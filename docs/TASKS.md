@@ -101,15 +101,17 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Worktree hardening: auto-cleanup empty, cross-device guard (same-drive only)
 
 ### Phase 3 — graphify
-- [ ] `graph.rs`: build graph in-repo `<repo>/graphify-out/` (ADR-0003)
-- [ ] First-open prompt "build graph?" (one-time full build) (US-14)
-- [ ] Inject `GRAPH_REPORT.md` on session start via `--append-system-prompt`
-- [ ] Write AGENTS.md navigation note (graphify query/path/explain via bash)
-- [ ] Two-layer gitignore: per-project `graphify-out/` + opt-in global (asks first) (US-15)
-- [ ] Detect already-tracked via `git ls-files graphify-out/`, warn `git rm -r --cached` (never silent)
-- [ ] Auto `--update` (code-only) after task finish / commit / branch switch (US-16)
-- [ ] Docs/PDF/image change → "graph stale (docs), rebuild?" badge only, no auto
-- [ ] Graph status per project: none / fresh / stale + rebuild action (US-17)
+- [x] `graph.rs`: build graph in-repo `<repo>/graphify-out/` (ADR-0003)
+- [x] First-open prompt "build graph?" (one-time full build) (US-14)
+- [x] Inject `GRAPH_REPORT.md` on session start via `--append-system-prompt`
+- [x] Write AGENTS.md navigation note (graphify query/path/explain via bash)
+- [x] Two-layer gitignore: per-project `graphify-out/` + opt-in global (asks first) (US-15)
+- [x] Detect already-tracked via `git ls-files graphify-out/`, warn `git rm -r --cached` (never silent)
+- [x] Auto `--update` (code-only) after task finish / new worktree (US-16)
+- [ ] Auto `--update` after commit / branch switch outside the app session
+- [x] Graphify Settings page: configure custom OpenAI-compatible URL, API key, and model (including 9Router); store API key in macOS Keychain outside `.env`/repo and pass to Graphify process
+- [x] Docs/PDF/image change → "graph stale (docs), rebuild?" badge only, no auto
+- [x] Graph status per project: none / fresh / stale + rebuild action (US-17)
 
 ### Phase 4 — kanban + pipeline
 - [ ] Kanban reads `Task All Project/<project>.json`, columns by status (`Backlog→In Progress→Review→Done`, case-insensitive) (US-18)

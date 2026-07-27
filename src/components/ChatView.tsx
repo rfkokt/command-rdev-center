@@ -12,7 +12,8 @@ import DiffPanel from "./DiffPanel";
 
 type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
-type SlashCommand = { name: string; description?: string; source: string }; 
+type SlashCommand = { name: string; description?: string; source: string };
+type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 
 const MAX_HISTORY = 600;
 
@@ -75,6 +76,9 @@ export default function ChatView({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
+  const [graphBusy, setGraphBusy] = useState(false);
+  const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
@@ -144,6 +148,38 @@ export default function ChatView({
       return copy;
     });
   }, []);
+
+  const refreshGraph = useCallback(async (full: boolean) => {
+    setGraphBusy(true);
+    try {
+      const next = await invoke<GraphStatus>("build_graph", { projectPath, full });
+      graphReportRef.current = next.report_path;
+      setGraphStatus(next);
+      if (next.tracked_warning) onToast(next.tracked_warning);
+      onToast(full ? "Graph built" : "Graph updated");
+      if (full && window.confirm("Add Graphify exclusions to ~/.gitignore_global as a safety net?")) {
+        const path = await invoke<string>("enable_global_graphignore");
+        onToast(`Global Graphify ignore enabled: ${path}`);
+      }
+      return next;
+    } catch (e) {
+      onToast(`Graphify: ${String(e)}`);
+      return null;
+    } finally {
+      setGraphBusy(false);
+    }
+  }, [projectPath, onToast]);
+
+  const updateGraphIfCodeStale = useCallback(async () => {
+    try {
+      const next = await invoke<GraphStatus>("get_graph_status", { projectPath });
+      setGraphStatus(next);
+      graphReportRef.current = next.report_path;
+      if (next.code_stale) await refreshGraph(false);
+    } catch (e) {
+      onToast(`Graphify status: ${String(e)}`);
+    }
+  }, [projectPath, refreshGraph, onToast]);
 
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
@@ -311,6 +347,7 @@ export default function ChatView({
           setAgentStatus("idle");
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
+          void updateGraphIfCodeStale();
           return;
         }
 
@@ -407,6 +444,18 @@ export default function ChatView({
       unlisteners.push(u4);
 
       try {
+        let graph = await invoke<GraphStatus>("get_graph_status", { projectPath });
+        if (!mounted) return;
+        setGraphStatus(graph);
+        graphReportRef.current = graph.report_path;
+        if (graph.tracked_warning) onToast(graph.tracked_warning);
+        if (graph.state === "none" && window.confirm(`Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`)) {
+          graph = await refreshGraph(true) ?? graph;
+        } else if (graph.code_stale) {
+          graph = await refreshGraph(false) ?? graph;
+        }
+        graphReportRef.current = graph.report_path;
+
         if (!isGit) {
           setCwd(projectPath);
           const [provider, ...modelParts] = modelRef.current.split("/");
@@ -417,6 +466,7 @@ export default function ChatView({
             provider: modelParts.length ? provider : undefined,
             model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
             thinking: thinkingRef.current || undefined,
+            graphReportPath: graphReportRef.current,
           });
         } else {
           const wt = await invoke<WorktreeInfo>("ensure_worktree", {
@@ -435,6 +485,7 @@ export default function ChatView({
             provider: modelParts.length ? provider : undefined,
             model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
             thinking: thinkingRef.current || undefined,
+            graphReportPath: graphReportRef.current,
           });
         }
 
@@ -462,7 +513,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, appendTextDelta, appendThinkingDelta, upsertToolCall]);
+  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale]);
 
   async function handleSend() {
     const text = input.trim();
@@ -492,6 +543,7 @@ export default function ChatView({
         provider: modelParts.length ? provider : undefined,
         model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
         thinking: thinkingRef.current || undefined,
+        graphReportPath: graphReportRef.current,
       });
       onToast("Agent restarted");
       setTimeout(() => sendRaw({ type: "get_state" }), 300);
@@ -648,6 +700,12 @@ export default function ChatView({
         {!isGit && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
+        {graphStatus && <button
+          className="category-tag graph-status"
+          disabled={graphBusy}
+          title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
+          onClick={() => graphStatus.state !== "fresh" && refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
+        >GRAPH {graphBusy ? "WORKING" : graphStatus.state}</button>}
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
           {agentStatus === "running" && <button onClick={() => sendRaw({ type: "abort" })} className="caption-uppercase">ABORT</button>}

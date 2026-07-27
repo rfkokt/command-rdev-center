@@ -135,6 +135,7 @@ pub fn spawn_pi_rpc(
     thinking: Option<String>,
     no_session: Option<bool>,
     session_file: Option<String>,
+    graph_report_path: Option<String>,
 ) -> Result<String, String> {
     let (pi_path, cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
@@ -187,6 +188,11 @@ pub fn spawn_pi_rpc(
         }
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
+    if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
+        let report = crate::graph::validate_report_path(Path::new(&report))?;
+        args.push("--append-system-prompt".into());
+        args.push(report.to_string_lossy().to_string());
+    }
 
     let mut child = Command::new(&pi_path)
         .args(&args)
@@ -254,7 +260,12 @@ pub fn spawn_pi_rpc(
             .lock()
             .ok()
             .and_then(|map| map.get(&sid).cloned())
-            .and_then(|handle| handle.lock().ok().and_then(|guard| guard.as_ref().map(Child::id)))
+            .and_then(|handle| {
+                handle
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(Child::id))
+            })
             == Some(process_id);
         if is_current {
             let _ = app_clone.emit(

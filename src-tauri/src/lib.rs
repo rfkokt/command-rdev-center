@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 mod diff;
 mod files;
+mod graph;
 mod pi_rpc;
 mod projects;
 mod settings;
@@ -36,11 +37,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            graph::get_graph_status,
+            graph::build_graph,
+            graph::enable_global_graphignore,
             diff::get_worktree_diff,
             projects::list_projects,
             projects::add_project,
             settings::get_pi_settings,
             settings::save_pi_settings,
+            settings::get_graphify_settings,
+            settings::fetch_graphify_models,
+            settings::save_graphify_settings,
             worktree::ensure_worktree,
             worktree::remove_worktree,
             pi_rpc::spawn_pi_rpc,

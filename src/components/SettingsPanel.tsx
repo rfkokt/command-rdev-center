@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import GraphifySettings from "./GraphifySettings";
 
 const GROUPS = [
   ["Model & Thinking", "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets"],
@@ -14,6 +15,7 @@ const GROUPS = [
 ] as const;
 
 export default function SettingsPanel({ projectPath, onClose, onToast }: { projectPath?: string; onClose: () => void; onToast: (message: string) => void }) {
+  const [page, setPage] = useState<"pi" | "graphify">("pi");
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
   const [saved, setSaved] = useState("{}");
@@ -42,14 +44,14 @@ export default function SettingsPanel({ projectPath, onClose, onToast }: { proje
   }
 
   return <div className="settings-backdrop">
-    <section className="settings-panel" aria-label="Pi settings">
-      <header><div><small>CONFIGURATION</small><strong>PI SETTINGS</strong></div><button onClick={onClose}>ESC</button></header>
+    <section className="settings-panel" aria-label="Settings">
+      <header><div><small>CONFIGURATION</small><strong>{page === "pi" ? "PI SETTINGS" : "GRAPHIFY SETTINGS"}</strong></div><button onClick={onClose}>ESC</button></header>
       <div className="settings-scope">
-        <button className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>GLOBAL</button>
-        <button className={scope === "project" ? "active" : ""} disabled={!projectPath} onClick={() => setScope("project")}>PROJECT</button>
-        <span>{scope === "global" ? "~/.pi/agent/settings.json" : `${projectPath}/.pi/settings.json`}</span>
+        <button className={page === "pi" ? "active" : ""} onClick={() => setPage("pi")}>PI</button>
+        <button className={page === "graphify" ? "active" : ""} onClick={() => setPage("graphify")}>GRAPHIFY</button>
+        {page === "pi" && <><button className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>GLOBAL</button><button className={scope === "project" ? "active" : ""} disabled={!projectPath} onClick={() => setScope("project")}>PROJECT</button><span>{scope === "global" ? "~/.pi/agent/settings.json" : `${projectPath}/.pi/settings.json`}</span></>}
       </div>
-      <div className="settings-content">
+      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : <><div className="settings-content">
         <nav>{GROUPS.map(([name, detail]) => <div key={name}><strong>{name}</strong><span>{detail}</span></div>)}</nav>
         <main>
           <div className="settings-notice">Complete Pi settings JSON. Project values override global values. Unknown/custom keys are preserved. Most settings apply to newly started sessions.</div>
@@ -57,7 +59,7 @@ export default function SettingsPanel({ projectPath, onClose, onToast }: { proje
           {error && <div className="settings-error">{error}</div>}
         </main>
       </div>
-      <footer><span>{text === saved ? "NO CHANGES" : "UNSAVED CHANGES"}</span><div><button onClick={() => setText(saved)} disabled={text === saved}>RESET</button><button className="save-settings" onClick={save} disabled={loading || text === saved}>SAVE SETTINGS</button></div></footer>
+      <footer><span>{text === saved ? "NO CHANGES" : "UNSAVED CHANGES"}</span><div><button onClick={() => setText(saved)} disabled={text === saved}>RESET</button><button className="save-settings" onClick={save} disabled={loading || text === saved}>SAVE SETTINGS</button></div></footer></>}
     </section>
   </div>;
 }
