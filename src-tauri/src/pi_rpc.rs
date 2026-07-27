@@ -51,6 +51,16 @@ fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
+fn session_args(no_session: bool, session_file: Option<String>) -> Vec<String> {
+    if no_session {
+        vec!["--no-session".into()]
+    } else if let Some(path) = session_file.filter(|path| !path.trim().is_empty()) {
+        vec!["--session".into(), path]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Strict LF-only JSONL reader: split on \n only, strip trailing \r, do NOT split on U+2028/U+2029.
 /// We implement our own line splitter over raw bytes to be correct.
 struct LfLineReader<R: Read> {
@@ -124,7 +134,7 @@ pub fn spawn_pi_rpc(
     provider: Option<String>,
     thinking: Option<String>,
     no_session: Option<bool>,
-    continue_session: Option<bool>,
+    session_file: Option<String>,
 ) -> Result<String, String> {
     let (pi_path, cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
@@ -176,11 +186,7 @@ pub fn spawn_pi_rpc(
             args.push(t.clone());
         }
     }
-    if no_session.unwrap_or(false) {
-        args.push("--no-session".into());
-    } else if continue_session.unwrap_or(false) {
-        args.push("--continue".into());
-    }
+    args.extend(session_args(no_session.unwrap_or(false), session_file));
 
     let mut child = Command::new(&pi_path)
         .args(&args)
@@ -389,11 +395,21 @@ mod tests {
     }
 
     #[test]
-    fn continue_flag_is_supported_by_pi() {
+    fn session_args_resume_exact_file() {
+        assert_eq!(
+            session_args(false, Some("/tmp/chat.jsonl".into())),
+            ["--session", "/tmp/chat.jsonl"]
+        );
+        assert!(session_args(false, None).is_empty());
+        assert_eq!(session_args(true, Some("ignored".into())), ["--no-session"]);
+    }
+
+    #[test]
+    fn exact_session_flag_is_supported_by_pi() {
         let output = Command::new(read_pi_config().unwrap().0)
             .arg("--help")
             .output()
             .unwrap();
-        assert!(String::from_utf8_lossy(&output.stdout).contains("--continue"));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("--session <path|id>"));
     }
 }

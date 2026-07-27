@@ -36,7 +36,11 @@ export default function ChatView({
   projectName,
   isGit,
   chatId,
-  resume,
+  sessionFile,
+  initialModel,
+  initialThinking,
+  onSessionFile,
+  onRuntimeSettings,
   onClose,
   onToast,
 }: {
@@ -44,7 +48,11 @@ export default function ChatView({
   projectName: string;
   isGit: boolean;
   chatId: string;
-  resume: boolean;
+  sessionFile?: string;
+  initialModel?: string;
+  initialThinking?: string;
+  onSessionFile: (chatId: string, sessionFile: string) => void;
+  onRuntimeSettings: (chatId: string, model: string, thinking: string) => void;
   onClose: () => void;
   onToast: (m: string) => void;
 }) {
@@ -57,17 +65,20 @@ export default function ChatView({
   const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">("idle");
   const [driveDetached, setDriveDetached] = useState(false);
   const [models, setModels] = useState<string[]>([]);
-  const [currentModel, setCurrentModel] = useState("");
+  const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [modelIndex, setModelIndex] = useState(0);
-  const [currentThinking, setCurrentThinking] = useState("");
+  const [currentThinking, setCurrentThinking] = useState(initialThinking ?? "");
   const [filePickerQuery, setFilePickerQuery] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
+  const sessionFileRef = useRef(sessionFile);
+  const modelRef = useRef(initialModel ?? "");
+  const thinkingRef = useRef(initialThinking ?? "");
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -214,16 +225,32 @@ export default function ChatView({
             }
           } else if (cmd === "cycle_model") {
             const model = data.model as { id: string; provider?: string } | undefined;
-            if (model) setCurrentModel(`${model.provider ?? ""}/${model.id}`.replace(/^\//, ""));
-            if (data.thinkingLevel) setCurrentThinking(String(data.thinkingLevel));
+            if (model) {
+              const value = `${model.provider ?? ""}/${model.id}`.replace(/^\//, "");
+              modelRef.current = value;
+              setCurrentModel(value);
+            }
+            if (data.thinkingLevel) {
+              thinkingRef.current = String(data.thinkingLevel);
+              setCurrentThinking(thinkingRef.current);
+            }
           } else if (cmd === "cycle_thinking_level") {
             if (data.level) setCurrentThinking(String(data.level));
           } else if (cmd === "get_state") {
+            if (typeof data.sessionFile === "string") {
+              sessionFileRef.current = data.sessionFile;
+              onSessionFile(chatId, data.sessionFile);
+            }
             if (data.model) {
               const m = data.model as { id: string; provider?: string };
-              setCurrentModel(`${m.provider ?? ""}/${m.id}`.replace(/^\//, ""));
+              modelRef.current = `${m.provider ?? ""}/${m.id}`.replace(/^\//, "");
+              setCurrentModel(modelRef.current);
             }
-            if (data.thinkingLevel) setCurrentThinking(String(data.thinkingLevel));
+            if (data.thinkingLevel) {
+              thinkingRef.current = String(data.thinkingLevel);
+              setCurrentThinking(thinkingRef.current);
+            }
+            onRuntimeSettings(chatId, modelRef.current, thinkingRef.current);
           } else if (cmd === "get_messages") {
             const hist = data.messages as Array<Record<string, unknown>> | undefined;
             if (hist && hist.length > 0) {
@@ -379,7 +406,15 @@ export default function ChatView({
       try {
         if (!isGit) {
           setCwd(projectPath);
-          await invoke("spawn_pi_rpc", { sessionId, cwd: projectPath, continueSession: resume });
+          const [provider, ...modelParts] = modelRef.current.split("/");
+          await invoke("spawn_pi_rpc", {
+            sessionId,
+            cwd: projectPath,
+            sessionFile: sessionFileRef.current,
+            provider: modelParts.length ? provider : undefined,
+            model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
+            thinking: thinkingRef.current || undefined,
+          });
         } else {
           const wt = await invoke<WorktreeInfo>("ensure_worktree", {
             repoPath: projectPath,
@@ -389,7 +424,15 @@ export default function ChatView({
           if (!mounted) return;
           setWorktree(wt);
           setCwd(wt.worktree_path);
-          await invoke("spawn_pi_rpc", { sessionId, cwd: wt.worktree_path, continueSession: resume });
+          const [provider, ...modelParts] = modelRef.current.split("/");
+          await invoke("spawn_pi_rpc", {
+            sessionId,
+            cwd: wt.worktree_path,
+            sessionFile: sessionFileRef.current,
+            provider: modelParts.length ? provider : undefined,
+            model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
+            thinking: thinkingRef.current || undefined,
+          });
         }
 
         const initial = () => {
@@ -416,7 +459,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, sessionId, resume, sendRaw, onToast, appendTextDelta, appendThinkingDelta, upsertToolCall]);
+  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, appendTextDelta, appendThinkingDelta, upsertToolCall]);
 
   async function handleSend() {
     const text = input.trim();
@@ -438,7 +481,15 @@ export default function ChatView({
     setAgentStatus("idle");
     setDriveDetached(false);
     try {
-      await invoke("spawn_pi_rpc", { sessionId, cwd, continueSession: true });
+      const [provider, ...modelParts] = modelRef.current.split("/");
+      await invoke("spawn_pi_rpc", {
+        sessionId,
+        cwd,
+        sessionFile: sessionFileRef.current,
+        provider: modelParts.length ? provider : undefined,
+        model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
+        thinking: thinkingRef.current || undefined,
+      });
       onToast("Agent restarted");
       setTimeout(() => sendRaw({ type: "get_state" }), 300);
     } catch (e) {
@@ -469,7 +520,9 @@ export default function ChatView({
 
   async function handleSetModel(m: string) {
     if (!m) return;
+    modelRef.current = m;
     setCurrentModel(m);
+    onRuntimeSettings(chatId, m, thinkingRef.current);
     const parts = m.split("/");
     const provider = parts.length > 1 ? parts[0] : undefined;
     const modelId = parts.length > 1 ? parts.slice(1).join("/") : m;
@@ -480,7 +533,9 @@ export default function ChatView({
   }
 
   async function handleSetThinking(lvl: string) {
+    thinkingRef.current = lvl;
     setCurrentThinking(lvl);
+    onRuntimeSettings(chatId, modelRef.current, lvl);
     await sendRaw({ type: "set_thinking_level", level: lvl });
   }
 
@@ -653,7 +708,9 @@ export default function ChatView({
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: "auto", padding: "var(--spacing-xl) var(--spacing-section)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
+          <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
         {messages.length === 0 && (
           <div className="display-sm" style={{ color: "var(--colors-muted)", marginTop: "var(--spacing-xl)" }}>
             AGENT IDLE. SEND PROMPT.
@@ -690,8 +747,10 @@ export default function ChatView({
         )}
         <div ref={bottomRef} />
       </div>
+      </div>
 
-      <div style={{ position: "relative", padding: "var(--spacing-md) var(--spacing-section)", display: "flex", gap: "var(--spacing-md)", alignItems: "flex-end" }}>
+      <div style={{ borderTop: "1px solid var(--colors-hairline)" }}>
+        <div style={{ maxWidth: 880, margin: "0 auto", padding: "var(--spacing-md)", position: "relative", display: "flex", gap: "var(--spacing-md)", alignItems: "flex-end" }}>
         {slashCommands.length > 0 && (
           <div className="slash-menu" role="listbox">
             {slashCommands.map((command, index) => (
@@ -711,7 +770,7 @@ export default function ChatView({
         )}
         {filePickerQuery !== null && (
           <FilePicker
-            projectPath={cwd}
+            projectPath={projectPath}
             query={filePickerQuery}
             onPick={(f) => {
               const atIdx = input.lastIndexOf("@");
@@ -777,7 +836,9 @@ export default function ChatView({
            <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || !input.trim()} className="button-primary">SEND</button>
         )}
       </div>
-      {atHint && <div className="caption-uppercase" style={{ padding: "0 var(--spacing-section) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
+      </div>
+      </div>
+      {atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>

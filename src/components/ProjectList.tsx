@@ -68,7 +68,6 @@ export default function ProjectList({
           </div>
         );
       })}
-      <button className="add-project" onClick={addProject}>＋ REGISTER PROJECT</button>
     </div>
   );
 }

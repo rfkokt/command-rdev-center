@@ -14,7 +14,7 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; resume?: boolean };
+type Tab = { id: string; project: ProjectInfo; sessionFile?: string; model?: string; thinking?: string };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
 
@@ -28,8 +28,11 @@ function savedTabs(): Tab[] {
 
 export default function App() {
   const [configErr, setConfigErr] = useState<string | null>(null);
-  const [tabs, setTabs] = useState<Tab[]>(() => savedTabs().map((tab) => ({ ...tab, resume: true })));
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [tabs, setTabs] = useState<Tab[]>(savedTabs);
+  const [activeTabId, setActiveTabId] = useState<string | null>(() => {
+    const tabs = savedTabs();
+    return tabs[tabs.length - 1]?.id ?? null;
+  });
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [toasts, setToasts] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -39,12 +42,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs.map(({ id, project }) => ({ id, project }))));
+    localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
   const addToast = useCallback((msg: string) => {
     setToasts((prev) => [...prev, msg].slice(-6));
     setTimeout(() => setToasts((prev) => prev.slice(1)), 6000);
+  }, []);
+
+  const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
+    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
+  }, []);
+
+  const saveRuntimeSettings = useCallback((tabId: string, model: string, thinking: string) => {
+    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, model, thinking } : item));
   }, []);
 
   function openProject(project: ProjectInfo) {
@@ -57,7 +68,7 @@ export default function App() {
   function newConversation(project = selectedProject) {
     if (!project) return;
     const id = `${project.name}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    setTabs((prev) => [...prev, { id, project, resume: false }]);
+    setTabs((prev) => [...prev, { id, project }]);
     setSelectedProject(project);
     setActiveTabId(id);
   }
@@ -110,7 +121,11 @@ export default function App() {
                 projectName={tab.project.name}
                 isGit={tab.project.is_git}
                 chatId={tab.id}
-                resume={Boolean(tab.resume)}
+                sessionFile={tab.sessionFile}
+                initialModel={tab.model}
+                initialThinking={tab.thinking}
+                onSessionFile={saveSessionFile}
+                onRuntimeSettings={saveRuntimeSettings}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
               />

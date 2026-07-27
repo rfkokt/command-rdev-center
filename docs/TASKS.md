@@ -77,7 +77,7 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 
 ### M5 Controls + worktree lifecycle
 - [x] Model/thinking dropdowns populated via get_available_models + get_state; set_model/set_thinking_level mid-session no restart (US-5)
-- [ ] Session resume across app/tab close: persist/recover the original slug, recreate its worktree, then load pi history (US-6)
+- [x] Session resume across app/tab close: persist exact pi `sessionFile` + original tab slug, recreate its worktree, then load pi history via `--session` (US-6)
 - [x] worktree.rs central .crc-worktrees/<repo>/<slug> -b crc/<slug> parent resolution origin/HEAD fallback main/master/HEAD; slug unique per tab for US-8 concurrent no-collide
 - [x] Non-git project -> spawn directly + not isolated badge
 - [x] Auto-remove worktree when porcelain empty on close + toast; idle guard blocks close if streaming (US-10 + US-4 safety)

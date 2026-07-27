@@ -44,11 +44,7 @@ fn walk_collect(
     cur: &Path,
     depth: usize,
     results: &mut Vec<(PathBuf, PathBuf)>,
-    limit: usize,
 ) {
-    if results.len() >= limit {
-        return;
-    }
     if depth > 4 {
         return;
     }
@@ -77,13 +73,10 @@ fn walk_collect(
             continue;
         }
         if p.is_dir() {
-            walk_collect(base, &p, depth + 1, results, limit);
+            walk_collect(base, &p, depth + 1, results);
         } else {
             let rel = p.strip_prefix(base).unwrap_or(&p).to_path_buf();
             results.push((p, rel));
-        }
-        if results.len() >= limit {
-            return;
         }
     }
 }
@@ -98,7 +91,7 @@ pub fn search_files(project_path: String, query: String) -> Result<Vec<FileEntry
     }
 
     let mut candidates: Vec<(PathBuf, PathBuf)> = Vec::new();
-    walk_collect(&proj_path, &proj_path, 0, &mut candidates, 1000);
+    walk_collect(&proj_path, &proj_path, 0, &mut candidates);
 
     let q = query.trim().to_lowercase();
     let mut scored: Vec<(i32, FileEntry)> = Vec::new();

@@ -15,6 +15,7 @@ export default function FilePicker({
   onClose: () => void;
 }) {
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [error, setError] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
 
   useEffect(() => {
@@ -22,14 +23,16 @@ export default function FilePicker({
     async function search() {
       try {
         const res = await invoke<FileEntry[]>("search_files", { projectPath, query });
-        if (!cancelled) { setFiles(res); setSelectedIdx(0); }
-      } catch {}
+        if (!cancelled) { setFiles(res); setError(""); setSelectedIdx(0); }
+      } catch (e) {
+        if (!cancelled) { setFiles([]); setError(String(e)); }
+      }
     }
     search();
     return () => { cancelled = true; };
   }, [projectPath, query]);
 
-  if (files.length === 0) return null;
+  if (files.length === 0 && !error) return null;
 
   return (
     <div className="surface-elevated" style={{ position: "absolute", bottom: "100%", left: 0, maxHeight: 300, overflow: "auto", width: 400, zIndex: 20 }}>
@@ -37,6 +40,7 @@ export default function FilePicker({
         <span>@ FILE PICKER — {files.length} RESULTS</span>
         <button onClick={onClose} aria-label="Close file picker">✕</button>
       </div>
+      {error && <div className="body-sm" role="alert" style={{ padding: "var(--spacing-sm)", color: "var(--colors-muted-soft)" }}>{error}</div>}
       {files.map((f, idx) => (
         <button
           key={f.path}
