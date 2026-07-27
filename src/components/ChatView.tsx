@@ -8,6 +8,7 @@ import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import FilePicker from "./FilePicker";
+import DiffPanel from "./DiffPanel";
 
 type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
@@ -73,6 +74,7 @@ export default function ChatView({
   const [filePickerQuery, setFilePickerQuery] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [editingFile, setEditingFile] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
@@ -334,12 +336,13 @@ export default function ChatView({
           } else if (dtype === "toolcall_end") {
             const tc = delta.toolCall as { id?: string; name?: string; arguments?: Record<string, unknown> } | undefined;
             const callId = tc?.id ?? (delta.toolCallId as string | undefined);
-            if (callId) upsertToolCall(callId, {
-              name: tc?.name ?? (delta.toolName as string) ?? "tool",
-              args: tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {},
-              phase: "end",
-              callId,
-            });
+            const name = tc?.name ?? (delta.toolName as string) ?? "tool";
+            const args = tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {};
+            if (callId) upsertToolCall(callId, { name, args, phase: "end", callId });
+            if (name === "edit" || name === "write") {
+              const path = args.path;
+              if (typeof path === "string") setEditingFile(path);
+            }
           }
           return;
         }
@@ -839,6 +842,17 @@ export default function ChatView({
       </div>
       </div>
       {atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
+      {worktree && <DiffPanel
+        worktreePath={worktree.worktree_path}
+        parentRef={worktree.parent_ref}
+        editingFile={editingFile}
+        onToast={onToast}
+        onHandoff={() => {
+          const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes.";
+          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
+          sendRaw({ type: "prompt", message });
+        }}
+      />}
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>

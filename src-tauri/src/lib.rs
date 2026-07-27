@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod diff;
 mod files;
 mod pi_rpc;
 mod projects;
@@ -35,6 +36,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            diff::get_worktree_diff,
             projects::list_projects,
             projects::add_project,
             settings::get_pi_settings,

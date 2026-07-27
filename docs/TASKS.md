@@ -91,14 +91,14 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 ## Later phases
 
 ### Phase 2 — diff viewer + worktree hardening
-- [ ] `diff.rs`: record parent at worktree create (`origin/HEAD`, fallback `main`)
-- [ ] Compute baseline `git merge-base crc/<slug> <parent>` (ADR-0004, never stored)
-- [ ] `git diff <merge-base>...HEAD` (three-dot) + uncommitted `git diff` + `--staged`
-- [ ] `git status --porcelain` for touched-files list
-- [ ] Per-file diff UI: added/removed lines, collapsible (US-11)
-- [ ] Live "currently editing X" from `toolcall_end` edit/write events (US-12)
-- [ ] Hand off to `git-push-workflow` skill from diff panel (US-13)
-- [ ] Worktree hardening: auto-cleanup empty, cross-device guard (same-drive only)
+- [x] `diff.rs`: record parent at worktree create (`origin/HEAD`, fallback `main`)
+- [x] Compute baseline `git merge-base crc/<slug> <parent>` (ADR-0004, never stored)
+- [x] `git diff <merge-base>...HEAD` (three-dot) + uncommitted `git diff` + `--staged`
+- [x] `git status --porcelain` for touched-files list
+- [x] Per-file diff UI: added/removed lines, collapsible (US-11)
+- [x] Live "currently editing X" from `toolcall_end` edit/write events (US-12)
+- [x] Hand off to `git-push-workflow` skill from diff panel (US-13)
+- [x] Worktree hardening: auto-cleanup empty, cross-device guard (same-drive only)
 
 ### Phase 3 — graphify
 - [ ] `graph.rs`: build graph in-repo `<repo>/graphify-out/` (ADR-0003)

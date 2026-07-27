@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,13 +36,17 @@ pub fn slugify(s: &str) -> String {
         .collect::<String>()
 }
 
-/// Ensure `child` (`worktree_path`) lives on same device as `main_repo` per FS boundary check?
-/// Phase 1: simply ensure main_repo is a dir on disk and that worktree_root exists.
-/// Cross-device: colocated under same external-drive root => same device if project_root
-/// truly is on external drive. We don't enforce explicit device-id compare yet; that is Phase 2 hardening.
-fn ensure_worktree_root(project_root: &Path) -> Result<PathBuf, String> {
+fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
     let root = worktree_root(project_root);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    if std::fs::metadata(repo_path)
+        .map_err(|e| e.to_string())?
+        .dev()
+        != std::fs::metadata(&root).map_err(|e| e.to_string())?.dev()
+    {
+        return Err("worktree root and repository must be on the same filesystem".to_string());
+    }
     Ok(root)
 }
 
@@ -104,7 +110,7 @@ pub fn create_worktree(
     let safe_slug = sanitize_repo_name(slug);
 
     // deterministic single folder per repo+slug
-    let wt_root = ensure_worktree_root(project_root)?;
+    let wt_root = ensure_worktree_root(project_root, repo_path)?;
     let worktree_path = wt_root.join(&safe_repo).join(&safe_slug);
     let worktree_path_str = worktree_path.to_string_lossy().to_string();
 
@@ -177,7 +183,7 @@ pub fn create_worktree(
         branch,
         repo_name: safe_repo,
         slug: safe_slug,
-        parent_ref: parent_ref,
+        parent_ref,
     })
 }
 
