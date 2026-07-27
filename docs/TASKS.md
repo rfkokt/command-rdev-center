@@ -58,36 +58,35 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Seed JSON config (ADR/CONTEXT branch C): pi path `/Users/rifkioktapratama/.local/bin/pi`, project root `/Volumes/ExternalM4/Project`, default model/thinking/provider  \n  → `src-tauri/crc.config.json` + `get_config` Tauri command + frontend smoke test
 
 ### M2 Project scan (`list_projects`)
-- [ ] `projects.rs`: scan project root, detect kind (`.git` / `package.json` / `Cargo.toml` / `pom.xml`)
-- [ ] Sort by mtime, kind badges + search
-- [ ] Path validation: child-of-root only (anti path-traversal, PRD §6.6)
-- [ ] `ProjectList` component renders ~21 real projects
+- [x] `projects.rs`: scan project root (47 entries filtered -> 23 real), detect kind `.git`/`package.json`/`Cargo.toml`/`pom.xml` + go.mod, hidden dot skip (.crc-worktrees etc)
+- [x] Sort by mtime, kind badges + search — ProjectList.tsx
+- [x] Path validation: child-of-root canonical check
+- [x] `ProjectList` renders real projects, searchable
 
 ### M3 pi RPC bridge (`pi_rpc.rs`)
-- [ ] Spawn `pi --mode rpc` via `std::process::Command` (absolute path), cwd = worktree/project
-- [ ] **Strict LF-only** JSONL reader (no Node readline; strip trailing `\r`; do NOT split on U+2028/U+2029) — PRD §6.2, §12
-- [ ] Write commands to stdin `{id,type:"prompt",message}`; read events from stdout
-- [ ] Forward events to webview via Tauri events
-- [ ] Test: U+2028 inside a JSON string must not break framing
+- [x] Spawn `pi --mode rpc` absolute path, cwd=worktree/project, session map, kill handle — spawn_pi_rpc, send_pi_command (snake_case args, was camelCase bug fixed), kill_pi_session
+- [x] **Strict LF-only** JSONL reader (not Node readline; strip CR; U+2028/U+2029 safe) — custom byte reader, 4 tests passing including literal U+2028 not split
+- [x] Write prompt + extension_ui_response + set_model etc via stdin; read events stdout; forward via Tauri events pi-rpc-event/ended/error/stderr
+- [x] U+2028 test: cargo test passes
 
 ### M4 Chatbox
-- [ ] `send_prompt` command; stream `message_update` (text/thinking deltas) into `ChatView`
-- [ ] Render tool calls live (read/bash/edit/write) — `ToolCall` component
-- [ ] `ApprovalDialog`: show dangerous-command prompt; Allow/Block; app NEVER auto-resolves (agent auto-resolves on timeout; safe default = Block) — CONTEXT branch B
-- [ ] `@` file-reference picker (only TUI gap we build — ADR-0002): fuzzy file search → inject path into prompt
+- [x] ChatView streams message_update text_delta/thinking_delta, tool_execution_* phases, toolcall_* events; MAX_HISTORY 600, thinking collapsible
+- [x] ToolCall component live rendering
+- [x] ApprovalDialog select/confirm/input/editor, never auto-resolves, safe Block default — handles extension_ui_request
+- [x] @ file picker files.rs fuzzy + FilePicker.tsx, inserts @relative path
 
 ### M5 Controls + worktree lifecycle
-- [ ] Model/thinking switch mid-session: `set_model`, `set_thinking_level`; populate via `get_available_models`, `get_available_thinking_levels`
-- [ ] Session resume: recreate `crc/<slug>` worktree + spawn pi against pi's default session (ADR-0001, deterministic slug, no mapping file)
-- [ ] `worktree.rs`: git Chat → `git worktree add /Volumes/ExternalM4/Project/.crc-worktrees/<repo>/<slug> -b crc/<slug> <parent>` (parent = `origin/HEAD`, fallback `main`)
-- [ ] Non-git project → spawn pi in folder directly + "not isolated" badge; offer one-time `git init` (never forced)
-- [ ] Auto-remove worktree on close when no changes
-- [ ] Idle-only process kill guard (not streaming / not running bash / empty queue); background Chat never killed on tab unfocus
+- [x] Model/thinking dropdowns populated via get_available_models + get_state; set_model/set_thinking_level mid-session no restart (US-5)
+- [ ] Session resume across app/tab close: persist/recover the original slug, recreate its worktree, then load pi history (US-6)
+- [x] worktree.rs central .crc-worktrees/<repo>/<slug> -b crc/<slug> parent resolution origin/HEAD fallback main/master/HEAD; slug unique per tab for US-8 concurrent no-collide
+- [x] Non-git project -> spawn directly + not isolated badge
+- [x] Auto-remove worktree when porcelain empty on close + toast; idle guard blocks close if streaming (US-10 + US-4 safety)
+- [x] Background tabs hidden not killed — tabs mounted display:none, streaming preserved (US-7)
 
 ### M6 Reliability
-- [ ] Drive-unmounted: mark Chat "drive detached", freeze (no kill/retry loop), offer reconnect on drive return
-- [ ] pi crash: Rust supervises, UI shows "agent stopped" + restart, app never hard-crashes
-- [ ] Error toasts
+- [x] Drive-unmounted: spawn and pi-exit checks detect missing cwd; ChatView freezes input and offers reconnect (US-4)
+- [x] pi crash supervised: stdout thread emits pi-rpc-ended -> stopped badge + restart button, no app crash (US-4)
+- [x] Toasts stack 6 auto-clear 6s for rpc errors/stderr/worktree events
 
 ## Later phases
 

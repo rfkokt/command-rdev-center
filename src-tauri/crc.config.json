@@ -3,5 +3,8 @@
   "project_root": "/Volumes/ExternalM4/Project",
   "default_provider": "anthropic",
   "default_model": "claude-opus-4-8",
-  "default_thinking": "medium"
+  "default_thinking": "medium",
+  "projects": [
+    "/Volumes/ExternalM4/Project/command-rdev-center"
+  ]
 }

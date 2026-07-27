@@ -1,0 +1,304 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// Root where all CRC worktrees live: /Volumes/ExternalM4/Project/.crc-worktrees
+fn worktree_root(project_root: &Path) -> PathBuf {
+    project_root.join(".crc-worktrees")
+}
+
+/// Sanitize repo name for path safety.
+fn sanitize_repo_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Deterministically slugify a chat id / name into a single path component.
+pub fn slugify(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .chars()
+        .take(64)
+        .collect::<String>()
+}
+
+/// Ensure `child` (`worktree_path`) lives on same device as `main_repo` per FS boundary check?
+/// Phase 1: simply ensure main_repo is a dir on disk and that worktree_root exists.
+/// Cross-device: colocated under same external-drive root => same device if project_root
+/// truly is on external drive. We don't enforce explicit device-id compare yet; that is Phase 2 hardening.
+fn ensure_worktree_root(project_root: &Path) -> Result<PathBuf, String> {
+    let root = worktree_root(project_root);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    Ok(root)
+}
+
+fn git_origin_head_exists(repo_path: &Path) -> bool {
+    Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "rev-parse",
+            "--verify",
+            "origin/HEAD",
+        ])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Result of creating a worktree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WorktreeInfo {
+    pub worktree_path: String,
+    pub branch: String,
+    pub repo_name: String,
+    pub slug: String,
+    /// Parent ref used as starting point (origin/HEAD or main or master)
+    pub parent_ref: String,
+}
+
+fn resolve_parent_ref(repo_path: &Path) -> String {
+    if git_origin_head_exists(repo_path) {
+        return "origin/HEAD".to_string();
+    }
+    // try main then master then HEAD
+    for cand in ["main", "master", "HEAD"] {
+        let ok = Command::new("git")
+            .args([
+                "-C",
+                &repo_path.to_string_lossy(),
+                "rev-parse",
+                "--verify",
+                cand,
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return cand.to_string();
+        }
+    }
+    "HEAD".to_string()
+}
+
+pub fn create_worktree(
+    project_root: &Path,
+    repo_path: &Path,
+    repo_name: &str,
+    slug: &str,
+) -> Result<WorktreeInfo, String> {
+    let repo_path_str = repo_path.to_string_lossy().to_string();
+    let safe_repo = sanitize_repo_name(repo_name);
+    let safe_slug = sanitize_repo_name(slug);
+
+    // deterministic single folder per repo+slug
+    let wt_root = ensure_worktree_root(project_root)?;
+    let worktree_path = wt_root.join(&safe_repo).join(&safe_slug);
+    let worktree_path_str = worktree_path.to_string_lossy().to_string();
+
+    if worktree_path.exists() {
+        // already exists — treat as resume path, re-use if branch matches
+        let branch = format!("crc/{}", safe_slug);
+        let parent = resolve_parent_ref(repo_path);
+        return Ok(WorktreeInfo {
+            worktree_path: worktree_path_str,
+            branch,
+            repo_name: safe_repo,
+            slug: safe_slug,
+            parent_ref: parent,
+        });
+    }
+
+    // ensure parent dir
+    if let Some(parent_dir) = worktree_path.parent() {
+        std::fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
+    }
+
+    let parent_ref = resolve_parent_ref(repo_path);
+    let branch = format!("crc/{}", safe_slug);
+
+    // git worktree add <worktree_path> -b <branch> <parent_ref>
+    // parent_ref is relative to repo_path
+    let out = Command::new("git")
+        .args([
+            "-C",
+            &repo_path_str,
+            "worktree",
+            "add",
+            &worktree_path_str,
+            "-b",
+            &branch,
+            &parent_ref,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // maybe branch already exists — try without -b (attach existing branch)
+        if stderr.contains("already exists") || stderr.contains("already used") {
+            let out2 = Command::new("git")
+                .args([
+                    "-C",
+                    &repo_path_str,
+                    "worktree",
+                    "add",
+                    &worktree_path_str,
+                    &branch,
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !out2.status.success() {
+                return Err(format!(
+                    "git worktree add failed: {}\nstderr: {}",
+                    String::from_utf8_lossy(&out2.stderr),
+                    stderr
+                ));
+            }
+        } else {
+            return Err(format!("git worktree add failed: {}", stderr));
+        }
+    }
+
+    Ok(WorktreeInfo {
+        worktree_path: worktree_path_str,
+        branch,
+        repo_name: safe_repo,
+        slug: safe_slug,
+        parent_ref: parent_ref,
+    })
+}
+
+pub fn remove_worktree_if_empty(
+    _project_root: &Path,
+    repo_path: &Path,
+    worktree_path_str: &str,
+    parent_ref: &str,
+) -> Result<bool, String> {
+    let wt_path = Path::new(worktree_path_str);
+    if !wt_path.exists() {
+        return Ok(false);
+    }
+    let out = Command::new("git")
+        .args(["-C", worktree_path_str, "status", "--porcelain"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let porcelain = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !porcelain.is_empty() {
+        return Ok(false);
+    }
+    let ahead = Command::new("git")
+        .args([
+            "-C",
+            worktree_path_str,
+            "rev-list",
+            "--count",
+            &format!("{}..HEAD", parent_ref),
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !ahead.status.success() || String::from_utf8_lossy(&ahead.stdout).trim() != "0" {
+        return Ok(false);
+    }
+
+    // Remove worktree
+    let repo_path_str = repo_path.to_string_lossy().to_string();
+    // git worktree remove --force <path>
+    let rm_out = Command::new("git")
+        .args([
+            "-C",
+            &repo_path_str,
+            "worktree",
+            "remove",
+            "--force",
+            worktree_path_str,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !rm_out.status.success() {
+        // fallback: rm dir + prune
+        let _ = std::fs::remove_dir_all(wt_path);
+        let _ = Command::new("git")
+            .args(["-C", &repo_path_str, "worktree", "prune"])
+            .output();
+    }
+    Ok(true)
+}
+
+pub fn get_worktree_status(worktree_path_str: &str) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["-C", worktree_path_str, "status", "--porcelain"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).to_string())
+    }
+}
+
+fn read_config_project_root() -> Result<PathBuf, String> {
+    let cfg_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json");
+    let raw = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let root = v
+        .get("project_root")
+        .and_then(|r| r.as_str())
+        .ok_or_else(|| "project_root missing".to_string())?;
+    Ok(PathBuf::from(root))
+}
+
+#[tauri::command]
+pub fn ensure_worktree(
+    repo_path: String,
+    repo_name: String,
+    slug: String,
+) -> Result<WorktreeInfo, String> {
+    let project_root = read_config_project_root()?;
+    let rp = PathBuf::from(&repo_path);
+    // validate child-of-root
+    crate::projects::ensure_child_of_root(&project_root, &rp)?;
+    if slug.is_empty() {
+        return Err("slug must not be empty".to_string());
+    }
+    // slug safety: max 64 alnum-dash already via sanitize
+    create_worktree(&project_root, &rp, &repo_name, &slug)
+}
+
+#[tauri::command]
+pub fn remove_worktree(
+    repo_path: String,
+    worktree_path: String,
+    parent_ref: String,
+) -> Result<bool, String> {
+    let project_root = read_config_project_root()?;
+    let rp = PathBuf::from(&repo_path);
+    crate::projects::ensure_child_of_root(&project_root, &rp)?;
+    // also ensure worktree path is inside .crc-worktrees of project_root
+    let wt = PathBuf::from(&worktree_path);
+    let expected_prefix = worktree_root(&project_root);
+    let canon_prefix = expected_prefix
+        .canonicalize()
+        .unwrap_or(expected_prefix.clone());
+    let canon_wt = wt.canonicalize().unwrap_or(wt.clone());
+    if !canon_wt.starts_with(&canon_prefix) {
+        return Err(format!(
+            "worktree path not inside {}",
+            expected_prefix.display()
+        ));
+    }
+    remove_worktree_if_empty(&project_root, &rp, &worktree_path, &parent_ref)
+}

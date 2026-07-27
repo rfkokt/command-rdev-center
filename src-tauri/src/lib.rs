@@ -1,5 +1,11 @@
 use serde::{Deserialize, Serialize};
 
+mod files;
+mod pi_rpc;
+mod projects;
+mod settings;
+mod worktree;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub pi_path: String,
@@ -7,6 +13,8 @@ pub struct Config {
     pub default_provider: String,
     pub default_model: String,
     pub default_thinking: String,
+    #[serde(default)]
+    pub projects: Vec<String>,
 }
 
 fn config_path() -> std::path::PathBuf {
@@ -24,7 +32,21 @@ fn get_config() -> Result<Config, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_config])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            get_config,
+            projects::list_projects,
+            projects::add_project,
+            settings::get_pi_settings,
+            settings::save_pi_settings,
+            worktree::ensure_worktree,
+            worktree::remove_worktree,
+            pi_rpc::spawn_pi_rpc,
+            pi_rpc::send_pi_command,
+            pi_rpc::kill_pi_session,
+            pi_rpc::list_pi_sessions,
+            files::search_files
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
