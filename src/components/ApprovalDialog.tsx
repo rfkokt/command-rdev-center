@@ -9,50 +9,54 @@ export default function ApprovalDialog({
   onRespond: (payload: Record<string, unknown>) => void;
 }) {
   const [inputVal, setInputVal] = useState(req.prefill ?? "");
+  const respond = (payload: Record<string, unknown>) => onRespond({ type: "extension_ui_response", id: req.id, ...payload });
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}>
-      <div className="surface-card" style={{ padding: "var(--spacing-xl)", minWidth: 400, maxWidth: 600 }}>
-        <h3 className="display-sm">{req.title ? req.title.toUpperCase() : "APPROVAL REQUIRED"}</h3>
-        {req.message && <p className="body-md" style={{ marginTop: "var(--spacing-md)" }}>{req.message}</p>}
+    <div className="approval-backdrop" role="dialog" aria-modal="true" aria-labelledby="approval-title" aria-describedby={req.message ? "approval-message" : undefined}>
+      <section className="approval-dialog">
+        <header>
+          <small>AGENT · FOLLOW-UP</small>
+          <h2 id="approval-title">{req.title ?? "Input required"}</h2>
+        </header>
+
+        {req.message && <p id="approval-message" className="approval-message">{req.message}</p>}
 
         {req.method === "select" && req.options && (
-          <div style={{ display: "flex", gap: "var(--spacing-md)", marginTop: "var(--spacing-xl)", flexWrap: "wrap" }}>
-            {req.options.map((opt) => (
-              <button
-                key={opt}
-                onClick={() => onRespond({ type: "extension_ui_response", id: req.id, value: opt })}
-                className="button-primary"
-              >
-                {opt.toUpperCase()}
+          <div className="approval-options">
+            {req.options.map((opt, index) => (
+              <button key={opt} onClick={() => respond({ value: opt })}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                {opt}
               </button>
             ))}
-            <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, cancelled: true })} className="button-primary" style={{ marginLeft: "auto" }}>CANCEL</button>
           </div>
         )}
 
         {req.method === "confirm" && (
-          <div style={{ display: "flex", gap: "var(--spacing-md)", marginTop: "var(--spacing-xl)" }}>
-            <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, confirmed: false })} className="button-primary">BLOCK</button>
-            <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, confirmed: true })} className="button-primary">ALLOW</button>
-            <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, cancelled: true })} className="button-primary" style={{ marginLeft: "auto" }}>CANCEL</button>
+          <div className="approval-options approval-confirm">
+            <button onClick={() => respond({ confirmed: false })}><span>×</span>Block</button>
+            <button className="approval-primary" onClick={() => respond({ confirmed: true })}><span>✓</span>Allow</button>
           </div>
         )}
 
         {(req.method === "input" || req.method === "editor") && (
-          <div style={{ marginTop: "var(--spacing-xl)", display: "flex", flexDirection: "column", gap: "var(--spacing-md)" }}>
+          <label className="approval-input">
+            <span>YOUR RESPONSE</span>
             {req.method === "input" ? (
-              <input value={inputVal} placeholder={req.placeholder} onChange={(e) => setInputVal(e.target.value)} className="text-input body-md" style={{ padding: "var(--spacing-xs) 0" }} autoFocus />
+              <input value={inputVal} placeholder={req.placeholder} onChange={(e) => setInputVal(e.target.value)} autoFocus />
             ) : (
-              <textarea value={inputVal} onChange={(e) => setInputVal(e.target.value)} rows={8} className="text-input body-md" style={{ padding: "var(--spacing-xs) 0", fontFamily: "var(--font-mono)" }} autoFocus />
+              <textarea value={inputVal} placeholder={req.placeholder} onChange={(e) => setInputVal(e.target.value)} rows={8} autoFocus />
             )}
-            <div style={{ display: "flex", gap: "var(--spacing-md)" }}>
-              <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, value: inputVal })} className="button-primary">SUBMIT</button>
-              <button onClick={() => onRespond({ type: "extension_ui_response", id: req.id, cancelled: true })} className="button-primary">CANCEL</button>
-            </div>
-          </div>
+          </label>
         )}
-      </div>
+
+        <footer>
+          {(req.method === "input" || req.method === "editor") && (
+            <button className="approval-submit" onClick={() => respond({ value: inputVal })}>Submit response →</button>
+          )}
+          <button className="approval-cancel" onClick={() => respond({ cancelled: true })}>Cancel</button>
+        </footer>
+      </section>
     </div>
   );
 }

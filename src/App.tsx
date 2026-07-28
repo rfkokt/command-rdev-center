@@ -16,7 +16,7 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean };
+type Tab = { id: string; project: ProjectInfo; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: boolean };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
 
@@ -70,11 +70,20 @@ export default function App() {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, interrupted } : item));
   }, []);
 
+  const markUnread = useCallback((tabId: string) => {
+    setTabs((prev) => prev.map((item) => item.id === tabId && item.id !== activeTabId ? { ...item, unread: true } : item));
+  }, [activeTabId]);
+
+  function activateTab(tabId: string) {
+    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, unread: false } : item));
+    setActiveTabId(tabId);
+  }
+
   function openProject(project: ProjectInfo) {
     setDashboard(null);
     setSelectedProject(project);
     const existing = tabs.find((tab) => tab.project.path === project.path);
-    if (existing) return setActiveTabId(existing.id);
+    if (existing) return activateTab(existing.id);
     newConversation(project);
   }
 
@@ -113,7 +122,7 @@ export default function App() {
           onSelect={setSelectedProject}
           tabs={tabs}
           activeTabId={activeTabId}
-          onResume={(id, project) => { setDashboard(null); setSelectedProject(project); setActiveTabId(id); }}
+          onResume={(id, project) => { setDashboard(null); setSelectedProject(project); activateTab(id); }}
         />
         <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}>
           {dashboard === "kanban" ? (
@@ -157,10 +166,12 @@ export default function App() {
                 initialModel={tab.model}
                 initialThinking={tab.thinking}
                 initialInterrupted={tab.interrupted}
+                resumableSessions={tabs.filter((candidate) => candidate.id !== tab.id && candidate.project.path === tab.project.path && candidate.sessionFile).map((candidate) => ({ title: candidate.title ?? "Untitled session", sessionFile: candidate.sessionFile! }))}
                 onSessionFile={saveSessionFile}
                 onFirstMessage={saveTitle}
                 onRuntimeSettings={saveRuntimeSettings}
                 onAgentRunning={saveAgentRunning}
+                onUnread={markUnread}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
                 isActive={tab.id === activeTabId}

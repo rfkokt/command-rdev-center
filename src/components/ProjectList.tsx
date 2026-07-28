@@ -12,7 +12,7 @@ export type ProjectInfo = {
   base_branch?: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; title?: string };
+type Tab = { id: string; project: ProjectInfo; title?: string; unread?: boolean };
 
 export default function ProjectList({
   onOpen,
@@ -174,7 +174,7 @@ export default function ProjectList({
                     onClick={() => onResume(tab.id, project)}
                   >
                     <span>{tab.title ?? "UNTITLED SESSION"}</span>
-                    <i />
+                    {tab.unread && <i aria-label="Unread activity" />}
                   </button>
                 ))}
               </div>

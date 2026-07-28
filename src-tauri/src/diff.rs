@@ -68,6 +68,20 @@ fn count_lines(patch: &str) -> (u32, u32) {
     })
 }
 
+fn untracked_patch(cwd: &str, path: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["diff", "--no-index", "--", "/dev/null", path])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() || output.status.code() == Some(1) {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 fn file_patch(cwd: &str, merge_base: &str, path: &str) -> Result<String, String> {
     let committed = git(
         cwd,
@@ -95,7 +109,14 @@ fn get_worktree_diff_blocking(
     if !Path::new(&worktree_path).is_dir() {
         return Err("worktree not found".to_string());
     }
-    let merge_base = git(&worktree_path, &["merge-base", "HEAD", &parent_ref])?
+    let _ = git(&worktree_path, &["fetch", "--quiet", "origin", &parent_ref]);
+    let upstream = format!("origin/{}", parent_ref);
+    let effective_ref = if git(&worktree_path, &["rev-parse", "--verify", &upstream]).is_ok() {
+        upstream
+    } else {
+        parent_ref
+    };
+    let merge_base = git(&worktree_path, &["merge-base", "HEAD", &effective_ref])?
         .trim()
         .to_string();
     let mut statuses: BTreeMap<String, String> = parse_name_status(&git(
@@ -103,19 +124,31 @@ fn get_worktree_diff_blocking(
         &["diff", "--name-status", &format!("{}...HEAD", merge_base)],
     )?)
     .into_iter()
+    .filter(|(path, _)| {
+        !git(
+            &worktree_path,
+            &["diff", "--quiet", "HEAD", &effective_ref, "--", path],
+        )
+        .is_ok()
+    })
     .collect();
     statuses.extend(parse_status(&git(
         &worktree_path,
-        &["status", "--porcelain"],
+        &["status", "--porcelain", "--untracked-files=all"],
     )?));
     statuses.remove("graphify-out");
     let mut files = Vec::with_capacity(statuses.len());
     for (path, status) in statuses {
-        let patch = file_patch(&worktree_path, &merge_base, &path)?;
+        let untracked = status == "??";
+        let patch = if untracked {
+            untracked_patch(&worktree_path, &path)?
+        } else {
+            file_patch(&worktree_path, &merge_base, &path)?
+        };
         let (added, removed) = count_lines(&patch);
         files.push(DiffFile {
             path,
-            status,
+            status: if untracked { "A".into() } else { status },
             added,
             removed,
             patch,
@@ -168,5 +201,42 @@ mod tests {
                 ("new.rs".into(), "R100".into())
             ]
         );
+    }
+
+    #[test]
+    fn hides_squash_merged_committed_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "crc-diff-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| git(dir.to_str().unwrap(), args).unwrap();
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "Test"]);
+        std::fs::write(dir.join("file.txt"), "base\n").unwrap();
+        run(&["add", "file.txt"]);
+        run(&["commit", "-qm", "base"]);
+        run(&["branch", "-M", "main"]);
+        run(&["checkout", "-qb", "feature"]);
+        std::fs::write(dir.join("file.txt"), "feature\n").unwrap();
+        run(&["add", "file.txt"]);
+        run(&["commit", "-qm", "feature"]);
+        run(&["checkout", "-q", "main"]);
+        run(&["merge", "--squash", "feature"]);
+        run(&["commit", "-qm", "squash"]);
+        run(&["update-ref", "refs/remotes/origin/main", "main"]);
+        run(&["checkout", "-q", "feature"]);
+
+        let diff = get_worktree_diff_blocking(
+            dir.to_string_lossy().to_string(),
+            "main".into(),
+        )
+        .unwrap();
+        assert!(diff.files.is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
