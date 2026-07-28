@@ -65,6 +65,7 @@ export default function ChatView({
   onToast: (m: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
   const [input, setInput] = useState("");
   const [images, setImages] = useState<ChatImage[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
@@ -316,6 +317,7 @@ export default function ChatView({
             }
             onRuntimeSettings(chatId, modelRef.current, thinkingRef.current);
           } else if (cmd === "get_messages") {
+            setIsHistoryLoading(false);
             const hist = data.messages as Array<Record<string, unknown>> | undefined;
             if (hist && hist.length > 0) {
               const mapped: ChatMessage[] = hist
@@ -536,6 +538,7 @@ export default function ChatView({
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 9000));
       } catch (e) {
         const msg = String(e);
+        setIsHistoryLoading(false);
         if (msg.includes("detached") || msg.includes("not found") || msg.includes("does not exist")) setDriveDetached(true);
         onToast(msg);
       }
@@ -835,11 +838,16 @@ export default function ChatView({
       <div className={worktree ? "chat-content has-activity-rail" : "chat-content"}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
-        {messages.length === 0 && (
+        {messages.length === 0 && (isHistoryLoading ? (
+          <div className="session-loading" role="status" aria-live="polite">
+            <span className="agent-working-mark" aria-hidden="true"><i /><i /><i /></span>
+            <div><strong>LOADING SESSION</strong><small>RESTORING CHAT HISTORY</small></div>
+          </div>
+        ) : (
           <div className="display-sm" style={{ color: "var(--colors-muted)", marginTop: "var(--spacing-xl)" }}>
             AGENT IDLE. SEND PROMPT.
           </div>
-        )}
+        ))}
         {messages.map((m) => (
           <div
             key={m.id}

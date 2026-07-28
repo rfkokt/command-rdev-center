@@ -114,8 +114,8 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Graph status per project: none / fresh / stale + rebuild action (US-17)
 
 ### Phase 4 — kanban + pipeline
-- [ ] Kanban reads `Task All Project/<project>.json`, columns by status (`Backlog→In Progress→Review→Done`, case-insensitive) (US-18)
-- [ ] Filters by `pic`, project
+- [x] Kanban reads `Task All Project/<project>.json`, columns by status (`Backlog→In Progress→Review→Done`, case-insensitive) (US-18)
+- [x] Filters by `pic`, project
 - [ ] Atomic write-back: temp → `fsync` → rename + `.bak` before overwrite
 - [ ] Reuse `backlog-local` skill data files (no separate store)
 - [ ] Pipeline stage-view (Jenkins grid) from `_pipeline-runs.jsonl` (append-only) (US-19)

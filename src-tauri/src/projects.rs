@@ -79,6 +79,11 @@ fn all_registered_paths_uncached() -> Result<Vec<PathBuf>, String> {
     Ok(read_config()?.projects.iter().map(|s| PathBuf::from(s)).collect())
 }
 
+pub fn project_root() -> Result<PathBuf, String> {
+    let root = read_config()?.project_root;
+    if root.trim().is_empty() { Err("project root is not configured".into()) } else { Ok(PathBuf::from(root)) }
+}
+
 pub fn global_worktree_root() -> Result<PathBuf, String> {
     let cfg = read_config()?;
     let base = if cfg.project_root.trim().is_empty() {

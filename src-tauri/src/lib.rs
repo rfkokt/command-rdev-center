@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 mod diff;
 mod files;
 mod graph;
+mod kanban;
 mod pi_rpc;
 mod projects;
 mod settings;
@@ -37,6 +38,7 @@ pub fn run() {
             graph::get_git_fingerprint,
             graph::build_graph,
             graph::enable_global_graphignore,
+            kanban::list_kanban_tasks,
             diff::get_worktree_diff,
             projects::list_projects,
             projects::add_project,

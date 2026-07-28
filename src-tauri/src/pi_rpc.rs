@@ -205,6 +205,7 @@ pub fn spawn_pi_rpc(
         .args(&args)
         .current_dir(&cwd)
         .env("CRC_PROJECT_ROOT", &owning_project)
+        .env("CRC_PROJECT_CWD", &cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

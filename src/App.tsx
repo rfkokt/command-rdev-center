@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
 import SettingsPanel from "./components/SettingsPanel";
+import KanbanBoard from "./components/KanbanBoard";
 import "./App.css";
 
 type Config = {
@@ -36,6 +37,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [toasts, setToasts] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [kanbanOpen, setKanbanOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
@@ -111,6 +113,7 @@ export default function App() {
           activeTabId={activeTabId}
           onResume={(id, project) => { setSelectedProject(project); setActiveTabId(id); }}
         />
+        <button className="settings-button" onClick={() => setKanbanOpen((open) => !open)}>▦ <span>{kanbanOpen ? "Sessions" : "Kanban"}</span></button>
         <button className="settings-button" onClick={() => setSettingsOpen(true)}>⚙ <span>Settings</span></button>
       </aside>
 
@@ -119,13 +122,13 @@ export default function App() {
           <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>☰</button>
           <div className="workspace-title">
             <span className="live-dot" />
-            <div><strong>{activeTab?.project.name ?? "NO PROJECT SELECTED"}</strong><small>LOCAL WORKSPACE</small></div>
+            <div><strong>{kanbanOpen ? "KANBAN" : activeTab?.project.name ?? "NO PROJECT SELECTED"}</strong><small>LOCAL WORKSPACE</small></div>
           </div>
           <button className="open-ide"><span>OPEN IDE</span><b>↗</b></button>
         </header>
 
         <div className="workspace-body">
-          {activeTab ? tabs.map((tab) => (
+          {kanbanOpen ? <KanbanBoard /> : activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={tab.id !== activeTabId}>
               <ChatView
                 projectPath={tab.project.path}
