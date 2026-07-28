@@ -19,6 +19,6 @@ dist-ssr
 src-tauri/target/
 
 # graphify (will be enforced per-project too — Phase 3)
-graphify-out/
+/graphify-out
 .graphify_python
 .graphify_detect.json

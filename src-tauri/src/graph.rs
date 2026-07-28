@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\ngraphify-out/\n.graphify_python\n.graphify_detect.json\n";
+const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
 const AGENTS_END: &str = "<!-- /command-rdev-center:graphify -->";
 const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify gate (blocking)\nFor every new coding task, before any file search/read (`rg`, `grep`, `find`, `ls`, `read`, or Codebase Memory):\n1. Check whether `graphify-out/graph.json` is fresh against `git HEAD`; run `graphify update .` if stale.\n2. Run `graphify query \"<the user's task>\"`.\n3. Only then inspect the returned files/symbols.\nDo not skip this gate for small tasks. Use `graphify path \"A\" \"B\"` or `graphify explain \"X\"` when needed.\n<!-- /command-rdev-center:graphify -->\n";
@@ -196,8 +196,18 @@ fn ensure_agents_note(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_graphignore(path: &Path) -> Result<(), String> {
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    if existing.lines().any(|line| line == "graphify-out/") {
+        fs::write(path, existing.replace("graphify-out/", "/graphify-out"))
+            .map_err(|e| e.to_string())
+    } else {
+        append_once(path, "/graphify-out", IGNORE_BLOCK)
+    }
+}
+
 fn ensure_project_files(project: &Path) -> Result<(), String> {
-    append_once(&project.join(".gitignore"), "graphify-out/", IGNORE_BLOCK)?;
+    ensure_graphignore(&project.join(".gitignore"))?;
     ensure_agents_note(&project.join("AGENTS.md"))
 }
 
@@ -335,7 +345,7 @@ pub fn enable_global_graphignore() -> Result<String, String> {
     } else {
         PathBuf::from(configured.replace('~', &home))
     };
-    append_once(&path, "graphify-out/", IGNORE_BLOCK)?;
+    ensure_graphignore(&path)?;
     let output = Command::new("git")
         .args([
             "config",
@@ -391,15 +401,30 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        append_once(&path, "graphify-out/", IGNORE_BLOCK).unwrap();
-        append_once(&path, "graphify-out/", IGNORE_BLOCK).unwrap();
+        ensure_graphignore(&path).unwrap();
+        ensure_graphignore(&path).unwrap();
         assert_eq!(
             fs::read_to_string(&path)
                 .unwrap()
-                .matches("graphify-out/")
+                .matches("/graphify-out")
                 .count(),
             1
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn graphignore_migrates_directory_rule_for_worktree_symlink() {
+        let path = std::env::temp_dir().join(format!(
+            "crc-graphignore-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "graphify-out/\n").unwrap();
+        ensure_graphignore(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "/graphify-out\n");
         let _ = fs::remove_file(path);
     }
 
