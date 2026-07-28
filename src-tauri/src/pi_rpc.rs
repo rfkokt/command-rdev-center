@@ -56,6 +56,15 @@ fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
     crate::projects::global_worktree_root().map(|p| p.parent().unwrap_or(&p).to_path_buf())
 }
 
+fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
+    let pi_dir = Path::new(pi_path).parent().unwrap_or_else(|| Path::new(""));
+    let mut paths = vec![pi_dir.to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    std::env::join_paths(paths).unwrap_or_else(|_| pi_dir.as_os_str().to_owned())
+}
+
 fn session_args(no_session: bool, session_file: Option<String>) -> Vec<String> {
     if no_session {
         vec!["--no-session".into()]
@@ -234,6 +243,8 @@ pub fn spawn_pi_rpc(
         .env("CRC_PROJECT_ROOT", &owning_project)
         .env("CRC_PROJECT_CWD", &cwd)
         .env("CRC_GRAPH_JSON", &graph_json_path)
+        // macOS GUI apps get a minimal PATH; pi uses `#!/usr/bin/env node`.
+        .env("PATH", path_for_pi(&pi_path))
         .env("GRAPHIFY_GRAPH", &graph_json_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -436,6 +447,15 @@ mod tests {
         assert_eq!(first, "{\"a\":1}");
         let second = r.next_line().unwrap().unwrap();
         assert_eq!(second, "{\"b\":2}");
+    }
+
+    #[test]
+    fn pi_directory_is_first_on_path() {
+        let path = path_for_pi("/opt/pi/bin/pi");
+        assert_eq!(
+            std::env::split_paths(&path).next().unwrap(),
+            Path::new("/opt/pi/bin")
+        );
     }
 
     #[test]

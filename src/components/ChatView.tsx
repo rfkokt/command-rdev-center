@@ -18,11 +18,37 @@ type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
 type DevRunnerInfo = { command: string; url: string; running: boolean };
+type SessionStats = {
+  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+};
 
 const MAX_HISTORY = 600;
 
+export function formatTokens(tokens: number) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(tokens);
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+export function preserveStreamedContent(streamed: string, completed: string) {
+  if (!completed || streamed.endsWith(completed)) return streamed;
+  if (!streamed) return completed;
+  return `${streamed}\n\n${completed}`;
+}
+
+export function insertSteerMessage(messages: ChatMessage[], message: ChatMessage) {
+  let streamingIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant" && messages[i].isStreaming) {
+      streamingIndex = i;
+      break;
+    }
+  }
+  if (streamingIndex < 0) return [...messages, message];
+  return [...messages.slice(0, streamingIndex), message, ...messages.slice(streamingIndex)];
 }
 
 async function notifyAgentFinished(projectName: string) {
@@ -106,10 +132,12 @@ export default function ChatView({
   initialModel,
   initialThinking,
   initialInterrupted,
+  resumableSessions,
   onSessionFile,
   onFirstMessage,
   onRuntimeSettings,
   onAgentRunning,
+  onUnread,
   onClose,
   onToast,
   isActive,
@@ -122,10 +150,12 @@ export default function ChatView({
   initialModel?: string;
   initialThinking?: string;
   initialInterrupted?: boolean;
+  resumableSessions: Array<{ title: string; sessionFile: string }>;
   onSessionFile: (chatId: string, sessionFile: string) => void;
   onFirstMessage: (chatId: string, message: string) => void;
   onRuntimeSettings: (chatId: string, model: string, thinking: string) => void;
   onAgentRunning: (chatId: string, running: boolean) => void;
+  onUnread: (chatId: string) => void;
   onClose: () => void;
   onToast: (m: string) => void;
   isActive: boolean;
@@ -144,6 +174,7 @@ export default function ChatView({
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [resumePickerOpen, setResumePickerOpen] = useState(false);
   const [modelQuery, setModelQuery] = useState("");
   const [modelIndex, setModelIndex] = useState(0);
   const [currentThinking, setCurrentThinking] = useState(initialThinking ?? "");
@@ -158,6 +189,10 @@ export default function ChatView({
   const [graphBusy, setGraphBusy] = useState(false);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
+  const [devStarting, setDevStarting] = useState(false);
+  const [pendingMessageCount, setPendingMessageCount] = useState(0);
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [usageOpen, setUsageOpen] = useState(false);
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -345,7 +380,11 @@ export default function ChatView({
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
           if (copy[i].role === "assistant" && copy[i].isStreaming) {
-            copy[i] = { ...copy[i], text: content.text || copy[i].text, thinking: content.thinking || copy[i].thinking };
+            copy[i] = {
+              ...copy[i],
+              text: preserveStreamedContent(copy[i].text, content.text),
+              thinking: preserveStreamedContent(copy[i].thinking ?? "", content.thinking),
+            };
             return copy;
           }
         }
@@ -379,6 +418,20 @@ export default function ChatView({
           if (!data) return;
           if (cmd === "get_commands") {
             setCommands((data.commands as SlashCommand[]) ?? []);
+          } else if (cmd === "new_session" && data.cancelled !== true) {
+            setMessages([]);
+            setPendingMessageCount(0);
+            trackedTaskRef.current = false;
+            sendRaw({ type: "get_state" });
+            onToast("New context started — dev server unchanged");
+          } else if (cmd === "switch_session" && data.cancelled !== true) {
+            setMessages([]);
+            setIsHistoryLoading(true);
+            setPendingMessageCount(0);
+            trackedTaskRef.current = false;
+            sendRaw({ type: "get_state" });
+            sendRaw({ type: "get_messages" });
+            onToast("Session resumed — dev server unchanged");
           } else if (cmd === "get_available_models") {
             const arr = (data.models as Array<{ id: string; provider?: string }>) ?? [];
             if (arr.length > 0) {
@@ -397,6 +450,8 @@ export default function ChatView({
             }
           } else if (cmd === "cycle_thinking_level") {
             if (data.level) setCurrentThinking(String(data.level));
+          } else if (cmd === "get_session_stats") {
+            setSessionStats(data as SessionStats);
           } else if (cmd === "get_state") {
             if (typeof data.sessionFile === "string") {
               sessionFileRef.current = data.sessionFile;
@@ -452,6 +507,13 @@ export default function ChatView({
           return;
         }
 
+        if (t === "queue_update") {
+          const steering = Array.isArray(ev.steering) ? ev.steering.length : 0;
+          const followUp = Array.isArray(ev.followUp) ? ev.followUp.length : 0;
+          setPendingMessageCount(steering + followUp);
+          return;
+        }
+
         if (t === "agent_start") {
           setAgentStatus("running");
           onAgentRunning(chatId, true);
@@ -476,7 +538,9 @@ export default function ChatView({
         }
         if (t === "agent_settled") {
           setAgentStatus("idle");
+          sendRaw({ type: "get_session_stats" });
           onAgentRunning(chatId, false);
+          onUnread(chatId);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
           void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
@@ -632,6 +696,7 @@ export default function ChatView({
           sendRaw({ type: "get_commands" });
           sendRaw({ type: "get_state" });
           sendRaw({ type: "get_messages" });
+          sendRaw({ type: "get_session_stats" });
         };
         initial();
         // pi boot takes time for extensions, retry models
@@ -652,7 +717,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
+  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   async function handleSend() {
     const text = input.trim();
@@ -763,12 +828,15 @@ export default function ChatView({
   }
 
   async function confirmRunDev() {
-    if (!worktree || !pendingDevCommand) return;
+    if (!worktree || !pendingDevCommand || devStarting) return;
+    setDevStarting(true);
     try {
       localStorage.setItem(`crc-dev-command:${projectPath}`, pendingDevCommand);
       setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command: pendingDevCommand }));
       setPendingDevCommand(null);
+      onToast(`Dev server started: ${pendingDevCommand}`);
     } catch (error) { onToast(String(error)); }
+    finally { setDevStarting(false); }
   }
 
   async function handleStopDev() {
@@ -831,6 +899,8 @@ export default function ChatView({
   }
   const slashQuery = input.startsWith("/") && !input.includes(" ") ? input.slice(1).toLowerCase() : null;
   const clientCommands: SlashCommand[] = [
+    { name: "new", description: "Start fresh context; keep worktree and dev server", source: "client" },
+    { name: "resume", description: "Resume a project session; keep worktree and dev server", source: "client" },
     { name: "model", description: "Choose the active model", source: "client" },
     { name: "thinking", description: "Set reasoning level", source: "client" },
     { name: "compact", description: "Compact session context", source: "client" },
@@ -848,8 +918,19 @@ export default function ChatView({
     setCommandIndex(0);
   }
 
-  async function submitInput(mode: "prompt" | "follow_up" = "prompt") {
+  async function submitInput(mode: "prompt" | "follow_up" | "steer" = "prompt") {
     const text = input.trim();
+    if (text === "/new") {
+      setInput("");
+      await sendRaw({ type: "new_session" });
+      return;
+    }
+    if (text === "/resume") {
+      setInput("");
+      if (resumableSessions.length === 0) onToast("No other saved sessions for this project");
+      else setResumePickerOpen(true);
+      return;
+    }
     if (text === "/compact") {
       setInput("");
       await sendRaw({ type: "compact" });
@@ -870,10 +951,18 @@ export default function ChatView({
       setInput("");
       return;
     }
-    if (mode === "follow_up") {
+    if (agentStatus === "running") {
       if (!text) return;
+      const type = mode === "steer" ? "steer" : "follow_up";
+      setMessages((prev) => {
+        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [] } as ChatMessage;
+        const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
+        return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+      });
       setInput("");
-      await sendRaw({ type: "follow_up", message: text });
+      if (type === "follow_up") setPendingMessageCount((count) => count + 1);
+      await sendRaw({ type, message: text });
+      onToast(type === "steer" ? "Steering current turn" : "Message queued for next turn");
       return;
     }
     await handleSend();
@@ -946,9 +1035,15 @@ export default function ChatView({
         <div className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title">
           <small>DEV SERVER / {worktree?.branch}</small>
           <strong id="dev-command-title">Run detected command?</strong>
-          <code>{pendingDevCommand}</code>
+          <input
+            aria-label="Dev command"
+            autoFocus
+            value={pendingDevCommand}
+            onChange={(event) => setPendingDevCommand(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") void confirmRunDev(); }}
+          />
           <p>Runs only in this chat worktree. This command is remembered for {projectName}.</p>
-          <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev}>RUN DEV</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)}>CANCEL</button></div>
+          <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
       </div>}
 
@@ -1001,6 +1096,18 @@ export default function ChatView({
         </div>
       )}
 
+      {resumePickerOpen && (
+        <div className="model-picker-backdrop" onMouseDown={() => setResumePickerOpen(false)}>
+          <section className="model-picker" role="dialog" aria-modal="true" aria-label="Resume session" onMouseDown={(event) => event.stopPropagation()}>
+            <header><span>PROJECT SESSIONS</span><button onClick={() => setResumePickerOpen(false)} aria-label="Close session picker">ESC</button></header>
+            <div className="model-list" role="listbox">
+              {resumableSessions.map((session) => <button key={session.sessionFile} onClick={() => { setResumePickerOpen(false); void sendRaw({ type: "switch_session", sessionPath: session.sessionFile }); }} role="option"><span className="model-arrow">→</span><strong>{session.title}</strong><small>{session.sessionFile}</small><b /></button>)}
+            </div>
+            <footer><span>{resumableSessions.length} SESSIONS</span><span>SELECT TO RESUME</span></footer>
+          </section>
+        </div>
+      )}
+
       {driveDetached && (
         <div className="surface-card" style={{ padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", display: "flex", justifyContent: "space-between" }}>
           <span className="caption-uppercase">DRIVE DETACHED — RECONNECT</span>
@@ -1024,11 +1131,11 @@ export default function ChatView({
         {messages.map((m) => (
           <div
             key={m.id}
-            className={m.role === "user" ? "chat-bubble-user body-md" : m.role === "system" ? "chat-notice body-sm" : "chat-bubble-assistant body-md"}
+            className={m.role === "user" ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}` : m.role === "system" ? "chat-notice body-sm" : "chat-bubble-assistant body-md"}
           >
             {m.role === "system" && <small>PI CONTEXT</small>}
             {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
-            {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
+            {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)} aria-label={`Preview attachment ${index + 1}`}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
@@ -1130,6 +1237,10 @@ export default function ChatView({
           </div>
         )}
         {images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
+        {agentStatus === "running" && <div className={`queue-status${pendingMessageCount ? " has-queue" : ""}`} role="status">
+          <strong>{pendingMessageCount ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED` : "AGENT IS WORKING"}</strong>
+          <span>Enter queues next turn · Option/Alt + Enter steers current turn</span>
+        </div>}
         <textarea
           ref={inputRef}
           value={input}
@@ -1138,7 +1249,7 @@ export default function ChatView({
           onKeyDown={(e) => {
             if (e.altKey && e.key === "Enter") {
               e.preventDefault();
-              submitInput("follow_up");
+              submitInput("steer");
               return;
             }
             if (e.ctrlKey && e.key.toLowerCase() === "j") {
@@ -1170,17 +1281,13 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
+          placeholder={driveDetached ? "DRIVE DETACHED" : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
           aria-disabled={driveDetached || agentStatus === "stopped"}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        {agentStatus === "running" ? (
-           <button onClick={handleAbort} className="button-primary chat-action chat-action-abort">ABORT</button>
-        ) : (
-           <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || (!input.trim() && images.length === 0)} className="button-primary chat-action">SEND</button>
-        )}
+        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || (!input.trim() && images.length === 0)} className="button-primary chat-action">{agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
       </div>
@@ -1206,8 +1313,24 @@ export default function ChatView({
       />}
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
+        {sessionStats && <button className="usage-summary" onClick={() => setUsageOpen(true)} title="Show token usage">
+          CONTEXT {sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`} · ↑ {formatTokens(sessionStats.tokens.input)} · ↓ {formatTokens(sessionStats.tokens.output)}
+        </button>}
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
       </footer>
+      {usageOpen && sessionStats && <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
+        <section className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" onMouseDown={(event) => event.stopPropagation()}>
+          <header><strong id="usage-title">CONTEXT USAGE</strong><button onClick={() => setUsageOpen(false)} aria-label="Close context usage">×</button></header>
+          <div className="usage-meter" role="meter" aria-label="Context used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sessionStats.contextUsage?.percent ?? undefined}><i style={{ width: `${Math.min(100, sessionStats.contextUsage?.percent ?? 0)}%` }} /></div>
+          <strong className="usage-percent">{sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`}</strong>
+          <dl>
+            <div><dt>CONTEXT</dt><dd>{sessionStats.contextUsage?.tokens == null ? "—" : formatTokens(sessionStats.contextUsage.tokens)} / {sessionStats.contextUsage ? formatTokens(sessionStats.contextUsage.contextWindow) : "—"}</dd></div>
+            <div><dt>INPUT</dt><dd>{sessionStats.tokens.input.toLocaleString()}</dd></div>
+            <div><dt>OUTPUT</dt><dd>{sessionStats.tokens.output.toLocaleString()}</dd></div>
+            <div><dt>TOTAL</dt><dd>{sessionStats.tokens.total.toLocaleString()}</dd></div>
+          </dl>
+        </section>
+      </div>}
       {previewImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
       {approval && <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />}
     </div>

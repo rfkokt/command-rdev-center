@@ -15,6 +15,21 @@ fn runners() -> &'static Mutex<HashMap<String, Child>> {
     RUNNERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn shell_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let nvm_bins = std::fs::read_dir(format!("{home}/.nvm/versions/node"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("bin"))
+        .filter(|path| path.is_dir())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(":");
+    format!("{nvm_bins}:{home}/.local/bin:{home}/.npm-global/bin:{home}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{current}")
+}
+
 #[derive(Serialize)]
 pub struct DevRunnerInfo {
     pub command: String,
@@ -60,8 +75,14 @@ pub fn detect_dev_command(cwd: String) -> Result<String, String> {
 #[tauri::command]
 pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result<DevRunnerInfo, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
-    if command != detect_command(Path::new(&cwd))? {
-        return Err("dev command does not match detected project command".into());
+    let detected = detect_command(Path::new(&cwd))?;
+    let allowed = if Path::new(&cwd).join("package.json").exists() {
+        ["npm run dev", "pnpm dev", "yarn dev", "bun run dev"].contains(&command.as_str())
+    } else {
+        command == detected
+    };
+    if !allowed {
+        return Err("unsupported dev command".into());
     }
     ensure_node_modules(Path::new(&cwd), &project)?;
     stop_dev_server(chat_id.clone())?;
@@ -74,10 +95,10 @@ pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result
     let webpack = next && !dev_script.as_deref().is_some_and(|script| script.split_whitespace().any(|arg| arg == "--webpack"));
     let separator = if command.starts_with("npm ") { " --" } else { "" };
     let run_command = if command == "cargo run" { command.clone() } else if webpack { format!("{command}{separator} --webpack --port {port}") } else { format!("{command}{separator} --port {port}") };
-    let path = std::env::var("PATH").unwrap_or_default();
+    let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
     let mut child = Command::new("sh")
-        .args(["-lc", &run_command])
+        .args(["-c", &run_command])
         .current_dir(&cwd)
         .env("PATH", format!("{}:{path}", project_bins.display()))
         .env("NODE_PATH", project.join("node_modules"))
