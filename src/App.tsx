@@ -144,8 +144,10 @@ export default function App() {
         </header>
 
         <div className="workspace-body">
-          {dashboard === "kanban" ? <KanbanBoard /> : dashboard === "pipeline" ? <PipelineView /> : activeTab ? tabs.map((tab) => (
-            <div key={tab.id} className="chat-session" hidden={tab.id !== activeTabId}>
+          {dashboard === "kanban" && <KanbanBoard />}
+          {dashboard === "pipeline" && <PipelineView />}
+          {activeTab ? tabs.map((tab) => (
+            <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView
                 projectPath={tab.project.path}
                 projectName={tab.project.name}
@@ -164,7 +166,7 @@ export default function App() {
                 isActive={tab.id === activeTabId}
               />
             </div>
-          )) : (
+          )) : dashboard === null && (
             <div className="empty-state">
               <span className="empty-index">00</span>
               <strong>NO ACTIVE SESSION</strong>
