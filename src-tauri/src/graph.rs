@@ -279,15 +279,20 @@ fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-pub fn get_graph_status(project_path: String) -> Result<GraphStatus, String> {
+fn get_graph_status_blocking(project_path: String) -> Result<GraphStatus, String> {
     let project = validate_project(Path::new(&project_path))?;
     ensure_project_files(&project)?;
     Ok(status(&project))
 }
 
 #[tauri::command]
-pub fn get_git_fingerprint(project_path: String) -> Result<Option<String>, String> {
+pub async fn get_graph_status(project_path: String) -> Result<GraphStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || get_graph_status_blocking(project_path))
+        .await
+        .map_err(|e| format!("Graph status worker failed: {e}"))?
+}
+
+fn get_git_fingerprint_blocking(project_path: String) -> Result<Option<String>, String> {
     let project = validate_project(Path::new(&project_path))?;
     if !project.join(".git").exists() {
         return Ok(None);
@@ -310,6 +315,13 @@ pub fn get_git_fingerprint(project_path: String) -> Result<Option<String>, Strin
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+#[tauri::command]
+pub async fn get_git_fingerprint(project_path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || get_git_fingerprint_blocking(project_path))
+        .await
+        .map_err(|e| format!("Git fingerprint worker failed: {e}"))?
 }
 
 fn build_graph_blocking(project_path: String, full: bool) -> Result<GraphStatus, String> {

@@ -88,8 +88,7 @@ fn file_patch(cwd: &str, merge_base: &str, path: &str) -> Result<String, String>
         .join("\n"))
 }
 
-#[tauri::command]
-pub fn get_worktree_diff(
+fn get_worktree_diff_blocking(
     worktree_path: String,
     parent_ref: String,
 ) -> Result<WorktreeDiff, String> {
@@ -109,6 +108,7 @@ pub fn get_worktree_diff(
         &worktree_path,
         &["status", "--porcelain"],
     )?));
+    statuses.remove("graphify-out");
     let mut files = Vec::with_capacity(statuses.len());
     for (path, status) in statuses {
         let patch = file_patch(&worktree_path, &merge_base, &path)?;
@@ -122,6 +122,18 @@ pub fn get_worktree_diff(
         });
     }
     Ok(WorktreeDiff { merge_base, files })
+}
+
+#[tauri::command]
+pub async fn get_worktree_diff(
+    worktree_path: String,
+    parent_ref: String,
+) -> Result<WorktreeDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        get_worktree_diff_blocking(worktree_path, parent_ref)
+    })
+    .await
+    .map_err(|e| format!("Diff worker failed: {e}"))?
 }
 
 #[cfg(test)]

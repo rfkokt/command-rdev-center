@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
 use tauri::Manager;
@@ -13,6 +15,7 @@ pub struct ProjectInfo {
     pub kinds: Vec<String>,
     pub mtime_ms: u64,
     pub is_git: bool,
+    pub base_branch: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -25,6 +28,8 @@ struct StoredConfig {
     default_thinking: String,
     #[serde(default)]
     projects: Vec<String>,
+    #[serde(default)]
+    base_branches: HashMap<String, String>,
 }
 
 fn sanitize_repo_name(name: &str) -> String {
@@ -84,7 +89,8 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     }
     CONFIG_PATH
         .set(path)
-        .map_err(|_| "config already initialized".to_string())
+        .map_err(|_| "config already initialized".to_string())?;
+    migrate_base_branches()
 }
 
 pub fn config_path() -> PathBuf {
@@ -97,6 +103,27 @@ pub fn config_path() -> PathBuf {
 fn read_config() -> Result<StoredConfig, String> {
     let raw = std::fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn current_branch(path: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"])
+        .output()
+        .ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|branch| !branch.is_empty())
+}
+
+fn migrate_base_branches() -> Result<(), String> {
+    let mut config = read_config()?;
+    let missing = config.projects.iter().filter_map(|path| {
+        (!config.base_branches.contains_key(path)).then(|| current_branch(path).map(|branch| (path.clone(), branch))).flatten()
+    }).collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    config.base_branches.extend(missing);
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }
 
 fn all_registered_paths_uncached() -> Result<Vec<PathBuf>, String> {
@@ -192,7 +219,7 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-fn project_info(path: &Path) -> Result<ProjectInfo, String> {
+fn project_info(path: &Path, base_branch: Option<String>) -> Result<ProjectInfo, String> {
     if !path.is_dir() {
         return Err(format!("project directory not found: {}", path.display()));
     }
@@ -209,21 +236,67 @@ fn project_info(path: &Path) -> Result<ProjectInfo, String> {
         kinds,
         mtime_ms: dir_mtime_ms(&path),
         is_git,
+        base_branch,
     })
 }
 
 #[tauri::command]
 pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
-    read_config()?
+    let config = read_config()?;
+    config
         .projects
         .iter()
-        .map(|path| project_info(Path::new(path)))
+        .map(|path| project_info(Path::new(path), config.base_branches.get(path).cloned()))
         .collect()
 }
 
 #[tauri::command]
-pub fn add_project(path: String) -> Result<ProjectInfo, String> {
-    let project = project_info(Path::new(&path))?;
+pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
+    let project = project_info(Path::new(&path), None)?;
+    if !project.is_git {
+        return Ok(Vec::new());
+    }
+    let output = Command::new("git")
+        .args(["-C", &project.path, "for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let mut branches = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|branch| !branch.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    branches.sort();
+    Ok(branches)
+}
+
+pub fn project_base_branch(path: &Path) -> Result<String, String> {
+    let canonical = canonicalize_or_original(path).to_string_lossy().to_string();
+    read_config()?
+        .base_branches
+        .get(&canonical)
+        .cloned()
+        .ok_or_else(|| format!("base branch not configured for {}", canonical))
+}
+
+#[tauri::command]
+pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectInfo, String> {
+    let mut project = project_info(Path::new(&path), base_branch.clone())?;
+    if project.is_git {
+        let branch = base_branch.filter(|branch| !branch.trim().is_empty()).ok_or("base branch required")?;
+        let exists = Command::new("git")
+            .args(["-C", &project.path, "rev-parse", "--verify", &format!("refs/heads/{branch}")])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if !exists {
+            return Err(format!("local branch not found: {branch}"));
+        }
+        project.base_branch = Some(branch);
+    }
     let mut config = read_config()?;
     if !config
         .projects
@@ -231,10 +304,49 @@ pub fn add_project(path: String) -> Result<ProjectInfo, String> {
         .any(|saved| Path::new(saved) == Path::new(&project.path))
     {
         config.projects.push(project.path.clone());
-        let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-        std::fs::write(config_path(), format!("{json}\n")).map_err(|e| e.to_string())?;
     }
+    if let Some(branch) = &project.base_branch {
+        config.base_branches.insert(project.path.clone(), branch.clone());
+    }
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|e| e.to_string())?;
     Ok(project)
+}
+
+#[tauri::command]
+pub fn update_project_base_branch(path: String, base_branch: String) -> Result<ProjectInfo, String> {
+    let mut project = project_info(Path::new(&path), Some(base_branch.clone()))?;
+    if !project.is_git {
+        return Err("base branch is only available for Git projects".into());
+    }
+    let exists = Command::new("git")
+        .args(["-C", &project.path, "rev-parse", "--verify", &format!("refs/heads/{base_branch}")])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !exists {
+        return Err(format!("local branch not found: {base_branch}"));
+    }
+    let mut config = read_config()?;
+    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)) == PathBuf::from(&project.path)) {
+        return Err(format!("project is not registered: {}", project.path));
+    }
+    config.base_branches.insert(project.path.clone(), base_branch.clone());
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    project.base_branch = Some(base_branch);
+    Ok(project)
+}
+
+#[tauri::command]
+pub fn remove_project(path: String) -> Result<(), String> {
+    let canonical = canonicalize_or_original(Path::new(&path)).to_string_lossy().to_string();
+    let mut config = read_config()?;
+    config.projects.retain(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() != canonical);
+    config.base_branches.remove(&canonical);
+    config.base_branches.remove(&path);
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }
 
 // legacy compat shim — prefer ensure_path_allowed

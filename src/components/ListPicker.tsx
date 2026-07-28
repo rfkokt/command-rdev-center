@@ -5,13 +5,14 @@ type Props = {
   value: string;
   options: string[];
   allLabel?: string;
+  includeAll?: boolean;
   onChange: (value: string) => void;
 };
 
-export default function ListPicker({ label, value, options, allLabel = "All", onChange }: Props) {
+export default function ListPicker({ label, value, options, allLabel = "All", includeAll = true, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLLabelElement>(null);
-  const items = ["", ...options];
+  const items = includeAll ? ["", ...options] : options;
 
   useEffect(() => {
     function close(event: MouseEvent) {

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod dev_runner;
 mod diff;
 mod files;
 mod graph;
@@ -36,6 +37,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            dev_runner::detect_dev_command,
+            dev_runner::start_dev_server,
+            dev_runner::stop_dev_server,
             graph::get_graph_status,
             graph::get_git_fingerprint,
             graph::build_graph,
@@ -46,7 +50,10 @@ pub fn run() {
             pipeline::get_pipeline_data,
             diff::get_worktree_diff,
             projects::list_projects,
+            projects::list_project_branches,
             projects::add_project,
+            projects::update_project_base_branch,
+            projects::remove_project,
             settings::get_pi_settings,
             settings::save_pi_settings,
             settings::get_graphify_settings,

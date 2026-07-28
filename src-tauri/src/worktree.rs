@@ -50,20 +50,6 @@ fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf
     Ok(root)
 }
 
-fn git_origin_head_exists(repo_path: &Path) -> bool {
-    Command::new("git")
-        .args([
-            "-C",
-            &repo_path.to_string_lossy(),
-            "rev-parse",
-            "--verify",
-            "origin/HEAD",
-        ])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// Result of creating a worktree.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WorktreeInfo {
@@ -75,28 +61,8 @@ pub struct WorktreeInfo {
     pub parent_ref: String,
 }
 
-fn resolve_parent_ref(repo_path: &Path) -> String {
-    if git_origin_head_exists(repo_path) {
-        return "origin/HEAD".to_string();
-    }
-    // try main then master then HEAD
-    for cand in ["main", "master", "HEAD"] {
-        let ok = Command::new("git")
-            .args([
-                "-C",
-                &repo_path.to_string_lossy(),
-                "rev-parse",
-                "--verify",
-                cand,
-            ])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if ok {
-            return cand.to_string();
-        }
-    }
-    "HEAD".to_string()
+fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
+    crate::projects::project_base_branch(repo_path)
 }
 
 pub fn create_worktree(
@@ -128,7 +94,7 @@ pub fn create_worktree(
             }
         }
         let branch = format!("crc/{}", safe_slug);
-        let parent = resolve_parent_ref(repo_path);
+        let parent = resolve_parent_ref(repo_path)?;
         return Ok(WorktreeInfo {
             worktree_path: worktree_path_str,
             branch,
@@ -143,7 +109,7 @@ pub fn create_worktree(
         std::fs::create_dir_all(parent_dir).map_err(|e| e.to_string())?;
     }
 
-    let parent_ref = resolve_parent_ref(repo_path);
+    let parent_ref = resolve_parent_ref(repo_path)?;
     let branch = format!("crc/{}", safe_slug);
 
     // git worktree add <worktree_path> -b <branch> <parent_ref>
@@ -298,8 +264,7 @@ fn read_config_project_root() -> Result<PathBuf, String> {
     crate::projects::global_worktree_root().map(|p| p.parent().unwrap_or(&p).to_path_buf())
 }
 
-#[tauri::command]
-pub fn ensure_worktree(
+fn ensure_worktree_blocking(
     repo_path: String,
     repo_name: String,
     slug: String,
@@ -315,7 +280,19 @@ pub fn ensure_worktree(
 }
 
 #[tauri::command]
-pub fn remove_worktree(
+pub async fn ensure_worktree(
+    repo_path: String,
+    repo_name: String,
+    slug: String,
+) -> Result<WorktreeInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_worktree_blocking(repo_path, repo_name, slug)
+    })
+    .await
+    .map_err(|e| format!("Worktree worker failed: {e}"))?
+}
+
+fn remove_worktree_blocking(
     repo_path: String,
     worktree_path: String,
     parent_ref: String,
@@ -340,4 +317,17 @@ pub fn remove_worktree(
         ));
     }
     remove_worktree_if_empty(&project_root, &rp, &worktree_path, &parent_ref)
+}
+
+#[tauri::command]
+pub async fn remove_worktree(
+    repo_path: String,
+    worktree_path: String,
+    parent_ref: String,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        remove_worktree_blocking(repo_path, worktree_path, parent_ref)
+    })
+    .await
+    .map_err(|e| format!("Worktree worker failed: {e}"))?
 }

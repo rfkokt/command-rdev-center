@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tauri::Emitter;
@@ -20,11 +20,16 @@ pub struct RpcResponse {
     pub raw: String,
 }
 
-type SessionHandle = Arc<Mutex<Option<Child>>>;
+struct SessionHandle {
+    child: Mutex<Option<Child>>,
+    stdin: Mutex<Option<ChildStdin>>,
+}
 
-static SESSIONS: OnceLock<Mutex<HashMap<String, SessionHandle>>> = OnceLock::new();
+type SharedSessionHandle = Arc<SessionHandle>;
 
-fn sessions_map() -> &'static Mutex<HashMap<String, SessionHandle>> {
+static SESSIONS: OnceLock<Mutex<HashMap<String, SharedSessionHandle>>> = OnceLock::new();
+
+fn sessions_map() -> &'static Mutex<HashMap<String, SharedSessionHandle>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -158,7 +163,7 @@ pub fn spawn_pi_rpc(
     // If session already exists, kill old one first (replace)
     if let Ok(map) = sessions_map().lock() {
         if let Some(h) = map.get(&session_id) {
-            if let Ok(mut maybe_child) = h.lock() {
+            if let Ok(mut maybe_child) = h.child.lock() {
                 if let Some(child) = maybe_child.as_mut() {
                     let _ = child.kill();
                 }
@@ -187,9 +192,12 @@ pub fn spawn_pi_rpc(
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
     args.push("--extension".into());
+    let extensions = Path::new(env!("CARGO_MANIFEST_DIR")).join("extensions");
+    args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
+    args.push("--extension".into());
     args.push(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("extensions/kanban-task.ts")
+        extensions
+            .join("graphify-context.ts")
             .to_string_lossy()
             .into(),
     );
@@ -236,15 +244,13 @@ pub fn spawn_pi_rpc(
     let process_id = child.id();
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let stderr = child.stderr.take().ok_or("no stderr")?;
-    // Don't keep ChildStdin here — we keep handle in sessions map via Child
-    // Actually to send, we need stdin. We'll wrap stdin in an Arc<Mutex<ChildStdin>>? No, simplify:
-    // Re-open by keeping child: but we already took stdout/stderr. Keep child's stdin as Option.
-    // child.stdin is still Some unless we took it. So keep stdin by not moving child wholly — we moved stdout/stderr via take().
-    // child.stdin is still present.
-    // However we also want to keep child killable. So we store the Child (stdin inside it).
+    let stdin = child.stdin.take().ok_or("no stdin")?;
 
-    // Register before readers start so an immediate process exit is still observable.
-    let handle: SessionHandle = Arc::new(Mutex::new(Some(child)));
+    // Keep process control separate from stdin writes: a blocked pipe must not block Restart.
+    let handle: SharedSessionHandle = Arc::new(SessionHandle {
+        child: Mutex::new(Some(child)),
+        stdin: Mutex::new(Some(stdin)),
+    });
     if let Ok(mut map) = sessions_map().lock() {
         map.insert(session_id.clone(), handle);
     }
@@ -292,6 +298,7 @@ pub fn spawn_pi_rpc(
             .and_then(|map| map.get(&sid).cloned())
             .and_then(|handle| {
                 handle
+                    .child
                     .lock()
                     .ok()
                     .and_then(|guard| guard.as_ref().map(Child::id))
@@ -347,12 +354,8 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
     let h = map
         .get(&session_id)
         .ok_or_else(|| format!("unknown session {}", session_id))?;
-    let mut guard = h.lock().map_err(|_| "poisoned handle".to_string())?;
-    let child = guard
-        .as_mut()
-        .ok_or_else(|| "session child already taken".to_string())?;
-    let stdin = child
-        .stdin
+    let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
+    let stdin = guard
         .as_mut()
         .ok_or_else(|| "stdin closed (pi crashed?)".to_string())?;
 
@@ -374,7 +377,7 @@ pub fn kill_pi_session(session_id: String) -> Result<(), String> {
     let h = map
         .get(&session_id)
         .ok_or_else(|| format!("unknown session {}", session_id))?;
-    let mut guard = h.lock().map_err(|_| "poisoned".to_string())?;
+    let mut guard = h.child.lock().map_err(|_| "poisoned".to_string())?;
     if let Some(child) = guard.as_mut() {
         let _ = child.kill();
     }

@@ -76,8 +76,7 @@ fn walk_collect(base: &Path, cur: &Path, depth: usize, results: &mut Vec<(PathBu
     }
 }
 
-#[tauri::command]
-pub fn search_files(project_path: String, query: String) -> Result<Vec<FileEntry>, String> {
+fn search_files_blocking(project_path: String, query: String) -> Result<Vec<FileEntry>, String> {
     let proj_path = PathBuf::from(&project_path);
     crate::projects::ensure_registered_project(&proj_path)?;
 
@@ -115,4 +114,11 @@ pub fn search_files(project_path: String, query: String) -> Result<Vec<FileEntry
     scored.sort_by(|a, b| b.0.cmp(&a.0));
     scored.truncate(50);
     Ok(scored.into_iter().map(|(_, f)| f).collect())
+}
+
+#[tauri::command]
+pub async fn search_files(project_path: String, query: String) -> Result<Vec<FileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || search_files_blocking(project_path, query))
+        .await
+        .map_err(|e| format!("File search worker failed: {e}"))?
 }

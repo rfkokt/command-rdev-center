@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
 import ToolCallView from "./ToolCall";
@@ -16,6 +17,7 @@ type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; 
 type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
+type DevRunnerInfo = { command: string; url: string; running: boolean };
 
 const MAX_HISTORY = 600;
 
@@ -31,12 +33,22 @@ async function notifyAgentFinished(projectName: string) {
 function tsvToMarkdown(text: string): string | null {
   const norm = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "");
   if (!norm.includes("\t")) return null;
-  let rows = norm.split("\n").map((l) => l.split("\t"));
+  const rows: string[][] = [[]];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i <= norm.length; i++) {
+    const char = norm[i] ?? "\n";
+    if (char === '"' && quoted && norm[i + 1] === '"') { cell += '"'; i++; }
+    else if (char === '"') quoted = !quoted;
+    else if (char === "\t" && !quoted) { rows[rows.length - 1].push(cell); cell = ""; }
+    else if (char === "\n" && !quoted) { rows[rows.length - 1].push(cell); cell = ""; if (i < norm.length) rows.push([]); }
+    else cell += char;
+  }
   while (rows.length > 0 && rows[rows.length - 1].every((c) => c.trim() === "")) rows.pop();
   if (rows.length === 0) return null;
   const colCount = Math.max(...rows.map((r) => r.length));
   if (colCount <= 1) return null;
-  const esc = (s: string) => s.replace(/\|/g, "\\|").trim();
+  const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ↵ ").trim();
   const padded = rows.map((r) => {
     const c = r.slice();
     while (c.length < colCount) c.push("");
@@ -144,6 +156,8 @@ export default function ChatView({
   const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
+  const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
+  const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -163,6 +177,11 @@ export default function ChatView({
 
   useEffect(() => {
     setFilePickerQuery(deriveAtQuery(input));
+    const textarea = inputRef.current;
+    if (textarea) {
+      textarea.style.height = "auto";
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+    }
   }, [input]);
 
   const upsertToolCall = useCallback((callId: string, patch: Partial<ToolCall> & { name?: string; args?: Record<string, unknown> }) => {
@@ -731,12 +750,39 @@ export default function ChatView({
     }
   }
 
+  async function handleRunDev() {
+    if (!worktree) return;
+    try {
+      const key = `crc-dev-command:${projectPath}`;
+      const saved = localStorage.getItem(key);
+      const command = saved ?? await invoke<string>("detect_dev_command", { cwd: worktree.worktree_path });
+      if (!saved) return setPendingDevCommand(command);
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command }));
+      onToast(`Dev server started: ${command}`);
+    } catch (error) { onToast(String(error)); }
+  }
+
+  async function confirmRunDev() {
+    if (!worktree || !pendingDevCommand) return;
+    try {
+      localStorage.setItem(`crc-dev-command:${projectPath}`, pendingDevCommand);
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command: pendingDevCommand }));
+      setPendingDevCommand(null);
+    } catch (error) { onToast(String(error)); }
+  }
+
+  async function handleStopDev() {
+    await invoke("stop_dev_server", { chatId }).catch((error) => onToast(String(error)));
+    setDevRunner(null);
+  }
+
   async function handleClose() {
     if (isStreaming) {
       onToast("Still streaming — abort first.");
       return;
     }
     try {
+      await invoke("stop_dev_server", { chatId }).catch(() => {});
       await invoke("kill_pi_session", { sessionId }).catch(() => {});
       if (worktree && isGit) {
         const removed = await invoke<boolean>("remove_worktree", {
@@ -889,10 +935,22 @@ export default function ChatView({
         >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}GRAPH {graphBusy ? "UPDATING…" : graphStatus.state}</button>}
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
+          {worktree && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
+          {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ OPEN APP</button></>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus === "stopped" && <button onClick={() => handleRestart()} className="caption-uppercase">RESTART</button>}
         </div>
       </div>
+
+      {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
+        <div className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title">
+          <small>DEV SERVER / {worktree?.branch}</small>
+          <strong id="dev-command-title">Run detected command?</strong>
+          <code>{pendingDevCommand}</code>
+          <p>Runs only in this chat worktree. This command is remembered for {projectName}.</p>
+          <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev}>RUN DEV</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)}>CANCEL</button></div>
+        </div>
+      </div>}
 
       {modelPickerOpen && (
         <div className="model-picker-backdrop" onMouseDown={() => setModelPickerOpen(false)}>
@@ -1116,7 +1174,7 @@ export default function ChatView({
           aria-disabled={driveDetached || agentStatus === "stopped"}
           rows={1}
           className="text-input body-md"
-          style={{ flex: 1, padding: "var(--spacing-sm) 0", resize: "none" }}
+          style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
         {agentStatus === "running" ? (
            <button onClick={handleAbort} className="button-primary chat-action chat-action-abort">ABORT</button>
