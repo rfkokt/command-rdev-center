@@ -174,7 +174,15 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [ ] Handle failed/aborted workflows as terminal records without changing the actual git workflow result when logging fails
 - [ ] Support concurrent runs without one chat overwriting another chat's live Pipeline state
 
-#### F5 — Required verification
+#### F5 — Git graph in right sidebar
+- [ ] Show a Git commit graph in the right sidebar for the active project
+- [ ] Build the graph from the project’s selected HEAD branch, not the main checkout’s current branch
+- [ ] Provide a branch selector in the sidebar so users can view another local or remote branch
+- [ ] Persist the selected graph branch independently per project without checking out or mutating the working tree
+- [ ] Refresh the graph when the active project or selected branch changes
+- [ ] Keep commit history isolated per project; never reuse another project’s branch state
+
+#### F6 — Required verification
 - [ ] Test question-only chat → zero Kanban cards
 - [ ] Test one actionable request → one card with `In Progress → Review → Done`
 - [ ] Test pasted IDs 949/950/951 → exactly three cards with preserved URLs/descriptions
