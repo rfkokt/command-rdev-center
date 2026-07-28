@@ -58,10 +58,17 @@ fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
 
 fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
     let pi_dir = Path::new(pi_path).parent().unwrap_or_else(|| Path::new(""));
+    let login_path = Command::new("/bin/zsh")
+        .args(["-lic", "printf %s \"$PATH\""])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| std::ffi::OsString::from(String::from_utf8_lossy(&output.stdout).as_ref()));
+    let inherited_path = login_path
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default());
     let mut paths = vec![pi_dir.to_path_buf()];
-    paths.extend(std::env::split_paths(
-        &std::env::var_os("PATH").unwrap_or_default(),
-    ));
+    paths.extend(std::env::split_paths(&inherited_path));
     std::env::join_paths(paths).unwrap_or_else(|_| pi_dir.as_os_str().to_owned())
 }
 

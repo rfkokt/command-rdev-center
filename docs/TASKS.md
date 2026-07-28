@@ -120,6 +120,7 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Reuse `backlog-local` skill data files (no separate store)
 - [x] Model decides whether work merits tracking via `track_kanban_task`; chosen work creates one session-linked task as `In Progress` without approval (no keyword classifier)
 - [x] Agent completion updates its active chat task to `Review`; user/editor acceptance moves it to `Done`
+- [ ] Support drag-and-drop cards from `Review` to `Done`; persist the card status as `Done` automatically
 - [x] Pipeline stage-view (Jenkins grid) from `_pipeline-runs.jsonl` (append-only) (US-19)
 - [x] `_pipeline-current.json` patched per stage for live "which step" indicator
 - [x] Dynamic stage columns per project type (MBI / KAI / Personal)

@@ -36,6 +36,28 @@ pub fn slugify(s: &str) -> String {
         .collect::<String>()
 }
 
+fn clone_node_modules(repo_path: &Path, worktree_path: &Path) -> Result<(), String> {
+    let source = repo_path.join("node_modules");
+    let target = worktree_path.join("node_modules");
+    if !source.exists() || (target.exists() && !target.is_symlink()) {
+        return Ok(());
+    }
+    if target.is_symlink() {
+        std::fs::remove_file(&target).map_err(|e| e.to_string())?;
+    }
+    let output = Command::new("cp")
+        .arg("-cR")
+        .arg(&source)
+        .arg(&target)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("copy node_modules failed: {}", String::from_utf8_lossy(&output.stderr)))
+    }
+}
+
 fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
     let root = worktree_root(project_root);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -82,6 +104,7 @@ pub fn create_worktree(
 
     if worktree_path.exists() {
         // already exists — treat as resume path, re-use if branch matches
+        clone_node_modules(repo_path, &worktree_path)?;
         // Ensure graphify-out symlink exists even on resume
         {
             let src = repo_path.join("graphify-out");
@@ -154,6 +177,8 @@ pub fn create_worktree(
             return Err(format!("git worktree add failed: {}", stderr));
         }
     }
+
+    clone_node_modules(repo_path, &worktree_path)?;
 
     // Ensure graphify-out is available in worktree (gitignored in main repo, so worktree would miss it and agent burns tokens)
     // Symlink from main repo -> worktree

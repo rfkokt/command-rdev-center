@@ -39,6 +39,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             dev_runner::detect_dev_command,
+            dev_runner::get_dev_server,
             dev_runner::start_dev_server,
             dev_runner::stop_dev_server,
             graph::get_graph_status,

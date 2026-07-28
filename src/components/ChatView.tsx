@@ -218,6 +218,10 @@ export default function ChatView({
   }, [messages]);
 
   useEffect(() => {
+    if (isActive) invoke<DevRunnerInfo | null>("get_dev_server", { projectPath }).then(setDevRunner).catch(() => {});
+  }, [isActive, projectPath]);
+
+  useEffect(() => {
     setFilePickerQuery(deriveAtQuery(input));
     const textarea = inputRef.current;
     if (textarea) {
@@ -692,6 +696,7 @@ export default function ChatView({
           if (!mounted) return;
           setWorktree(wt);
           setCwd(wt.worktree_path);
+          setDevRunner(await invoke<DevRunnerInfo | null>("get_dev_server", { projectPath }));
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
             sessionId,
@@ -843,7 +848,7 @@ export default function ChatView({
       const saved = localStorage.getItem(key);
       const command = saved ?? await invoke<string>("detect_dev_command", { cwd: worktree.worktree_path });
       if (!saved) return setPendingDevCommand(command);
-      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command }));
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { projectPath, cwd: worktree.worktree_path, command }));
       onToast(`Dev server started: ${command}`);
     } catch (error) { onToast(String(error)); }
   }
@@ -853,7 +858,7 @@ export default function ChatView({
     setDevStarting(true);
     try {
       localStorage.setItem(`crc-dev-command:${projectPath}`, pendingDevCommand);
-      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command: pendingDevCommand }));
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { projectPath, cwd: worktree.worktree_path, command: pendingDevCommand }));
       setPendingDevCommand(null);
       onToast(`Dev server started: ${pendingDevCommand}`);
     } catch (error) { onToast(String(error)); }
@@ -861,7 +866,7 @@ export default function ChatView({
   }
 
   async function handleStopDev() {
-    await invoke("stop_dev_server", { chatId }).catch((error) => onToast(String(error)));
+    await invoke("stop_dev_server", { projectPath }).catch((error) => onToast(String(error)));
     setDevRunner(null);
   }
 
@@ -871,7 +876,7 @@ export default function ChatView({
       return;
     }
     try {
-      await invoke("stop_dev_server", { chatId }).catch(() => {});
+      await invoke("stop_dev_server", { projectPath }).catch(() => {});
       await invoke("kill_pi_session", { sessionId }).catch(() => {});
       if (worktree && isGit) {
         const removed = await invoke<boolean>("remove_worktree", {
