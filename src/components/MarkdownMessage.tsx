@@ -8,6 +8,11 @@ export default function MarkdownMessage({ children }: { children: string }) {
       components={{
         a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
         input: ({ node: _node, ...props }) => <input {...props} disabled />,
+        table: ({ children: tChildren, ...props }) => (
+          <div className="md-table-wrapper">
+            <table {...props}>{tChildren}</table>
+          </div>
+        ),
       }}
     >{children}</ReactMarkdown>
   </div>;

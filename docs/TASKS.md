@@ -116,13 +116,15 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 ### Phase 4 — kanban + pipeline
 - [x] Kanban reads `Task All Project/<project>.json`, columns by status (`Backlog→In Progress→Review→Done`, case-insensitive) (US-18)
 - [x] Filters by `pic`, project
-- [ ] Atomic write-back: temp → `fsync` → rename + `.bak` before overwrite
-- [ ] Reuse `backlog-local` skill data files (no separate store)
-- [ ] Pipeline stage-view (Jenkins grid) from `_pipeline-runs.jsonl` (append-only) (US-19)
-- [ ] `_pipeline-current.json` patched per stage for live "which step" indicator
-- [ ] Dynamic stage columns per project type (MBI / KAI / Personal)
-- [ ] Header avg time per stage; rows per-run duration + colour per status; newest on top
+- [x] Atomic write-back: temp → `fsync` → rename + `.bak` before overwrite
+- [x] Reuse `backlog-local` skill data files (no separate store)
+- [x] Model decides whether work merits tracking via `track_kanban_task`; chosen work creates one session-linked task as `In Progress` without approval (no keyword classifier)
+- [x] Agent completion updates its active chat task to `Review`; user/editor acceptance moves it to `Done`
+- [x] Pipeline stage-view (Jenkins grid) from `_pipeline-runs.jsonl` (append-only) (US-19)
+- [x] `_pipeline-current.json` patched per stage for live "which step" indicator
+- [x] Dynamic stage columns per project type (MBI / KAI / Personal)
+- [x] Header avg time per stage; rows per-run duration + colour per status; newest on top
 
 ## Open questions (PRD §14)
 - [ ] Kanban with no JSON yet: create on first task add, or hide board? (proposed: create on first add)
-- [ ] Add pipeline-logging section to `git-push-workflow/SKILL.md` early (Phase 4 or sooner)?
+- [x] Add pipeline-logging section to `git-push-workflow/SKILL.md` early (Phase 4 or sooner)

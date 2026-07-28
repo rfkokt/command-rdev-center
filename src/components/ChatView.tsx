@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
 import ToolCallView from "./ToolCall";
@@ -14,11 +15,62 @@ type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
 type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
+type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
 
 const MAX_HISTORY = 600;
 
 function uid() {
   return Math.random().toString(36).slice(2, 10);
+}
+
+async function notifyAgentFinished(projectName: string) {
+  const granted = await isPermissionGranted() || await requestPermission() === "granted";
+  if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" });
+}
+
+function tsvToMarkdown(text: string): string | null {
+  const norm = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "");
+  if (!norm.includes("\t")) return null;
+  let rows = norm.split("\n").map((l) => l.split("\t"));
+  while (rows.length > 0 && rows[rows.length - 1].every((c) => c.trim() === "")) rows.pop();
+  if (rows.length === 0) return null;
+  const colCount = Math.max(...rows.map((r) => r.length));
+  if (colCount <= 1) return null;
+  const esc = (s: string) => s.replace(/\|/g, "\\|").trim();
+  const padded = rows.map((r) => {
+    const c = r.slice();
+    while (c.length < colCount) c.push("");
+    return c.map(esc);
+  });
+  const header = padded[0];
+  const sep = Array(colCount).fill("---");
+  let md = `| ${header.join(" | ")} |\n| ${sep.join(" | ")} |`;
+  for (let i = 1; i < padded.length; i++) md += `\n| ${padded[i].join(" | ")} |`;
+  return md;
+}
+
+function extractMarkdownTables(text: string): { header: string[]; rows: string[][] }[] {
+  const lines = text.split("\n");
+  const out: { header: string[]; rows: string[][] }[] = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    const a = lines[i].trim();
+    const b = lines[i + 1]?.trim() ?? "";
+    if (!a.startsWith("|") || !b.startsWith("|")) continue;
+    if (!/\|\s*:?-{2,}/.test(b)) continue;
+    // collect
+    const block: string[] = [a, b];
+    let j = i + 2;
+    while (j < lines.length && lines[j].trim().startsWith("|")) {
+      block.push(lines[j].trim());
+      j++;
+    }
+    const parseRow = (s: string) => s.replace(/^\|/, "").replace(/\|$/, "").split("|").map((x) => x.trim().replace(/\\\|/g, "|"));
+    const header = parseRow(block[0]);
+    const rows = block.slice(2).map(parseRow);
+    if (header.length > 0) out.push({ header, rows });
+    i = j - 1;
+  }
+  return out;
 }
 
 function deriveAtQuery(text: string): string | null {
@@ -86,6 +138,8 @@ export default function ChatView({
   const [commandIndex, setCommandIndex] = useState(0);
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const graphReportRef = useRef<string | undefined>(undefined);
@@ -95,6 +149,8 @@ export default function ChatView({
   const sessionFileRef = useRef(sessionFile);
   const modelRef = useRef(initialModel ?? "");
   const thinkingRef = useRef(initialThinking ?? "");
+  const pendingTaskPromptRef = useRef("");
+  const trackedTaskRef = useRef(false);
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -180,6 +236,15 @@ export default function ChatView({
     }
   }, [projectPath, onToast]);
 
+  const syncKanbanTask = useCallback(async (status: "In Progress" | "Review", prompt?: string) => {
+    try {
+      const updated = await invoke<string | null>("sync_chat_task", { input: { project: projectName, session_id: sessionId, prompt, status } });
+      if (updated) onToast(`Kanban: ${projectName} → ${updated}`);
+    } catch (error) {
+      onToast(`Kanban sync: ${String(error)}`);
+    }
+  }, [projectName, sessionId, onToast]);
+
   const updateGraphIfCodeStale = useCallback(async () => {
     try {
       const next = await invoke<GraphStatus>("get_graph_status", { projectPath });
@@ -207,6 +272,16 @@ export default function ChatView({
     const id = window.setInterval(check, 5000);
     return () => window.clearInterval(id);
   }, [isGit, projectPath, refreshGraph, onToast]);
+
+  const refreshDiff = useCallback(async () => {
+    if (!worktree) return;
+    setDiffLoading(true);
+    try { setWorktreeDiff(await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree.worktree_path, parentRef: worktree.parent_ref })); }
+    catch (error) { onToast(String(error)); }
+    finally { setDiffLoading(false); }
+  }, [worktree, onToast]);
+
+  useEffect(() => { if (agentStatus === "idle") void refreshDiff(); }, [agentStatus, refreshDiff]);
 
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
@@ -383,7 +458,9 @@ export default function ChatView({
           onAgentRunning(chatId, false);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
+          void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
+          if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;
         }
 
@@ -397,12 +474,16 @@ export default function ChatView({
             const tc = delta.toolCall as { id?: string; name?: string; arguments?: Record<string, unknown> } | undefined;
             const callId = tc?.id ?? (delta.toolCallId as string | undefined);
             const name = tc?.name ?? (delta.toolName as string | undefined);
-            if (callId && name) upsertToolCall(callId, {
-              name,
-              args: tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {},
-              phase: "start",
-              callId,
-            });
+            const args = tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {};
+            if (callId && name) upsertToolCall(callId, { name, args, phase: "start", callId });
+            if (name === "track_kanban_task") {
+              const status = args.status === "Done" ? "Done" : "In Progress";
+              const description = typeof args.description === "string" ? args.description : pendingTaskPromptRef.current;
+              trackedTaskRef.current = status !== "Done";
+              void invoke<string | null>("sync_chat_task", { input: { project: projectName, session_id: sessionId, prompt: description, status } })
+                .then((updated) => updated && onToast(`Kanban: ${projectName} → ${updated}`))
+                .catch((error) => onToast(`Kanban sync: ${String(error)}`));
+            }
           } else if (dtype === "toolcall_delta") {
             const callId = delta.toolCallId as string | undefined;
             if (callId) upsertToolCall(callId, { args: (delta.args as Record<string, unknown>) ?? {}, phase: "delta", callId });
@@ -550,7 +631,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale]);
+  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   async function handleSend() {
     const text = input.trim();
@@ -562,22 +643,51 @@ export default function ChatView({
     });
     setInput("");
     setImages([]);
+    pendingTaskPromptRef.current = text;
     await sendRaw({ type: "prompt", message: text, images });
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
     const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-    if (files.length === 0) return;
-    event.preventDefault();
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const data = String(reader.result).split(",", 2)[1];
-        if (data) setImages((prev) => [...prev, { type: "image", data, mimeType: file.type }]);
-      };
-      reader.onerror = () => onToast(`Couldn't paste ${file.name || "image"}`);
-      reader.readAsDataURL(file);
-    });
+    if (files.length > 0) {
+      event.preventDefault();
+      files.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const data = String(reader.result).split(",", 2)[1];
+          if (data) setImages((prev) => [...prev, { type: "image", data, mimeType: file.type }]);
+        };
+        reader.onerror = () => onToast(`Couldn't paste ${file.name || "image"}`);
+        reader.readAsDataURL(file);
+      });
+      return;
+    }
+    const plain = event.clipboardData.getData("text/plain");
+    if (plain) {
+      const mdTable = tsvToMarkdown(plain);
+      if (mdTable) {
+        event.preventDefault();
+        const ta = event.currentTarget;
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        const before = input.slice(0, start);
+        const after = input.slice(end);
+        // ensure blank lines around table for markdown rendering
+        let newValue: string;
+        if (!before.trim()) {
+          newValue = mdTable + (after ? "\n\n" + after.replace(/^\n+/, "") : "\n");
+        } else {
+          const b = before.endsWith("\n\n") ? before : before.endsWith("\n") ? before + "\n" : before + "\n\n";
+          const a = after.startsWith("\n\n") ? after : after.startsWith("\n") ? "\n" + after : after ? "\n\n" + after : "\n";
+          newValue = b + mdTable + a;
+        }
+        setInput(newValue);
+        requestAnimationFrame(() => {
+          const pos = newValue.indexOf(mdTable) + mdTable.length + 2;
+          ta.selectionStart = ta.selectionEnd = Math.min(pos, newValue.length);
+        });
+      }
+    }
   }
 
   async function handleApprovalResponse(payload: Record<string, unknown>) {
@@ -659,6 +769,8 @@ export default function ChatView({
     onRuntimeSettings(chatId, modelRef.current, lvl);
     await sendRaw({ type: "set_thinking_level", level: lvl });
   }
+
+  const tablePreviews = useMemo(() => extractMarkdownTables(input), [input]);
 
   const atHint = filePickerQuery !== null ? `Searching: ${filePickerQuery || "(all)"} — click to insert.` : "";
   const filteredModels = models.filter((model) => model.toLowerCase().includes(modelQuery.trim().toLowerCase()));
@@ -921,6 +1033,41 @@ export default function ChatView({
             onClose={() => setFilePickerQuery(null)}
           />
         )}
+        {tablePreviews.length > 0 && (
+          <div className="table-preview">
+            <div className="table-preview-head">
+              <span>TABLE PREVIEW · {tablePreviews[0].header.length} cols · {tablePreviews[0].rows.length} rows</span>
+              <button onClick={() => {
+                // remove table block from input
+                const lines = input.split("\n");
+                const cleaned = [] as string[];
+                let skipping = false;
+                for (const l of lines) {
+                  const t = l.trim();
+                  if (!skipping && t.startsWith("|") && /\|/.test(t)) {
+                    // naive: skip all consecutive | lines that include separator
+                    if (/^\|\s*:?-{2,}/.test(t) || (cleaned.length > 0 && cleaned[cleaned.length - 1]?.trim().startsWith("|"))) {
+                      skipping = true;
+                    }
+                  }
+                  if (skipping) {
+                    if (!t.startsWith("|") && t !== "") { skipping = false; cleaned.push(l); }
+                    continue;
+                  }
+                  cleaned.push(l);
+                }
+                setInput(cleaned.join("\n").trim());
+              }} title="Remove table">✕</button>
+            </div>
+            <div className="md-table-wrapper">
+              <table>
+                <thead><tr>{tablePreviews[0].header.map((c, i) => <th key={i}>{c || `COL ${i + 1}`}</th>)}</tr></thead>
+                <tbody>{tablePreviews[0].rows.slice(0, 30).map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} title={c}>{c}</td>)}</tr>)}</tbody>
+              </table>
+            </div>
+            {tablePreviews[0].rows.length > 30 && <small className="table-preview-more">+{tablePreviews[0].rows.length - 30} more rows hidden — will still send full table</small>}
+          </div>
+        )}
         {images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
         <textarea
           ref={inputRef}
@@ -978,13 +1125,16 @@ export default function ChatView({
       </div>
       {atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
       {worktree && <div className="activity-rail">
-        <button className={rightSidebarOpen ? "active" : ""} onClick={() => setRightSidebarOpen((open) => !open)} title="Changes" aria-label="Toggle changes sidebar" aria-expanded={rightSidebarOpen}>⇄</button>
+        <button className={rightSidebarOpen ? "active" : ""} onClick={() => setRightSidebarOpen((open) => !open)} title="Changes" aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length} files)` : ""}`} aria-expanded={rightSidebarOpen}>⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
       </div>}
       {worktree && rightSidebarOpen && <DiffPanel
         worktreePath={worktree.worktree_path}
         parentRef={worktree.parent_ref}
         editingFile={editingFile}
         open={rightSidebarOpen}
+        diff={worktreeDiff}
+        loading={diffLoading}
+        onRefresh={refreshDiff}
         onClose={() => setRightSidebarOpen(false)}
         onToast={onToast}
         onHandoff={() => {

@@ -5,6 +5,7 @@ mod files;
 mod graph;
 mod kanban;
 mod pi_rpc;
+mod pipeline;
 mod projects;
 mod settings;
 mod worktree;
@@ -29,6 +30,7 @@ fn get_config() -> Result<Config, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| projects::init_config(app.handle()).map_err(Into::into))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -39,6 +41,9 @@ pub fn run() {
             graph::build_graph,
             graph::enable_global_graphignore,
             kanban::list_kanban_tasks,
+            kanban::save_kanban_tasks,
+            kanban::sync_chat_task,
+            pipeline::get_pipeline_data,
             diff::get_worktree_diff,
             projects::list_projects,
             projects::add_project,

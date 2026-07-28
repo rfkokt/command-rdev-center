@@ -215,6 +215,7 @@ Graphify needs Python 3.10+ (have 3.14.6) and an LLM API key for **docs** extrac
 - Filters: by `pic`, by project.
 - Edit (drag/dropdown) writes back **atomically**: write temp file → `fsync` → rename; keep a `.bak` before overwrite. Never corrupt the JSON.
 - Reuses the existing `backlog-local` skill's data files — no separate store.
+- The model decides whether a request merits tracking via the `track_kanban_task` tool—no language/keyword classifier. Chosen work creates one session-linked task as `In Progress` without an approval prompt. Agent completion moves it to `Review`; user/editor acceptance moves it to `Done`.
 
 ### 10.2 Push-pipeline stage-view (Jenkins-style)
 - Source: `_pipeline-runs.jsonl` (one run per line), **written by the `git-push-workflow` skill** (a small logging section added to that SKILL.md), read by the app. Location: `/Volumes/ExternalM4/Project/Task All Project/_pipeline-runs.jsonl`.

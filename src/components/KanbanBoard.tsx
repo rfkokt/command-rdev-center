@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ListPicker from "./ListPicker";
 
 type Task = { no?: string | number; url?: string; deskripsi?: string; pic?: string; status?: string; notes?: string };
 type KanbanProject = { project: string; tasks: Task[] };
@@ -16,7 +17,22 @@ export default function KanbanBoard() {
     invoke<KanbanProject[]>("list_kanban_tasks").then(setProjects).catch((e) => setError(String(e)));
   }, []);
 
-  const allTasks = projects.flatMap(({ project, tasks }) => tasks.map((task) => ({ ...task, project })));
+  async function moveTask(project: string, taskIndex: number, status: string) {
+    const previous = projects;
+    const next = projects.map((entry) => entry.project === project
+      ? { ...entry, tasks: entry.tasks.map((task, index) => index === taskIndex ? { ...task, status } : task) }
+      : entry);
+    setProjects(next);
+    setError(null);
+    try {
+      await invoke("save_kanban_tasks", { project, tasks: next.find((entry) => entry.project === project)?.tasks ?? [] });
+    } catch (error) {
+      setProjects(previous);
+      setError(String(error));
+    }
+  }
+
+  const allTasks = projects.flatMap(({ project, tasks }) => tasks.map((task, taskIndex) => ({ ...task, project, taskIndex })));
   const pics = [...new Set(allTasks.map((task) => task.pic?.trim()).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b));
   const tasks = allTasks.filter((task) => (!projectFilter || task.project === projectFilter) && (!picFilter || task.pic?.trim() === picFilter));
 
@@ -24,8 +40,8 @@ export default function KanbanBoard() {
     <header>
       <div><small>LOCAL BACKLOG</small><strong>KANBAN</strong></div>
       <div className="kanban-filters">
-        <label>Project<select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}><option value="">All</option>{projects.map(({ project }) => <option key={project}>{project}</option>)}</select></label>
-        <label>PIC<select value={picFilter} onChange={(event) => setPicFilter(event.target.value)}><option value="">All</option>{pics.map((pic) => <option key={pic}>{pic}</option>)}</select></label>
+        <ListPicker label="Project" value={projectFilter} options={projects.map(({ project }) => project)} onChange={setProjectFilter} />
+        <ListPicker label="PIC" value={picFilter} options={pics} onChange={setPicFilter} />
       </div>
       <span>{tasks.length} / {allTasks.length} TASKS · {projects.length} PROJECTS</span>
     </header>
@@ -37,6 +53,9 @@ export default function KanbanBoard() {
           <div>{items.map((task, index) => <article className="kanban-card" key={`${task.project}-${task.no ?? index}`}>
             <small>{task.project} · #{task.no ?? "—"}</small>
             <strong>{task.deskripsi || "Untitled task"}</strong>
+            <select className="themed-select" value={task.status || column} onChange={(event) => void moveTask(task.project, task.taskIndex, event.target.value)} aria-label={`Status for task ${task.no ?? ""}`}>
+              {COLUMNS.map((status) => <option key={status}>{status}</option>)}
+            </select>
             <footer><span>{task.pic || "Unassigned"}</span>{task.url && <a href={task.url} target="_blank" rel="noreferrer" aria-label={`Open task ${task.no ?? ""}`}>↗</a>}</footer>
           </article>)}</div>
         </section>;

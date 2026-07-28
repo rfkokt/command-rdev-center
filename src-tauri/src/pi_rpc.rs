@@ -186,6 +186,13 @@ pub fn spawn_pi_rpc(
         }
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
+    args.push("--extension".into());
+    args.push(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("extensions/kanban-task.ts")
+            .to_string_lossy()
+            .into(),
+    );
     if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
         if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
             if !session_dir.trim().is_empty() {
@@ -201,11 +208,25 @@ pub fn spawn_pi_rpc(
         args.push(report.to_string_lossy().to_string());
     }
 
+    // Resolve graphify-out path: prefer owning project (main repo) where graph exists, fallback cwd
+    let graph_json_path = {
+        let owning_graph = owning_project.join("graphify-out/graph.json");
+        if owning_graph.exists() {
+            owning_graph.to_string_lossy().to_string()
+        } else {
+            Path::new(&cwd)
+                .join("graphify-out/graph.json")
+                .to_string_lossy()
+                .to_string()
+        }
+    };
     let mut child = Command::new(&pi_path)
         .args(&args)
         .current_dir(&cwd)
         .env("CRC_PROJECT_ROOT", &owning_project)
         .env("CRC_PROJECT_CWD", &cwd)
+        .env("CRC_GRAPH_JSON", &graph_json_path)
+        .env("GRAPHIFY_GRAPH", &graph_json_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

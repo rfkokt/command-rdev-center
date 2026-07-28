@@ -116,6 +116,17 @@ pub fn create_worktree(
 
     if worktree_path.exists() {
         // already exists — treat as resume path, re-use if branch matches
+        // Ensure graphify-out symlink exists even on resume
+        {
+            let src = repo_path.join("graphify-out");
+            let dst = worktree_path.join("graphify-out");
+            if src.exists() && !dst.exists() {
+                #[cfg(unix)]
+                {
+                    let _ = std::os::unix::fs::symlink(&src, &dst);
+                }
+            }
+        }
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path);
         return Ok(WorktreeInfo {
@@ -175,6 +186,24 @@ pub fn create_worktree(
             }
         } else {
             return Err(format!("git worktree add failed: {}", stderr));
+        }
+    }
+
+    // Ensure graphify-out is available in worktree (gitignored in main repo, so worktree would miss it and agent burns tokens)
+    // Symlink from main repo -> worktree
+    {
+        let src = repo_path.join("graphify-out");
+        let dst = worktree_path.join("graphify-out");
+        if src.exists() && !dst.exists() {
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(&src, &dst);
+            }
+            #[cfg(not(unix))]
+            {
+                // Windows fallback: copy marker files at least
+                let _ = std::fs::create_dir_all(&dst);
+            }
         }
     }
 
@@ -262,7 +291,9 @@ fn read_config_project_root() -> Result<PathBuf, String> {
     let raw = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if let Some(root) = v.get("project_root").and_then(|r| r.as_str()) {
-        if !root.trim().is_empty() { return Ok(PathBuf::from(root)); }
+        if !root.trim().is_empty() {
+            return Ok(PathBuf::from(root));
+        }
     }
     crate::projects::global_worktree_root().map(|p| p.parent().unwrap_or(&p).to_path_buf())
 }
@@ -277,7 +308,9 @@ pub fn ensure_worktree(
     let rp = PathBuf::from(&repo_path);
     // Strict per-registered-project check — not just child of legacy root
     let _owner = crate::projects::ensure_path_allowed(&rp)?;
-    if slug.is_empty() { return Err("slug must not be empty".to_string()); }
+    if slug.is_empty() {
+        return Err("slug must not be empty".to_string());
+    }
     create_worktree(&project_root, &rp, &repo_name, &slug)
 }
 
@@ -294,12 +327,17 @@ pub fn remove_worktree(
     // also ensure worktree path belongs to same owning project
     crate::projects::ensure_path_allowed(&wt)?;
     let expected_prefix = worktree_root(&project_root);
-    let canon_prefix = expected_prefix.canonicalize().unwrap_or(expected_prefix.clone());
+    let canon_prefix = expected_prefix
+        .canonicalize()
+        .unwrap_or(expected_prefix.clone());
     let canon_wt = wt.canonicalize().unwrap_or(wt.clone());
     if !canon_wt.starts_with(&canon_prefix) && !expected_prefix.exists() {
         // if legacy prefix missing (fresh config), skip prefix check if path_allowed already passed
     } else if !canon_wt.starts_with(&canon_prefix) {
-        return Err(format!("worktree path not inside {}", expected_prefix.display()));
+        return Err(format!(
+            "worktree path not inside {}",
+            expected_prefix.display()
+        ));
     }
     remove_worktree_if_empty(&project_root, &rp, &worktree_path, &parent_ref)
 }
