@@ -100,6 +100,7 @@ export default function ChatView({
   onAgentRunning,
   onClose,
   onToast,
+  isActive,
 }: {
   projectPath: string;
   projectName: string;
@@ -115,6 +116,7 @@ export default function ChatView({
   onAgentRunning: (chatId: string, running: boolean) => void;
   onClose: () => void;
   onToast: (m: string) => void;
+  isActive: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
@@ -852,6 +854,7 @@ export default function ChatView({
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      if (!isActive) return;
       if (event.key === "Escape" && agentStatus === "running") {
         event.preventDefault();
         void handleAbort();
@@ -868,7 +871,7 @@ export default function ChatView({
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [agentStatus, sendRaw, models, currentModel]);
+  }, [agentStatus, sendRaw, models, currentModel, isActive]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%" }}>

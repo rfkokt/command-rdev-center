@@ -161,6 +161,7 @@ export default function App() {
                 onAgentRunning={saveAgentRunning}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
+                isActive={tab.id === activeTabId}
               />
             </div>
           )) : (
