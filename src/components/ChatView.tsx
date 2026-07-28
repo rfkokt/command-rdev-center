@@ -217,7 +217,7 @@ export default function ChatView({
       textarea.style.height = "auto";
       textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
     }
-  }, [input]);
+  }, [input, isActive]);
 
   const upsertToolCall = useCallback((callId: string, patch: Partial<ToolCall> & { name?: string; args?: Record<string, unknown> }) => {
     setMessages((prev) => {
