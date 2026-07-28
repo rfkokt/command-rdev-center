@@ -44,11 +44,11 @@ fn read_pi_config() -> Result<(String, serde_json::Value), String> {
 }
 
 fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
-    let root = v
-        .get("project_root")
-        .and_then(|r| r.as_str())
-        .ok_or_else(|| "project_root missing".to_string())?;
-    Ok(PathBuf::from(root))
+    // legacy — keep for fallback, but new guard uses registered projects
+    if let Some(r) = v.get("project_root").and_then(|r| r.as_str()) {
+        return Ok(PathBuf::from(r));
+    }
+    crate::projects::global_worktree_root().map(|p| p.parent().unwrap_or(&p).to_path_buf())
 }
 
 fn session_args(no_session: bool, session_file: Option<String>) -> Vec<String> {
@@ -137,7 +137,7 @@ pub fn spawn_pi_rpc(
     session_file: Option<String>,
     graph_report_path: Option<String>,
 ) -> Result<String, String> {
-    let (pi_path, cfg) = read_pi_config()?;
+    let (pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
         return Err("session_id required".to_string());
     }
@@ -145,10 +145,8 @@ pub fn spawn_pi_rpc(
         return Err("cwd required".to_string());
     }
 
-    let project_root = project_root_from_config(&cfg)?;
-    // Validate cwd is child-of-root OR is inside .crc-worktrees/<repo>/<slug> which itself is child-of-project_root? Actually worktree root is inside project_root, so child check still holds for worktrees created under project_root.
-    // But for worktrees that are elsewhere? Per ADR they live under project_root/.crc-worktrees, so check passes.
-    crate::projects::ensure_child_of_root(&project_root, Path::new(&cwd))?;
+    // Strict per-registered-project guard — returns owning project path
+    let owning_project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
 
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
@@ -206,6 +204,7 @@ pub fn spawn_pi_rpc(
     let mut child = Command::new(&pi_path)
         .args(&args)
         .current_dir(&cwd)
+        .env("CRC_PROJECT_ROOT", &owning_project)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
