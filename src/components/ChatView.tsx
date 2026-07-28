@@ -18,6 +18,7 @@ type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
 type DevRunnerInfo = { command: string; url: string; running: boolean };
+type PipelineRun = { run_id: string; session_id: string; project: string; project_type: string; date: string; status: string; commits: string[]; stages: Array<{ name: string; ms: number; status: string }> };
 type SessionStats = {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
@@ -207,6 +208,7 @@ export default function ChatView({
   const thinkingRef = useRef(initialThinking ?? "");
   const pendingTaskPromptRef = useRef("");
   const trackedTaskRef = useRef(false);
+  const pipelineRunRef = useRef<string | null>(null);
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -297,10 +299,14 @@ export default function ChatView({
     }
   }, [projectPath, onToast]);
 
-  const syncKanbanTask = useCallback(async (status: "In Progress" | "Review", prompt?: string) => {
+  const syncKanbanTask = useCallback(async (status: "In Progress" | "Review" | "Done", prompt?: string) => {
     try {
       const updated = await invoke<string | null>("sync_chat_task", { input: { project: projectName, session_id: sessionId, prompt, status } });
-      if (updated) onToast(`Kanban: ${projectName} → ${updated}`);
+      trackedTaskRef.current = updated === "In Progress" || updated === "Review";
+      if (updated) {
+        window.dispatchEvent(new CustomEvent("kanban-changed"));
+        onToast(`Kanban: ${projectName} → ${updated}`);
+      }
     } catch (error) {
       onToast(`Kanban sync: ${String(error)}`);
     }
@@ -556,6 +562,11 @@ export default function ChatView({
           void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
+          if (pipelineRunRef.current) {
+            const runId = pipelineRunRef.current;
+            void invoke("update_pipeline_stage", { runId, stage: { name: "git-push-workflow", ms: 0, status: "pass" } })
+              .then(() => finishPipeline("pass"));
+          }
           return;
         }
 
@@ -571,14 +582,6 @@ export default function ChatView({
             const name = tc?.name ?? (delta.toolName as string | undefined);
             const args = tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {};
             if (callId && name) upsertToolCall(callId, { name, args, phase: "start", callId });
-            if (name === "track_kanban_task") {
-              const status = args.status === "Done" ? "Done" : "In Progress";
-              const description = typeof args.description === "string" ? args.description : pendingTaskPromptRef.current;
-              trackedTaskRef.current = status !== "Done";
-              void invoke<string | null>("sync_chat_task", { input: { project: projectName, session_id: sessionId, prompt: description, status } })
-                .then((updated) => updated && onToast(`Kanban: ${projectName} → ${updated}`))
-                .catch((error) => onToast(`Kanban sync: ${String(error)}`));
-            }
           } else if (dtype === "toolcall_delta") {
             const callId = delta.toolCallId as string | undefined;
             if (callId) upsertToolCall(callId, { args: (delta.args as Record<string, unknown>) ?? {}, phase: "delta", callId });
@@ -740,7 +743,7 @@ export default function ChatView({
     setInput("");
     setImages([]);
     pendingTaskPromptRef.current = text;
-    await sendRaw({ type: "prompt", message: text, images });
+    if (await sendRaw({ type: "prompt", message: text, images }) && text) await syncKanbanTask("In Progress", text);
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -791,8 +794,16 @@ export default function ChatView({
     await sendRaw(payload);
   }
 
+  async function finishPipeline(status: "pass" | "fail") {
+    const runId = pipelineRunRef.current;
+    if (!runId) return;
+    pipelineRunRef.current = null;
+    await invoke("finish_pipeline_run", { runId, status }).catch((error) => onToast(`Pipeline logging: ${String(error)}`));
+  }
+
   async function handleAbort() {
     await sendRaw({ type: "abort" });
+    await finishPipeline("fail");
     setAgentStatus("idle");
     setIsStreaming(false);
     setMessages((prev) => prev.map((message) => message.isStreaming ? { ...message, isStreaming: false } : message));
@@ -1331,12 +1342,20 @@ export default function ChatView({
         onToast={onToast}
         onHandoff={() => {
           const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes.";
-          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
-          sendRaw({ type: "prompt", message });
+          const runId = `${sessionId}-${Date.now()}`;
+          const run: PipelineRun = { run_id: runId, session_id: sessionId, project: projectName, project_type: "Personal", date: new Date().toISOString(), status: "running", commits: [], stages: [] };
+          void invoke("start_pipeline_run", { run }).then(async () => {
+            pipelineRunRef.current = runId;
+            await invoke("update_pipeline_stage", { runId, stage: { name: "git-push-workflow", ms: 0, status: "running" } });
+            setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
+            if (!await sendRaw({ type: "prompt", message })) return finishPipeline("fail");
+            await syncKanbanTask("In Progress", message);
+          }).catch((error) => onToast(`Pipeline start: ${String(error)}`));
         }}
       />}
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
+        {agentStatus === "idle" && trackedTaskRef.current && <button className="usage-summary" onClick={() => void syncKanbanTask("Done")} title="Accept completed work and move its Kanban task to Done">ACCEPT → DONE</button>}
         {sessionStats && <button className="usage-summary" onClick={() => setUsageOpen(true)} title="Show token usage">
           CONTEXT {sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`} · ↑ {formatTokens(sessionStats.tokens.input)} · ↓ {formatTokens(sessionStats.tokens.output)}
         </button>}

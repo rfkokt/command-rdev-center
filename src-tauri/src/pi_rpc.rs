@@ -237,11 +237,21 @@ pub fn spawn_pi_rpc(
                 .to_string()
         }
     };
+    let task_dir = crate::task_storage::task_dir()?;
     let mut child = Command::new(&pi_path)
         .args(&args)
         .current_dir(&cwd)
         .env("CRC_PROJECT_ROOT", &owning_project)
         .env("CRC_PROJECT_CWD", &cwd)
+        .env(
+            "CRC_PROJECT_NAME",
+            owning_project
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default(),
+        )
+        .env("CRC_SESSION_ID", &session_id)
+        .env("CRC_TASK_DIR", &task_dir)
         .env("CRC_GRAPH_JSON", &graph_json_path)
         // macOS GUI apps get a minimal PATH; pi uses `#!/usr/bin/env node`.
         .env("PATH", path_for_pi(&pi_path))

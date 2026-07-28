@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ListPicker from "./ListPicker";
 
-type Task = { no?: string | number; url?: string; deskripsi?: string; pic?: string; status?: string; notes?: string };
+type Task = { no?: string | number; url?: string; deskripsi?: string; pic?: string; status?: string; notes?: string; session_id?: string };
 type KanbanProject = { project: string; tasks: Task[] };
 
 const COLUMNS = ["Backlog", "In Progress", "Review", "Done"] as const;
@@ -14,7 +14,14 @@ export default function KanbanBoard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<KanbanProject[]>("list_kanban_tasks").then(setProjects).catch((e) => setError(String(e)));
+    const load = () => invoke<KanbanProject[]>("list_kanban_tasks")
+      .then((next) => { setProjects(next); setError(null); })
+      .catch((e) => setError(String(e)));
+    const changed = () => void load();
+    void load();
+    window.addEventListener("kanban-changed", changed);
+    const timer = window.setInterval(load, 3000);
+    return () => { window.removeEventListener("kanban-changed", changed); window.clearInterval(timer); };
   }, []);
 
   async function moveTask(project: string, taskIndex: number, status: string) {
@@ -50,12 +57,10 @@ export default function KanbanBoard() {
         const items = tasks.filter((task) => task.status?.trim().toLowerCase() === column.toLowerCase());
         return <section className="kanban-column" key={column}>
           <header><strong>{column}</strong><span>{items.length}</span></header>
-          <div>{items.map((task, index) => <article className="kanban-card" key={`${task.project}-${task.no ?? index}`}>
+          <div>{items.map((task, index) => <article className="kanban-card" key={`${task.project}-${task.session_id ?? task.no ?? index}`}>
             <small>{task.project} · #{task.no ?? "—"}</small>
             <strong>{task.deskripsi || "Untitled task"}</strong>
-            <select className="themed-select" value={task.status || column} onChange={(event) => void moveTask(task.project, task.taskIndex, event.target.value)} aria-label={`Status for task ${task.no ?? ""}`}>
-              {COLUMNS.map((status) => <option key={status}>{status}</option>)}
-            </select>
+            <ListPicker label="Status" value={task.status || column} options={[...COLUMNS]} includeAll={false} onChange={(status) => void moveTask(task.project, task.taskIndex, status)} ariaLabel={`Status for task ${task.no ?? ""}`} />
             <footer><span>{task.pic || "Unassigned"}</span>{task.url && <a href={task.url} target="_blank" rel="noreferrer" aria-label={`Open task ${task.no ?? ""}`}>↗</a>}</footer>
           </article>)}</div>
         </section>;

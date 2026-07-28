@@ -9,6 +9,7 @@ mod pi_rpc;
 mod pipeline;
 mod projects;
 mod settings;
+mod task_storage;
 mod worktree;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +49,9 @@ pub fn run() {
             kanban::save_kanban_tasks,
             kanban::sync_chat_task,
             pipeline::get_pipeline_data,
+            pipeline::start_pipeline_run,
+            pipeline::update_pipeline_stage,
+            pipeline::finish_pipeline_run,
             diff::get_worktree_diff,
             projects::list_projects,
             projects::list_project_branches,

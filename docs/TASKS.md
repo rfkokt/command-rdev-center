@@ -125,6 +125,63 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Dynamic stage columns per project type (MBI / KAI / Personal)
 - [x] Header avg time per stage; rows per-run duration + colour per status; newest on top
 
+### Phase 4 hardening — full Chat ↔ Kanban ↔ Pipeline integration
+- [x] Use one authoritative `Task All Project` path for Kanban, Pipeline, chat sync, and `git-push-workflow`; support `CRC_TASK_DIR` consistently
+- [x] Guarantee every actionable chat creates or updates exactly one session-linked Kanban task (`In Progress`), independent of optional model tool-call behavior
+- [x] Drive task lifecycle from app events: work starts → `In Progress`, agent finishes → `Review`, explicit user acceptance → `Done`; preserve manual board changes
+- [x] Live-refresh Kanban after chat sync and while its dashboard is open; newly created/updated cards appear without reopening the view
+- [x] Connect chat push-workflow execution to Pipeline: create `_pipeline-current.json`, update every stage, append terminal run to `_pipeline-runs.jsonl`, then clear current
+- [ ] Use stable project/session/run IDs so Kanban cards, chats, worktrees, and pipeline runs can be correlated without duplicates
+- [ ] Show actionable empty/error states identifying missing task storage, absent pipeline writer, malformed records, or filtered unregistered projects
+- [ ] Add integration tests covering chat → Kanban `In Progress` → `Review` → `Done`, app restart persistence, and push workflow → live/current → run history
+- [ ] Verify two concurrent chats and repeated/resumed sessions remain isolated and idempotent
+
+### Phase 4 follow-up fixes — agreed behavior
+
+#### F1 — Task storage configured in Settings
+- [ ] Add **Task Storage Folder** to app Settings with a native folder picker; users must not need to set environment variables manually
+- [ ] Persist the selected folder in app-owned settings/config and validate that it is readable/writable before saving
+- [ ] Make Kanban, Pipeline reader/writer, chat sync, and `git-push-workflow` resolve the same saved folder
+- [ ] Keep `CRC_TASK_DIR` only as an internal child-process handoff derived from the saved setting, not as the user-facing source of truth
+- [ ] Show the resolved folder and an actionable error when it is missing, unavailable, malformed, or read-only
+- [ ] Define migration/default behavior for existing installs: prefill the current `<project-root-parent>/Task All Project` path until the user changes it
+
+#### F2 — Only actionable work enters Kanban
+- [ ] Stop creating a Kanban card for every successful text message; questions, explanations, brainstorming, and casual discussion must not create tasks
+- [ ] Classify the request semantically (no keyword-only heuristic) before tracking; uncertain requests remain untracked rather than creating noise
+- [ ] Keep an explicit UI override such as **Track in Kanban** / **Do not track** so the user can correct classification
+- [ ] Once tracked, app events remain authoritative: work starts → `In Progress`, agent finishes → `Review`, explicit user acceptance → `Done`
+- [ ] Follow-up messages in the same tracked work update the existing card and never create duplicates
+
+#### F3 — Split multiple task IDs into separate cards
+- [ ] Parse pasted task batches containing explicit IDs (for example `949`, `950`, `951`) into one Kanban card per task ID, even when sent in one chat message
+- [ ] Preserve each task's ID, URL, and full multiline description; example expectation: IDs 949/950/951 create exactly three cards
+- [ ] Link all cards to the same chat/session while giving every card a stable unique identity such as `<session-id>:<task-id>`
+- [ ] Re-sending or resuming the same task batch must upsert the same three cards, not duplicate them
+- [ ] A message without explicit task IDs follows the normal single-actionable-task flow
+- [ ] Do not split numbered prose/checklists unless they clearly represent separate task records
+
+#### F4 — Deterministic Pipeline writer
+- [x] Implement app-owned Pipeline start/stage-update/finish operations instead of relying only on the agent obeying prompt instructions
+- [ ] Move Pipeline lifecycle ownership out of the **SHIP CHANGES** UI handler and into the actual `git-push-workflow` execution path
+- [ ] Trigger the same instrumented workflow from both **SHIP CHANGES** and normal chat requests such as “push”, “push dan merge”, “ship”, or “commit push PR”; the button is only a shortcut
+- [ ] On push-workflow start, create the live record; update each real stage atomically; append one terminal JSONL record; clear live state only when the same run ID finishes
+- [ ] Resolve project type from project/config instead of hardcoding `Personal`
+- [ ] Define ordered stages per project type/workflow (MBI / KAI / Personal) and render the run using that project-specific stage sequence
+- [ ] Record actual stage outcomes and durations from review/test/Sonar/commit/push/PR/merge/deploy execution; do not treat generic `agent_settled` as workflow success
+- [ ] Correlate every run with stable project, chat/session, Kanban task(s), and run IDs
+- [ ] Handle failed/aborted workflows as terminal records without changing the actual git workflow result when logging fails
+- [ ] Support concurrent runs without one chat overwriting another chat's live Pipeline state
+
+#### F5 — Required verification
+- [ ] Test question-only chat → zero Kanban cards
+- [ ] Test one actionable request → one card with `In Progress → Review → Done`
+- [ ] Test pasted IDs 949/950/951 → exactly three cards with preserved URLs/descriptions
+- [ ] Test repeated prompts, app restart, and session resume remain idempotent
+- [ ] Test two concurrent chats in one project remain isolated with no lost writes
+- [ ] Test Settings folder selection/migration and consistent storage use across Kanban, Pipeline, chat, and child process
+- [ ] Test push workflow → live Pipeline stages → terminal history → live cleanup, including failure and concurrent runs
+
 ## Open questions (PRD §14)
 - [ ] Kanban with no JSON yet: create on first task add, or hide board? (proposed: create on first add)
 - [x] Add pipeline-logging section to `git-push-workflow/SKILL.md` early (Phase 4 or sooner)

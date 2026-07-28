@@ -3,19 +3,19 @@ use serde_json::{json, Value};
 use std::{
     fs::OpenOptions,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
+    sync::{Mutex, OnceLock},
 };
+
+fn task_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Serialize)]
 pub struct KanbanProject {
     project: String,
     tasks: Vec<Value>,
-}
-
-fn task_dir() -> Result<PathBuf, String> {
-    let root = super::projects::project_root()?;
-    let parent = root.parent().ok_or("project root has no parent")?;
-    Ok(parent.join("Task All Project"))
 }
 
 fn write_tasks(path: &Path, tasks: &[Value]) -> Result<(), String> {
@@ -71,7 +71,10 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
         return Err("invalid task status".into());
     }
 
-    let dir = task_dir()?;
+    let _guard = task_lock()
+        .lock()
+        .map_err(|_| "task storage lock poisoned")?;
+    let dir = super::task_storage::task_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.json", input.project));
     let mut tasks = if path.exists() {
@@ -86,7 +89,19 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
         .iter_mut()
         .find(|task| task.get("session_id").and_then(Value::as_str) == Some(&input.session_id));
     if let Some(task) = existing {
-        task["status"] = json!(input.status);
+        let current = task
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let automatic = matches!(
+            (current, input.status.as_str()),
+            ("In Progress", "In Progress" | "Review") | ("Review", "Review")
+        );
+        if input.status == "Done" || automatic {
+            task["status"] = json!(input.status);
+        } else {
+            return Ok(Some(current.into()));
+        }
     } else {
         let prompt = input.prompt.as_deref().unwrap_or_default().trim();
         if prompt.is_empty() {
@@ -111,7 +126,10 @@ pub fn save_kanban_tasks(project: String, tasks: Vec<Value>) -> Result<(), Strin
     if !valid_project(&project) {
         return Err("invalid project name".into());
     }
-    let path = task_dir()?.join(format!("{project}.json"));
+    let _guard = task_lock()
+        .lock()
+        .map_err(|_| "task storage lock poisoned")?;
+    let path = super::task_storage::task_dir()?.join(format!("{project}.json"));
     if !path.is_file() {
         return Err("task file does not exist".into());
     }
@@ -120,9 +138,9 @@ pub fn save_kanban_tasks(project: String, tasks: Vec<Value>) -> Result<(), Strin
 
 #[tauri::command]
 pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
-    let dir = task_dir()?;
+    let dir = super::task_storage::task_dir()?;
     if !dir.exists() {
-        return Ok(Vec::new());
+        return Err(format!("Task storage is missing: {}", dir.display()));
     }
 
     let mut projects = Vec::new();
