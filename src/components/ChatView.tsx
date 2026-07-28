@@ -181,6 +181,23 @@ export default function ChatView({
     }
   }, [projectPath, refreshGraph, onToast]);
 
+  useEffect(() => {
+    if (!isGit) return;
+    let fingerprint: string | null | undefined;
+    const check = async () => {
+      try {
+        const next = await invoke<string | null>("get_git_fingerprint", { projectPath });
+        if (fingerprint !== undefined && next !== fingerprint) await refreshGraph(false);
+        fingerprint = next;
+      } catch (e) {
+        onToast(`Git watcher: ${String(e)}`);
+      }
+    };
+    void check();
+    const id = window.setInterval(check, 5000);
+    return () => window.clearInterval(id);
+  }, [isGit, projectPath, refreshGraph, onToast]);
+
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
       const line = JSON.stringify(obj);

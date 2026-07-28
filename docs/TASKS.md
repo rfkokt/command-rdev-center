@@ -108,7 +108,7 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Two-layer gitignore: per-project `graphify-out/` + opt-in global (asks first) (US-15)
 - [x] Detect already-tracked via `git ls-files graphify-out/`, warn `git rm -r --cached` (never silent)
 - [x] Auto `--update` (code-only) after task finish / new worktree (US-16)
-- [ ] Auto `--update` after commit / branch switch outside the app session
+- [x] Auto `--update` after commit / branch switch outside the app session
 - [x] Graphify Settings page: configure custom OpenAI-compatible URL, API key, and model (including 9Router); store API key in macOS Keychain outside `.env`/repo and pass to Graphify process
 - [x] Docs/PDF/image change → "graph stale (docs), rebuild?" badge only, no auto
 - [x] Graph status per project: none / fresh / stale + rebuild action (US-17)

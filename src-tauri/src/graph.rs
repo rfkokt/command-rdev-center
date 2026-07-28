@@ -249,6 +249,30 @@ pub fn get_graph_status(project_path: String) -> Result<GraphStatus, String> {
     Ok(status(&validate_project(Path::new(&project_path))?))
 }
 
+#[tauri::command]
+pub fn get_git_fingerprint(project_path: String) -> Result<Option<String>, String> {
+    let project = validate_project(Path::new(&project_path))?;
+    if !project.join(".git").exists() {
+        return Ok(None);
+    }
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &project.to_string_lossy(),
+            "rev-parse",
+            "--abbrev-ref",
+            "HEAD",
+            "HEAD",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 fn build_graph_blocking(project_path: String, full: bool) -> Result<GraphStatus, String> {
     let project = validate_project(Path::new(&project_path))?;
     run_graphify(&project, full)?;

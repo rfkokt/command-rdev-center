@@ -38,6 +38,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             graph::get_graph_status,
+            graph::get_git_fingerprint,
             graph::build_graph,
             graph::enable_global_graphignore,
             diff::get_worktree_diff,
