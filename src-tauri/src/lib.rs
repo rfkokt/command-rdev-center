@@ -19,20 +19,16 @@ pub struct Config {
     pub projects: Vec<String>,
 }
 
-fn config_path() -> std::path::PathBuf {
-    // dev: file lives next to Cargo.toml (src-tauri/crc.config.json)
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json")
-}
-
 #[tauri::command]
 fn get_config() -> Result<Config, String> {
-    let raw = std::fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(projects::config_path()).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| projects::init_config(app.handle()).map_err(Into::into))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![

@@ -14,7 +14,7 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; sessionFile?: string; model?: string; thinking?: string };
+type Tab = { id: string; project: ProjectInfo; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
 
@@ -36,6 +36,7 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [toasts, setToasts] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
     invoke<Config>("get_config").catch((e) => setConfigErr(String(e)));
@@ -54,8 +55,16 @@ export default function App() {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
   }, []);
 
+  const saveTitle = useCallback((tabId: string, title: string) => {
+    setTabs((prev) => prev.map((item) => item.id === tabId && !item.title ? { ...item, title } : item));
+  }, []);
+
   const saveRuntimeSettings = useCallback((tabId: string, model: string, thinking: string) => {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, model, thinking } : item));
+  }, []);
+
+  const saveAgentRunning = useCallback((tabId: string, interrupted: boolean) => {
+    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, interrupted } : item));
   }, []);
 
   function openProject(project: ProjectInfo) {
@@ -84,7 +93,7 @@ export default function App() {
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
       <aside className="sidebar">
         <div className="sidebar-brand">
           <span className="brand-mark">R/</span>
@@ -97,6 +106,7 @@ export default function App() {
         {configErr && <div className="sidebar-error">Config error: {configErr}</div>}
         <ProjectList
           onOpen={openProject}
+          onSelect={setSelectedProject}
           tabs={tabs}
           activeTabId={activeTabId}
           onResume={(id, project) => { setSelectedProject(project); setActiveTabId(id); }}
@@ -106,6 +116,7 @@ export default function App() {
 
       <section className="workspace">
         <header className="app-toolbar">
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>☰</button>
           <div className="workspace-title">
             <span className="live-dot" />
             <div><strong>{activeTab?.project.name ?? "NO PROJECT SELECTED"}</strong><small>LOCAL WORKSPACE</small></div>
@@ -124,8 +135,11 @@ export default function App() {
                 sessionFile={tab.sessionFile}
                 initialModel={tab.model}
                 initialThinking={tab.thinking}
+                initialInterrupted={tab.interrupted}
                 onSessionFile={saveSessionFile}
+                onFirstMessage={saveTitle}
                 onRuntimeSettings={saveRuntimeSettings}
+                onAgentRunning={saveAgentRunning}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
               />
@@ -138,7 +152,14 @@ export default function App() {
             </div>
           )}
         </div>
-        {toasts[toasts.length - 1] && <div className="toast" role="status">{toasts[toasts.length - 1]}</div>}
+        {toasts[toasts.length - 1] && <div className="toast" role="status">
+          <span>{toasts[toasts.length - 1]}</span>
+          <button
+            onClick={() => navigator.clipboard.writeText(toasts[toasts.length - 1]).then(() => addToast("Toast copied")).catch((e) => addToast(`Copy failed: ${String(e)}`))}
+            title="Copy toast"
+            aria-label="Copy toast"
+          >⧉</button>
+        </div>}
         {settingsOpen && <SettingsPanel projectPath={activeTab?.project.path} onClose={() => setSettingsOpen(false)} onToast={addToast} />}
       </section>
     </main>

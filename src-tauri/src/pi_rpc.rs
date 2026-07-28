@@ -188,6 +188,15 @@ pub fn spawn_pi_rpc(
         }
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
+    if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
+        if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
+            if !session_dir.trim().is_empty() {
+                std::fs::create_dir_all(session_dir).map_err(|e| format!("sessionDir: {e}"))?;
+                args.push("--session-dir".into());
+                args.push(session_dir.into());
+            }
+        }
+    }
     if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
         let report = crate::graph::validate_report_path(Path::new(&report))?;
         args.push("--append-system-prompt".into());

@@ -39,12 +39,7 @@ fn fuzzy_match(hay: &str, needle: &str) -> Option<i32> {
     Some(score)
 }
 
-fn walk_collect(
-    base: &Path,
-    cur: &Path,
-    depth: usize,
-    results: &mut Vec<(PathBuf, PathBuf)>,
-) {
+fn walk_collect(base: &Path, cur: &Path, depth: usize, results: &mut Vec<(PathBuf, PathBuf)>) {
     if depth > 4 {
         return;
     }

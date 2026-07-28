@@ -7,6 +7,7 @@ export default function GraphifySettings({ onToast }: { onToast: (message: strin
   const [config, setConfig] = useState<GraphifyConfig>({ base_url: "", model: "", has_api_key: false });
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [saving, setSaving] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -37,6 +38,7 @@ export default function GraphifySettings({ onToast }: { onToast: (message: strin
   async function save() {
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       const next = await invoke<GraphifyConfig>("save_graphify_settings", {
         baseUrl: config.base_url,
@@ -45,9 +47,11 @@ export default function GraphifySettings({ onToast }: { onToast: (message: strin
       });
       setConfig(next);
       setApiKey("");
-      onToast("Graphify provider saved securely in macOS Keychain.");
+      const message = "Graphify settings saved securely.";
+      setSuccess(message);
+      onToast(message);
     } catch (e) {
-      setError(String(e));
+      setError(`Save failed: ${String(e)}`);
     } finally {
       setSaving(false);
     }
@@ -58,7 +62,8 @@ export default function GraphifySettings({ onToast }: { onToast: (message: strin
     <label>BASE URL<input type="url" value={config.base_url} onChange={(e) => setConfig({ ...config, base_url: e.target.value })} placeholder="https://9router.example/v1" /></label>
     <label>API KEY<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={config.has_api_key ? "Saved — leave blank to keep current key" : "Required"} autoComplete="new-password" /></label>
     <div className="graphify-model-field"><label htmlFor="graphify-model">MODEL</label><div className="graphify-model-row"><input id="graphify-model" value={config.model} onFocus={() => { if (models.length) { setModelSearch(""); setModelsOpen(true); } }} onChange={(e) => { setConfig({ ...config, model: e.target.value }); setModelSearch(e.target.value); setModelsOpen(models.length > 0); }} placeholder="provider/model" /><button type="button" onClick={fetchModels} disabled={fetching || !config.base_url.trim() || (!apiKey && !config.has_api_key)}>{fetching ? "FETCHING…" : "FETCH MODELS"}</button></div>{modelsOpen && <div className="graphify-model-picker"><div className="graphify-model-search"><span>⌕</span><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models…" aria-label="Search Graphify models" autoFocus /></div><div className="graphify-model-list">{filteredModels.map((model) => <button type="button" key={model} className={model === config.model ? "active" : ""} onClick={() => { setConfig({ ...config, model }); setModelSearch(""); setModelsOpen(false); }}><span>{model}</span>{model === config.model && <b>✓</b>}</button>)}{!filteredModels.length && <div className="graphify-model-empty">NO MATCHING MODELS</div>}</div><small>{filteredModels.length} / {models.length} MODELS</small></div>}</div>
-    {error && <div className="settings-error">{error}</div>}
-    <button className="save-settings" onClick={save} disabled={saving || !config.base_url.trim() || !config.model.trim() || (!apiKey && !config.has_api_key)}>{saving ? "SAVING…" : "SAVE GRAPHIFY SETTINGS"}</button>
+    {error && <div className="settings-error" role="alert">{error}</div>}
+    {success && <div className="settings-success" role="status">✓ {success}</div>}
+    <button className="save-settings" onClick={save} disabled={saving || !config.base_url.trim() || !config.model.trim() || (!apiKey && !config.has_api_key)} aria-busy={saving}>{saving && <span className="button-spinner" aria-hidden="true" />}{saving ? "SAVING…" : "SAVE GRAPHIFY SETTINGS"}</button>
   </main>;
 }

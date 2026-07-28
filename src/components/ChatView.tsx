@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
+import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
 import ToolCallView from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
@@ -41,8 +41,11 @@ export default function ChatView({
   sessionFile,
   initialModel,
   initialThinking,
+  initialInterrupted,
   onSessionFile,
+  onFirstMessage,
   onRuntimeSettings,
+  onAgentRunning,
   onClose,
   onToast,
 }: {
@@ -53,18 +56,23 @@ export default function ChatView({
   sessionFile?: string;
   initialModel?: string;
   initialThinking?: string;
+  initialInterrupted?: boolean;
   onSessionFile: (chatId: string, sessionFile: string) => void;
+  onFirstMessage: (chatId: string, message: string) => void;
   onRuntimeSettings: (chatId: string, model: string, thinking: string) => void;
+  onAgentRunning: (chatId: string, running: boolean) => void;
   onClose: () => void;
   onToast: (m: string) => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [images, setImages] = useState<ChatImage[]>([]);
+  const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [cwd, setCwd] = useState(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-  const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">("idle");
+  const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">(initialInterrupted ? "stopped" : "idle");
   const [driveDetached, setDriveDetached] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
@@ -76,6 +84,7 @@ export default function ChatView({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [editingFile, setEditingFile] = useState<string | null>(null);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const graphReportRef = useRef<string | undefined>(undefined);
@@ -239,7 +248,7 @@ export default function ChatView({
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
           if (copy[i].role === "assistant" && copy[i].isStreaming) {
-            copy[i] = { ...copy[i], text: usedTool ? "" : content.text || copy[i].text, thinking: content.thinking || copy[i].thinking };
+            copy[i] = { ...copy[i], text: content.text || copy[i].text, thinking: content.thinking || copy[i].thinking };
             return copy;
           }
         }
@@ -314,26 +323,32 @@ export default function ChatView({
                   const role = (mm.role as string) ?? "assistant";
                   if (role === "toolResult" || role === "bashExecution" || (role === "custom" && mm.display === false)) return null;
                   let text = "";
+                  let historyImages: ChatImage[] = [];
                   if (typeof mm.content === "string") text = mm.content;
                   else if (Array.isArray(mm.content)) {
-                    text = (mm.content as Array<{ type: string; text?: string }>)
-                      .filter((c) => c.type === "text")
-                      .map((c) => c.text ?? "")
-                      .join("\n");
+                    const content = mm.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+                    text = content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
+                    historyImages = content
+                      .filter((c): c is ChatImage => c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string")
+                      .map(({ type, data, mimeType }) => ({ type, data, mimeType }));
                   }
                   if (!text && typeof mm.text === "string") text = mm.text as string;
-                  if (!text) return null;
+                  if (!text && historyImages.length === 0) return null;
                   return {
                     id: (mm.id as string) ?? uid(),
                     role: role === "user" ? "user" : role === "assistant" ? "assistant" : "system",
                     text: text.slice(0, 200_000),
+                    images: historyImages,
                     thinking: "",
                     toolCalls: [],
                     isStreaming: false,
                   } as ChatMessage;
                 })
                 .filter(Boolean) as ChatMessage[];
-              if (mapped.length > 0) setMessages((prev) => (prev.length === 0 ? mapped : prev));
+              if (mapped.length > 0) {
+                setMessages((prev) => (prev.length === 0 ? mapped : prev));
+                if (mapped[mapped.length - 1].role === "user") setAgentStatus("stopped");
+              }
             }
           }
           return;
@@ -341,6 +356,7 @@ export default function ChatView({
 
         if (t === "agent_start") {
           setAgentStatus("running");
+          onAgentRunning(chatId, true);
           setIsStreaming(true);
           setMessages((prev) => {
             const last = prev[prev.length - 1];
@@ -362,6 +378,7 @@ export default function ChatView({
         }
         if (t === "agent_settled") {
           setAgentStatus("idle");
+          onAgentRunning(chatId, false);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
           void updateGraphIfCodeStale();
@@ -530,17 +547,34 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale]);
+  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale]);
 
   async function handleSend() {
     const text = input.trim();
-    if (!text || driveDetached || agentStatus === "stopped") return;
+    if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
+    if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     setMessages((prev) => {
-      const next = [...prev, { id: uid(), role: "user", text, thinking: "", toolCalls: [] } as ChatMessage];
+      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [] } as ChatMessage];
       return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
     });
     setInput("");
-    await sendRaw({ type: "prompt", message: text });
+    setImages([]);
+    await sendRaw({ type: "prompt", message: text, images });
+  }
+
+  function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+    if (files.length === 0) return;
+    event.preventDefault();
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const data = String(reader.result).split(",", 2)[1];
+        if (data) setImages((prev) => [...prev, { type: "image", data, mimeType: file.type }]);
+      };
+      reader.onerror = () => onToast(`Couldn't paste ${file.name || "image"}`);
+      reader.readAsDataURL(file);
+    });
   }
 
   async function handleApprovalResponse(payload: Record<string, unknown>) {
@@ -548,7 +582,16 @@ export default function ChatView({
     await sendRaw(payload);
   }
 
-  async function handleRestart() {
+  async function handleAbort() {
+    await sendRaw({ type: "abort" });
+    setAgentStatus("idle");
+    setIsStreaming(false);
+    setMessages((prev) => prev.map((message) => message.isStreaming ? { ...message, isStreaming: false } : message));
+    onAgentRunning(chatId, false);
+    onToast("Agent aborted");
+  }
+
+  async function handleRestart(retry = false) {
     setAgentStatus("idle");
     setDriveDetached(false);
     try {
@@ -562,8 +605,11 @@ export default function ChatView({
         thinking: thinkingRef.current || undefined,
         graphReportPath: graphReportRef.current,
       });
-      onToast("Agent restarted");
-      setTimeout(() => sendRaw({ type: "get_state" }), 300);
+      onToast(retry ? "Agent retrying" : "Agent restarted");
+      setTimeout(() => {
+        sendRaw({ type: "get_state" });
+        if (retry) sendRaw({ type: "prompt", message: "Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work." });
+      }, 300);
     } catch (e) {
       onToast(String(e));
       if (String(e).includes("detached")) setDriveDetached(true);
@@ -693,7 +739,7 @@ export default function ChatView({
     function handleShortcut(event: KeyboardEvent) {
       if (event.key === "Escape" && agentStatus === "running") {
         event.preventDefault();
-        sendRaw({ type: "abort" });
+        void handleAbort();
       } else if (event.ctrlKey && event.key.toLowerCase() === "l") {
         event.preventDefault();
         openModelPicker();
@@ -713,7 +759,7 @@ export default function ChatView({
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap" }}>
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
-        <button onClick={handleClose} className="caption-uppercase" title="Close chat">✕</button>
+        <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
         {!isGit && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
@@ -722,11 +768,11 @@ export default function ChatView({
           disabled={graphBusy}
           title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
           onClick={() => graphStatus.state !== "fresh" && refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
-        >GRAPH {graphBusy ? "WORKING" : graphStatus.state}</button>}
+        >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}GRAPH {graphBusy ? "UPDATING…" : graphStatus.state}</button>}
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
-          {agentStatus === "running" && <button onClick={() => sendRaw({ type: "abort" })} className="caption-uppercase">ABORT</button>}
-          {agentStatus === "stopped" && <button onClick={handleRestart} className="caption-uppercase">RESTART</button>}
+          {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
+          {agentStatus === "stopped" && <button onClick={() => handleRestart()} className="caption-uppercase">RESTART</button>}
         </div>
       </div>
 
@@ -782,11 +828,11 @@ export default function ChatView({
       {driveDetached && (
         <div className="surface-card" style={{ padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", display: "flex", justifyContent: "space-between" }}>
           <span className="caption-uppercase">DRIVE DETACHED — RECONNECT</span>
-          <button onClick={handleRestart} className="button-primary" style={{ padding: "var(--spacing-xxs) var(--spacing-sm)" }}>RECONNECT</button>
+          <button onClick={() => handleRestart()} className="button-primary" style={{ padding: "var(--spacing-xxs) var(--spacing-sm)" }}>RECONNECT</button>
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <div className={worktree ? "chat-content has-activity-rail" : "chat-content"}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
         {messages.length === 0 && (
@@ -801,7 +847,11 @@ export default function ChatView({
           >
             {m.role === "system" && <small>PI CONTEXT</small>}
             {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
+            {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
+              <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
+            )}
             {m.toolCalls.length > 0 && (
               <details className="tool-stack">
                 <summary>
@@ -820,7 +870,7 @@ export default function ChatView({
             <span className="agent-working-mark"><i /><i /><i /></span>
             <div><strong>AGENT WORKING</strong><small>{messages.some((message) => message.toolCalls.some((tool) => tool.phase !== "end")) ? "RUNNING TOOLS" : "THINKING"}</small></div>
             <span className="agent-working-line" />
-            <button onClick={() => sendRaw({ type: "abort" })}>ABORT</button>
+            <button onClick={handleAbort}>ABORT</button>
           </div>
         )}
         <div ref={bottomRef} />
@@ -863,9 +913,11 @@ export default function ChatView({
             onClose={() => setFilePickerQuery(null)}
           />
         )}
+        {images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
         <textarea
           ref={inputRef}
           value={input}
+          onPaste={handlePaste}
           onChange={(e) => { setInput(e.target.value); setCommandIndex(0); }}
           onKeyDown={(e) => {
             if (e.altKey && e.key === "Enter") {
@@ -902,25 +954,30 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : "TYPE MESSAGE… SHIFT+ENTER NEWLINE. @ FILE PICKER."}
+          placeholder={driveDetached ? "DRIVE DETACHED" : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
           aria-disabled={driveDetached || agentStatus === "stopped"}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, padding: "var(--spacing-sm) 0", resize: "none" }}
         />
         {agentStatus === "running" ? (
-           <button onClick={() => sendRaw({ type: "abort" })} className="button-primary">ABORT</button>
+           <button onClick={handleAbort} className="button-primary chat-action chat-action-abort">ABORT</button>
         ) : (
-           <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || !input.trim()} className="button-primary">SEND</button>
+           <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || (!input.trim() && images.length === 0)} className="button-primary chat-action">SEND</button>
         )}
       </div>
       </div>
       </div>
       {atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
-      {worktree && <DiffPanel
+      {worktree && <div className="activity-rail">
+        <button className={rightSidebarOpen ? "active" : ""} onClick={() => setRightSidebarOpen((open) => !open)} title="Changes" aria-label="Toggle changes sidebar" aria-expanded={rightSidebarOpen}>⇄</button>
+      </div>}
+      {worktree && rightSidebarOpen && <DiffPanel
         worktreePath={worktree.worktree_path}
         parentRef={worktree.parent_ref}
         editingFile={editingFile}
+        open={rightSidebarOpen}
+        onClose={() => setRightSidebarOpen(false)}
         onToast={onToast}
         onHandoff={() => {
           const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes.";
@@ -932,6 +989,7 @@ export default function ChatView({
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
       </footer>
+      {previewImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
       {approval && <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />}
     </div>
   );

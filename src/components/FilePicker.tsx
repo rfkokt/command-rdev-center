@@ -38,7 +38,7 @@ export default function FilePicker({
     <div className="surface-elevated" style={{ position: "absolute", bottom: "100%", left: 0, maxHeight: 300, overflow: "auto", width: 400, zIndex: 20 }}>
       <div className="caption-uppercase" style={{ padding: "var(--spacing-sm)", borderBottom: "1px solid var(--colors-hairline)", display: "flex", justifyContent: "space-between" }}>
         <span>@ FILE PICKER — {files.length} RESULTS</span>
-        <button onClick={onClose} aria-label="Close file picker">✕</button>
+        <button className="small-icon-button" onClick={onClose} aria-label="Close file picker">✕</button>
       </div>
       {error && <div className="body-sm" role="alert" style={{ padding: "var(--spacing-sm)", color: "var(--colors-muted-soft)" }}>{error}</div>}
       {files.map((f, idx) => (

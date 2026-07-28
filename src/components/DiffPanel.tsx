@@ -34,14 +34,15 @@ function sideBySide(patch: string): Row[] {
   return rows;
 }
 
-export default function DiffPanel({ worktreePath, parentRef, editingFile, onHandoff, onToast }: {
+export default function DiffPanel({ worktreePath, parentRef, editingFile, open, onClose, onHandoff, onToast }: {
   worktreePath: string;
   parentRef: string;
   editingFile: string | null;
+  open: boolean;
+  onClose: () => void;
   onHandoff: () => void;
   onToast: (message: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [diff, setDiff] = useState<WorktreeDiff | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,16 +55,14 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, onHand
 
   useEffect(() => { if (open) refresh(); }, [open, refresh]);
 
-  return <section className={`diff-panel ${open ? "open" : ""}`}>
+  return <aside className="diff-panel">
     <header>
-      <button onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <strong>CHANGES</strong>
-        <span>{editingFile ? `EDITING ${editingFile}` : diff ? `${diff.files.length} FILES` : "VIEW DIFF"}</span>
-      </button>
-      {open && <button onClick={refresh} disabled={loading}>{loading ? "LOADING" : "REFRESH"}</button>}
-      {open && <button onClick={onHandoff} disabled={!diff?.files.length}>SHIP CHANGES</button>}
+      <strong>CHANGES</strong>
+      <span>{editingFile ? `EDITING ${editingFile}` : diff ? `${diff.files.length} FILES` : "VIEW DIFF"}</span>
+      <button onClick={refresh} disabled={loading}>{loading ? "LOADING" : "↻"}</button>
+      <button onClick={onClose} aria-label="Close changes" title="Close changes">×</button>
     </header>
-    {open && <div className="diff-files">
+    <div className="diff-files">
       {!loading && diff?.files.length === 0 && <p>WORKTREE CLEAN</p>}
       {diff?.files.map((file) => <details key={file.path}>
         <summary><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
@@ -76,6 +75,7 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, onHand
           </div>)}
         </div> : <p>Binary or untracked file — no textual diff.</p>}
       </details>)}
-    </div>}
-  </section>;
+    </div>
+    <button className="ship-changes" onClick={onHandoff} disabled={!diff?.files.length}>SHIP CHANGES</button>
+  </aside>;
 }

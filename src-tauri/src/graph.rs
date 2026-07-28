@@ -6,7 +6,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\ngraphify-out/\n.graphify_python\n.graphify_detect.json\n";
-const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify navigation\nA local knowledge graph exists at `graphify-out/graph.json`. Before reading files one by one, use `graphify query \"<question>\"`, `graphify path \"A\" \"B\"`, or `graphify explain \"X\"` via bash.\n<!-- /command-rdev-center:graphify -->\n";
+const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
+const AGENTS_END: &str = "<!-- /command-rdev-center:graphify -->";
+const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify gate (blocking)\nFor every new coding task, before any file search/read (`rg`, `grep`, `find`, `ls`, `read`, or Codebase Memory):\n1. Check whether `graphify-out/graph.json` is fresh against `git HEAD`; run `graphify update .` if stale.\n2. Run `graphify query \"<the user's task>\"`.\n3. Only then inspect the returned files/symbols.\nDo not skip this gate for small tasks. Use `graphify path \"A\" \"B\"` or `graphify explain \"X\"` when needed.\n<!-- /command-rdev-center:graphify -->\n";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -167,13 +169,36 @@ fn append_once(path: &Path, marker: &str, content: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+fn ensure_agents_note(path: &Path) -> Result<(), String> {
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(format!("refusing to write symlink: {}", path.display()));
+    }
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    let next = match (existing.find(AGENTS_START), existing.find(AGENTS_END)) {
+        (Some(start), Some(end)) if start <= end => {
+            let end = end + AGENTS_END.len();
+            format!(
+                "{}{}{}",
+                &existing[..start],
+                AGENTS_NOTE.trim_end(),
+                &existing[end..]
+            )
+        }
+        _ if existing.is_empty() => AGENTS_NOTE.to_string(),
+        _ => format!("{}\n\n{}", existing.trim_end(), AGENTS_NOTE),
+    };
+    if next != existing {
+        fs::write(path, next).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn ensure_project_files(project: &Path) -> Result<(), String> {
     append_once(&project.join(".gitignore"), "graphify-out/", IGNORE_BLOCK)?;
-    append_once(
-        &project.join("AGENTS.md"),
-        "command-rdev-center:graphify",
-        AGENTS_NOTE,
-    )
+    ensure_agents_note(&project.join("AGENTS.md"))
 }
 
 fn graphify_path() -> String {
@@ -246,7 +271,9 @@ fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_graph_status(project_path: String) -> Result<GraphStatus, String> {
-    Ok(status(&validate_project(Path::new(&project_path))?))
+    let project = validate_project(Path::new(&project_path))?;
+    ensure_project_files(&project)?;
+    Ok(status(&project))
 }
 
 #[tauri::command]
@@ -267,7 +294,9 @@ pub fn get_git_fingerprint(project_path: String) -> Result<Option<String>, Strin
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
-        Ok(Some(String::from_utf8_lossy(&output.stdout).trim().to_string()))
+        Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        ))
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
@@ -276,6 +305,11 @@ pub fn get_git_fingerprint(project_path: String) -> Result<Option<String>, Strin
 fn build_graph_blocking(project_path: String, full: bool) -> Result<GraphStatus, String> {
     let project = validate_project(Path::new(&project_path))?;
     run_graphify(&project, full)?;
+    if !full {
+        let graph = project.join("graphify-out/graph.json");
+        let contents = fs::read(&graph).map_err(|e| e.to_string())?;
+        fs::write(graph, contents).map_err(|e| e.to_string())?;
+    }
     Ok(status(&project))
 }
 
@@ -366,6 +400,45 @@ mod tests {
                 .count(),
             1
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn ensure_agents_note_keeps_mtime_when_unchanged() {
+        let path = std::env::temp_dir().join(format!(
+            "crc-agents-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, AGENTS_NOTE).unwrap();
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        ensure_agents_note(&path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn ensure_agents_note_replaces_old_block() {
+        let path = std::env::temp_dir().join(format!(
+            "crc-agents-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            format!("before\n{AGENTS_START}\nold\n{AGENTS_END}\nafter\n"),
+        )
+        .unwrap();
+        ensure_agents_note(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("Graphify gate (blocking)"));
+        assert!(!content.contains("\nold\n"));
+        assert_eq!(content.matches(AGENTS_START).count(), 1);
         let _ = fs::remove_file(path);
     }
 }

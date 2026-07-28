@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::UNIX_EPOCH;
+use tauri::Manager;
+
+static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -25,11 +29,21 @@ struct StoredConfig {
 fn detect_kinds(dir: &Path) -> (Vec<String>, bool) {
     let is_git = dir.join(".git").exists();
     let mut kinds = Vec::new();
-    if is_git { kinds.push("git".to_string()); }
-    if dir.join("package.json").exists() { kinds.push("node".to_string()); }
-    if dir.join("Cargo.toml").exists() { kinds.push("rust".to_string()); }
-    if dir.join("pom.xml").exists() { kinds.push("java".to_string()); }
-    if dir.join("go.mod").exists() { kinds.push("go".to_string()); }
+    if is_git {
+        kinds.push("git".to_string());
+    }
+    if dir.join("package.json").exists() {
+        kinds.push("node".to_string());
+    }
+    if dir.join("Cargo.toml").exists() {
+        kinds.push("rust".to_string());
+    }
+    if dir.join("pom.xml").exists() {
+        kinds.push("java".to_string());
+    }
+    if dir.join("go.mod").exists() {
+        kinds.push("go".to_string());
+    }
     (kinds, is_git)
 }
 
@@ -40,8 +54,27 @@ fn dir_mtime_ms(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-fn config_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json")
+pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("crc.config.json");
+    if !path.exists() {
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"),
+            &path,
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    CONFIG_PATH
+        .set(path)
+        .map_err(|_| "config already initialized".to_string())
+}
+
+pub fn config_path() -> PathBuf {
+    CONFIG_PATH
+        .get()
+        .cloned()
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"))
 }
 
 fn read_config() -> Result<StoredConfig, String> {
@@ -50,23 +83,43 @@ fn read_config() -> Result<StoredConfig, String> {
 }
 
 fn project_info(path: &Path) -> Result<ProjectInfo, String> {
-    if !path.is_dir() { return Err(format!("project directory not found: {}", path.display())); }
+    if !path.is_dir() {
+        return Err(format!("project directory not found: {}", path.display()));
+    }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-    let name = path.file_name().and_then(|n| n.to_str()).ok_or("invalid project name")?.to_string();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("invalid project name")?
+        .to_string();
     let (kinds, is_git) = detect_kinds(&path);
-    Ok(ProjectInfo { name, path: path.to_string_lossy().to_string(), kinds, mtime_ms: dir_mtime_ms(&path), is_git })
+    Ok(ProjectInfo {
+        name,
+        path: path.to_string_lossy().to_string(),
+        kinds,
+        mtime_ms: dir_mtime_ms(&path),
+        is_git,
+    })
 }
 
 #[tauri::command]
 pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
-    read_config()?.projects.iter().map(|path| project_info(Path::new(path))).collect()
+    read_config()?
+        .projects
+        .iter()
+        .map(|path| project_info(Path::new(path)))
+        .collect()
 }
 
 #[tauri::command]
 pub fn add_project(path: String) -> Result<ProjectInfo, String> {
     let project = project_info(Path::new(&path))?;
     let mut config = read_config()?;
-    if !config.projects.iter().any(|saved| Path::new(saved) == Path::new(&project.path)) {
+    if !config
+        .projects
+        .iter()
+        .any(|saved| Path::new(saved) == Path::new(&project.path))
+    {
         config.projects.push(project.path.clone());
         let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
         std::fs::write(config_path(), format!("{json}\n")).map_err(|e| e.to_string())?;
@@ -80,13 +133,23 @@ pub fn ensure_child_of_root(root: &Path, child: &Path) -> Result<(), String> {
     if child.starts_with(&root) {
         Ok(())
     } else {
-        Err(format!("path traversal blocked: {} not inside {}", child.display(), root.display()))
+        Err(format!(
+            "path traversal blocked: {} not inside {}",
+            child.display(),
+            root.display()
+        ))
     }
 }
 
 pub fn ensure_registered_project(child: &Path) -> Result<(), String> {
     let child = child.canonicalize().unwrap_or_else(|_| child.to_path_buf());
-    if read_config()?.projects.iter().any(|saved| child.starts_with(Path::new(saved).canonicalize().unwrap_or_else(|_| PathBuf::from(saved)))) {
+    if read_config()?.projects.iter().any(|saved| {
+        child.starts_with(
+            Path::new(saved)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(saved)),
+        )
+    }) {
         Ok(())
     } else {
         Err(format!("unregistered project path: {}", child.display()))
@@ -97,5 +160,7 @@ pub fn ensure_registered_project(child: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn mtime_no_panic() { let _ = dir_mtime_ms(Path::new("/tmp")); }
+    fn mtime_no_panic() {
+        let _ = dir_mtime_ms(Path::new("/tmp"));
+    }
 }

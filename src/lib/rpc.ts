@@ -9,10 +9,13 @@ export type ToolCall = {
   phase: "start" | "delta" | "end";
 };
 
+export type ChatImage = { type: "image"; data: string; mimeType: string };
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
+  images?: ChatImage[];
   thinking?: string;
   toolCalls: ToolCall[];
   // streaming flags
