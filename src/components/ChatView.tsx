@@ -39,6 +39,10 @@ export function preserveStreamedContent(streamed: string, completed: string) {
   return `${streamed}\n\n${completed}`;
 }
 
+export function shouldSubmitCommand(input: string, command: { name: string }) {
+  return input.trim() === `/${command.name}`;
+}
+
 export function insertSteerMessage(messages: ChatMessage[], message: ChatMessage) {
   let streamingIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -162,6 +166,7 @@ export default function ChatView({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
+  const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<ChatImage[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
@@ -344,10 +349,12 @@ export default function ChatView({
       const line = JSON.stringify(obj);
       try {
         await invoke("send_pi_command", { sessionId, jsonLine: line });
+        return true;
       } catch (e) {
         const msg = String(e);
         if (msg.includes("crashed") || msg.includes("closed") || msg.includes("unknown session")) setAgentStatus("stopped");
         onToast(msg);
+        return false;
       }
     },
     [sessionId, onToast]
@@ -418,12 +425,15 @@ export default function ChatView({
           if (!data) return;
           if (cmd === "get_commands") {
             setCommands((data.commands as SlashCommand[]) ?? []);
-          } else if (cmd === "new_session" && data.cancelled !== true) {
-            setMessages([]);
-            setPendingMessageCount(0);
-            trackedTaskRef.current = false;
-            sendRaw({ type: "get_state" });
-            onToast("New context started — dev server unchanged");
+          } else if (cmd === "new_session") {
+            setIsNewSessionLoading(false);
+            if (data.cancelled !== true) {
+              setMessages([]);
+              setPendingMessageCount(0);
+              trackedTaskRef.current = false;
+              sendRaw({ type: "get_state" });
+              onToast("New context started — dev server unchanged");
+            }
           } else if (cmd === "switch_session" && data.cancelled !== true) {
             setMessages([]);
             setIsHistoryLoading(true);
@@ -922,7 +932,8 @@ export default function ChatView({
     const text = input.trim();
     if (text === "/new") {
       setInput("");
-      await sendRaw({ type: "new_session" });
+      setIsNewSessionLoading(true);
+      if (!await sendRaw({ type: "new_session" })) setIsNewSessionLoading(false);
       return;
     }
     if (text === "/resume") {
@@ -1118,7 +1129,13 @@ export default function ChatView({
       <div className={worktree ? "chat-content has-activity-rail" : "chat-content"}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
-        {messages.length === 0 && (isHistoryLoading ? (
+        {isNewSessionLoading && (
+          <div className="session-loading" role="status" aria-live="polite">
+            <span className="agent-working-mark" aria-hidden="true"><i /><i /><i /></span>
+            <div><strong>STARTING NEW CONTEXT</strong><small>KEEPING WORKTREE AND DEV SERVER</small></div>
+          </div>
+        )}
+        {messages.length === 0 && !isNewSessionLoading && (isHistoryLoading ? (
           <div className="session-loading" role="status" aria-live="polite">
             <span className="agent-working-mark" aria-hidden="true"><i /><i /><i /></span>
             <div><strong>LOADING SESSION</strong><small>RESTORING CHAT HISTORY</small></div>
@@ -1173,7 +1190,11 @@ export default function ChatView({
               <button
                 key={`${command.source}-${command.name}`}
                 className={index === commandIndex ? "active" : ""}
-                onMouseDown={(event) => { event.preventDefault(); chooseCommand(command); }}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  if (shouldSubmitCommand(input, command)) void submitInput();
+                  else chooseCommand(command);
+                }}
                 role="option"
                 aria-selected={index === commandIndex}
               >
@@ -1264,7 +1285,9 @@ export default function ChatView({
             }
             if (slashCommands.length > 0 && (e.key === "Tab" || e.key === "Enter")) {
               e.preventDefault();
-              chooseCommand(slashCommands[commandIndex]);
+              const command = slashCommands[commandIndex];
+              if (e.key === "Enter" && shouldSubmitCommand(input, command)) void submitInput();
+              else chooseCommand(command);
               return;
             }
             if (filePickerQuery !== null && e.key === "Escape") {
@@ -1282,12 +1305,13 @@ export default function ChatView({
             }
           }}
           placeholder={driveDetached ? "DRIVE DETACHED" : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
-          aria-disabled={driveDetached || agentStatus === "stopped"}
+          disabled={isNewSessionLoading}
+          aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || (!input.trim() && images.length === 0)} className="button-primary chat-action">{agentStatus === "running" ? "QUEUE" : "SEND"}</button>
+        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || (!input.trim() && images.length === 0)} className="button-primary chat-action">{isNewSessionLoading ? "LOADING…" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
       </div>
