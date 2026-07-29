@@ -1089,7 +1089,7 @@ export default function ChatView({
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
           {worktree && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
-          {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ OPEN APP</button></>}
+          {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
         </div>
