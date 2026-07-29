@@ -1,5 +1,5 @@
 import "@fontsource/jetbrains-mono/400.css";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
@@ -37,6 +37,8 @@ export default function App() {
     const tabs = savedTabs();
     return tabs[tabs.length - 1]?.id ?? null;
   });
+  const activeTabIdRef = useRef(activeTabId);
+  activeTabIdRef.current = activeTabId;
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
   const [toasts, setToasts] = useState<string[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -74,8 +76,8 @@ export default function App() {
   }, []);
 
   const markUnread = useCallback((tabId: string) => {
-    setTabs((prev) => prev.map((item) => item.id === tabId && item.id !== activeTabId ? { ...item, unread: true } : item));
-  }, [activeTabId]);
+    setTabs((prev) => prev.map((item) => item.id === tabId && item.id !== activeTabIdRef.current ? { ...item, unread: true } : item));
+  }, []);
 
   function activateTab(tabId: string) {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, unread: false } : item));
