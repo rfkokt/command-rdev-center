@@ -7,6 +7,7 @@ use std::time::UNIX_EPOCH;
 use tauri::Manager;
 
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
+const DEFAULT_CONFIG: &str = include_str!("../crc.config.json");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -81,11 +82,7 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("crc.config.json");
     if !path.exists() {
-        std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"),
-            &path,
-        )
-        .map_err(|e| e.to_string())?;
+        std::fs::write(&path, DEFAULT_CONFIG).map_err(|e| e.to_string())?;
     }
     CONFIG_PATH
         .set(path)
@@ -378,5 +375,10 @@ mod tests {
     #[test]
     fn mtime_no_panic() {
         let _ = dir_mtime_ms(Path::new("/tmp"));
+    }
+
+    #[test]
+    fn embedded_default_config_is_valid() {
+        serde_json::from_str::<StoredConfig>(DEFAULT_CONFIG).unwrap();
     }
 }
