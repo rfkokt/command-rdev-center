@@ -46,6 +46,7 @@ jobs:
           VERSION="$(node -p "require('./package.json').version")"
           test "$TAG" = "v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Test
         run: pnpm test && cargo test --manifest-path src-tauri/Cargo.toml
@@ -67,12 +68,12 @@ jobs:
           filename="command-rdev-center_${VERSION}_aarch64.app.tar.gz"
           cp "$artifact" "$RUNNER_TEMP/$filename"
           cp "$artifact.sig" "$RUNNER_TEMP/$filename.sig"
-          python3 - "$RUNNER_TEMP/$filename.sig" "$RUNNER_TEMP/latest.json" "$VERSION" "$filename" <<'PY'
+          python3 - "$RUNNER_TEMP/$filename.sig" "$RUNNER_TEMP/latest.json" "$VERSION" "$filename" "$GITHUB_SHA" <<'PY'
           import datetime, json, pathlib, sys
-          signature_file, output, version, filename = sys.argv[1:]
+          signature_file, output, version, filename, commit = sys.argv[1:]
           payload = {
               "version": version,
-              "notes": f"Automated build {version}",
+              "notes": f"Build {version} ({commit[:7]})",
               "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
               "platforms": {
                   "darwin-aarch64": {
