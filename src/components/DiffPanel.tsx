@@ -72,7 +72,7 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, open, 
     <header>
       <strong>CHANGES</strong>
       <span>{editingFile ? `EDITING ${editingFile}` : currentDiff ? `${currentDiff.files.length} FILES` : "VIEW DIFF"}</span>
-      <button onClick={refresh} disabled={isLoading}>{isLoading ? "LOADING" : "↻"}</button>
+      <button onClick={refresh} disabled={isLoading} aria-label={isLoading ? "Loading changes" : "Refresh changes"} title={isLoading ? "Loading changes" : "Refresh changes"}>{isLoading ? "…" : "↻"}</button>
       <button onClick={onClose} aria-label="Close changes" title="Close changes">×</button>
     </header>
     <div className="diff-files">
