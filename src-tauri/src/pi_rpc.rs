@@ -54,7 +54,24 @@ fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
 
 fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
     let pi_dir = Path::new(pi_path).parent().unwrap_or_else(|| Path::new(""));
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut paths = vec![pi_dir.to_path_buf()];
+    if let Some(home) = home {
+        if let Ok(versions) = std::fs::read_dir(home.join(".nvm/versions/node")) {
+            paths.extend(
+                versions
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path().join("bin"))
+                    .filter(|path| path.is_dir()),
+            );
+        }
+        paths.extend([
+            home.join(".local/bin"),
+            home.join(".npm-global/bin"),
+            home.join(".bun/bin"),
+        ]);
+    }
+    paths.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
