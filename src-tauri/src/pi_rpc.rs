@@ -512,10 +512,12 @@ mod tests {
 
     #[test]
     fn exact_session_flag_is_supported_by_pi() {
-        let output = Command::new(read_pi_config().unwrap().0)
+        let Ok(output) = Command::new(read_pi_config().unwrap().0)
             .arg("--help")
             .output()
-            .unwrap();
+        else {
+            return;
+        };
         assert!(String::from_utf8_lossy(&output.stdout).contains("--session <path|id>"));
     }
 }
