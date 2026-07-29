@@ -33,12 +33,8 @@ fn sessions_map() -> &'static Mutex<HashMap<String, SharedSessionHandle>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn config_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json")
-}
-
 fn read_pi_config() -> Result<(String, serde_json::Value), String> {
-    let raw = std::fs::read_to_string(config_path()).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(crate::projects::config_path()).map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let pi_path = v
         .get("pi_path")
@@ -414,6 +410,19 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         .map_err(|e| format!("write to pi stdin failed: {}", e))?;
     stdin.flush().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
+    let map = sessions_map().lock().map_err(|_| "poisoned lock".to_string())?;
+    let Some(handle) = map.get(&session_id) else {
+        return Ok(false);
+    };
+    let mut child = handle.child.lock().map_err(|_| "poisoned child".to_string())?;
+    match child.as_mut() {
+        Some(child) => child.try_wait().map(|status| status.is_none()).map_err(|e| e.to_string()),
+        None => Ok(false),
+    }
 }
 
 #[tauri::command]
