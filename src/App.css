@@ -82,6 +82,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .project-dialog-actions .project-dialog-cancel { background: var(--colors-surface-elevated); color: var(--colors-on-dark); }
 .project-dialog-actions .project-dialog-cancel:hover, .project-dialog-actions .project-dialog-cancel:focus-visible { border-color: var(--accent); color: var(--accent); }
 .add-project { margin: 8px 10px; color: #bdbdc3; }.settings-button { margin-top: auto; }
+.app-version { padding: 6px 10px 0; color: var(--colors-muted-soft); font-size: 9px; letter-spacing: .08em; }
 .sidebar-error { margin: 6px 10px; color: #ff9b96; font-size: 11px; word-break: break-word; }
 .workspace { min-width: 0; flex: 1; position: relative; display: flex; flex-direction: column; background-color: #111210; background-image: linear-gradient(#1b1c18 1px, transparent 1px), linear-gradient(90deg, #1b1c18 1px, transparent 1px); background-size: 32px 32px; }
 .app-toolbar { height: 62px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; background: #111210eF; border-bottom: 1px solid #34352f; }

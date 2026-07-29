@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 const unmounted = vi.fn();
 const unreadCallbacks: Array<(chatId: string) => void> = [];
 
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve("1.2.3")) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve({})) }));
 vi.mock("@tauri-apps/plugin-notification", () => ({
   registerActionTypes: vi.fn(() => Promise.resolve()),
@@ -42,6 +43,12 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+test("shows the runtime app version at the bottom of the sidebar", async () => {
+  render(<App />);
+
+  expect(await screen.findByText("v1.2.3")).toBeInTheDocument();
+});
 
 test("keeps the active chat mounted while Kanban is open", () => {
   render(<App />);

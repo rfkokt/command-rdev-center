@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
-    "build": "tsc && vite build",
+    "check:version": "node scripts/check-version.mjs",
+    "build": "pnpm check:version && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

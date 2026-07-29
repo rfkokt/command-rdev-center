@@ -42,10 +42,9 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          VERSION="${TAG#v}"
-          test "$(node -p "require('./package.json').version")" = "$VERSION"
-          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION"
-          grep -Fqx "version = \"$VERSION\"" src-tauri/Cargo.toml
+          pnpm check:version
+          VERSION="$(node -p "require('./package.json').version")"
+          test "$TAG" = "v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Test
