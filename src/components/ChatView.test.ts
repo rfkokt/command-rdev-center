@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { formatTokens, insertSteerMessage, preserveStreamedContent, shouldSubmitCommand } from "./ChatView";
+import { formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("formatTokens", () => {
@@ -32,5 +32,23 @@ describe("insertSteerMessage", () => {
     const steer = { id: "u", role: "user", text: "Skip sonar", toolCalls: [] } as ChatMessage;
 
     expect(insertSteerMessage([assistant], steer).map((message) => message.id)).toEqual(["u", "a"]);
+  });
+});
+
+describe("shouldToastPiStderr", () => {
+  test("hides normal startup diagnostics but keeps real stderr", () => {
+    expect(shouldToastPiStderr("[crc-isolation v3] root=/repo")).toBe(false);
+    expect(shouldToastPiStderr("Ponytail loaded: full")).toBe(false);
+    expect(shouldToastPiStderr("provider authentication failed")).toBe(true);
+  });
+});
+
+describe("settleWithError", () => {
+  test("replaces an empty streaming response with a persistent error", () => {
+    const assistant = { id: "a", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage;
+
+    expect(settleWithError([assistant], "provider failed")).toEqual([
+      { ...assistant, text: "Agent error: provider failed", isStreaming: false },
+    ]);
   });
 });

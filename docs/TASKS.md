@@ -124,6 +124,7 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] `_pipeline-current.json` patched per stage for live "which step" indicator
 - [x] Dynamic stage columns per project type (MBI / KAI / Personal)
 - [x] Header avg time per stage; rows per-run duration + colour per status; newest on top
+- [ ] Fix Ship pipeline instrumentation: clicking Ship starts `git-push-workflow`, but Pipeline remains empty; ensure each run writes live state to `_pipeline-current.json`, appends completion to `_pipeline-runs.jsonl`, and surfaces logging failures
 
 ## Open questions (PRD §14)
 - [ ] Kanban with no JSON yet: create on first task add, or hide board? (proposed: create on first add)

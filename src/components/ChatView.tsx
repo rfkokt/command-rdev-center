@@ -55,6 +55,26 @@ export function insertSteerMessage(messages: ChatMessage[], message: ChatMessage
   return [...messages.slice(0, streamingIndex), message, ...messages.slice(streamingIndex)];
 }
 
+export function shouldToastPiStderr(line: string) {
+  const text = line.trim();
+  return Boolean(text) && !text.startsWith("[crc-isolation ") && !text.startsWith("Ponytail loaded:");
+}
+
+export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
+  const text = `Agent error: ${error}`;
+  let streamingIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant" && messages[i].isStreaming) {
+      streamingIndex = i;
+      break;
+    }
+  }
+  if (streamingIndex < 0) return [...messages, { id: uid(), role: "system", text, toolCalls: [] }];
+  const next = [...messages];
+  next[streamingIndex] = { ...next[streamingIndex], text: next[streamingIndex].text || text, isStreaming: false };
+  return next;
+}
+
 async function notifyAgentFinished(projectName: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
   if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" });
@@ -344,6 +364,23 @@ export default function ChatView({
   }, [worktree, onToast]);
 
   useEffect(() => { if (agentStatus === "idle") void refreshDiff(); }, [agentStatus, refreshDiff]);
+
+  useEffect(() => {
+    if (agentStatus !== "running") return;
+    const check = async () => {
+      try {
+        if (await invoke<boolean>("is_pi_session_running", { sessionId })) return;
+        setAgentStatus("stopped");
+        setIsStreaming(false);
+        onAgentRunning(chatId, false);
+        setMessages((prev) => settleWithError(prev, "Agent process stopped unexpectedly — use Restart."));
+      } catch (error) {
+        onToast(`Agent status: ${String(error)}`);
+      }
+    };
+    const id = window.setInterval(check, 3000);
+    return () => window.clearInterval(id);
+  }, [agentStatus, chatId, onAgentRunning, onToast, sessionId]);
 
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
@@ -637,22 +674,27 @@ export default function ChatView({
         return;
       }
       unlisteners.push(u1);
-      const u2 = await listen<{ session_id: string; cwd_exists: boolean }>("pi-rpc-ended", (e) => {
-        if (e.payload.session_id !== sessionId) return;
+      const stopWithError = (error: string) => {
         setAgentStatus("stopped");
         setIsStreaming(false);
+        onAgentRunning(chatId, false);
+        setMessages((prev) => settleWithError(prev, error));
+        onToast(error);
+      };
+      const u2 = await listen<{ session_id: string; cwd_exists: boolean }>("pi-rpc-ended", (e) => {
+        if (e.payload.session_id !== sessionId) return;
         setDriveDetached(!e.payload.cwd_exists);
-        onToast(e.payload.cwd_exists ? "Agent stopped — use Restart." : "Drive detached — reconnect drive, then retry.");
+        stopWithError(e.payload.cwd_exists ? "Agent process stopped unexpectedly — use Restart." : "Drive detached — reconnect drive, then retry.");
       });
       unlisteners.push(u2);
       const u3 = await listen<{ session_id: string; error: string }>("pi-rpc-error", (e) => {
         if (e.payload.session_id !== sessionId) return;
-        onToast(e.payload.error);
+        stopWithError(e.payload.error);
       });
       unlisteners.push(u3);
       const u4 = await listen<{ session_id: string; line: string }>("pi-rpc-stderr", (e) => {
         if (e.payload.session_id !== sessionId) return;
-        if (e.payload.line.trim()) onToast(`pi stderr: ${e.payload.line.slice(0, 180)}`);
+        if (shouldToastPiStderr(e.payload.line)) onToast(`pi stderr: ${e.payload.line.slice(0, 180)}`);
       });
       unlisteners.push(u4);
 

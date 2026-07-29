@@ -66,6 +66,7 @@ pub fn run() {
             worktree::remove_worktree,
             pi_rpc::spawn_pi_rpc,
             pi_rpc::send_pi_command,
+            pi_rpc::is_pi_session_running,
             pi_rpc::kill_pi_session,
             pi_rpc::list_pi_sessions,
             files::search_files
