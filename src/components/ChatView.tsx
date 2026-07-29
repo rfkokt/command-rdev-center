@@ -29,6 +29,16 @@ export function formatTokens(tokens: number) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(tokens);
 }
 
+function formatMessageTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  if (timestamp >= startOfToday) return time;
+  if (timestamp >= startOfToday - 86_400_000) return `Kemarin ${time}`;
+  return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" })} ${time}`;
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -75,9 +85,18 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   return next;
 }
 
-async function notifyAgentFinished(projectName: string) {
+export function agentNotification(kind: "finished" | "follow-up", projectName: string, chatId?: string) {
+  return {
+    ...(kind === "finished"
+      ? { title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" }
+      : { title: "Agent perlu jawaban", body: `${projectName} menunggu respons.`, sound: "Ping" }),
+    ...(chatId ? { actionTypeId: "agent-finished", extra: { chatId } } : {}),
+  };
+}
+
+async function notifyAgent(kind: "finished" | "follow-up", projectName: string, chatId: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
-  if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" });
+  if (granted) sendNotification(agentNotification(kind, projectName, chatId));
 }
 
 function tsvToMarkdown(text: string): string | null {
@@ -367,6 +386,13 @@ export default function ChatView({
 
   useEffect(() => {
     if (agentStatus !== "running") return;
+    void refreshDiff();
+    const id = window.setInterval(refreshDiff, 2000);
+    return () => window.clearInterval(id);
+  }, [agentStatus, refreshDiff]);
+
+  useEffect(() => {
+    if (agentStatus !== "running") return;
     const check = async () => {
       try {
         if (await invoke<boolean>("is_pi_session_running", { sessionId })) return;
@@ -433,7 +459,7 @@ export default function ChatView({
             return copy;
           }
         }
-        return [...copy, { id: uid(), role: "assistant", text: usedTool ? "" : content.text, thinking: content.thinking, toolCalls: [], isStreaming: false }];
+        return [...copy, { id: uid(), role: "assistant", text: usedTool ? "" : content.text, thinking: content.thinking, toolCalls: [], createdAt: Date.now(), isStreaming: false }];
       });
     }
 
@@ -448,6 +474,8 @@ export default function ChatView({
           const req = parseApprovalRequest(sessionId, raw);
           if (req) {
             setApproval(req);
+            onUnread(chatId);
+            void notifyAgent("follow-up", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
             return;
           }
           if (ev.method === "notify") {
@@ -542,6 +570,7 @@ export default function ChatView({
                     images: historyImages,
                     thinking: "",
                     toolCalls: [],
+                    createdAt: typeof mm.timestamp === "number" ? mm.timestamp : typeof mm.timestamp === "string" ? Date.parse(mm.timestamp) : undefined,
                     isStreaming: false,
                   } as ChatMessage;
                 })
@@ -569,7 +598,7 @@ export default function ChatView({
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             if (last?.role === "assistant" && last.isStreaming) return prev;
-            const next = [...prev, { id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], isStreaming: true } as ChatMessage];
+            const next = [...prev, { id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], createdAt: Date.now(), isStreaming: true } as ChatMessage];
             return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
           });
           return;
@@ -591,7 +620,7 @@ export default function ChatView({
           onUnread(chatId);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
-          void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
+          void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;
@@ -778,7 +807,7 @@ export default function ChatView({
     if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     setMessages((prev) => {
-      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [] } as ChatMessage];
+      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage];
       return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
     });
     setInput("");
@@ -1019,7 +1048,7 @@ export default function ChatView({
       if (!text) return;
       const type = mode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
-        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [] } as ChatMessage;
+        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
         const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
@@ -1080,6 +1109,7 @@ export default function ChatView({
         {!isGit && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
+        {approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
         {graphStatus && <button
           className="category-tag graph-status"
           disabled={graphBusy}
@@ -1207,8 +1237,19 @@ export default function ChatView({
             {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
             {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)} aria-label={`Preview attachment ${index + 1}`}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {m.createdAt && <time className="chat-message-time" dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
+            )}
+            {m.role === "assistant" && m.isStreaming && worktreeDiff && worktreeDiff.files.length > 0 && (
+              <div className="chat-changes">
+                <strong>FILES CHANGED</strong>
+                {worktreeDiff.files.map((file) => (
+                  <button key={file.path} onClick={() => { setEditingFile(file.path); setRightSidebarOpen(true); }}>
+                    <span>{file.status}</span><b>{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
+                  </button>
+                ))}
+              </div>
             )}
             {m.toolCalls.length > 0 && (
               <details className="tool-stack">
@@ -1384,7 +1425,7 @@ export default function ChatView({
         onToast={onToast}
         onHandoff={() => {
           const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Follow its required pipeline logging and report any logging failure.";
-          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
+          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
           sendRaw({ type: "prompt", message });
         }}
       />}

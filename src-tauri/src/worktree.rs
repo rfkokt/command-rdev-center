@@ -62,7 +62,38 @@ pub struct WorktreeInfo {
 }
 
 fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
-    crate::projects::project_base_branch(repo_path)
+    let branch = crate::projects::project_base_branch(repo_path)?;
+    let repo = repo_path.to_string_lossy().to_string();
+    let upstream = Command::new("git")
+        .args([
+            "-C",
+            &repo,
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            &format!("{branch}@{{upstream}}"),
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !upstream.status.success() {
+        return Ok(branch);
+    }
+
+    let upstream = String::from_utf8_lossy(&upstream.stdout).trim().to_string();
+    let (remote, remote_branch) = upstream
+        .split_once('/')
+        .ok_or_else(|| format!("invalid upstream ref: {upstream}"))?;
+    let fetch = Command::new("git")
+        .args(["-C", &repo, "fetch", "--prune", remote, remote_branch])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !fetch.status.success() {
+        return Err(format!(
+            "failed to update {upstream}: {}",
+            String::from_utf8_lossy(&fetch.stderr).trim()
+        ));
+    }
+    Ok(upstream)
 }
 
 pub fn create_worktree(
