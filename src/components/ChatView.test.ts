@@ -1,6 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
+import { agentNotification, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
+
+describe("agentNotification", () => {
+  test("uses a distinct sound for follow-up requests", () => {
+    expect(agentNotification("finished", "Command").sound).toBe("Glass");
+    expect(agentNotification("follow-up", "Command")).toEqual({
+      title: "Agent perlu jawaban",
+      body: "Command menunggu respons.",
+      sound: "Ping",
+    });
+  });
+});
 
 describe("formatTokens", () => {
   test("formats footer token counts compactly", () => {

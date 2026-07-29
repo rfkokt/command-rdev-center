@@ -75,9 +75,15 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   return next;
 }
 
-async function notifyAgentFinished(projectName: string) {
+export function agentNotification(kind: "finished" | "follow-up", projectName: string) {
+  return kind === "finished"
+    ? { title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" }
+    : { title: "Agent perlu jawaban", body: `${projectName} menunggu respons.`, sound: "Ping" };
+}
+
+async function notifyAgent(kind: "finished" | "follow-up", projectName: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
-  if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" });
+  if (granted) sendNotification(agentNotification(kind, projectName));
 }
 
 function tsvToMarkdown(text: string): string | null {
@@ -448,6 +454,8 @@ export default function ChatView({
           const req = parseApprovalRequest(sessionId, raw);
           if (req) {
             setApproval(req);
+            onUnread(chatId);
+            void notifyAgent("follow-up", projectName).catch((error) => onToast(`Notification: ${String(error)}`));
             return;
           }
           if (ev.method === "notify") {
@@ -591,7 +599,7 @@ export default function ChatView({
           onUnread(chatId);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
-          void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
+          void notifyAgent("finished", projectName).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;
@@ -1080,6 +1088,7 @@ export default function ChatView({
         {!isGit && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
+        {approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
         {graphStatus && <button
           className="category-tag graph-status"
           disabled={graphBusy}
