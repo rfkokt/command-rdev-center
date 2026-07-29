@@ -5,6 +5,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.pi-subagents/
 .vscode/*
 !.vscode/extensions.json
 .idea

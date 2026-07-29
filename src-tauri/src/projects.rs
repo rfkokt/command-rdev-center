@@ -8,6 +8,8 @@ use tauri::Manager;
 
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 const DEFAULT_CONFIG: &str = include_str!("../crc.config.json");
+const KANBAN_EXTENSION: &str = include_str!("../extensions/kanban-task.ts");
+const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -84,6 +86,12 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     if !path.exists() {
         std::fs::write(&path, DEFAULT_CONFIG).map_err(|e| e.to_string())?;
     }
+    let extensions = dir.join("extensions");
+    std::fs::create_dir_all(&extensions).map_err(|e| e.to_string())?;
+    std::fs::write(extensions.join("kanban-task.ts"), KANBAN_EXTENSION)
+        .map_err(|e| e.to_string())?;
+    std::fs::write(extensions.join("graphify-context.ts"), GRAPHIFY_EXTENSION)
+        .map_err(|e| e.to_string())?;
     CONFIG_PATH
         .set(path)
         .map_err(|_| "config already initialized".to_string())?;
@@ -95,6 +103,10 @@ pub fn config_path() -> PathBuf {
         .get()
         .cloned()
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"))
+}
+
+pub fn extensions_path() -> PathBuf {
+    config_path().parent().unwrap_or_else(|| Path::new(".")).join("extensions")
 }
 
 fn read_config() -> Result<StoredConfig, String> {
@@ -380,5 +392,7 @@ mod tests {
     #[test]
     fn embedded_default_config_is_valid() {
         serde_json::from_str::<StoredConfig>(DEFAULT_CONFIG).unwrap();
+        assert!(KANBAN_EXTENSION.contains("track_kanban_task"));
+        assert!(GRAPHIFY_EXTENSION.contains("before_agent_start"));
     }
 }

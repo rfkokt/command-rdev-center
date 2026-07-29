@@ -253,8 +253,7 @@ pub fn get_worktree_status(worktree_path_str: &str) -> Result<String, String> {
 
 fn read_config_project_root() -> Result<PathBuf, String> {
     // legacy: still reads project_root for worktree base dir
-    let cfg_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json");
-    let raw = std::fs::read_to_string(&cfg_path).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(crate::projects::config_path()).map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if let Some(root) = v.get("project_root").and_then(|r| r.as_str()) {
         if !root.trim().is_empty() {

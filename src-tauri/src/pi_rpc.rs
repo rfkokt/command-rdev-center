@@ -233,7 +233,7 @@ pub fn spawn_pi_rpc(
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
     args.push("--extension".into());
-    let extensions = Path::new(env!("CARGO_MANIFEST_DIR")).join("extensions");
+    let extensions = crate::projects::extensions_path();
     args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
     args.push("--extension".into());
     args.push(
