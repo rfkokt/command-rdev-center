@@ -12,6 +12,7 @@
   --colors-link: #d7ff54;
   --accent: #d7ff54;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-body: "Cormorant Garamond", Georgia, serif;
   --spacing-xxs: 4px; --spacing-xs: 8px; --spacing-sm: 12px; --spacing-md: 16px;
   --spacing-lg: 24px; --spacing-xl: 40px; --spacing-section: clamp(24px, 6vw, 72px);
 }
@@ -138,8 +139,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .approval-dialog { width: min(680px, 100%); border: 1px solid var(--colors-hairline-strong); border-top: 3px solid var(--accent); background: #151612; box-shadow: 16px 16px 0 #080906; }
 .approval-dialog header { display: grid; gap: 6px; padding: 20px 22px; border-bottom: 1px solid var(--colors-hairline); }
 .approval-dialog header small, .approval-input > span { color: var(--accent); font-size: 9px; letter-spacing: .18em; }
-.approval-dialog h2 { margin: 0; color: var(--colors-on-dark); font-size: 18px; line-height: 1.35; letter-spacing: .06em; }
-.approval-message { max-height: 32vh; overflow: auto; margin: 0; padding: 18px 22px; border-bottom: 1px solid var(--colors-hairline); color: var(--colors-body); line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-dialog h2 { margin: 0; color: var(--colors-on-dark); font: 600 18px/1.35 var(--font-body); letter-spacing: 0; }
+.approval-message { max-height: 32vh; overflow: auto; margin: 0; padding: 18px 22px; border-bottom: 1px solid var(--colors-hairline); color: var(--colors-body); font: 16px/1.55 var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px 0; background: var(--colors-hairline); }
 .approval-options button { min-height: 54px; display: flex; align-items: center; gap: 12px; padding: 11px 14px; background: var(--colors-surface-card); color: var(--colors-body); text-align: left; line-height: 1.4; }
 .approval-options button span { flex: none; color: var(--accent); font-size: 9px; }

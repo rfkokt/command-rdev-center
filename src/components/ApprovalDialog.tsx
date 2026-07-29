@@ -43,7 +43,13 @@ export default function ApprovalDialog({
           <label className="approval-input">
             <span>YOUR RESPONSE</span>
             {req.method === "input" ? (
-              <input value={inputVal} placeholder={req.placeholder} onChange={(e) => setInputVal(e.target.value)} autoFocus />
+              <input
+                value={inputVal}
+                placeholder={req.placeholder}
+                onChange={(e) => setInputVal(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && respond({ value: inputVal })}
+                autoFocus
+              />
             ) : (
               <textarea value={inputVal} placeholder={req.placeholder} onChange={(e) => setInputVal(e.target.value)} rows={8} autoFocus />
             )}
