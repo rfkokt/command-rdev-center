@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
+import { onAction, registerActionTypes } from "@tauri-apps/plugin-notification";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
 import SettingsPanel from "./components/SettingsPanel";
@@ -37,6 +38,15 @@ export default function App() {
     const tabs = savedTabs();
     return tabs[tabs.length - 1]?.id ?? null;
   });
+
+  useEffect(() => {
+    registerActionTypes([{ id: "agent-finished", actions: [{ id: "open", title: "Buka", foreground: true }] }]);
+    const unlisten = onAction((notification) => {
+      const chatId = notification.extra?.chatId as string | undefined;
+      if (chatId) setActiveTabId(chatId);
+    });
+    return () => { void unlisten.then((listener) => listener.unregister()); };
+  }, []);
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);

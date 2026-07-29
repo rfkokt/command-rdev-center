@@ -50,6 +50,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .project-sessions { display: grid; grid-template-rows: 1fr; opacity: 1; transition: grid-template-rows 220ms cubic-bezier(.22, 1, .36, 1), opacity 150ms ease-out; }.project-sessions > div { min-height: 0; overflow: hidden; }.project-sessions[data-collapsed="true"] { grid-template-rows: 0fr; opacity: 0; }
 .conversation-row { height: 31px; padding: 0 10px 0 43px; color: #9b9c93; justify-content: space-between; font-size: 11px; }.conversation-row:hover, .conversation-row.active { background: #252620; color: var(--accent); }
 .conversation-row i { width: 5px; height: 5px; background: var(--accent); flex: none; }
+.conversation-row .agent-working-mark { display: flex; gap: 3px; flex: none; overflow: visible; }
+.agent-working-mark i { border-radius: 50%; animation: agent-working 900ms ease-in-out infinite; }
+.agent-working-mark i:nth-child(2) { animation-delay: 150ms; }
+.agent-working-mark i:nth-child(3) { animation-delay: 300ms; }
+@keyframes agent-working { 0%, 60%, 100% { opacity: .25; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
 .project-empty { padding: 20px 10px; color: var(--colors-muted); }
 .project-branch-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: #080906dc; backdrop-filter: blur(4px); }
 .project-branch-picker { width: min(440px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--colors-hairline-strong); background: var(--colors-surface-card); box-shadow: 12px 12px 0 #080906; display: grid; gap: 12px; }

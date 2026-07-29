@@ -75,9 +75,9 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   return next;
 }
 
-async function notifyAgentFinished(projectName: string) {
+async function notifyAgentFinished(projectName: string, chatId: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
-  if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" });
+  if (granted) sendNotification({ title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass", actionTypeId: "agent-finished", extra: { chatId } });
 }
 
 function tsvToMarkdown(text: string): string | null {
@@ -591,7 +591,7 @@ export default function ChatView({
           onUnread(chatId);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
-          void notifyAgentFinished(projectName).catch((error) => onToast(`Notification: ${String(error)}`));
+          void notifyAgentFinished(projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;
