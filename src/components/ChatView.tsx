@@ -386,6 +386,13 @@ export default function ChatView({
 
   useEffect(() => {
     if (agentStatus !== "running") return;
+    void refreshDiff();
+    const id = window.setInterval(refreshDiff, 2000);
+    return () => window.clearInterval(id);
+  }, [agentStatus, refreshDiff]);
+
+  useEffect(() => {
+    if (agentStatus !== "running") return;
     const check = async () => {
       try {
         if (await invoke<boolean>("is_pi_session_running", { sessionId })) return;
@@ -1233,6 +1240,16 @@ export default function ChatView({
             {m.createdAt && <time className="chat-message-time" dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
+            )}
+            {m.role === "assistant" && m.isStreaming && worktreeDiff && worktreeDiff.files.length > 0 && (
+              <div className="chat-changes">
+                <strong>FILES CHANGED</strong>
+                {worktreeDiff.files.map((file) => (
+                  <button key={file.path} onClick={() => { setEditingFile(file.path); setRightSidebarOpen(true); }}>
+                    <span>{file.status}</span><b>{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
+                  </button>
+                ))}
+              </div>
             )}
             {m.toolCalls.length > 0 && (
               <details className="tool-stack">
