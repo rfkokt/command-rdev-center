@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
+import { agentNotification, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -27,6 +27,14 @@ describe("preserveStreamedContent", () => {
 
   test("does not duplicate a completion already present in the stream", () => {
     expect(preserveStreamedContent("First answer\n\nSecond answer", "Second answer")).toBe("First answer\n\nSecond answer");
+  });
+});
+
+describe("shouldShowChanges", () => {
+  test("keeps changes attached to the latest assistant message after streaming ends", () => {
+    expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 1)).toBe(true);
+    expect(shouldShowChanges({ id: "older", role: "assistant" }, "latest", 1)).toBe(false);
+    expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 0)).toBe(false);
   });
 });
 

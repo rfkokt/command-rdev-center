@@ -43,6 +43,10 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+export function shouldShowChanges(message: Pick<ChatMessage, "id" | "role">, lastAssistantId: string | undefined, fileCount: number) {
+  return message.role === "assistant" && message.id === lastAssistantId && fileCount > 0;
+}
+
 export function preserveStreamedContent(streamed: string, completed: string) {
   if (!completed || streamed.endsWith(completed)) return streamed;
   if (!streamed) return completed;
@@ -1101,6 +1105,8 @@ export default function ChatView({
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [agentStatus, sendRaw, models, currentModel, isActive]);
 
+  const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
       <div style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap" }}>
@@ -1241,7 +1247,7 @@ export default function ChatView({
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
             )}
-            {m.role === "assistant" && m.isStreaming && worktreeDiff && worktreeDiff.files.length > 0 && (
+            {worktreeDiff && shouldShowChanges(m, lastAssistantId, worktreeDiff.files.length) && (
               <div className="chat-changes">
                 <strong>FILES CHANGED</strong>
                 {worktreeDiff.files.map((file) => (
