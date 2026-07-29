@@ -29,6 +29,16 @@ export function formatTokens(tokens: number) {
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(tokens);
 }
 
+function formatMessageTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  if (timestamp >= startOfToday) return time;
+  if (timestamp >= startOfToday - 86_400_000) return `Kemarin ${time}`;
+  return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" })} ${time}`;
+}
+
 function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
@@ -442,7 +452,7 @@ export default function ChatView({
             return copy;
           }
         }
-        return [...copy, { id: uid(), role: "assistant", text: usedTool ? "" : content.text, thinking: content.thinking, toolCalls: [], isStreaming: false }];
+        return [...copy, { id: uid(), role: "assistant", text: usedTool ? "" : content.text, thinking: content.thinking, toolCalls: [], createdAt: Date.now(), isStreaming: false }];
       });
     }
 
@@ -553,6 +563,7 @@ export default function ChatView({
                     images: historyImages,
                     thinking: "",
                     toolCalls: [],
+                    createdAt: typeof mm.timestamp === "number" ? mm.timestamp : typeof mm.timestamp === "string" ? Date.parse(mm.timestamp) : undefined,
                     isStreaming: false,
                   } as ChatMessage;
                 })
@@ -580,7 +591,7 @@ export default function ChatView({
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             if (last?.role === "assistant" && last.isStreaming) return prev;
-            const next = [...prev, { id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], isStreaming: true } as ChatMessage];
+            const next = [...prev, { id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], createdAt: Date.now(), isStreaming: true } as ChatMessage];
             return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
           });
           return;
@@ -789,7 +800,7 @@ export default function ChatView({
     if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     setMessages((prev) => {
-      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [] } as ChatMessage];
+      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage];
       return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
     });
     setInput("");
@@ -1030,7 +1041,7 @@ export default function ChatView({
       if (!text) return;
       const type = mode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
-        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [] } as ChatMessage;
+        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
         const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
@@ -1219,6 +1230,7 @@ export default function ChatView({
             {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
             {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)} aria-label={`Preview attachment ${index + 1}`}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {m.createdAt && <time className="chat-message-time" dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
             )}
@@ -1396,7 +1408,7 @@ export default function ChatView({
         onToast={onToast}
         onHandoff={() => {
           const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Follow its required pipeline logging and report any logging failure.";
-          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
+          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
           sendRaw({ type: "prompt", message });
         }}
       />}

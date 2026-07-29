@@ -18,6 +18,7 @@ export type ChatMessage = {
   images?: ChatImage[];
   thinking?: string;
   toolCalls: ToolCall[];
+  createdAt?: number;
   // streaming flags
   isStreaming?: boolean;
 };
