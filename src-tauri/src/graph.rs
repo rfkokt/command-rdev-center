@@ -3,7 +3,9 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
+#[cfg(test)]
+use std::time::SystemTime;
 
 const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
@@ -211,16 +213,31 @@ fn ensure_project_files(project: &Path) -> Result<(), String> {
     ensure_agents_note(&project.join("AGENTS.md"))
 }
 
-fn graphify_path() -> String {
-    let cfg = Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json");
-    fs::read_to_string(cfg)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|value| value.get("pi_path")?.as_str().map(String::from))
-        .and_then(|pi| Path::new(&pi).parent().map(|p| p.join("graphify")))
-        .filter(|path| path.exists())
-        .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| "graphify".into())
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).is_ok_and(|metadata| {
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    })
+}
+
+fn resolve_graphify(configured: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
+    configured
+        .into_iter()
+        .chain(home.map(|home| home.join(".local/bin/graphify")))
+        .find(|path| is_executable(path))
+        .unwrap_or_else(|| PathBuf::from("graphify"))
+}
+
+fn graphify_path() -> PathBuf {
+    let configured = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"),
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+    .and_then(|value| value.get("pi_path")?.as_str().map(PathBuf::from))
+    .and_then(|pi| pi.parent().map(|parent| parent.join("graphify")));
+    resolve_graphify(configured, std::env::var_os("HOME").map(PathBuf::from))
 }
 
 fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
@@ -396,6 +413,43 @@ pub fn validate_report_path(path: &Path) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_graphify_for_gui_apps() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "crc-graphify-path-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let configured = root.join("configured/graphify");
+        let installed = root.join("home/.local/bin/graphify");
+        fs::create_dir_all(configured.parent().unwrap()).unwrap();
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::write(&configured, "").unwrap();
+        fs::write(&installed, "").unwrap();
+        fs::set_permissions(&configured, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&installed, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            resolve_graphify(Some(configured.clone()), Some(root.join("home"))),
+            configured
+        );
+        fs::set_permissions(&configured, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            resolve_graphify(Some(configured), Some(root.join("home"))),
+            installed
+        );
+        fs::remove_file(&installed).unwrap();
+        assert_eq!(
+            resolve_graphify(None, Some(root.join("home"))),
+            PathBuf::from("graphify")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn classify_code_and_docs() {
