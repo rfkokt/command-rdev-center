@@ -48,7 +48,7 @@ pub fn run() {
             graph::build_graph,
             graph::enable_global_graphignore,
             kanban::list_kanban_tasks,
-            kanban::save_kanban_tasks,
+            kanban::update_kanban_task_status,
             kanban::sync_chat_task,
             pipeline::get_pipeline_data,
             diff::get_worktree_diff,

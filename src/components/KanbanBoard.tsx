@@ -19,13 +19,15 @@ export default function KanbanBoard() {
 
   async function moveTask(project: string, taskIndex: number, status: string) {
     const previous = projects;
+    const taskNo = projects.find((entry) => entry.project === project)?.tasks[taskIndex]?.no;
+    if (taskNo == null) return setError("Task has no stable number");
     const next = projects.map((entry) => entry.project === project
       ? { ...entry, tasks: entry.tasks.map((task, index) => index === taskIndex ? { ...task, status } : task) }
       : entry);
     setProjects(next);
     setError(null);
     try {
-      await invoke("save_kanban_tasks", { project, tasks: next.find((entry) => entry.project === project)?.tasks ?? [] });
+      await invoke("update_kanban_task_status", { project, taskNo, status });
     } catch (error) {
       setProjects(previous);
       setError(String(error));

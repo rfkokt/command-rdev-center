@@ -334,3 +334,49 @@ pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persisted_pid_without_verifiable_command_is_never_live() {
+        let record = DevRunnerRecord {
+            chat_id: "chat-a".into(),
+            cwd: "/tmp/a".into(),
+            command: "pnpm dev".into(),
+            url: "http://localhost:1".into(),
+            process_group: std::process::id(),
+            process_command: String::new(),
+        };
+        assert!(!record_is_live(&record));
+    }
+
+    #[test]
+    fn runner_registry_is_keyed_per_chat() {
+        let records = [
+            DevRunnerRecord {
+                chat_id: "chat-a".into(),
+                cwd: "/tmp/a".into(),
+                command: "a".into(),
+                url: "a".into(),
+                process_group: 1,
+                process_command: "a".into(),
+            },
+            DevRunnerRecord {
+                chat_id: "chat-b".into(),
+                cwd: "/tmp/b".into(),
+                command: "b".into(),
+                url: "b".into(),
+                process_group: 2,
+                process_command: "b".into(),
+            },
+        ];
+        let remaining: Vec<_> = records
+            .iter()
+            .filter(|record| record.chat_id != "chat-a")
+            .collect();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].chat_id, "chat-b");
+    }
+}

@@ -4,7 +4,13 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
+
+fn task_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Serialize)]
 pub struct KanbanProject {
@@ -71,6 +77,9 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
         return Err("invalid task status".into());
     }
 
+    let _guard = task_lock()
+        .lock()
+        .map_err(|_| "task storage lock poisoned")?;
     let dir = task_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.json", input.project));
@@ -106,16 +115,38 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
     Ok(Some(input.status))
 }
 
-#[tauri::command]
-pub fn save_kanban_tasks(project: String, tasks: Vec<Value>) -> Result<(), String> {
-    if !valid_project(&project) {
-        return Err("invalid project name".into());
+fn update_task_status_at(path: &Path, task_no: &Value, status: &str) -> Result<(), String> {
+    if !["Backlog", "In Progress", "Review", "Done"].contains(&status) {
+        return Err("invalid task status".into());
     }
+    let mut tasks: Vec<Value> =
+        serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let task = tasks
+        .iter_mut()
+        .find(|task| task.get("no") == Some(task_no))
+        .ok_or("task no longer exists")?;
+    task["status"] = json!(status);
+    write_tasks(path, &tasks)
+}
+
+#[tauri::command]
+pub fn update_kanban_task_status(
+    project: String,
+    task_no: Value,
+    status: String,
+) -> Result<(), String> {
+    if !valid_project(&project) || task_no.is_null() {
+        return Err("invalid task identity".into());
+    }
+    let _guard = task_lock()
+        .lock()
+        .map_err(|_| "task storage lock poisoned")?;
     let path = task_dir()?.join(format!("{project}.json"));
     if !path.is_file() {
         return Err("task file does not exist".into());
     }
-    write_tasks(&path, &tasks)
+    update_task_status_at(&path, &task_no, &status)
 }
 
 #[tauri::command]
@@ -148,6 +179,28 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_update_preserves_concurrently_added_tasks() {
+        let dir = std::env::temp_dir().join(format!("crc-kanban-update-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("demo.json");
+        std::fs::write(
+            &path,
+            r#"[{"no":1,"status":"Backlog"},{"no":2,"status":"In Progress"}]"#,
+        )
+        .unwrap();
+
+        update_task_status_at(&path, &json!(1), "Done").unwrap();
+
+        let tasks: Vec<Value> =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0]["status"], "Done");
+        assert_eq!(tasks[1]["no"], 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn atomic_write_keeps_backup() {

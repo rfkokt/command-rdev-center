@@ -28,8 +28,9 @@ test("groups statuses case-insensitively, filters, and writes canonical status",
   expect(screen.queryByText("Review beta")).not.toBeInTheDocument();
 
   fireEvent.change(screen.getByRole("combobox", { name: "Status for task 1" }), { target: { value: "Done" } });
-  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("save_kanban_tasks", {
+  await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("update_kanban_task_status", {
     project: "alpha",
-    tasks: [expect.objectContaining({ no: 1, status: "Done" })],
+    taskNo: 1,
+    status: "Done",
   }));
 });
