@@ -1,7 +1,45 @@
-# Tauri + React + Typescript
+# Command RDev Center
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A local-first macOS desktop app for running the [`pi`](https://github.com/badlogic/pi-mono) coding agent across local projects.
 
-## Recommended IDE Setup
+Command RDev Center combines project discovery, isolated task worktrees, native agent chat, git diff review, Graphify context, Kanban tracking, and push-pipeline visibility in one Tauri app.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## Stack
+
+- Tauri 2
+- React 19 + TypeScript
+- Vite 7
+- Rust
+
+## Requirements
+
+- macOS on Apple Silicon
+- Node.js 22+
+- Rust toolchain
+- `pi` CLI
+- `git`
+- `graphify` (optional, for knowledge graphs)
+
+## Development
+
+```bash
+npm install
+npm run tauri dev
+```
+
+## Checks
+
+```bash
+npm test
+npm run build
+```
+
+## Documentation
+
+- [Product requirements](docs/PRD.md)
+- [Project context and glossary](CONTEXT.md)
+- [Architecture decisions](docs/adr/)
+
+## Status
+
+Under active development for a single-user, local-first workflow.
