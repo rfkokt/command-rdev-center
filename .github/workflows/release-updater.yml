@@ -2,15 +2,14 @@ name: Release updater
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:
+    tags: ["v*"]
 
 concurrency:
   group: release-updater
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   release:
@@ -38,22 +37,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Set release version
+      - name: Verify release version
         id: version
         env:
-          VERSION: 0.1.${{ github.run_number }}
+          TAG: ${{ github.ref_name }}
         run: |
-          python3 - <<'PY'
-          import json, os, pathlib, re
-          version = os.environ["VERSION"]
-          for filename in ("package.json", "src-tauri/tauri.conf.json"):
-              path = pathlib.Path(filename)
-              data = json.loads(path.read_text())
-              data["version"] = version
-              path.write_text(json.dumps(data, indent=2) + "\n")
-          cargo = pathlib.Path("src-tauri/Cargo.toml")
-          cargo.write_text(re.sub(r'(?m)^version = "[^"]+"', f'version = "{version}"', cargo.read_text(), count=1))
-          PY
+          VERSION="${TAG#v}"
+          test "$(node -p "require('./package.json').version")" = "$VERSION"
+          test "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION"
+          grep -Fqx "version = \"$VERSION\"" src-tauri/Cargo.toml
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Test
@@ -111,3 +103,17 @@ jobs:
           scp "${ssh_opts[@]}" "$RUNNER_TEMP/latest.json" "$VPS_USER@$VPS_HOST:/var/www/updates/command-rdev-center/latest.json.tmp"
           ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" 'mv /var/www/updates/command-rdev-center/latest.json.tmp /var/www/updates/command-rdev-center/latest.json'
           curl --fail --retry 5 --retry-delay 2 "https://updates.rdev.web.id/command-rdev-center/latest.json"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ARTIFACT: ${{ steps.files.outputs.artifact }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "$ARTIFACT" \
+            "$ARTIFACT.sig" \
+            "$RUNNER_TEMP/latest.json" \
+            --verify-tag \
+            --title "Command RDEV Center v$VERSION" \
+            --generate-notes
