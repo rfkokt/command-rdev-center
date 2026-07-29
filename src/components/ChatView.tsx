@@ -806,6 +806,15 @@ export default function ChatView({
     };
   }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
+  useEffect(() => {
+    if (!devRunner || !worktree) return;
+    const id = window.setInterval(async () => {
+      const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: worktree.worktree_path }).catch(() => null);
+      setDevRunner(runner);
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, [chatId, devRunner, worktree]);
+
   async function handleSend() {
     const text = input.trim();
     if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
