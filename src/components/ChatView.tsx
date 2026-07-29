@@ -171,6 +171,7 @@ export default function ChatView({
   const [images, setImages] = useState<ChatImage[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [cwd, setCwd] = useState(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
@@ -689,6 +690,7 @@ export default function ChatView({
           if (!mounted) return;
           setWorktree(wt);
           setCwd(wt.worktree_path);
+          setDevRunner(await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: wt.worktree_path }));
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
             sessionId,
@@ -801,6 +803,8 @@ export default function ChatView({
   }
 
   async function handleRestart(retry = false) {
+    if (isRestarting) return;
+    setIsRestarting(true);
     setAgentStatus("idle");
     setDriveDetached(false);
     try {
@@ -814,14 +818,21 @@ export default function ChatView({
         thinking: thinkingRef.current || undefined,
         graphReportPath: graphReportRef.current,
       });
-      onToast(retry ? "Agent retrying" : "Agent restarted");
+      onToast(retry ? "Agent retrying" : "Pi agent reloaded");
       setTimeout(() => {
+        sendRaw({ type: "get_available_models" });
+        sendRaw({ type: "get_commands" });
         sendRaw({ type: "get_state" });
+        sendRaw({ type: "get_messages" });
+        sendRaw({ type: "get_session_stats" });
         if (retry) sendRaw({ type: "prompt", message: "Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work." });
       }, 300);
     } catch (e) {
+      setAgentStatus("stopped");
       onToast(String(e));
       if (String(e).includes("detached")) setDriveDetached(true);
+    } finally {
+      setIsRestarting(false);
     }
   }
 
@@ -1038,7 +1049,7 @@ export default function ChatView({
           {worktree && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
           {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ OPEN APP</button></>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
-          {agentStatus === "stopped" && <button onClick={() => handleRestart()} className="caption-uppercase">RESTART</button>}
+          {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
         </div>
       </div>
 

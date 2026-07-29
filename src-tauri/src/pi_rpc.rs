@@ -65,6 +65,44 @@ fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
     std::env::join_paths(paths).unwrap_or_else(|_| pi_dir.as_os_str().to_owned())
 }
 
+fn installed_pi(configured: &str) -> Option<PathBuf> {
+    let configured = PathBuf::from(configured);
+    if configured.is_file() {
+        return Some(configured);
+    }
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".local/bin/pi"))
+        .filter(|path| path.is_file())
+}
+
+fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
+    if let Some(path) = installed_pi(configured) {
+        return Ok(path);
+    }
+
+    let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
+    let download = Command::new("curl")
+        .args(["-fsSL", "https://pi.dev/install.sh", "-o"])
+        .arg(&installer)
+        .status()
+        .map_err(|error| format!("failed to download Pi installer: {error}"))?;
+    if !download.success() {
+        return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
+    }
+
+    let install = Command::new("sh").arg(&installer).status();
+    let _ = std::fs::remove_file(&installer);
+    let install = install.map_err(|error| format!("failed to run Pi installer: {error}"))?;
+    if !install.success() {
+        return Err(format!("Pi installer failed with {install}"));
+    }
+
+    installed_pi(configured).ok_or_else(|| {
+        format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi")
+    })
+}
+
 fn session_args(no_session: bool, session_file: Option<String>) -> Vec<String> {
     if no_session {
         vec!["--no-session".into()]
@@ -151,7 +189,7 @@ pub fn spawn_pi_rpc(
     session_file: Option<String>,
     graph_report_path: Option<String>,
 ) -> Result<String, String> {
-    let (pi_path, _cfg) = read_pi_config()?;
+    let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
         return Err("session_id required".to_string());
     }
@@ -165,9 +203,7 @@ pub fn spawn_pi_rpc(
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
     }
-    if !Path::new(&pi_path).exists() {
-        return Err(format!("pi binary not found at {}", pi_path));
-    }
+    let pi_path = ensure_pi_installed(&configured_pi_path)?;
 
     // If session already exists, kill old one first (replace)
     if let Ok(map) = sessions_map().lock() {
@@ -244,7 +280,7 @@ pub fn spawn_pi_rpc(
         .env("CRC_PROJECT_CWD", &cwd)
         .env("CRC_GRAPH_JSON", &graph_json_path)
         // macOS GUI apps get a minimal PATH; pi uses `#!/usr/bin/env node`.
-        .env("PATH", path_for_pi(&pi_path))
+        .env("PATH", path_for_pi(&pi_path.to_string_lossy()))
         .env("GRAPHIFY_GRAPH", &graph_json_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -456,6 +492,12 @@ mod tests {
             std::env::split_paths(&path).next().unwrap(),
             Path::new("/opt/pi/bin")
         );
+    }
+
+    #[test]
+    fn installed_pi_accepts_existing_configured_binary() {
+        let path = std::env::current_exe().unwrap();
+        assert_eq!(installed_pi(path.to_str().unwrap()), Some(path));
     }
 
     #[test]

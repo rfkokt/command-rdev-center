@@ -32,12 +32,15 @@ fn get_config() -> Result<Config, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| projects::init_config(app.handle()).map_err(Into::into))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
             dev_runner::detect_dev_command,
+            dev_runner::get_dev_server,
             dev_runner::start_dev_server,
             dev_runner::stop_dev_server,
             graph::get_graph_status,

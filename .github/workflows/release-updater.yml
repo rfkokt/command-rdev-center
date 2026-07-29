@@ -1,0 +1,113 @@
+name: Release updater
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-updater
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      TARGET: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set release version
+        id: version
+        env:
+          VERSION: 0.1.${{ github.run_number }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          version = os.environ["VERSION"]
+          for filename in ("package.json", "src-tauri/tauri.conf.json"):
+              path = pathlib.Path(filename)
+              data = json.loads(path.read_text())
+              data["version"] = version
+              path.write_text(json.dumps(data, indent=2) + "\n")
+          cargo = pathlib.Path("src-tauri/Cargo.toml")
+          cargo.write_text(re.sub(r'(?m)^version = "[^"]+"', f'version = "{version}"', cargo.read_text(), count=1))
+          PY
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: pnpm test && cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build signed updater
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: pnpm tauri build --target "$TARGET" --bundles app
+
+      - name: Prepare release files
+        id: files
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          artifact=$(find src-tauri/target/$TARGET/release/bundle/macos -name '*.app.tar.gz' -type f -print -quit)
+          test -n "$artifact"
+          test -f "$artifact.sig"
+          filename="command-rdev-center_${VERSION}_aarch64.app.tar.gz"
+          cp "$artifact" "$RUNNER_TEMP/$filename"
+          cp "$artifact.sig" "$RUNNER_TEMP/$filename.sig"
+          python3 - "$RUNNER_TEMP/$filename.sig" "$RUNNER_TEMP/latest.json" "$VERSION" "$filename" <<'PY'
+          import datetime, json, pathlib, sys
+          signature_file, output, version, filename = sys.argv[1:]
+          payload = {
+              "version": version,
+              "notes": f"Automated build {version}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": pathlib.Path(signature_file).read_text().strip(),
+                      "url": f"https://updates.rdev.web.id/command-rdev-center/{filename}",
+                  }
+              },
+          }
+          pathlib.Path(output).write_text(json.dumps(payload, indent=2) + "\n")
+          PY
+          echo "artifact=$RUNNER_TEMP/$filename" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to updater VPS
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          ARTIFACT: ${{ steps.files.outputs.artifact }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/updater
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/updater ~/.ssh/known_hosts
+          ssh_opts=(-i ~/.ssh/updater -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 -o ServerAliveCountMax=3)
+          scp "${ssh_opts[@]}" "$ARTIFACT" "$VPS_USER@$VPS_HOST:/var/www/updates/command-rdev-center/"
+          scp "${ssh_opts[@]}" "$ARTIFACT.sig" "$VPS_USER@$VPS_HOST:/var/www/updates/command-rdev-center/"
+          scp "${ssh_opts[@]}" "$RUNNER_TEMP/latest.json" "$VPS_USER@$VPS_HOST:/var/www/updates/command-rdev-center/latest.json.tmp"
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" 'mv /var/www/updates/command-rdev-center/latest.json.tmp /var/www/updates/command-rdev-center/latest.json'
+          curl --fail --retry 5 --retry-delay 2 "https://updates.rdev.web.id/command-rdev-center/latest.json"

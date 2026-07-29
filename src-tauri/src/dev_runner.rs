@@ -1,15 +1,16 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::{TcpListener, TcpStream};
 use std::io::Read;
-use std::path::Path;
+use std::net::{TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 static RUNNERS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
+static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
 
 fn runners() -> &'static Mutex<HashMap<String, Child>> {
     RUNNERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -30,11 +31,76 @@ fn shell_path() -> String {
     format!("{nvm_bins}:{home}/.local/bin:{home}/.npm-global/bin:{home}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{current}")
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct DevRunnerInfo {
     pub command: String,
     pub url: String,
     pub running: bool,
+}
+
+#[derive(Deserialize, Serialize)]
+struct DevRunnerRecord {
+    chat_id: String,
+    cwd: String,
+    command: String,
+    url: String,
+    process_group: u32,
+    #[serde(default)]
+    process_command: String,
+}
+
+fn registry_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("command-rdev-center-dev-runners.json")
+}
+
+fn read_records() -> Vec<DevRunnerRecord> {
+    std::fs::read_to_string(registry_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn write_records(records: &[DevRunnerRecord]) -> Result<(), String> {
+    let path = registry_path();
+    let tmp = path.with_extension("tmp");
+    std::fs::write(
+        &tmp,
+        serde_json::to_vec(records).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, path).map_err(|e| e.to_string())
+}
+
+fn record_is_live(record: &DevRunnerRecord) -> bool {
+    if record.process_command.is_empty() {
+        return false;
+    }
+    let command_matches = Command::new("ps")
+        .args(["-p", &record.process_group.to_string(), "-o", "command="])
+        .output()
+        .is_ok_and(|output| {
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains(&record.process_command)
+        });
+    let port = record
+        .url
+        .rsplit(':')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok());
+    command_matches && port.is_some_and(|port| TcpStream::connect(("127.0.0.1", port)).is_ok())
+}
+
+fn remove_record(chat_id: &str) -> Result<Option<DevRunnerRecord>, String> {
+    let _lock = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "dev runner registry lock poisoned")?;
+    let mut records = read_records();
+    let removed = records
+        .iter()
+        .position(|record| record.chat_id == chat_id)
+        .map(|index| records.remove(index));
+    write_records(&records)?;
+    Ok(removed)
 }
 
 fn ensure_node_modules(cwd: &Path, project: &Path) -> Result<(), String> {
@@ -44,7 +110,10 @@ fn ensure_node_modules(cwd: &Path, project: &Path) -> Result<(), String> {
         return Ok(());
     }
     if !source.exists() {
-        return Err(format!("dependencies missing: run install once in {}", project.display()));
+        return Err(format!(
+            "dependencies missing: run install once in {}",
+            project.display()
+        ));
     }
     #[cfg(unix)]
     std::os::unix::fs::symlink(source, target).map_err(|e| e.to_string())?;
@@ -55,10 +124,23 @@ fn detect_command(cwd: &Path) -> Result<String, String> {
     if cwd.join("package.json").exists() {
         let raw = std::fs::read_to_string(cwd.join("package.json")).map_err(|e| e.to_string())?;
         let package: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-        if package.pointer("/scripts/dev").and_then(|v| v.as_str()).is_none() {
+        if package
+            .pointer("/scripts/dev")
+            .and_then(|v| v.as_str())
+            .is_none()
+        {
             return Err("package.json has no dev script".into());
         }
-        return Ok(if cwd.join("pnpm-lock.yaml").exists() { "pnpm dev" } else if cwd.join("yarn.lock").exists() { "yarn dev" } else if cwd.join("bun.lock").exists() || cwd.join("bun.lockb").exists() { "bun run dev" } else { "npm run dev" }.into());
+        return Ok(if cwd.join("pnpm-lock.yaml").exists() {
+            "pnpm dev"
+        } else if cwd.join("yarn.lock").exists() {
+            "yarn dev"
+        } else if cwd.join("bun.lock").exists() || cwd.join("bun.lockb").exists() {
+            "bun run dev"
+        } else {
+            "npm run dev"
+        }
+        .into());
     }
     if cwd.join("Cargo.toml").exists() {
         return Ok("cargo run".into());
@@ -73,7 +155,11 @@ pub fn detect_dev_command(cwd: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result<DevRunnerInfo, String> {
+pub fn start_dev_server(
+    chat_id: String,
+    cwd: String,
+    command: String,
+) -> Result<DevRunnerInfo, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
     let detected = detect_command(Path::new(&cwd))?;
     let allowed = if Path::new(&cwd).join("package.json").exists() {
@@ -86,15 +172,39 @@ pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result
     }
     ensure_node_modules(Path::new(&cwd), &project)?;
     stop_dev_server(chat_id.clone())?;
-    let port = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?.local_addr().map_err(|e| e.to_string())?.port();
+    let port = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| e.to_string())?
+        .local_addr()
+        .map_err(|e| e.to_string())?
+        .port();
     let dev_script = std::fs::read_to_string(Path::new(&cwd).join("package.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|package| package.pointer("/scripts/dev").and_then(|value| value.as_str()).map(str::to_string));
-    let next = dev_script.as_deref().is_some_and(|script| script.split_whitespace().next() == Some("next"));
-    let webpack = next && !dev_script.as_deref().is_some_and(|script| script.split_whitespace().any(|arg| arg == "--webpack"));
-    let separator = if command.starts_with("npm ") { " --" } else { "" };
-    let run_command = if command == "cargo run" { command.clone() } else if webpack { format!("{command}{separator} --webpack --port {port}") } else { format!("{command}{separator} --port {port}") };
+        .and_then(|package| {
+            package
+                .pointer("/scripts/dev")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        });
+    let next = dev_script
+        .as_deref()
+        .is_some_and(|script| script.split_whitespace().next() == Some("next"));
+    let webpack = next
+        && !dev_script
+            .as_deref()
+            .is_some_and(|script| script.split_whitespace().any(|arg| arg == "--webpack"));
+    let separator = if command.starts_with("npm ") {
+        " --"
+    } else {
+        ""
+    };
+    let run_command = if command == "cargo run" {
+        command.clone()
+    } else if webpack {
+        format!("{command}{separator} --webpack --port {port}")
+    } else {
+        format!("{command}{separator} --port {port}")
+    };
     let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
     let mut child = Command::new("sh")
@@ -114,15 +224,60 @@ pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result
     for _ in 0..150 {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             let mut output = String::new();
-            if let Some(mut stderr) = child.stderr.take() { let _ = stderr.read_to_string(&mut output); }
-            if output.trim().is_empty() { if let Some(mut stdout) = child.stdout.take() { let _ = stdout.read_to_string(&mut output); } }
-            return Err(format!("dev server exited before startup ({status}): {}", output.trim()));
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut output);
+            }
+            if output.trim().is_empty() {
+                if let Some(mut stdout) = child.stdout.take() {
+                    let _ = stdout.read_to_string(&mut output);
+                }
+            }
+            return Err(format!(
+                "dev server exited before startup ({status}): {}",
+                output.trim()
+            ));
         }
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
             ready_checks += 1;
             if ready_checks == 10 {
-                runners().lock().map_err(|_| "dev runner lock poisoned")?.insert(chat_id, child);
-                return Ok(DevRunnerInfo { command, url: format!("http://localhost:{port}"), running: true });
+                let url = format!("http://localhost:{port}");
+                let record = DevRunnerRecord {
+                    chat_id: chat_id.clone(),
+                    cwd,
+                    command: command.clone(),
+                    url: url.clone(),
+                    process_group: child.id(),
+                    process_command: run_command,
+                };
+                {
+                    let _lock = REGISTRY_LOCK
+                        .lock()
+                        .map_err(|_| "dev runner registry lock poisoned")?;
+                    let mut records = read_records();
+                    records.retain(|item| item.chat_id != chat_id);
+                    records.push(record);
+                    if let Err(error) = write_records(&records) {
+                        kill_process_group(&mut child);
+                        return Err(error);
+                    }
+                }
+                if let Err(error) = runners()
+                    .lock()
+                    .map_err(|_| "dev runner lock poisoned")
+                    .map(|mut runners| runners.insert(chat_id.clone(), child))
+                {
+                    if let Some(record) = remove_record(&chat_id)? {
+                        let _ = Command::new("kill")
+                            .args(["-TERM", &format!("-{}", record.process_group)])
+                            .status();
+                    }
+                    return Err(error.into());
+                }
+                return Ok(DevRunnerInfo {
+                    command,
+                    url,
+                    running: true,
+                });
             }
         } else {
             ready_checks = 0;
@@ -134,14 +289,48 @@ pub fn start_dev_server(chat_id: String, cwd: String, command: String) -> Result
 }
 
 fn kill_process_group(child: &mut Child) {
-    let _ = Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
+    let _ = Command::new("kill")
+        .args(["-TERM", &format!("-{}", child.id())])
+        .status();
     let _ = child.wait();
 }
 
 #[tauri::command]
+pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerInfo>, String> {
+    crate::projects::ensure_path_allowed(Path::new(&cwd))?;
+    let _lock = REGISTRY_LOCK
+        .lock()
+        .map_err(|_| "dev runner registry lock poisoned")?;
+    let mut records = read_records();
+    let found = records
+        .iter()
+        .find(|record| record.chat_id == chat_id && record.cwd == cwd && record_is_live(record))
+        .map(|record| DevRunnerInfo {
+            command: record.command.clone(),
+            url: record.url.clone(),
+            running: true,
+        });
+    records
+        .retain(|record| record.chat_id != chat_id || record.cwd != cwd || record_is_live(record));
+    write_records(&records)?;
+    Ok(found)
+}
+
+#[tauri::command]
 pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
-    if let Some(mut child) = runners().lock().map_err(|_| "dev runner lock poisoned")?.remove(&chat_id) {
+    if let Some(mut child) = runners()
+        .lock()
+        .map_err(|_| "dev runner lock poisoned")?
+        .remove(&chat_id)
+    {
         kill_process_group(&mut child);
+        remove_record(&chat_id)?;
+    } else if let Some(record) = remove_record(&chat_id)? {
+        if record_is_live(&record) {
+            let _ = Command::new("kill")
+                .args(["-TERM", &format!("-{}", record.process_group)])
+                .status();
+        }
     }
     Ok(())
 }

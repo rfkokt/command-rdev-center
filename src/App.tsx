@@ -1,6 +1,8 @@
 import "@fontsource/jetbrains-mono/400.css";
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
 import SettingsPanel from "./components/SettingsPanel";
@@ -40,6 +42,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
     invoke<Config>("get_config").catch((e) => setConfigErr(String(e)));
@@ -105,6 +108,21 @@ export default function App() {
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
+  async function installUpdate() {
+    setUpdating(true);
+    try {
+      const update = await check();
+      if (!update) return addToast("App is up to date");
+      addToast(`Downloading update ${update.version}…`);
+      await update.downloadAndInstall();
+      await relaunch();
+    } catch (error) {
+      addToast(`Update failed: ${String(error)}`);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   return (
     <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
       <aside className="sidebar">
@@ -149,7 +167,12 @@ export default function App() {
             <span className="live-dot" />
             <div><strong>{dashboard?.toUpperCase() ?? activeTab?.project.name ?? "NO PROJECT SELECTED"}</strong><small>LOCAL WORKSPACE</small></div>
           </div>
-          <button className="open-ide"><span>OPEN IDE</span><b>↗</b></button>
+          <div className="toolbar-actions">
+            <button className="open-ide" onClick={installUpdate} disabled={updating}>
+              <span>{updating ? "UPDATING…" : "CHECK UPDATE"}</span><b>↻</b>
+            </button>
+            <button className="open-ide"><span>OPEN IDE</span><b>↗</b></button>
+          </div>
         </header>
 
         <div className="workspace-body">
