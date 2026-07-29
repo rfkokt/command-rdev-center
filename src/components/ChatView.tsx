@@ -1383,7 +1383,7 @@ export default function ChatView({
         onClose={() => setRightSidebarOpen(false)}
         onToast={onToast}
         onHandoff={() => {
-          const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes.";
+          const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Follow its required pipeline logging and report any logging failure.";
           setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [] } as ChatMessage]);
           sendRaw({ type: "prompt", message });
         }}

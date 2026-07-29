@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PipelineStage {
@@ -28,15 +27,6 @@ pub struct PipelineData {
     pub current: Option<PipelineRun>,
 }
 
-fn task_dir() -> Result<PathBuf, String> {
-    std::env::var_os("CRC_TASK_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Task All Project"))
-        })
-        .ok_or("home directory unavailable".into())
-}
-
 fn read_runs(raw: &str) -> Result<Vec<PipelineRun>, String> {
     raw.lines()
         .filter(|line| !line.trim().is_empty())
@@ -49,7 +39,7 @@ fn read_runs(raw: &str) -> Result<Vec<PipelineRun>, String> {
 
 #[tauri::command]
 pub fn get_pipeline_data() -> Result<PipelineData, String> {
-    let dir = task_dir()?;
+    let dir = crate::kanban::task_dir()?;
     let runs_path = dir.join("_pipeline-runs.jsonl");
     let current_path = dir.join("_pipeline-current.json");
     let mut runs = if runs_path.exists() {

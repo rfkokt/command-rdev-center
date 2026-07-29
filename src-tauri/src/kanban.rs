@@ -12,7 +12,7 @@ pub struct KanbanProject {
     tasks: Vec<Value>,
 }
 
-fn task_dir() -> Result<PathBuf, String> {
+pub(crate) fn task_dir() -> Result<PathBuf, String> {
     let root = super::projects::project_root()?;
     let parent = root.parent().ok_or("project root has no parent")?;
     Ok(parent.join("Task All Project"))
