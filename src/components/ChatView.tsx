@@ -75,15 +75,18 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   return next;
 }
 
-export function agentNotification(kind: "finished" | "follow-up", projectName: string) {
-  return kind === "finished"
-    ? { title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" }
-    : { title: "Agent perlu jawaban", body: `${projectName} menunggu respons.`, sound: "Ping" };
+export function agentNotification(kind: "finished" | "follow-up", projectName: string, chatId?: string) {
+  return {
+    ...(kind === "finished"
+      ? { title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" }
+      : { title: "Agent perlu jawaban", body: `${projectName} menunggu respons.`, sound: "Ping" }),
+    ...(chatId ? { actionTypeId: "agent-finished", extra: { chatId } } : {}),
+  };
 }
 
-async function notifyAgent(kind: "finished" | "follow-up", projectName: string) {
+async function notifyAgent(kind: "finished" | "follow-up", projectName: string, chatId: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
-  if (granted) sendNotification(agentNotification(kind, projectName));
+  if (granted) sendNotification(agentNotification(kind, projectName, chatId));
 }
 
 function tsvToMarkdown(text: string): string | null {
@@ -455,7 +458,7 @@ export default function ChatView({
           if (req) {
             setApproval(req);
             onUnread(chatId);
-            void notifyAgent("follow-up", projectName).catch((error) => onToast(`Notification: ${String(error)}`));
+            void notifyAgent("follow-up", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
             return;
           }
           if (ev.method === "notify") {
@@ -599,7 +602,7 @@ export default function ChatView({
           onUnread(chatId);
           setIsStreaming(false);
           setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
-          void notifyAgent("finished", projectName).catch((error) => onToast(`Notification: ${String(error)}`));
+          void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;

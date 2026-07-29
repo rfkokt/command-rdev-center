@@ -7,6 +7,10 @@ const unmounted = vi.fn();
 const unreadCallbacks: Array<(chatId: string) => void> = [];
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve({})) }));
+vi.mock("@tauri-apps/plugin-notification", () => ({
+  registerActionTypes: vi.fn(() => Promise.resolve()),
+  onAction: vi.fn(() => Promise.resolve({ unregister: vi.fn(() => Promise.resolve()) })),
+}));
 vi.mock("./components/ProjectList", () => ({
   default: ({ tabs, onResume }: { tabs: Array<{ id: string; project: unknown }>; onResume: (id: string, project: unknown) => void }) => (
     <>{tabs.map((tab) => <button key={tab.id} onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button>)}</>

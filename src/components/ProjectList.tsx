@@ -12,7 +12,7 @@ export type ProjectInfo = {
   base_branch?: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; title?: string; unread?: boolean };
+type Tab = { id: string; project: ProjectInfo; title?: string; unread?: boolean; interrupted?: boolean };
 
 export default function ProjectList({
   onOpen,
@@ -174,7 +174,7 @@ export default function ProjectList({
                     onClick={() => onResume(tab.id, project)}
                   >
                     <span>{tab.title ?? "UNTITLED SESSION"}</span>
-                    {tab.unread && <i aria-label="Unread activity" />}
+                    {tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}
                   </button>
                 ))}
               </div>
