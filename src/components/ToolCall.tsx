@@ -29,12 +29,18 @@ function preview(args: Record<string, unknown>) {
   return `${first[0]}: ${value}`.replace(/\s+/g, " ").slice(0, 100);
 }
 
+export function isWebSearchTool(name: string) {
+  return /(?:^|\.)(?:web_search|source_check|fetch_content|get_search_content)$/.test(name);
+}
+
 export default function ToolCallView({ tc }: { tc: TC }) {
   const isStreaming = tc.phase !== "end";
-  return <details className={`tool-call ${isStreaming ? "running" : ""}`} open={isStreaming}>
+  const isSearch = isWebSearchTool(tc.name);
+  const label = isSearch ? (isStreaming ? "SEARCHING WEB" : "WEB SEARCH") : tc.name;
+  return <details className={`tool-call ${isStreaming ? "running" : ""} ${isSearch ? "web-search" : ""}`} open={isStreaming}>
     <summary>
-      <span className="tool-status">{isStreaming ? "◌" : tc.isError ? "!" : "✓"}</span>
-      <strong>{tc.name}</strong>
+      <span className="tool-status">{isSearch ? "⌕" : isStreaming ? "◌" : tc.isError ? "!" : "✓"}</span>
+      <strong>{label}</strong>
       <span>{preview(tc.args)}</span>
     </summary>
     <div className="tool-detail">
