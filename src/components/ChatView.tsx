@@ -74,6 +74,10 @@ export function shouldToastPiStderr(line: string) {
   return Boolean(text) && !text.startsWith("[crc-isolation ") && !text.startsWith("Ponytail loaded:");
 }
 
+export function appendAgentLog(messages: ChatMessage[], line: string): ChatMessage[] {
+  return [...messages, { id: uid(), role: "system", text: `pi stderr: ${line}`, toolCalls: [], createdAt: Date.now() }];
+}
+
 export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
   const text = `Agent error: ${error}`;
   let streamingIndex = -1;
@@ -737,8 +741,10 @@ export default function ChatView({
       });
       unlisteners.push(u3);
       const u4 = await listen<{ session_id: string; line: string }>("pi-rpc-stderr", (e) => {
-        if (e.payload.session_id !== sessionId) return;
-        if (shouldToastPiStderr(e.payload.line)) onToast(`pi stderr: ${e.payload.line.slice(0, 180)}`);
+        if (e.payload.session_id !== sessionId || !shouldToastPiStderr(e.payload.line)) return;
+        const line = e.payload.line.slice(0, 2_000);
+        setMessages((prev) => appendAgentLog(prev, line));
+        onToast(`pi stderr: ${line.slice(0, 180)}`);
       });
       unlisteners.push(u4);
 

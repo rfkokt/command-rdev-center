@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
+import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -59,6 +59,15 @@ describe("shouldToastPiStderr", () => {
     expect(shouldToastPiStderr("[crc-isolation v3] root=/repo")).toBe(false);
     expect(shouldToastPiStderr("Ponytail loaded: full")).toBe(false);
     expect(shouldToastPiStderr("provider authentication failed")).toBe(true);
+  });
+});
+
+describe("appendAgentLog", () => {
+  test("keeps pi stderr visible in chat", () => {
+    expect(appendAgentLog([], "provider authentication failed")[0]).toMatchObject({
+      role: "system",
+      text: "pi stderr: provider authentication failed",
+    });
   });
 });
 
