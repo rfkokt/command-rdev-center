@@ -33,14 +33,29 @@ export function isWebSearchTool(name: string) {
   return /(?:^|\.)(?:web_search|source_check|fetch_content|get_search_content)$/.test(name);
 }
 
-export default function ToolCallView({ tc }: { tc: TC }) {
-  const isStreaming = tc.phase !== "end";
-  const isSearch = isWebSearchTool(tc.name);
-  const label = isSearch ? (isStreaming ? "SEARCHING WEB" : "WEB SEARCH") : tc.name;
-  return <details className={`tool-call ${isStreaming ? "running" : ""} ${isSearch ? "web-search" : ""}`} open={isStreaming}>
+function WebSearchView({ tc }: { tc: TC }) {
+  const queries = (Array.isArray(tc.args.queries) ? tc.args.queries : [tc.args.query]).filter((query): query is string => typeof query === "string" && Boolean(query));
+  const result = normalize(tc.result) as { details?: { progress?: number; currentQuery?: string } } | null;
+  const progress = Math.round((result?.details?.progress ?? (tc.phase === "end" ? 1 : 0)) * 100);
+  return <details className={`web-search-card ${tc.phase !== "end" ? "running" : ""}`} open>
     <summary>
-      <span className="tool-status">{isSearch ? "⌕" : isStreaming ? "◌" : tc.isError ? "!" : "✓"}</span>
-      <strong>{label}</strong>
+      <span className="web-search-icon">⌕</span>
+      <span><strong>{tc.phase === "end" ? "WEB RESEARCH" : "SEARCHING WEB"}</strong><small>{queries.length} {queries.length === 1 ? "query" : "queries"}</small></span>
+      <b>{progress}%</b>
+    </summary>
+    <div className="web-search-progress"><i style={{ width: `${progress}%` }} /></div>
+    <ol className="web-search-queries">{queries.map((query, index) => <li className={query === result?.details?.currentQuery ? "active" : ""} key={query}><span>{index + 1}</span>{query}</li>)}</ol>
+    {tc.result != null && tc.phase === "end" && <details className="web-search-result"><summary>{tc.isError ? "VIEW ERROR" : "VIEW RESEARCH RESULT"}</summary><pre className="json-view"><JsonValue value={tc.result} /></pre></details>}
+  </details>;
+}
+
+export default function ToolCallView({ tc }: { tc: TC }) {
+  if (isWebSearchTool(tc.name)) return <WebSearchView tc={tc} />;
+  const isStreaming = tc.phase !== "end";
+  return <details className={`tool-call ${isStreaming ? "running" : ""}`} open={isStreaming}>
+    <summary>
+      <span className="tool-status">{isStreaming ? "◌" : tc.isError ? "!" : "✓"}</span>
+      <strong>{tc.name}</strong>
       <span>{preview(tc.args)}</span>
     </summary>
     <div className="tool-detail">
