@@ -17,7 +17,7 @@ type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; 
 type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
-type DevRunnerInfo = { command: string; url: string; running: boolean };
+type DevRunnerInfo = { command: string; url: string; running: boolean; error?: string };
 type SessionStats = {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
@@ -814,10 +814,12 @@ export default function ChatView({
     const id = window.setInterval(async () => {
       try {
         const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: worktree.worktree_path });
-        if (!runner) {
-          const message = "Dev server stopped unexpectedly. Check dev-server.log for details.";
+        if (!runner?.running) {
+          const message = `Dev server stopped unexpectedly.${runner?.error ? `\n\n${runner.error}` : " No log output available."}`;
           setDevError(message);
+          setDevRunner(null);
           onToast(message);
+          return;
         }
         setDevRunner(runner);
       } catch (error) {

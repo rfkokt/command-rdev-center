@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
@@ -36,6 +36,7 @@ pub struct DevRunnerInfo {
     pub command: String,
     pub url: String,
     pub running: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -47,6 +48,19 @@ struct DevRunnerRecord {
     process_group: u32,
     #[serde(default)]
     process_command: String,
+    #[serde(default)]
+    log_path: String,
+}
+
+fn read_log_tail(path: &str) -> String {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return "No dev-server.log output available.".into();
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(len.saturating_sub(8_000)));
+    let mut output = String::new();
+    let _ = file.read_to_string(&mut output);
+    output.trim().to_string()
 }
 
 fn registry_path() -> std::path::PathBuf {
@@ -236,6 +250,8 @@ pub fn start_dev_server(
     };
     let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
+    let log_path = std::env::temp_dir().join(format!("command-rdev-center-dev-{chat_id}.log"));
+    let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
     let mut child = Command::new("sh")
         .args(["-c", &run_command])
         .current_dir(&cwd)
@@ -244,26 +260,17 @@ pub fn start_dev_server(
         .env("PORT", port.to_string())
         .env("VITE_PORT", port.to_string())
         .process_group(0)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
+        .stderr(Stdio::from(log))
         .spawn()
         .map_err(|e| e.to_string())?;
 
     let mut ready_checks = 0;
     for _ in 0..150 {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            let mut output = String::new();
-            if let Some(mut stderr) = child.stderr.take() {
-                let _ = stderr.read_to_string(&mut output);
-            }
-            if output.trim().is_empty() {
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut output);
-                }
-            }
             return Err(format!(
                 "dev server exited before startup ({status}): {}",
-                output.trim()
+                read_log_tail(&log_path.to_string_lossy())
             ));
         }
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -277,6 +284,7 @@ pub fn start_dev_server(
                     url: url.clone(),
                     process_group: child.id(),
                     process_command: run_command,
+                    log_path: log_path.to_string_lossy().into_owned(),
                 };
                 {
                     let _lock = REGISTRY_LOCK
@@ -306,6 +314,7 @@ pub fn start_dev_server(
                     command,
                     url,
                     running: true,
+                    error: None,
                 });
             }
         } else {
@@ -337,12 +346,23 @@ pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerIn
         .lock()
         .map_err(|_| "dev runner registry lock poisoned")?;
     let mut records = read_records();
+    let stopped = records
+        .iter()
+        .find(|record| record.chat_id == chat_id && record.cwd == cwd)
+        .filter(|record| !record_is_live(record))
+        .map(|record| DevRunnerInfo {
+            command: record.command.clone(),
+            url: record.url.clone(),
+            running: false,
+            error: Some(read_log_tail(&record.log_path)),
+        });
     let found = take_live_record(&mut records, &chat_id, &cwd, record_is_live);
     let info = found.as_ref().map(|record| DevRunnerInfo {
         command: record.command.clone(),
         url: record.url.clone(),
         running: true,
-    });
+        error: None,
+    }).or(stopped);
     if let Some(record) = found {
         records.push(record);
     }
@@ -372,6 +392,16 @@ pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_tail_is_bounded_to_recent_output() {
+        let path = std::env::temp_dir().join("crc-dev-log-tail-test.log");
+        std::fs::write(&path, format!("{}LATEST ERROR", "x".repeat(9_000))).unwrap();
+        let tail = read_log_tail(&path.to_string_lossy());
+        assert!(tail.len() <= 8_000);
+        assert!(tail.ends_with("LATEST ERROR"));
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn stop_force_kills_a_process_group_that_ignores_term() {
@@ -404,6 +434,7 @@ mod tests {
             url: "http://localhost:1".into(),
             process_group: 1,
             process_command: "command that ps will not contain".into(),
+            log_path: String::new(),
         };
         assert!(record_is_live(&record));
         child = runners().lock().unwrap().remove(chat_id).unwrap();
@@ -420,6 +451,7 @@ mod tests {
             url: "http://localhost:1".into(),
             process_group: std::process::id(),
             process_command: String::new(),
+            log_path: String::new(),
         };
         assert!(!record_is_live(&record));
     }
@@ -433,6 +465,7 @@ mod tests {
             url: "http://localhost:1".into(),
             process_group: 1,
             process_command: "pnpm dev".into(),
+            log_path: String::new(),
         }];
         let mut checks = 0;
         let found = take_live_record(&mut records, "chat-a", "/tmp/a", |_| {
@@ -453,6 +486,7 @@ mod tests {
                 url: "a".into(),
                 process_group: 1,
                 process_command: "a".into(),
+                log_path: String::new(),
             },
             DevRunnerRecord {
                 chat_id: "chat-b".into(),
@@ -461,6 +495,7 @@ mod tests {
                 url: "b".into(),
                 process_group: 2,
                 process_command: "b".into(),
+                log_path: String::new(),
             },
         ];
         let remaining: Vec<_> = records
