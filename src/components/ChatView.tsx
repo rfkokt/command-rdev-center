@@ -174,6 +174,8 @@ export default function ChatView({
   const thinkingRef = useRef(initialThinking ?? "");
   const pendingTaskPromptRef = useRef("");
   const trackedTaskRef = useRef(false);
+  // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
+  const surfacedErrorRef = useRef<string | null>(null);
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -375,6 +377,14 @@ export default function ChatView({
       const content = messageContent(message);
       const blocks = Array.isArray(message.content) ? message.content as Array<{ type?: string }> : [];
       const usedTool = message.stopReason === "toolUse" || blocks.some((block) => block.type === "toolCall");
+      // Provider/connection failures land here: stopReason "error" + errorMessage, usually no text/thinking/tool.
+      // Surface them — otherwise the error is silently dropped and the chat shows nothing.
+      const errMsg = message.stopReason === "error" && typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
+      if (errMsg && surfacedErrorRef.current !== errMsg) {
+        surfacedErrorRef.current = errMsg;
+        setMessages((prev) => settleWithError(prev, errMsg));
+        if (!content.text && !content.thinking && !usedTool) return;
+      }
       if (!content.text && !content.thinking && !usedTool) return;
       setMessages((prev) => {
         const copy = [...prev];
@@ -542,6 +552,17 @@ export default function ChatView({
           finalizeAssistant(assistants[assistants.length - 1]);
           return;
         }
+        if (t === "auto_retry_end") {
+          // Retries exhausted — surface the final error so the user sees why the agent stopped.
+          if (ev.success === false) {
+            const finalError = typeof ev.finalError === "string" ? ev.finalError.trim() : "";
+            if (finalError && surfacedErrorRef.current !== finalError) {
+              surfacedErrorRef.current = finalError;
+              setMessages((prev) => settleWithError(prev, `Provider retries exhausted: ${finalError}`));
+            }
+          }
+          return;
+        }
         if (t === "agent_settled") {
           setAgentStatus("idle");
           sendRaw({ type: "get_session_stats" });
@@ -549,6 +570,7 @@ export default function ChatView({
           onUnread(chatId);
           setIsStreaming(false);
           setMessages(settleAgentMessages);
+          surfacedErrorRef.current = null;
           void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");

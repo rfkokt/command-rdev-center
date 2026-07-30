@@ -53,8 +53,57 @@ export function settleAgentMessages(messages: ChatMessage[]): ChatMessage[] {
     .map((message) => message.isStreaming ? { ...message, isStreaming: false } : message);
 }
 
+/**
+ * Turn raw provider error strings (often nested JSON like
+ * `402: {"message":"[provider/model] [402]: {\"error\":{\"code\":...}} (reset after 1m 40s)"}`)
+ * into a readable summary. Falls back to the raw string if it can't be parsed.
+ */
+export function formatAgentError(raw: string): string {
+  const original = raw.trim();
+  if (!original) return "Unknown agent error";
+
+  // Provider errors arrive as a loosely-structured string (not strict JSON): an HTTP prefix,
+  // a provider/model bracket, and one or more nested "error" objects whose quotes are no longer
+  // escaped relative to the outer text. So we regex-scan the raw string instead of JSON.parse-ing it.
+  const statusMatch = original.match(/^(\d{3}):\s*/);
+  const httpStatus = statusMatch?.[1];
+
+  // Grab every "key":"value" pair across the whole string (values must not contain unescaped quotes).
+  const pairs: Array<{ key: string; value: string }> = [];
+  const pairRegex = /"([a-zA-Z_]+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = pairRegex.exec(original))) {
+    // unescape common JSON escapes so display is clean
+    const value = m[2].replace(/\\(.)/g, "$1");
+    pairs.push({ key: m[1], value });
+  }
+
+  const code = pairs.find((p) => p.key === "code")?.value ?? "";
+  const type = pairs.find((p) => p.key === "type")?.value ?? "";
+  // Prefer the cleanest message: the shortest "message" value with no embedded braces/JSON.
+  const messages = pairs.filter((p) => p.key === "message");
+  const cleanMessage =
+    messages
+      .filter((p) => !p.value.includes("{") && !p.value.includes("["))
+      .sort((a, b) => a.value.length - b.value.length)[0]?.value ?? "";
+  const headline = cleanMessage || messages[0]?.value || original;
+
+  const bracketMatch = original.match(/\[([^\]/\s]+\/([^\]/\s]+))\]/);
+  const model = bracketMatch?.[2];
+  const resetMatch = original.match(/\(reset after ([^)]+)\)/i);
+
+  const meta: string[] = [];
+  if (httpStatus) meta.push(`HTTP ${httpStatus}`);
+  if (code) meta.push(code);
+  if (type && type !== code) meta.push(type);
+  if (model) meta.push(model);
+  const metaLine = meta.length ? `\n\n${meta.join(" · ")}` : "";
+  const retryLine = resetMatch ? `\nRetry available in ${resetMatch[1]}.` : "";
+  return `${headline}${metaLine}${retryLine}`;
+}
+
 export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
-  const text = `Agent error: ${error}`;
+  const text = `Agent error: ${formatAgentError(error)}`;
   let streamingIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "assistant" && messages[i].isStreaming) {

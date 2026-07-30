@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -101,5 +101,30 @@ describe("settleWithError", () => {
     expect(settleWithError([assistant], "connection lost")[0].text).toBe(
       "Partial answer\n\nAgent error: connection lost",
     );
+  });
+});
+
+describe("formatAgentError", () => {
+  test("parses nested provider billing JSON into a readable summary", () => {
+    // Real runtime shape from pi: the outer "message" value is a loose string whose inner
+    // JSON quotes are no longer escaped (as rendered in the app), so it is NOT strict JSON.
+    const raw =
+      '402: {"message": "[openai-compatible-chat-5475b8dc-a07c-4129-8ca9-56b60f090486/muse-spark-1.1] [402]: {"error":{"code":"billing_not_configured", "message":"Billing verification failed. Please check your payment method.", "param":null, "type":"billing_error"}} (reset after 1m 40s)"}';
+    const out = formatAgentError(raw);
+    expect(out).toContain("Billing verification failed. Please check your payment method.");
+    expect(out).toContain("HTTP 402");
+    expect(out).toContain("billing_not_configured");
+    expect(out).toContain("muse-spark-1.1");
+    expect(out).toContain("Retry available in 1m 40s.");
+    expect(out).not.toContain("{\"");
+  });
+
+  test("returns plain text unchanged when there is no JSON to unwrap", () => {
+    expect(formatAgentError("connection reset")).toBe("connection reset");
+  });
+
+  test("handles empty input", () => {
+    expect(formatAgentError("")).toBe("Unknown agent error");
+    expect(formatAgentError("   ")).toBe("Unknown agent error");
   });
 });
