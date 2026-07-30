@@ -72,6 +72,11 @@ fn write_records(records: &[DevRunnerRecord]) -> Result<(), String> {
 }
 
 fn record_is_live(record: &DevRunnerRecord) -> bool {
+    if let Ok(mut children) = runners().lock() {
+        if let Some(child) = children.get_mut(&record.chat_id) {
+            return child.try_wait().is_ok_and(|status| status.is_none());
+        }
+    }
     if record.process_command.is_empty() {
         return false;
     }
@@ -359,6 +364,25 @@ mod tests {
     fn shell_path_includes_rustup_binaries() {
         let home = std::env::var("HOME").unwrap();
         assert!(shell_path().split(':').any(|path| path == format!("{home}/.cargo/bin")));
+    }
+
+    #[test]
+    fn in_memory_child_is_live_without_matching_shell_command() {
+        let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        let chat_id = "in-memory-live-check";
+        runners().lock().unwrap().insert(chat_id.into(), child);
+        let record = DevRunnerRecord {
+            chat_id: chat_id.into(),
+            cwd: "/tmp/a".into(),
+            command: "pnpm dev".into(),
+            url: "http://localhost:1".into(),
+            process_group: 1,
+            process_command: "command that ps will not contain".into(),
+        };
+        assert!(record_is_live(&record));
+        child = runners().lock().unwrap().remove(chat_id).unwrap();
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
