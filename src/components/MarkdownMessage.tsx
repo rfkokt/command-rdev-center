@@ -1,3 +1,4 @@
+import { Children } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -62,6 +63,13 @@ export default function MarkdownMessage({ children }: { children: string }) {
           <div className="md-table-wrapper">
             <table {...props}>{tChildren}</table>
           </div>
+        ),
+        td: ({ children: cellChildren, ...props }) => (
+          <td {...props}>{Children.toArray(cellChildren).flatMap((child, childIndex) =>
+            typeof child === "string"
+              ? child.split("\u2028").flatMap((line, lineIndex) => lineIndex ? [<br key={`${childIndex}-${lineIndex}`} />, line] : [line])
+              : [child]
+          )}</td>
         ),
       }}
     >{formatChatCode(children)}</ReactMarkdown>

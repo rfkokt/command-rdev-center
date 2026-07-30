@@ -114,7 +114,7 @@ async function notifyAgent(kind: "finished" | "follow-up", projectName: string, 
   if (granted) sendNotification(agentNotification(kind, projectName, chatId));
 }
 
-function tsvToMarkdown(text: string): string | null {
+export function tsvToMarkdown(text: string): string | null {
   const norm = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n+$/, "");
   if (!norm.includes("\t")) return null;
   const rows: string[][] = [[]];
@@ -132,7 +132,7 @@ function tsvToMarkdown(text: string): string | null {
   if (rows.length === 0) return null;
   const colCount = Math.max(...rows.map((r) => r.length));
   if (colCount <= 1) return null;
-  const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, " ↵ ").trim();
+  const esc = (s: string) => s.replace(/\|/g, "\\|").replace(/\n/g, "\u2028").trim();
   const padded = rows.map((r) => {
     const c = r.slice();
     while (c.length < colCount) c.push("");

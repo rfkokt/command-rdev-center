@@ -1,5 +1,16 @@
+// @vitest-environment jsdom
+
+import { createElement } from "react";
+import { render } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
-import { formatChatCode } from "./MarkdownMessage";
+import MarkdownMessage, { formatChatCode } from "./MarkdownMessage";
+
+describe("MarkdownMessage", () => {
+  test("renders preserved spreadsheet newlines inside table cells", () => {
+    const { container } = render(createElement(MarkdownMessage, null, "| Deskripsi |\n| --- |\n| Baris satu\u2028Baris dua |"));
+    expect(container.querySelector("td br")).not.toBeNull();
+  });
+});
 
 describe("formatChatCode", () => {
   test("turns raw curl and JSON into readable fenced blocks", () => {

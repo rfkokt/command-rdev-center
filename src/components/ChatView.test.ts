@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
+import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -10,6 +10,12 @@ describe("agentNotification", () => {
       body: "Command menunggu respons.",
       sound: "Ping",
     });
+  });
+});
+
+describe("tsvToMarkdown", () => {
+  test("preserves quoted spreadsheet cell newlines", () => {
+    expect(tsvToMarkdown('No\tDeskripsi\n997\t"Baris satu\nBaris dua"')).toContain("Baris satu\u2028Baris dua");
   });
 });
 
