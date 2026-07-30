@@ -57,20 +57,28 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
-
-  useEffect(() => {
-    invoke<Config>("get_config").catch((e) => setConfigErr(String(e)));
-    getVersion().then(setAppVersion).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
-  }, [tabs]);
+  const [availableVersion, setAvailableVersion] = useState("");
 
   const addToast = useCallback((msg: string) => {
     setToasts((prev) => [...prev, msg].slice(-6));
     setTimeout(() => setToasts((prev) => prev.slice(1)), 6000);
   }, []);
+
+  useEffect(() => {
+    invoke<Config>("get_config").catch((e) => setConfigErr(String(e)));
+    getVersion().then(setAppVersion).catch(() => {});
+    check()
+      .then((update) => {
+        if (!update) return;
+        setAvailableVersion(update.version);
+        addToast(`Update ${update.version} is available`);
+      })
+      .catch(() => {});
+  }, [addToast]);
+
+  useEffect(() => {
+    localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
+  }, [tabs]);
 
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
@@ -127,7 +135,11 @@ export default function App() {
     setUpdating(true);
     try {
       const update = await check();
-      if (!update) return addToast("App is up to date");
+      if (!update) {
+        setAvailableVersion("");
+        return addToast("App is up to date");
+      }
+      setAvailableVersion(update.version);
       addToast(`Downloading update ${update.version}…`);
       await update.downloadAndInstall();
       await relaunch();
@@ -185,7 +197,7 @@ export default function App() {
           </div>
           <div className="toolbar-actions">
             <button className="open-ide" onClick={installUpdate} disabled={updating}>
-              <span>{updating ? "UPDATING…" : "CHECK UPDATE"}</span><b>↻</b>
+              <span>{updating ? "UPDATING…" : availableVersion ? `UPDATE v${availableVersion}` : "CHECK UPDATE"}</span><b>↻</b>
             </button>
             <button className="open-ide"><span>OPEN IDE</span><b>↗</b></button>
           </div>

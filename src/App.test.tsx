@@ -4,9 +4,12 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const unmounted = vi.fn();
+const { checkUpdate } = vi.hoisted(() => ({ checkUpdate: vi.fn() }));
 const unreadCallbacks: Array<(chatId: string) => void> = [];
 
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve("1.2.3")) }));
+vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkUpdate }));
+vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve({})) }));
 vi.mock("@tauri-apps/plugin-notification", () => ({
   registerActionTypes: vi.fn(() => Promise.resolve()),
@@ -35,6 +38,8 @@ import App from "./App";
 
 beforeEach(() => {
   unmounted.mockClear();
+  checkUpdate.mockReset();
+  checkUpdate.mockResolvedValue(null);
   unreadCallbacks.length = 0;
   localStorage.setItem("crc-chat-tabs", JSON.stringify([{
     id: "chat-1",
@@ -48,6 +53,15 @@ test("shows the runtime app version at the bottom of the sidebar", async () => {
   render(<App />);
 
   expect(await screen.findByText("v1.2.3")).toBeInTheDocument();
+});
+
+test("notifies when an update is available", async () => {
+  checkUpdate.mockResolvedValue({ version: "1.3.0", downloadAndInstall: vi.fn() });
+
+  render(<App />);
+
+  expect(await screen.findByRole("status")).toHaveTextContent("Update 1.3.0 is available");
+  expect(screen.getByRole("button", { name: /UPDATE v1.3.0/ })).toBeInTheDocument();
 });
 
 test("keeps the active chat mounted while Kanban is open", () => {
