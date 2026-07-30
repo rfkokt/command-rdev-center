@@ -5,7 +5,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
-import ToolCallView from "./ToolCall";
+import ToolCallView, { isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
@@ -1310,17 +1310,19 @@ export default function ChatView({
                 ))}
               </div>
             )}
-            {m.toolCalls.length > 0 && (
-              <details className="tool-stack">
+            {m.toolCalls.filter((tool) => isWebSearchTool(tool.name)).map((tool) => <ToolCallView key={tool.callId} tc={tool} />)}
+            {m.toolCalls.some((tool) => !isWebSearchTool(tool.name)) && (() => {
+              const tools = m.toolCalls.filter((tool) => !isWebSearchTool(tool.name));
+              return <details className="tool-stack">
                 <summary>
-                  <span className="tool-stack-icon">{m.toolCalls.some((tool) => tool.phase !== "end") ? "◌" : "✓"}</span>
-                  <strong>{m.toolCalls.length} TOOL {m.toolCalls.length === 1 ? "CALL" : "CALLS"}</strong>
-                  <span>{m.toolCalls.map((tool) => tool.name).filter((name, index, all) => all.indexOf(name) === index).join(" · ")}</span>
+                  <span className="tool-stack-icon">{tools.some((tool) => tool.phase !== "end") ? "◌" : "✓"}</span>
+                  <strong>{tools.length} TOOL {tools.length === 1 ? "CALL" : "CALLS"}</strong>
+                  <span>{tools.map((tool) => tool.name).filter((name, index, all) => all.indexOf(name) === index).join(" · ")}</span>
                   <small>DETAILS</small>
                 </summary>
-                <div className="tool-stack-items">{m.toolCalls.map((tc) => <ToolCallView key={tc.callId} tc={tc} />)}</div>
-              </details>
-            )}
+                <div className="tool-stack-items">{tools.map((tool) => <ToolCallView key={tool.callId} tc={tool} />)}</div>
+              </details>;
+            })()}
           </div>
         ))}
         {agentStatus === "running" && (
