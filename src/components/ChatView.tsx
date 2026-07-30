@@ -812,11 +812,23 @@ export default function ChatView({
   useEffect(() => {
     if (!devRunner || !worktree) return;
     const id = window.setInterval(async () => {
-      const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: worktree.worktree_path }).catch(() => null);
-      setDevRunner(runner);
+      try {
+        const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: worktree.worktree_path });
+        if (!runner) {
+          const message = "Dev server stopped unexpectedly. Check dev-server.log for details.";
+          setDevError(message);
+          onToast(message);
+        }
+        setDevRunner(runner);
+      } catch (error) {
+        const message = `Dev server status failed: ${String(error)}`;
+        setDevError(message);
+        setDevRunner(null);
+        onToast(message);
+      }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [chatId, devRunner, worktree]);
+  }, [chatId, devRunner, onToast, worktree]);
 
   async function handleSend() {
     const text = input.trim();
