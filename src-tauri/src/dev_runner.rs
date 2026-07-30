@@ -318,9 +318,15 @@ pub fn start_dev_server(
 }
 
 fn kill_process_group(child: &mut Child) {
-    let _ = Command::new("kill")
-        .args(["-TERM", &format!("-{}", child.id())])
-        .status();
+    let group = format!("-{}", child.id());
+    let _ = Command::new("kill").args(["-TERM", &group]).status();
+    for _ in 0..20 {
+        if child.try_wait().is_ok_and(|status| status.is_some()) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let _ = Command::new("kill").args(["-KILL", &group]).status();
     let _ = child.wait();
 }
 
@@ -366,6 +372,19 @@ pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_force_kills_a_process_group_that_ignores_term() {
+        let mut child = Command::new("sh")
+            .args(["-c", "trap '' TERM; sleep 30 & wait"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        kill_process_group(&mut child);
+        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(child.try_wait().unwrap().is_some());
+    }
 
     #[test]
     fn shell_path_includes_rustup_binaries() {
