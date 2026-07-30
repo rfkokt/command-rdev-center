@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
+import { agentNotification, appendAgentLog, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr } from "./ChatView";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -68,6 +68,15 @@ describe("appendAgentLog", () => {
       role: "system",
       text: "pi stderr: provider authentication failed",
     });
+  });
+});
+
+describe("settleAgentMessages", () => {
+  test("removes an empty assistant placeholder without inventing an error", () => {
+    const user = { id: "u", role: "user", text: "test", toolCalls: [] } as ChatMessage;
+    const assistant = { id: "a", role: "assistant", text: "", thinking: "", toolCalls: [], isStreaming: true } as ChatMessage;
+
+    expect(settleAgentMessages([user, assistant])).toEqual([user]);
   });
 });
 

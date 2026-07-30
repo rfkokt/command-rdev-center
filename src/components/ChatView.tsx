@@ -78,6 +78,12 @@ export function appendAgentLog(messages: ChatMessage[], line: string): ChatMessa
   return [...messages, { id: uid(), role: "system", text: `pi stderr: ${line}`, toolCalls: [], createdAt: Date.now() }];
 }
 
+export function settleAgentMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages
+    .filter((message) => !(message.role === "assistant" && message.isStreaming && !message.text && !message.thinking && message.toolCalls.length === 0))
+    .map((message) => message.isStreaming ? { ...message, isStreaming: false } : message);
+}
+
 export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
   const text = `Agent error: ${error}`;
   let streamingIndex = -1;
@@ -633,12 +639,7 @@ export default function ChatView({
           onAgentRunning(chatId, false);
           onUnread(chatId);
           setIsStreaming(false);
-          setMessages((prev) => {
-            const streaming = [...prev].reverse().find((message) => message.role === "assistant" && message.isStreaming);
-            return streaming && !streaming.text && !streaming.thinking && streaming.toolCalls.length === 0
-              ? settleWithError(prev, "Agent finished without a response.")
-              : prev.map((message) => message.isStreaming ? { ...message, isStreaming: false } : message);
-          });
+          setMessages(settleAgentMessages);
           void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
