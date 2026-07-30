@@ -56,6 +56,7 @@ pub fn run() {
             projects::list_project_branches,
             projects::add_project,
             projects::update_project_base_branch,
+            projects::update_project_pipeline_type,
             projects::remove_project,
             settings::get_pi_settings,
             settings::save_pi_settings,

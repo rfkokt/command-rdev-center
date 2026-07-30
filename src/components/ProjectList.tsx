@@ -10,6 +10,7 @@ export type ProjectInfo = {
   mtime_ms: number;
   is_git: boolean;
   base_branch?: string;
+  pipeline_type?: string;
 };
 
 type Tab = { id: string; project: ProjectInfo; title?: string; unread?: boolean; interrupted?: boolean };

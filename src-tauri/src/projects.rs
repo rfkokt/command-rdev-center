@@ -19,6 +19,7 @@ pub struct ProjectInfo {
     pub mtime_ms: u64,
     pub is_git: bool,
     pub base_branch: Option<String>,
+    pub pipeline_type: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -33,6 +34,8 @@ struct StoredConfig {
     projects: Vec<String>,
     #[serde(default)]
     base_branches: HashMap<String, String>,
+    #[serde(default)]
+    pipeline_types: HashMap<String, String>,
 }
 
 fn sanitize_repo_name(name: &str) -> String {
@@ -228,7 +231,7 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-fn project_info(path: &Path, base_branch: Option<String>) -> Result<ProjectInfo, String> {
+fn project_info(path: &Path, base_branch: Option<String>, pipeline_type: Option<String>) -> Result<ProjectInfo, String> {
     if !path.is_dir() {
         return Err(format!("project directory not found: {}", path.display()));
     }
@@ -246,6 +249,7 @@ fn project_info(path: &Path, base_branch: Option<String>) -> Result<ProjectInfo,
         mtime_ms: dir_mtime_ms(&path),
         is_git,
         base_branch,
+        pipeline_type,
     })
 }
 
@@ -255,13 +259,20 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
     config
         .projects
         .iter()
-        .map(|path| project_info(Path::new(path), config.base_branches.get(path).cloned()))
+        .map(|path| {
+            let canonical = canonicalize_or_original(Path::new(path)).to_string_lossy().to_string();
+            project_info(
+                Path::new(path),
+                config.base_branches.get(path).or_else(|| config.base_branches.get(&canonical)).cloned(),
+                config.pipeline_types.get(path).or_else(|| config.pipeline_types.get(&canonical)).cloned(),
+            )
+        })
         .collect()
 }
 
 #[tauri::command]
 pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
-    let project = project_info(Path::new(&path), None)?;
+    let project = project_info(Path::new(&path), None, None)?;
     if !project.is_git {
         return Ok(Vec::new());
     }
@@ -293,7 +304,7 @@ pub fn project_base_branch(path: &Path) -> Result<String, String> {
 
 #[tauri::command]
 pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectInfo, String> {
-    let mut project = project_info(Path::new(&path), base_branch.clone())?;
+    let mut project = project_info(Path::new(&path), base_branch.clone(), None)?;
     if project.is_git {
         let branch = base_branch.filter(|branch| !branch.trim().is_empty()).ok_or("base branch required")?;
         let exists = Command::new("git")
@@ -324,7 +335,7 @@ pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectI
 
 #[tauri::command]
 pub fn update_project_base_branch(path: String, base_branch: String) -> Result<ProjectInfo, String> {
-    let mut project = project_info(Path::new(&path), Some(base_branch.clone()))?;
+    let mut project = project_info(Path::new(&path), Some(base_branch.clone()), None)?;
     if !project.is_git {
         return Err("base branch is only available for Git projects".into());
     }
@@ -344,7 +355,26 @@ pub fn update_project_base_branch(path: String, base_branch: String) -> Result<P
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
     project.base_branch = Some(base_branch);
+    project.pipeline_type = config.pipeline_types.get(&project.path).cloned();
     Ok(project)
+}
+
+#[tauri::command]
+pub fn update_project_pipeline_type(path: String, pipeline_type: String) -> Result<ProjectInfo, String> {
+    let pipeline_type = pipeline_type.trim().to_string();
+    if !matches!(pipeline_type.as_str(), "Personal" | "MBI" | "KAI") {
+        return Err("pipeline type must be Personal, MBI, or KAI".into());
+    }
+    let mut config = read_config()?;
+    let canonical = canonicalize_or_original(Path::new(&path)).to_string_lossy().to_string();
+    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical) {
+        return Err(format!("project is not registered: {canonical}"));
+    }
+    config.pipeline_types.insert(canonical.clone(), pipeline_type.clone());
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    let base_branch = config.base_branches.get(&canonical).cloned();
+    project_info(Path::new(&canonical), base_branch, Some(pipeline_type))
 }
 
 #[tauri::command]
@@ -354,6 +384,8 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.projects.retain(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() != canonical);
     config.base_branches.remove(&canonical);
     config.base_branches.remove(&path);
+    config.pipeline_types.remove(&canonical);
+    config.pipeline_types.remove(&path);
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }

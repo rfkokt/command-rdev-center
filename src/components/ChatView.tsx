@@ -174,6 +174,7 @@ export default function ChatView({
   projectPath,
   projectName,
   isGit,
+  pipelineType,
   chatId,
   sessionFile,
   initialModel,
@@ -192,6 +193,7 @@ export default function ChatView({
   projectPath: string;
   projectName: string;
   isGit: boolean;
+  pipelineType: string;
   chatId: string;
   sessionFile?: string;
   initialModel?: string;
@@ -1439,7 +1441,7 @@ export default function ChatView({
         onClose={() => setRightSidebarOpen(false)}
         onToast={onToast}
         onHandoff={() => {
-          const message = "Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Follow its required pipeline logging and report any logging failure.";
+          const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}. Follow its required pipeline logging and report any logging failure.`;
           setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
           sendRaw({ type: "prompt", message });
         }}

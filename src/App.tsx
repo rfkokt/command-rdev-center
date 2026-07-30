@@ -80,6 +80,11 @@ export default function App() {
     localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
+  function updatePipelineType(projectPath: string, pipelineType: string) {
+    setTabs((prev) => prev.map((tab) => tab.project.path === projectPath ? { ...tab, project: { ...tab.project, pipeline_type: pipelineType } } : tab));
+    setSelectedProject((project) => project?.path === projectPath ? { ...project, pipeline_type: pipelineType } : project);
+  }
+
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
   }, []);
@@ -212,6 +217,7 @@ export default function App() {
                 projectPath={tab.project.path}
                 projectName={tab.project.name}
                 isGit={tab.project.is_git}
+                pipelineType={tab.project.pipeline_type ?? "Personal"}
                 chatId={tab.id}
                 sessionFile={tab.sessionFile}
                 initialModel={tab.model}
@@ -244,7 +250,7 @@ export default function App() {
             aria-label="Copy toast"
           >⧉</button>
         </div>}
-        {settingsOpen && <SettingsPanel projectPath={activeTab?.project.path} onClose={() => setSettingsOpen(false)} onToast={addToast} />}
+        {settingsOpen && <SettingsPanel projectPath={activeTab?.project.path} onClose={() => setSettingsOpen(false)} onToast={addToast} onPipelineTypeSaved={updatePipelineType} />}
       </section>
     </main>
   );
