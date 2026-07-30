@@ -28,7 +28,7 @@ fn shell_path() -> String {
         .map(|path| path.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join(":");
-    format!("{nvm_bins}:{home}/.local/bin:{home}/.npm-global/bin:{home}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{current}")
+    format!("{nvm_bins}:{home}/.cargo/bin:{home}/.local/bin:{home}/.npm-global/bin:{home}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{current}")
 }
 
 #[derive(Clone, Serialize)]
@@ -88,6 +88,23 @@ fn record_is_live(record: &DevRunnerRecord) -> bool {
         .next()
         .and_then(|value| value.parse::<u16>().ok());
     command_matches && port.is_some_and(|port| TcpStream::connect(("127.0.0.1", port)).is_ok())
+}
+
+fn take_live_record(
+    records: &mut Vec<DevRunnerRecord>,
+    chat_id: &str,
+    cwd: &str,
+    mut is_live: impl FnMut(&DevRunnerRecord) -> bool,
+) -> Option<DevRunnerRecord> {
+    let index = records
+        .iter()
+        .position(|record| record.chat_id == chat_id && record.cwd == cwd)?;
+    if is_live(&records[index]) {
+        Some(records.remove(index))
+    } else {
+        records.remove(index);
+        None
+    }
 }
 
 fn remove_record(chat_id: &str) -> Result<Option<DevRunnerRecord>, String> {
@@ -302,18 +319,17 @@ pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerIn
         .lock()
         .map_err(|_| "dev runner registry lock poisoned")?;
     let mut records = read_records();
-    let found = records
-        .iter()
-        .find(|record| record.chat_id == chat_id && record.cwd == cwd && record_is_live(record))
-        .map(|record| DevRunnerInfo {
-            command: record.command.clone(),
-            url: record.url.clone(),
-            running: true,
-        });
-    records
-        .retain(|record| record.chat_id != chat_id || record.cwd != cwd || record_is_live(record));
+    let found = take_live_record(&mut records, &chat_id, &cwd, record_is_live);
+    let info = found.as_ref().map(|record| DevRunnerInfo {
+        command: record.command.clone(),
+        url: record.url.clone(),
+        running: true,
+    });
+    if let Some(record) = found {
+        records.push(record);
+    }
     write_records(&records)?;
-    Ok(found)
+    Ok(info)
 }
 
 #[tauri::command]
@@ -340,6 +356,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shell_path_includes_rustup_binaries() {
+        let home = std::env::var("HOME").unwrap();
+        assert!(shell_path().split(':').any(|path| path == format!("{home}/.cargo/bin")));
+    }
+
+    #[test]
     fn persisted_pid_without_verifiable_command_is_never_live() {
         let record = DevRunnerRecord {
             chat_id: "chat-a".into(),
@@ -350,6 +372,25 @@ mod tests {
             process_command: String::new(),
         };
         assert!(!record_is_live(&record));
+    }
+
+    #[test]
+    fn polling_checks_matching_runner_once() {
+        let mut records = vec![DevRunnerRecord {
+            chat_id: "chat-a".into(),
+            cwd: "/tmp/a".into(),
+            command: "pnpm dev".into(),
+            url: "http://localhost:1".into(),
+            process_group: 1,
+            process_command: "pnpm dev".into(),
+        }];
+        let mut checks = 0;
+        let found = take_live_record(&mut records, "chat-a", "/tmp/a", |_| {
+            checks += 1;
+            true
+        });
+        assert!(found.is_some());
+        assert_eq!(checks, 1);
     }
 
     #[test]
