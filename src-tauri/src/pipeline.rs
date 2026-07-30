@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PipelineStage {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, alias = "duration_ms", alias = "elapsed_ms")]
     pub ms: u64,
     pub status: String,
 }
@@ -70,6 +70,13 @@ mod tests {
         let runs = read_runs("{\"run_id\":\"1\",\"project\":\"demo\",\"project_type\":\"Personal\",\"date\":\"2026-01-01T00:00:00Z\",\"status\":\"done\",\"stages\":[]}\n\n").unwrap();
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].project, "demo");
+    }
+
+    #[test]
+    fn accepts_legacy_stage_duration_names() {
+        let runs = read_runs("{\"run_id\":\"1\",\"project\":\"demo\",\"project_type\":\"Personal\",\"date\":\"2026-01-01T00:00:00Z\",\"status\":\"done\",\"stages\":[{\"name\":\"review\",\"duration_ms\":1250,\"status\":\"pass\"},{\"name\":\"sonar\",\"elapsed_ms\":2500,\"status\":\"pass\"}]}\n").unwrap();
+        assert_eq!(runs[0].stages[0].ms, 1250);
+        assert_eq!(runs[0].stages[1].ms, 2500);
     }
 
     #[test]
