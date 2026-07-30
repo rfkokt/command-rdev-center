@@ -133,6 +133,28 @@ fn take_live_record(
     }
 }
 
+fn project_runner_chat_ids(
+    records: &[DevRunnerRecord],
+    project: &Path,
+    mut owner: impl FnMut(&Path) -> Option<std::path::PathBuf>,
+) -> Vec<String> {
+    records
+        .iter()
+        .filter(|record| owner(Path::new(&record.cwd)).as_deref() == Some(project))
+        .map(|record| record.chat_id.clone())
+        .collect()
+}
+
+fn stop_project_dev_servers(project: &Path) -> Result<(), String> {
+    let chat_ids = project_runner_chat_ids(&read_records(), project, |cwd| {
+        crate::projects::ensure_path_allowed(cwd).ok()
+    });
+    for chat_id in chat_ids {
+        stop_dev_server(chat_id)?;
+    }
+    Ok(())
+}
+
 fn remove_record(chat_id: &str) -> Result<Option<DevRunnerRecord>, String> {
     let _lock = REGISTRY_LOCK
         .lock()
@@ -214,7 +236,7 @@ pub fn start_dev_server(
         return Err("unsupported dev command".into());
     }
     ensure_node_modules(Path::new(&cwd), &project)?;
-    stop_dev_server(chat_id.clone())?;
+    stop_project_dev_servers(&project)?;
     let port = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| e.to_string())?
         .local_addr()
@@ -392,6 +414,27 @@ pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_runner_ids_include_other_worktrees_of_same_project() {
+        let records = [
+            DevRunnerRecord {
+                chat_id: "same-project".into(), cwd: "/worktrees/a".into(), command: "dev".into(),
+                url: "http://localhost:1".into(), process_group: 1, process_command: "dev".into(), log_path: String::new(),
+            },
+            DevRunnerRecord {
+                chat_id: "other-project".into(), cwd: "/worktrees/b".into(), command: "dev".into(),
+                url: "http://localhost:2".into(), process_group: 2, process_command: "dev".into(), log_path: String::new(),
+            },
+        ];
+        let project = Path::new("/projects/a");
+        let ids = project_runner_chat_ids(&records, project, |cwd| match cwd.to_str() {
+            Some("/worktrees/a") => Some(project.into()),
+            Some("/worktrees/b") => Some("/projects/b".into()),
+            _ => None,
+        });
+        assert_eq!(ids, ["same-project"]);
+    }
 
     #[test]
     fn log_tail_is_bounded_to_recent_output() {
