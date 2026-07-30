@@ -105,7 +105,9 @@ fn record_is_live(record: &DevRunnerRecord) -> bool {
                 && String::from_utf8_lossy(&output.stdout).lines().any(|line| {
                     let mut fields = line.trim().splitn(2, char::is_whitespace);
                     fields.next() == Some(process_group.as_str())
-                        && fields.next().is_some_and(|command| command.contains(&record.process_command))
+                        && fields
+                            .next()
+                            .is_some_and(|command| command.contains(&record.process_command))
                 })
         });
     let port = record
@@ -150,7 +152,7 @@ fn stop_project_dev_servers(project: &Path) -> Result<(), String> {
         crate::projects::ensure_path_allowed(cwd).ok()
     });
     for chat_id in chat_ids {
-        stop_dev_server(chat_id)?;
+        stop_dev_server_blocking(chat_id)?;
     }
     Ok(())
 }
@@ -361,6 +363,40 @@ fn kill_process_group(child: &mut Child) {
     let _ = child.wait();
 }
 
+fn kill_port_listener(url: &str) {
+    let Some(port) = url
+        .rsplit(':')
+        .next()
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return;
+    };
+    let port_arg = format!("-iTCP:{port}");
+    let Ok(output) = Command::new("lsof")
+        .args(["-nP", "-t", &port_arg, "-sTCP:LISTEN"])
+        .output()
+    else {
+        return;
+    };
+    for pid in String::from_utf8_lossy(&output.stdout).split_whitespace() {
+        let _ = Command::new("kill").args(["-TERM", pid]).status();
+    }
+    for _ in 0..20 {
+        if TcpStream::connect(("127.0.0.1", port)).is_err() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    if let Ok(output) = Command::new("lsof")
+        .args(["-nP", "-t", &port_arg, "-sTCP:LISTEN"])
+        .output()
+    {
+        for pid in String::from_utf8_lossy(&output.stdout).split_whitespace() {
+            let _ = Command::new("kill").args(["-KILL", pid]).status();
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerInfo>, String> {
     crate::projects::ensure_path_allowed(Path::new(&cwd))?;
@@ -379,12 +415,15 @@ pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerIn
             error: Some(read_log_tail(&record.log_path)),
         });
     let found = take_live_record(&mut records, &chat_id, &cwd, record_is_live);
-    let info = found.as_ref().map(|record| DevRunnerInfo {
-        command: record.command.clone(),
-        url: record.url.clone(),
-        running: true,
-        error: None,
-    }).or(stopped);
+    let info = found
+        .as_ref()
+        .map(|record| DevRunnerInfo {
+            command: record.command.clone(),
+            url: record.url.clone(),
+            running: true,
+            error: None,
+        })
+        .or(stopped);
     if let Some(record) = found {
         records.push(record);
     }
@@ -392,23 +431,32 @@ pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerIn
     Ok(info)
 }
 
-#[tauri::command]
-pub fn stop_dev_server(chat_id: String) -> Result<(), String> {
+fn stop_dev_server_blocking(chat_id: String) -> Result<(), String> {
+    let record = remove_record(&chat_id)?;
     if let Some(mut child) = runners()
         .lock()
         .map_err(|_| "dev runner lock poisoned")?
         .remove(&chat_id)
     {
         kill_process_group(&mut child);
-        remove_record(&chat_id)?;
-    } else if let Some(record) = remove_record(&chat_id)? {
-        if record_is_live(&record) {
+    } else if let Some(record) = &record {
+        if record_is_live(record) {
             let _ = Command::new("kill")
                 .args(["-TERM", &format!("-{}", record.process_group)])
                 .status();
         }
     }
+    if let Some(record) = record {
+        kill_port_listener(&record.url);
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_dev_server(chat_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || stop_dev_server_blocking(chat_id))
+        .await
+        .map_err(|e| format!("Dev-server stop worker failed: {e}"))?
 }
 
 #[cfg(test)]
@@ -419,12 +467,22 @@ mod tests {
     fn project_runner_ids_include_other_worktrees_of_same_project() {
         let records = [
             DevRunnerRecord {
-                chat_id: "same-project".into(), cwd: "/worktrees/a".into(), command: "dev".into(),
-                url: "http://localhost:1".into(), process_group: 1, process_command: "dev".into(), log_path: String::new(),
+                chat_id: "same-project".into(),
+                cwd: "/worktrees/a".into(),
+                command: "dev".into(),
+                url: "http://localhost:1".into(),
+                process_group: 1,
+                process_command: "dev".into(),
+                log_path: String::new(),
             },
             DevRunnerRecord {
-                chat_id: "other-project".into(), cwd: "/worktrees/b".into(), command: "dev".into(),
-                url: "http://localhost:2".into(), process_group: 2, process_command: "dev".into(), log_path: String::new(),
+                chat_id: "other-project".into(),
+                cwd: "/worktrees/b".into(),
+                command: "dev".into(),
+                url: "http://localhost:2".into(),
+                process_group: 2,
+                process_command: "dev".into(),
+                log_path: String::new(),
             },
         ];
         let project = Path::new("/projects/a");
@@ -460,9 +518,40 @@ mod tests {
     }
 
     #[test]
+    fn stop_kills_listener_that_escaped_the_launcher_group() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let mut server = Command::new("python3")
+            .args([
+                "-m",
+                "http.server",
+                &port.to_string(),
+                "--bind",
+                "127.0.0.1",
+            ])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        for _ in 0..20 {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        kill_port_listener(&format!("http://localhost:{port}"));
+        let stopped = TcpStream::connect(("127.0.0.1", port)).is_err();
+        let _ = server.kill();
+        let _ = server.wait();
+        assert!(stopped);
+    }
+
+    #[test]
     fn shell_path_includes_rustup_binaries() {
         let home = std::env::var("HOME").unwrap();
-        assert!(shell_path().split(':').any(|path| path == format!("{home}/.cargo/bin")));
+        assert!(shell_path()
+            .split(':')
+            .any(|path| path == format!("{home}/.cargo/bin")));
     }
 
     #[test]
