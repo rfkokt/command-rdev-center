@@ -85,7 +85,8 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   }
   if (streamingIndex < 0) return [...messages, { id: uid(), role: "system", text, toolCalls: [] }];
   const next = [...messages];
-  next[streamingIndex] = { ...next[streamingIndex], text: next[streamingIndex].text || text, isStreaming: false };
+  const streamed = next[streamingIndex].text;
+  next[streamingIndex] = { ...next[streamingIndex], text: streamed ? `${streamed}\n\n${text}` : text, isStreaming: false };
   return next;
 }
 
@@ -424,6 +425,8 @@ export default function ChatView({
       } catch (e) {
         const msg = String(e);
         if (msg.includes("crashed") || msg.includes("closed") || msg.includes("unknown session")) setAgentStatus("stopped");
+        setIsStreaming(false);
+        setMessages((prev) => settleWithError(prev, msg));
         onToast(msg);
         return false;
       }
@@ -626,7 +629,12 @@ export default function ChatView({
           onAgentRunning(chatId, false);
           onUnread(chatId);
           setIsStreaming(false);
-          setMessages((prev) => prev.map((x) => (x.isStreaming ? { ...x, isStreaming: false } : x)));
+          setMessages((prev) => {
+            const streaming = [...prev].reverse().find((message) => message.role === "assistant" && message.isStreaming);
+            return streaming && !streaming.text && !streaming.thinking && streaming.toolCalls.length === 0
+              ? settleWithError(prev, "Agent finished without a response.")
+              : prev.map((message) => message.isStreaming ? { ...message, isStreaming: false } : message);
+          });
           void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
@@ -797,6 +805,7 @@ export default function ChatView({
         const msg = String(e);
         setIsHistoryLoading(false);
         if (msg.includes("detached") || msg.includes("not found") || msg.includes("does not exist")) setDriveDetached(true);
+        setMessages((prev) => settleWithError(prev, msg));
         onToast(msg);
       }
     }

@@ -70,4 +70,12 @@ describe("settleWithError", () => {
       { ...assistant, text: "Agent error: provider failed", isStreaming: false },
     ]);
   });
+
+  test("keeps partial output and appends the error", () => {
+    const assistant = { id: "a", role: "assistant", text: "Partial answer", toolCalls: [], isStreaming: true } as ChatMessage;
+
+    expect(settleWithError([assistant], "connection lost")[0].text).toBe(
+      "Partial answer\n\nAgent error: connection lost",
+    );
+  });
 });
