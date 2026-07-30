@@ -239,6 +239,7 @@ export default function ChatView({
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
+  const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
   const [devStarting, setDevStarting] = useState(false);
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
@@ -930,8 +931,13 @@ export default function ChatView({
       const command = saved ?? await invoke<string>("detect_dev_command", { cwd: worktree.worktree_path });
       if (!saved) return setPendingDevCommand(command);
       setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command }));
+      setDevError(null);
       onToast(`Dev server started: ${command}`);
-    } catch (error) { onToast(String(error)); }
+    } catch (error) {
+      const message = String(error);
+      setDevError(message);
+      onToast(message);
+    }
   }
 
   async function confirmRunDev() {
@@ -940,9 +946,14 @@ export default function ChatView({
     try {
       localStorage.setItem(`crc-dev-command:${projectPath}`, pendingDevCommand);
       setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command: pendingDevCommand }));
+      setDevError(null);
       setPendingDevCommand(null);
       onToast(`Dev server started: ${pendingDevCommand}`);
-    } catch (error) { onToast(String(error)); }
+    } catch (error) {
+      const message = String(error);
+      setDevError(message);
+      onToast(message);
+    }
     finally { setDevStarting(false); }
   }
 
@@ -1137,6 +1148,7 @@ export default function ChatView({
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
           {worktree && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
           {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
+          {devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
         </div>
