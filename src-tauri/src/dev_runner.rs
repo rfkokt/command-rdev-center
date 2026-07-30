@@ -74,18 +74,25 @@ fn write_records(records: &[DevRunnerRecord]) -> Result<(), String> {
 fn record_is_live(record: &DevRunnerRecord) -> bool {
     if let Ok(mut children) = runners().lock() {
         if let Some(child) = children.get_mut(&record.chat_id) {
-            return child.try_wait().is_ok_and(|status| status.is_none());
+            if child.try_wait().is_ok_and(|status| status.is_none()) {
+                return true;
+            }
         }
     }
     if record.process_command.is_empty() {
         return false;
     }
+    let process_group = record.process_group.to_string();
     let command_matches = Command::new("ps")
-        .args(["-p", &record.process_group.to_string(), "-o", "command="])
+        .args(["-axo", "pgid=,command="])
         .output()
         .is_ok_and(|output| {
             output.status.success()
-                && String::from_utf8_lossy(&output.stdout).contains(&record.process_command)
+                && String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+                    let mut fields = line.trim().splitn(2, char::is_whitespace);
+                    fields.next() == Some(process_group.as_str())
+                        && fields.next().is_some_and(|command| command.contains(&record.process_command))
+                })
         });
     let port = record
         .url

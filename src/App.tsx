@@ -2,7 +2,7 @@ import "@fontsource/jetbrains-mono/400.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { relaunch } from "@tauri-apps/plugin-process";
+import { exit } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { onAction, registerActionTypes } from "@tauri-apps/plugin-notification";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
@@ -147,7 +147,7 @@ export default function App() {
       setAvailableVersion(update.version);
       addToast(`Downloading update ${update.version}…`);
       await update.downloadAndInstall();
-      await relaunch();
+      await exit(0);
     } catch (error) {
       addToast(`Update failed: ${String(error)}`);
     } finally {
