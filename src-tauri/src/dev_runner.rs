@@ -222,7 +222,17 @@ pub fn detect_dev_command(cwd: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn start_dev_server(
+pub async fn start_dev_server(
+    chat_id: String,
+    cwd: String,
+    command: String,
+) -> Result<DevRunnerInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || start_dev_server_blocking(chat_id, cwd, command))
+        .await
+        .map_err(|e| format!("Dev-server start worker failed: {e}"))?
+}
+
+fn start_dev_server_blocking(
     chat_id: String,
     cwd: String,
     command: String,
