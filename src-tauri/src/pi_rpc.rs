@@ -71,7 +71,10 @@ fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
             home.join(".bun/bin"),
         ]);
     }
-    paths.extend([PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
+    paths.extend([
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ]);
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
@@ -113,6 +116,16 @@ fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
 
     installed_pi(configured).ok_or_else(|| {
         format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi")
+    })
+}
+
+fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
+    (cwd != project).then(|| {
+        format!(
+            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- When a requested build hits it, replace only the worktree node_modules symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
+            cwd.display(),
+            project.display()
+        )
     })
 }
 
@@ -272,6 +285,12 @@ pub fn spawn_pi_rpc(
         let report = crate::graph::validate_report_path(Path::new(&report))?;
         args.push("--append-system-prompt".into());
         args.push(report.to_string_lossy().to_string());
+    }
+    if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
+        let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
+        std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
+        args.push("--append-system-prompt".into());
+        args.push(prompt_path.to_string_lossy().to_string());
     }
 
     // Resolve graphify-out path: prefer owning project (main repo) where graph exists, fallback cwd
@@ -438,13 +457,21 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
 
 #[tauri::command]
 pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
-    let map = sessions_map().lock().map_err(|_| "poisoned lock".to_string())?;
+    let map = sessions_map()
+        .lock()
+        .map_err(|_| "poisoned lock".to_string())?;
     let Some(handle) = map.get(&session_id) else {
         return Ok(false);
     };
-    let mut child = handle.child.lock().map_err(|_| "poisoned child".to_string())?;
+    let mut child = handle
+        .child
+        .lock()
+        .map_err(|_| "poisoned child".to_string())?;
     match child.as_mut() {
-        Some(child) => child.try_wait().map(|status| status.is_none()).map_err(|e| e.to_string()),
+        Some(child) => child
+            .try_wait()
+            .map(|status| status.is_none())
+            .map_err(|e| e.to_string()),
         None => Ok(false),
     }
 }
@@ -531,6 +558,19 @@ mod tests {
     fn installed_pi_accepts_existing_configured_binary() {
         let path = std::env::current_exe().unwrap();
         assert_eq!(installed_pi(path.to_str().unwrap()), Some(path));
+    }
+
+    #[test]
+    fn worktree_prompt_explains_external_node_modules_symlink() {
+        let prompt =
+            worktree_system_prompt(Path::new("/worktrees/chat"), Path::new("/projects/app"))
+                .unwrap();
+        assert!(prompt.contains("points out of the filesystem root"));
+        assert!(prompt.contains("local dependency install"));
+        assert!(
+            worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
+                .is_none()
+        );
     }
 
     #[test]
