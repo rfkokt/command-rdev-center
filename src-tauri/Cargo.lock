@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "command-rdev-center"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "security-framework",
  "serde",
