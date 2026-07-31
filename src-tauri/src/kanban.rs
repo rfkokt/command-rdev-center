@@ -1,21 +1,49 @@
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
 };
 
-fn task_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct KanbanTask {
+    no: Value,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    deskripsi: String,
+    #[serde(default)]
+    pic: String,
+    status: String,
+    #[serde(default)]
+    notes: String,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(flatten)]
+    extra: serde_json::Map<String, Value>,
+}
+
+impl KanbanTask {
+    fn validate(&self) -> Result<(), String> {
+        if self.no.is_null() {
+            return Err("task requires no".into());
+        }
+        if !["Backlog", "In Progress", "Review", "Done"]
+            .iter()
+            .any(|status| status.eq_ignore_ascii_case(self.status.trim()))
+        {
+            return Err(format!("invalid task status: {}", self.status));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct KanbanProject {
     project: String,
-    tasks: Vec<Value>,
+    tasks: Vec<KanbanTask>,
 }
 
 pub(crate) fn task_dir() -> Result<PathBuf, String> {
@@ -24,8 +52,36 @@ pub(crate) fn task_dir() -> Result<PathBuf, String> {
     Ok(parent.join("Task All Project"))
 }
 
-fn write_tasks(path: &Path, tasks: &[Value]) -> Result<(), String> {
-    let temp = path.with_extension(format!("json.tmp.{}", std::process::id()));
+fn lock_tasks(dir: &Path) -> Result<File, String> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(dir.join(".kanban.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.lock_exclusive().map_err(|e| e.to_string())?;
+    Ok(lock)
+}
+
+fn read_tasks(path: &Path) -> Result<Vec<KanbanTask>, String> {
+    let tasks: Vec<KanbanTask> =
+        serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    for task in &tasks {
+        task.validate()?;
+    }
+    Ok(tasks)
+}
+
+fn write_tasks(path: &Path, tasks: &[KanbanTask]) -> Result<(), String> {
+    let temp = path.with_extension(format!(
+        "json.tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
     let backup = path.with_extension("json.bak");
     let result = (|| {
         let bytes = serde_json::to_vec_pretty(tasks).map_err(|e| e.to_string())?;
@@ -77,39 +133,38 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
         return Err("invalid task status".into());
     }
 
-    let _guard = task_lock()
-        .lock()
-        .map_err(|_| "task storage lock poisoned")?;
     let dir = task_dir()?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _lock = lock_tasks(&dir)?;
     let path = dir.join(format!("{}.json", input.project));
     let mut tasks = if path.exists() {
-        serde_json::from_str::<Vec<Value>>(
-            &std::fs::read_to_string(&path).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?
+        read_tasks(&path)?
     } else {
         Vec::new()
     };
     let existing = tasks
         .iter_mut()
-        .find(|task| task.get("session_id").and_then(Value::as_str) == Some(&input.session_id));
+        .find(|task| task.session_id.as_deref() == Some(&input.session_id));
     if let Some(task) = existing {
-        task["status"] = json!(input.status);
+        task.status = input.status.clone();
     } else {
         let prompt = input.prompt.as_deref().unwrap_or_default().trim();
         if prompt.is_empty() {
             return Ok(None);
         }
-        tasks.push(json!({
-            "no": format!("chat-{}", input.session_id.trim_start_matches("chat-")),
-            "url": "",
-            "deskripsi": prompt.chars().take(160).collect::<String>(),
-            "pic": "agent",
-            "status": input.status,
-            "notes": "Created automatically from actionable chat",
-            "session_id": input.session_id
-        }));
+        tasks.push(KanbanTask {
+            no: json!(format!(
+                "chat-{}",
+                input.session_id.trim_start_matches("chat-")
+            )),
+            url: String::new(),
+            deskripsi: prompt.chars().take(160).collect(),
+            pic: "agent".into(),
+            status: input.status.clone(),
+            notes: "Created automatically from actionable chat".into(),
+            session_id: Some(input.session_id),
+            extra: serde_json::Map::new(),
+        });
     }
     write_tasks(&path, &tasks)?;
     Ok(Some(input.status))
@@ -119,14 +174,12 @@ fn update_task_status_at(path: &Path, task_no: &Value, status: &str) -> Result<(
     if !["Backlog", "In Progress", "Review", "Done"].contains(&status) {
         return Err("invalid task status".into());
     }
-    let mut tasks: Vec<Value> =
-        serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
+    let mut tasks = read_tasks(path)?;
     let task = tasks
         .iter_mut()
-        .find(|task| task.get("no") == Some(task_no))
+        .find(|task| &task.no == task_no)
         .ok_or("task no longer exists")?;
-    task["status"] = json!(status);
+    task.status = status.into();
     write_tasks(path, &tasks)
 }
 
@@ -139,10 +192,9 @@ pub fn update_kanban_task_status(
     if !valid_project(&project) || task_no.is_null() {
         return Err("invalid task identity".into());
     }
-    let _guard = task_lock()
-        .lock()
-        .map_err(|_| "task storage lock poisoned")?;
-    let path = task_dir()?.join(format!("{project}.json"));
+    let dir = task_dir()?;
+    let _lock = lock_tasks(&dir)?;
+    let path = dir.join(format!("{project}.json"));
     if !path.is_file() {
         return Err("task file does not exist".into());
     }
@@ -163,8 +215,12 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
             continue;
         }
         let raw = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let tasks = serde_json::from_str::<Vec<Value>>(&raw)
+        let tasks = serde_json::from_str::<Vec<KanbanTask>>(&raw)
             .map_err(|e| format!("{}: {e}", path.display()))?;
+        for task in &tasks {
+            task.validate()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+        }
         let project = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -188,17 +244,31 @@ mod tests {
         let path = dir.join("demo.json");
         std::fs::write(
             &path,
-            r#"[{"no":1,"status":"Backlog"},{"no":2,"status":"In Progress"}]"#,
+            r#"[{"no":1,"deskripsi":"One","status":"Backlog"},{"no":2,"deskripsi":"Two","status":"In Progress"}]"#,
         )
         .unwrap();
 
         update_task_status_at(&path, &json!(1), "Done").unwrap();
 
-        let tasks: Vec<Value> =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let tasks = read_tasks(&path).unwrap();
         assert_eq!(tasks.len(), 2);
-        assert_eq!(tasks[0]["status"], "Done");
-        assert_eq!(tasks[1]["no"], 2);
+        assert_eq!(tasks[0].status, "Done");
+        assert_eq!(tasks[1].no, json!(2));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn status_update_preserves_unknown_fields() {
+        let dir = std::env::temp_dir().join(format!("crc-kanban-fields-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("demo.json");
+        std::fs::write(&path, r#"[{"no":1,"status":"Backlog","custom":true}]"#).unwrap();
+
+        update_task_status_at(&path, &json!(1), "Done").unwrap();
+
+        let raw: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(raw[0]["custom"], true);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -210,16 +280,23 @@ mod tests {
         let path = dir.join("demo.json");
         std::fs::write(&path, "[{\"status\":\"Backlog\"}]\n").unwrap();
 
-        write_tasks(&path, &[serde_json::json!({"status": "Done"})]).unwrap();
+        let task = KanbanTask {
+            no: json!(1),
+            url: String::new(),
+            deskripsi: "Demo".into(),
+            pic: String::new(),
+            status: "Done".into(),
+            notes: String::new(),
+            session_id: None,
+            extra: serde_json::Map::new(),
+        };
+        write_tasks(&path, &[task]).unwrap();
 
         assert_eq!(
             std::fs::read_to_string(path.with_extension("json.bak")).unwrap(),
             "[{\"status\":\"Backlog\"}]\n"
         );
-        assert_eq!(
-            serde_json::from_str::<Vec<Value>>(&std::fs::read_to_string(&path).unwrap()).unwrap(),
-            vec![serde_json::json!({"status": "Done"})]
-        );
+        assert_eq!(read_tasks(&path).unwrap()[0].status, "Done");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

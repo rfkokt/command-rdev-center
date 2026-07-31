@@ -80,11 +80,6 @@ export default function App() {
     localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
-  function updatePipelineType(projectPath: string, pipelineType: string) {
-    setTabs((prev) => prev.map((tab) => tab.project.path === projectPath ? { ...tab, project: { ...tab.project, pipeline_type: pipelineType } } : tab));
-    setSelectedProject((project) => project?.path === projectPath ? { ...project, pipeline_type: pipelineType } : project);
-  }
-
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
   }, []);
@@ -210,7 +205,7 @@ export default function App() {
 
         <div className="workspace-body">
           {dashboard === "kanban" && <KanbanBoard />}
-          {dashboard === "pipeline" && <PipelineView />}
+          {dashboard === "pipeline" && <PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} />}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView
@@ -250,7 +245,7 @@ export default function App() {
             aria-label="Copy toast"
           >⧉</button>
         </div>}
-        {settingsOpen && <SettingsPanel projectPath={activeTab?.project.path} onClose={() => setSettingsOpen(false)} onToast={addToast} onPipelineTypeSaved={updatePipelineType} />}
+        {settingsOpen && <SettingsPanel projectPath={activeTab?.project.path} onClose={() => setSettingsOpen(false)} onToast={addToast} />}
       </section>
     </main>
   );

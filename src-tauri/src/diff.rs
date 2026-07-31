@@ -231,11 +231,8 @@ mod tests {
         run(&["update-ref", "refs/remotes/origin/main", "main"]);
         run(&["checkout", "-q", "feature"]);
 
-        let diff = get_worktree_diff_blocking(
-            dir.to_string_lossy().to_string(),
-            "main".into(),
-        )
-        .unwrap();
+        let diff =
+            get_worktree_diff_blocking(dir.to_string_lossy().to_string(), "main".into()).unwrap();
         assert!(diff.files.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }

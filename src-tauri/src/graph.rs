@@ -3,9 +3,9 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::UNIX_EPOCH;
 #[cfg(test)]
 use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
@@ -216,9 +216,8 @@ fn ensure_project_files(project: &Path) -> Result<(), String> {
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
-    fs::metadata(path).is_ok_and(|metadata| {
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    })
+    fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 fn resolve_graphify(configured: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
@@ -230,13 +229,12 @@ fn resolve_graphify(configured: Option<PathBuf>, home: Option<PathBuf>) -> PathB
 }
 
 fn graphify_path() -> PathBuf {
-    let configured = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"),
-    )
-    .ok()
-    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-    .and_then(|value| value.get("pi_path")?.as_str().map(PathBuf::from))
-    .and_then(|pi| pi.parent().map(|parent| parent.join("graphify")));
+    let configured =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("crc.config.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| value.get("pi_path")?.as_str().map(PathBuf::from))
+            .and_then(|pi| pi.parent().map(|parent| parent.join("graphify")));
     resolve_graphify(configured, std::env::var_os("HOME").map(PathBuf::from))
 }
 

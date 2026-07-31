@@ -14,7 +14,18 @@ export default function KanbanBoard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<KanbanProject[]>("list_kanban_tasks").then(setProjects).catch((e) => setError(String(e)));
+    let loading = false;
+    const load = () => {
+      if (loading || document.hidden) return;
+      loading = true;
+      void invoke<KanbanProject[]>("list_kanban_tasks").then((tasks) => {
+        setProjects(tasks);
+        setError(null);
+      }).catch((e) => setError(String(e))).finally(() => { loading = false; });
+    };
+    load();
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
   }, []);
 
   async function moveTask(project: string, taskIndex: number, status: string) {

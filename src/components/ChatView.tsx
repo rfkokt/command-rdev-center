@@ -176,6 +176,8 @@ export default function ChatView({
   const trackedTaskRef = useRef(false);
   // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
   const surfacedErrorRef = useRef<string | null>(null);
+  const pipelineRunRef = useRef(false);
+  const surfacedPipelineFailureRef = useRef("");
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -630,12 +632,22 @@ export default function ChatView({
         if (t === "tool_execution_end") {
           if (!ev.toolCallId) return;
           const callId = String(ev.toolCallId);
-          upsertToolCall(callId, {
-            phase: "end",
-            callId,
-            result: ev.result as unknown,
-            isError: Boolean(ev.isError),
-          });
+          const name = String(ev.toolName ?? "");
+          const args = (ev.args as Record<string, unknown>) ?? {};
+          upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
+          if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
+            void invoke<string>("start_pipeline", { projectPath })
+              .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
+              .catch((error) => onToast(`Pipeline: ${String(error)}`));
+          }
+          if (!ev.isError && name === "control_pipeline" && ["retry", "skip", "cancel"].includes(String(args.action))) {
+            const action = String(args.action);
+            const allowed = action === "retry" || window.confirm(`${action === "skip" ? "Skip failed step" : "Cancel pipeline"} for ${projectName}?`);
+            if (allowed) {
+              const command = action === "retry" ? "retry_pipeline_step" : action === "skip" ? "skip_pipeline_step" : "cancel_pipeline";
+              void invoke(command, { projectPath }).catch((error) => onToast(`Pipeline: ${String(error)}`));
+            }
+          }
           return;
         }
       } catch {
@@ -835,6 +847,29 @@ export default function ChatView({
       }
     }
   }
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (!pipelineRunRef.current) return;
+      void invoke<{ current?: { run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> } }>("get_pipeline_data", { projectPath }).then((data) => {
+        const run = data.current;
+        if (!run) {
+          pipelineRunRef.current = false;
+          return;
+        }
+        const failed = run.stages.find((stage) => stage.status === "fail");
+        if (!failed) return;
+        const key = `${run.run_id}:${failed.name}:${failed.attempts}`;
+        if (surfacedPipelineFailureRef.current === key) return;
+        surfacedPipelineFailureRef.current = key;
+        const request = failed.failure_policy === "ai_fix"
+          ? `Pipeline step ${failed.name} failed. Diagnose this output, fix the project if safe, then call retry_pipeline_step through the app workflow. Output:\n${failed.log ?? ""}`
+          : `Pipeline step ${failed.name} failed and requires user confirmation. Explain the failure and ask whether to retry, skip, or abort. Output:\n${failed.log ?? ""}`;
+        void sendRaw({ type: "steer", message: request });
+      }).catch(() => {});
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [projectName, sendRaw]);
 
   async function handleApprovalResponse(payload: Record<string, unknown>) {
     setApproval(null);

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import GraphifySettings from "./GraphifySettings";
+import PipelineSettings from "./PipelineSettings";
 
 const GROUPS = [
   ["Model & Thinking", "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets", ["defaultProvider", "defaultModel", "defaultThinkingLevel", "thinkingBudgets"]],
@@ -15,7 +16,7 @@ const GROUPS = [
   ["Resources", "packages, extensions, skills, prompts, themes, enableSkillCommands", ["packages", "extensions", "skills", "prompts", "themes"]],
 ] as const;
 
-export default function SettingsPanel({ projectPath, onClose, onToast, onPipelineTypeSaved }: { projectPath?: string; onClose: () => void; onToast: (message: string) => void; onPipelineTypeSaved: (projectPath: string, pipelineType: string) => void }) {
+export default function SettingsPanel({ projectPath, onClose, onToast }: { projectPath?: string; onClose: () => void; onToast: (message: string) => void }) {
   const [page, setPage] = useState<"pi" | "graphify" | "pipeline">("pi");
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
@@ -24,8 +25,7 @@ export default function SettingsPanel({ projectPath, onClose, onToast, onPipelin
   const [loading, setLoading] = useState(true);
   const [activeGroup, setActiveGroup] = useState("");
   const [mode, setMode] = useState<"form" | "json">("form");
-  const [pipelineType, setPipelineType] = useState("");
-  const [pipelineSaved, setPipelineSaved] = useState("");
+
   const editorRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -36,23 +36,6 @@ export default function SettingsPanel({ projectPath, onClose, onToast, onPipelin
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   }, [scope, projectPath]);
-
-  useEffect(() => {
-    if (page !== "pipeline" || !projectPath) return;
-    let active = true;
-    setLoading(true);
-    invoke<Array<{ path: string; pipeline_type?: string }>>("list_projects")
-      .then((projects) => {
-        if (!active) return;
-        const value = projects.find((project) => project.path === projectPath)?.pipeline_type ?? "Personal";
-        setPipelineType(value);
-        setPipelineSaved(value);
-        setError("");
-      })
-      .catch((e) => { if (active) setError(String(e)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [page, projectPath]);
 
   function settingsObject() {
     try { return JSON.parse(text) as Record<string, unknown>; } catch { return {}; }
@@ -89,17 +72,6 @@ export default function SettingsPanel({ projectPath, onClose, onToast, onPipelin
     } catch (e) { setError(String(e)); }
   }
 
-  async function savePipeline() {
-    if (!projectPath) return;
-    try {
-      await invoke("update_project_pipeline_type", { path: projectPath, pipelineType });
-      onPipelineTypeSaved(projectPath, pipelineType);
-      setPipelineSaved(pipelineType);
-      setError("");
-      onToast("Pipeline project type saved.");
-    } catch (e) { setError(String(e)); }
-  }
-
   async function save() {
     try {
       const settings = JSON.parse(text) as unknown;
@@ -121,12 +93,7 @@ export default function SettingsPanel({ projectPath, onClose, onToast, onPipelin
         <button className={page === "pipeline" ? "active" : ""} disabled={!projectPath} onClick={() => setPage("pipeline")}>PIPELINE</button>
         {page === "pi" && <><button className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>GLOBAL</button><button className={scope === "project" ? "active" : ""} disabled={!projectPath} onClick={() => setScope("project")}>PROJECT</button><span>{scope === "global" ? "~/.pi/agent/settings.json" : `${projectPath}/.pi/settings.json`}</span></>}
       </div>
-      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "pipeline" ? <><div className="graphify-settings">
-        <div className="settings-notice">Pipeline type controls which git-push-workflow stages are logged for this project.</div>
-        <label>PROJECT<span>{projectPath}</span></label>
-        <label>PIPELINE TYPE<select className="themed-select" value={pipelineType} onChange={(event) => setPipelineType(event.target.value)}><option>Personal</option><option>MBI</option><option>KAI</option></select></label>
-        {error && <div className="settings-error">{error}</div>}
-      </div><footer><span>{pipelineType === pipelineSaved ? "NO CHANGES" : "UNSAVED CHANGES"}</span><div><button onClick={() => setPipelineType(pipelineSaved)} disabled={pipelineType === pipelineSaved}>RESET</button><button className="save-settings" onClick={savePipeline} disabled={loading || pipelineType === pipelineSaved}>SAVE SETTINGS</button></div></footer></> : <><div className="settings-content">
+      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "pipeline" && projectPath ? <PipelineSettings projectPath={projectPath} onToast={onToast} /> : <><div className="settings-content">
         <nav>{GROUPS.map(([name, detail, keys]) => <button type="button" className={activeGroup === name ? "active" : ""} key={name} onClick={() => jumpToGroup(name, keys)}><strong>{name}</strong><span>{detail}</span></button>)}</nav>
         <main>
           <div className="settings-mode"><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>FORM</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>JSON · ADVANCED</button></div>

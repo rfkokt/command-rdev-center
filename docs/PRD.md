@@ -217,8 +217,10 @@ Graphify needs Python 3.10+ (have 3.14.6) and an LLM API key for **docs** extrac
 - Reuses the existing `backlog-local` skill's data files — no separate store.
 - The model decides whether a request merits tracking via the `track_kanban_task` tool—no language/keyword classifier. Chosen work creates one session-linked task as `In Progress` without an approval prompt. Agent completion moves it to `Review`; user/editor acceptance moves it to `Done`.
 
-### 10.2 Push-pipeline stage-view (Jenkins-style)
-- Source: `_pipeline-runs.jsonl` (one run per line), **written by the `git-push-workflow` skill** (a small logging section added to that SKILL.md), read by the app. Location: `/Volumes/ExternalM4/Project/Task All Project/_pipeline-runs.jsonl`.
+### 10.2 App-owned pipeline stage-view (Jenkins-style)
+- The app owns pipeline execution. Each registered project stores a preset (`Personal`, `KAI`, `MBI`, or `Custom`) plus ordered enabled shell-command steps. Each step defines `ai_fix`, `ask_user`, `stop`, or `continue` failure policy and a bounded attempt count.
+- Runs start manually from Pipeline or through the `run_pipeline` agent tool only after an explicit user request. The backend loads saved configuration itself (no command IPC), validates the canonical registered project, permits one run per project, executes process groups, records logs/timing, and supports cancel/retry/skip.
+- Source: `_pipeline-runs.jsonl` (one compatible final run per line) plus `_pipeline-current.json` for live state. Location: `/Volumes/ExternalM4/Project/Task All Project/`.
 - Run record (final, append-only): `{run_id, project, project_type, date, status:"running|done", commits, stages:[{name, ms, status}]}` where stage `status ∈ pass|fail|skip|running|pending`. Live "which step" is tracked in a separate `_pipeline-current.json` patched per stage transition; `_pipeline-runs.jsonl` stays append-only (one final record per run). Logging is added to `git-push-workflow/SKILL.md` now (independent of app code) so runs accumulate before the Phase 4 UI exists.
 - **Dynamic columns = union of all stages across project types** (MBI/KAI/Personal have different stages). A stage not run for a given project type renders greyed-out/skip. This mirrors the reference Jenkins Stage View screenshot.
 - Stage sets mapped from `git-push-workflow`:

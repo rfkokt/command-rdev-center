@@ -10,6 +10,7 @@ static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
 const DEFAULT_CONFIG: &str = include_str!("../crc.config.json");
 const KANBAN_EXTENSION: &str = include_str!("../extensions/kanban-task.ts");
 const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts");
+const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -95,6 +96,8 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     std::fs::write(extensions.join("graphify-context.ts"), GRAPHIFY_EXTENSION)
         .map_err(|e| e.to_string())?;
+    std::fs::write(extensions.join("pipeline-runner.ts"), PIPELINE_EXTENSION)
+        .map_err(|e| e.to_string())?;
     CONFIG_PATH
         .set(path)
         .map_err(|_| "config already initialized".to_string())?;
@@ -109,7 +112,10 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn extensions_path() -> PathBuf {
-    config_path().parent().unwrap_or_else(|| Path::new(".")).join("extensions")
+    config_path()
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("extensions")
 }
 
 fn read_config() -> Result<StoredConfig, String> {
@@ -122,14 +128,24 @@ fn current_branch(path: &str) -> Option<String> {
         .args(["-C", path, "symbolic-ref", "--quiet", "--short", "HEAD"])
         .output()
         .ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|branch| !branch.is_empty())
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|branch| !branch.is_empty())
 }
 
 fn migrate_base_branches() -> Result<(), String> {
     let mut config = read_config()?;
-    let missing = config.projects.iter().filter_map(|path| {
-        (!config.base_branches.contains_key(path)).then(|| current_branch(path).map(|branch| (path.clone(), branch))).flatten()
-    }).collect::<Vec<_>>();
+    let missing = config
+        .projects
+        .iter()
+        .filter_map(|path| {
+            (!config.base_branches.contains_key(path))
+                .then(|| current_branch(path).map(|branch| (path.clone(), branch)))
+                .flatten()
+        })
+        .collect::<Vec<_>>();
     if missing.is_empty() {
         return Ok(());
     }
@@ -231,7 +247,11 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-fn project_info(path: &Path, base_branch: Option<String>, pipeline_type: Option<String>) -> Result<ProjectInfo, String> {
+fn project_info(
+    path: &Path,
+    base_branch: Option<String>,
+    pipeline_type: Option<String>,
+) -> Result<ProjectInfo, String> {
     if !path.is_dir() {
         return Err(format!("project directory not found: {}", path.display()));
     }
@@ -260,11 +280,21 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
         .projects
         .iter()
         .map(|path| {
-            let canonical = canonicalize_or_original(Path::new(path)).to_string_lossy().to_string();
+            let canonical = canonicalize_or_original(Path::new(path))
+                .to_string_lossy()
+                .to_string();
             project_info(
                 Path::new(path),
-                config.base_branches.get(path).or_else(|| config.base_branches.get(&canonical)).cloned(),
-                config.pipeline_types.get(path).or_else(|| config.pipeline_types.get(&canonical)).cloned(),
+                config
+                    .base_branches
+                    .get(path)
+                    .or_else(|| config.base_branches.get(&canonical))
+                    .cloned(),
+                config
+                    .pipeline_types
+                    .get(path)
+                    .or_else(|| config.pipeline_types.get(&canonical))
+                    .cloned(),
             )
         })
         .collect()
@@ -277,7 +307,13 @@ pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
         return Ok(Vec::new());
     }
     let output = Command::new("git")
-        .args(["-C", &project.path, "for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .args([
+            "-C",
+            &project.path,
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ])
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
@@ -306,9 +342,17 @@ pub fn project_base_branch(path: &Path) -> Result<String, String> {
 pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectInfo, String> {
     let mut project = project_info(Path::new(&path), base_branch.clone(), None)?;
     if project.is_git {
-        let branch = base_branch.filter(|branch| !branch.trim().is_empty()).ok_or("base branch required")?;
+        let branch = base_branch
+            .filter(|branch| !branch.trim().is_empty())
+            .ok_or("base branch required")?;
         let exists = Command::new("git")
-            .args(["-C", &project.path, "rev-parse", "--verify", &format!("refs/heads/{branch}")])
+            .args([
+                "-C",
+                &project.path,
+                "rev-parse",
+                "--verify",
+                &format!("refs/heads/{branch}"),
+            ])
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false);
@@ -326,7 +370,9 @@ pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectI
         config.projects.push(project.path.clone());
     }
     if let Some(branch) = &project.base_branch {
-        config.base_branches.insert(project.path.clone(), branch.clone());
+        config
+            .base_branches
+            .insert(project.path.clone(), branch.clone());
     }
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|e| e.to_string())?;
@@ -334,13 +380,22 @@ pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectI
 }
 
 #[tauri::command]
-pub fn update_project_base_branch(path: String, base_branch: String) -> Result<ProjectInfo, String> {
+pub fn update_project_base_branch(
+    path: String,
+    base_branch: String,
+) -> Result<ProjectInfo, String> {
     let mut project = project_info(Path::new(&path), Some(base_branch.clone()), None)?;
     if !project.is_git {
         return Err("base branch is only available for Git projects".into());
     }
     let exists = Command::new("git")
-        .args(["-C", &project.path, "rev-parse", "--verify", &format!("refs/heads/{base_branch}")])
+        .args([
+            "-C",
+            &project.path,
+            "rev-parse",
+            "--verify",
+            &format!("refs/heads/{base_branch}"),
+        ])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
@@ -348,10 +403,16 @@ pub fn update_project_base_branch(path: String, base_branch: String) -> Result<P
         return Err(format!("local branch not found: {base_branch}"));
     }
     let mut config = read_config()?;
-    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)) == PathBuf::from(&project.path)) {
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)) == PathBuf::from(&project.path))
+    {
         return Err(format!("project is not registered: {}", project.path));
     }
-    config.base_branches.insert(project.path.clone(), base_branch.clone());
+    config
+        .base_branches
+        .insert(project.path.clone(), base_branch.clone());
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
     project.base_branch = Some(base_branch);
@@ -360,17 +421,28 @@ pub fn update_project_base_branch(path: String, base_branch: String) -> Result<P
 }
 
 #[tauri::command]
-pub fn update_project_pipeline_type(path: String, pipeline_type: String) -> Result<ProjectInfo, String> {
+pub fn update_project_pipeline_type(
+    path: String,
+    pipeline_type: String,
+) -> Result<ProjectInfo, String> {
     let pipeline_type = pipeline_type.trim().to_string();
     if !matches!(pipeline_type.as_str(), "Personal" | "MBI" | "KAI") {
         return Err("pipeline type must be Personal, MBI, or KAI".into());
     }
     let mut config = read_config()?;
-    let canonical = canonicalize_or_original(Path::new(&path)).to_string_lossy().to_string();
-    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical) {
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .to_string();
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical)
+    {
         return Err(format!("project is not registered: {canonical}"));
     }
-    config.pipeline_types.insert(canonical.clone(), pipeline_type.clone());
+    config
+        .pipeline_types
+        .insert(canonical.clone(), pipeline_type.clone());
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
     let base_branch = config.base_branches.get(&canonical).cloned();
@@ -379,9 +451,13 @@ pub fn update_project_pipeline_type(path: String, pipeline_type: String) -> Resu
 
 #[tauri::command]
 pub fn remove_project(path: String) -> Result<(), String> {
-    let canonical = canonicalize_or_original(Path::new(&path)).to_string_lossy().to_string();
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .to_string();
     let mut config = read_config()?;
-    config.projects.retain(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() != canonical);
+    config
+        .projects
+        .retain(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() != canonical);
     config.base_branches.remove(&canonical);
     config.base_branches.remove(&path);
     config.pipeline_types.remove(&canonical);

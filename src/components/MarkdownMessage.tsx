@@ -65,10 +65,10 @@ export default function MarkdownMessage({ children }: { children: string }) {
           </div>
         ),
         td: ({ children: cellChildren, ...props }) => (
-          <td {...props}>{Children.toArray(cellChildren).flatMap((child, childIndex) =>
+          <td {...props}>{Children.toArray(cellChildren).map((child, childIndex) =>
             typeof child === "string"
-              ? child.split("\u2028").flatMap((line, lineIndex) => lineIndex ? [<br key={`${childIndex}-${lineIndex}`} />, line] : [line])
-              : [child]
+              ? child.split("\u2028").map((line, lineIndex) => <span key={`${childIndex}-${lineIndex}`}>{lineIndex > 0 && <br />}{line}</span>)
+              : child
           )}</td>
         ),
       }}

@@ -272,6 +272,13 @@ pub fn spawn_pi_rpc(
             .to_string_lossy()
             .into(),
     );
+    args.push("--extension".into());
+    args.push(
+        extensions
+            .join("pipeline-runner.ts")
+            .to_string_lossy()
+            .into(),
+    );
     if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
         if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
             if !session_dir.trim().is_empty() {
