@@ -141,6 +141,7 @@ export default function ChatView({
   const [isRestarting, setIsRestarting] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [cwd, setCwd] = useState(projectPath);
+  const cwdRef = useRef(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">(initialInterrupted ? "stopped" : "idle");
   const [driveDetached, setDriveDetached] = useState(false);
@@ -182,6 +183,7 @@ export default function ChatView({
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
 
+  cwdRef.current = cwd;
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
 
@@ -639,7 +641,7 @@ export default function ChatView({
           const args = (ev.args as Record<string, unknown>) ?? {};
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
           if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
-            void invoke<string>("start_pipeline", { projectPath, executionCwd: cwd })
+            void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current })
               .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
           }

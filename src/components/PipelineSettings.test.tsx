@@ -82,7 +82,7 @@ test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", asy
   await screen.findByDisplayValue("pnpm test");
   fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
 
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.objectContaining({ cwd: "/projects/demo", noSession: true, tools: [] })));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.objectContaining({ cwd: "/projects/demo", noSession: true, tools: ["read", "grep", "find", "ls"] })));
   expect(screen.queryByRole("button", { name: "APPLY TO FORM" })).not.toBeInTheDocument();
   const draft = { preset: "Custom", steps: [{ ...config.steps[0], command: "pnpm test --run" }] };
   const text = `Recommendation\n\`\`\`json\n${JSON.stringify(draft)}\n\`\`\``;
