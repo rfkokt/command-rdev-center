@@ -16,6 +16,7 @@ function duration(ms = 0) {
 export default function PipelineView({ projectPath, projectName }: { projectPath?: string; projectName?: string }) {
   const [data, setData] = useState<PipelineData>({ runs: [] });
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     let loading = false;
@@ -28,9 +29,9 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
       }).catch((e) => setError(String(e))).finally(() => { loading = false; });
     };
     load();
-    const timer = data.current ? setInterval(load, 3000) : undefined;
-    return () => { if (timer) clearInterval(timer); };
-  }, [projectPath, data.current?.run_id]);
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
+  }, [projectPath]);
 
   const runs = data.current
     ? [data.current, ...data.runs.filter((run) => run.run_id !== data.current?.run_id).sort((a, b) => b.date.localeCompare(a.date))]
@@ -38,13 +39,27 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
   const projectTypes = [...new Set(runs.map((run) => run.project_type))];
 
   const current = data.current;
+  const start = async () => {
+    if (!projectPath || starting) return;
+    setStarting(true);
+    setError(null);
+    try {
+      await invoke("start_pipeline", { projectPath });
+      const pipeline = await invoke<PipelineData>("get_pipeline_data", { projectPath });
+      setData(pipeline);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setStarting(false);
+    }
+  };
   const control = (command: string) => {
     if (!projectPath) return;
     if (["cancel_pipeline", "skip_pipeline_step"].includes(command) && !window.confirm(command === "cancel_pipeline" ? "Cancel this pipeline?" : "Skip the failed step?")) return;
     void invoke(command, { projectPath }).catch((e) => setError(String(e)));
   };
   return <section className="pipeline-view">
-    <header><div><small>APP-OWNED AUTOMATION</small><strong>PIPELINE</strong></div><div className="pipeline-actions">{projectPath && <button onClick={() => invoke("start_pipeline", { projectPath }).catch((e) => setError(String(e)))}>RUN {projectName}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} RUNS · LIVE REFRESH 3S</span></header>
+    <header><div><small>APP-OWNED AUTOMATION</small><strong>PIPELINE</strong></div><div className="pipeline-actions">{projectPath && !current && <button onClick={() => void start()} disabled={starting}>{starting ? "STARTING…" : `RUN ${projectName ?? "PIPELINE"}`}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} RUNS · LIVE REFRESH 3S</span></header>
     {error ? <p className="kanban-error">{error}</p> : !runs.length ? <div className="pipeline-empty">No pipeline runs yet.</div> : <div className="pipeline-scroll">
       {projectTypes.map((projectType) => {
         const typeRuns = runs.filter((run) => run.project_type === projectType);
