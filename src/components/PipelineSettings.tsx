@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type PipelineStep = { id: string; name: string; command: string; enabled: boolean; failure_policy: "ai_fix" | "ask_user" | "stop" | "continue"; max_attempts: number };
+export type PipelineStep = { id: string; name: string; mode?: "shell" | "ai_commit" | "confirm"; command: string; enabled: boolean; failure_policy: "ai_fix" | "ask_user" | "stop" | "continue"; max_attempts: number; prompt?: string; options?: string[] };
 export type PipelineConfig = { preset: "Personal" | "KAI" | "MBI" | "Custom"; steps: PipelineStep[] };
 
 const PRESETS: PipelineConfig["preset"][] = ["Personal", "KAI", "MBI", "Custom"];
@@ -18,7 +18,8 @@ function stepId() {
 }
 
 const CONFIG_KEYS = ["preset", "steps"];
-const STEP_KEYS = ["command", "enabled", "failure_policy", "id", "max_attempts", "name"];
+const REQUIRED_STEP_KEYS = ["command", "enabled", "failure_policy", "id", "max_attempts", "name"];
+const OPTIONAL_STEP_KEYS = ["mode", "prompt", "options"];
 function exactKeys(value: Record<string, unknown>, keys: string[]) {
   return Object.keys(value).sort().join() === [...keys].sort().join();
 }
@@ -31,9 +32,14 @@ function consultantDraft(text: string): PipelineConfig | null {
     const candidate = value as Record<string, unknown>;
     if (typeof candidate.preset !== "string" || !["Personal", "KAI", "MBI", "Custom"].includes(candidate.preset) || !Array.isArray(candidate.steps) || candidate.steps.length > 50) return null;
     if (candidate.steps.some((raw) => {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw) || !exactKeys(raw as Record<string, unknown>, STEP_KEYS)) return true;
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return true;
+      const keys = Object.keys(raw as Record<string, unknown>);
+      if (REQUIRED_STEP_KEYS.some((key) => !keys.includes(key)) || keys.some((key) => !REQUIRED_STEP_KEYS.includes(key) && !OPTIONAL_STEP_KEYS.includes(key))) return true;
       const step = raw as Record<string, unknown>;
-      return typeof step.id !== "string" || !step.id.trim() || step.id.length > 100
+      return (step.mode !== undefined && !["shell", "ai_commit", "confirm"].includes(String(step.mode)))
+        || (step.prompt !== undefined && typeof step.prompt !== "string")
+        || (step.options !== undefined && (!Array.isArray(step.options) || step.options.some((option) => typeof option !== "string")))
+        || typeof step.id !== "string" || !step.id.trim() || step.id.length > 100
         || typeof step.name !== "string" || !step.name.trim() || step.name.length > 200
         || typeof step.command !== "string" || !step.command.trim() || step.command.length > 2_000
         || typeof step.enabled !== "boolean"
@@ -106,7 +112,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
   };
   const dirty = JSON.stringify(config) !== saved;
   const enabledCount = config.steps.filter((step) => step.enabled).length;
-  const invalid = config.steps.some((step) => !step.name.trim() || !step.command.trim() || step.max_attempts < 1 || step.max_attempts > 10);
+  const invalid = config.steps.some((step) => !step.name.trim() || ((step.mode ?? "shell") !== "ai_commit" && !step.command.trim()) || step.max_attempts < 1 || step.max_attempts > 10);
 
   async function selectPreset(preset: PipelineConfig["preset"]) {
     if (preset === "Custom") return setConfig((current) => current && { ...current, preset });
@@ -166,7 +172,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
       consultantListeners.current.push(eventUnlisten, errorUnlisten);
       await invoke("spawn_pi_rpc", { sessionId, cwd: projectPath, model: null, provider: null, thinking: "medium", noSession: true, sessionFile: null, graphReportPath: null, tools: ["read", "grep", "find", "ls"] });
       if (generation !== consultantGeneration.current) { resetConsultant(); return; }
-      const system = `You are a read-only pipeline configuration consultant for ${projectName ?? projectPath}. Inspect project manifests and scripts with read/grep/find/ls before proposing commands. This app runs chat-triggered pipelines inside the active isolated Git worktree; dashboard-triggered pipelines run at the registered project root. Commands must work in clean or dirty worktrees unless a step explicitly requires changes. Never invent environment variables such as AI_CONVENTIONAL_COMMIT_MESSAGE or CONFIRMED_TAG unless the user configured their values. Ask concise questions until you understand desired validation, build, git, deploy, failure and confirmation steps. Never modify files or run commands. When ready, include exactly one fenced JSON object matching this TypeScript shape: {preset:\"Personal\"|\"KAI\"|\"MBI\"|\"Custom\",steps:[{id:string,name:string,command:string,enabled:boolean,failure_policy:\"ai_fix\"|\"ask_user\"|\"stop\"|\"continue\",max_attempts:number}]}. Commands may be proposed but are never executed or saved automatically. Current config: ${JSON.stringify(config)}. Begin with the most important missing question.`;
+      const system = `You are a read-only pipeline configuration consultant for ${projectName ?? projectPath}. Inspect project manifests and scripts with read/grep/find/ls before proposing commands. This app runs chat-triggered pipelines inside the active isolated Git worktree; dashboard-triggered pipelines run at the registered project root. Commands must work in clean or dirty worktrees unless a step explicitly requires changes. Never invent environment variables such as AI_CONVENTIONAL_COMMIT_MESSAGE or CONFIRMED_TAG unless the user configured their values. Ask concise questions until you understand desired validation, build, git, deploy, failure and confirmation steps. Never modify files or run commands. When ready, include exactly one fenced JSON object matching this TypeScript shape: {preset:\"Personal\"|\"KAI\"|\"MBI\"|\"Custom\",steps:[{id:string,name:string,mode:"shell"|"ai_commit"|"confirm",command:string,prompt:string,options:string[],enabled:boolean,failure_policy:\"ai_fix\"|\"ask_user\"|\"stop\"|\"continue\",max_attempts:number}]}. Commands may be proposed but are never executed or saved automatically. Current config: ${JSON.stringify(config)}. Begin with the most important missing question.`;
       await invoke("send_pi_command", { sessionId, jsonLine: JSON.stringify({ type: "prompt", message: system }) });
     } catch (e) {
       if (generation === consultantGeneration.current) {
@@ -233,7 +239,9 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
         {config.steps.map((step, index) => <article className={`pipeline-step-editor ${step.enabled ? "" : "disabled"}`} key={step.id}>
           <label className="pipeline-step-toggle"><input type="checkbox" checked={step.enabled} onChange={(event) => update(index, { enabled: event.target.checked })} aria-label={`Enable ${step.name}`} /><span /><b>ENABLED</b></label>
           <label><span className="mobile-field-label">STEP</span><input value={step.name} onChange={(event) => update(index, { name: event.target.value })} aria-label={`Step ${index + 1} name`} placeholder="Step name" /></label>
-          <label><span className="mobile-field-label">COMMAND</span><input className="pipeline-command-input" value={step.command} onChange={(event) => update(index, { command: event.target.value })} aria-label={`${step.name} command`} placeholder="Shell command" spellCheck={false} /></label>
+          <label><span className="mobile-field-label">MODE</span><select className="themed-select" aria-label={`${step.name} mode`} value={step.mode ?? "shell"} onChange={(event) => update(index, { mode: event.target.value as PipelineStep["mode"] })}><option value="shell">Shell</option><option value="ai_commit">AI commit</option><option value="confirm">Confirm</option></select></label>
+          <label><span className="mobile-field-label">COMMAND</span><input className="pipeline-command-input" value={step.command} onChange={(event) => update(index, { command: event.target.value })} aria-label={`${step.name} command`} placeholder={(step.mode ?? "shell") === "ai_commit" ? "Handled safely by app" : "Shell command"} disabled={(step.mode ?? "shell") === "ai_commit"} spellCheck={false} /></label>
+          {(step.mode ?? "shell") !== "shell" && <label><span className="mobile-field-label">PROMPT / OPTIONS</span><input value={step.prompt ?? ""} onChange={(event) => update(index, { prompt: event.target.value })} placeholder="Prompt" />{step.mode === "confirm" && <input value={(step.options ?? []).join(", ")} onChange={(event) => update(index, { options: event.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} placeholder="patch, minor, major" />}</label>}
           <label><span className="mobile-field-label">ON FAILURE</span><select aria-label={`${step.name} failure policy`} className="themed-select" value={step.failure_policy} title={POLICIES.find((policy) => policy.value === step.failure_policy)?.detail} onChange={(event) => update(index, { failure_policy: event.target.value as PipelineStep["failure_policy"] })}>{POLICIES.map((policy) => <option key={policy.value} value={policy.value}>{policy.label}</option>)}</select></label>
           <label><span className="mobile-field-label">TRIES</span><input type="number" min="1" max="10" value={step.max_attempts} onChange={(event) => update(index, { max_attempts: Number(event.target.value) })} aria-label={`${step.name} max attempts`} /></label>
           <div className="pipeline-step-actions">
@@ -244,7 +252,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
         </article>)}
       </div>
 
-      <button className="pipeline-add-step" onClick={() => setConfig({ ...config, preset: "Custom", steps: [...config.steps, { id: stepId(), name: "New step", command: "", enabled: true, failure_policy: "ai_fix", max_attempts: 3 }] })}>＋ ADD STEP</button>
+      <button className="pipeline-add-step" onClick={() => setConfig({ ...config, preset: "Custom", steps: [...config.steps, { id: stepId(), name: "New step", mode: "shell", command: "", enabled: true, failure_policy: "ai_fix", max_attempts: 3 }] })}>＋ ADD STEP</button>
 
       <details className="pipeline-policy-guide"><summary>FAILURE POLICY HELP</summary><div>{POLICIES.map((policy) => <p key={policy.value}><b>{policy.label}</b><span>{policy.detail}</span></p>)}</div></details>
       {invalid && <div className="settings-error" role="alert">Every step needs a name, command, and 1–10 attempts.</div>}

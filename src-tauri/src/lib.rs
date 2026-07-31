@@ -57,6 +57,7 @@ pub fn run() {
             pipeline::cancel_pipeline,
             pipeline::retry_pipeline_step,
             pipeline::skip_pipeline_step,
+            pipeline::provide_pipeline_input,
             diff::get_worktree_diff,
             projects::list_projects,
             projects::list_project_branches,

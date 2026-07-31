@@ -45,12 +45,21 @@ test("renders unix-second timestamps without Invalid Date", async () => {
   expect(screen.queryByText("Invalid Date")).not.toBeInTheDocument();
 });
 
+test("submits only a configured confirm option", async () => {
+  invoke.mockResolvedValue({ current: live.current, runs: [], pending_input: { nonce: "nonce", run_id: "live", step_id: "tag", mode: "confirm", step: "Tag", prompt: "Choose increment", options: ["patch", "minor", "major"], execution_cwd: "/projects/demo", initiator_session_id: null } });
+  render(<PipelineView projectPath="/projects/demo" />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "patch" }));
+  fireEvent.click(screen.getByRole("button", { name: "CONFIRM" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("provide_pipeline_input", { projectPath: "/projects/demo", input: { nonce: "nonce", runId: "live", stepId: "tag", mode: "confirm", sessionId: null, executionCwd: "/projects/demo", value: "patch", message: null, paths: [] } }));
+});
+
 test("refreshes immediately after starting and hides duplicate run action", async () => {
   invoke.mockResolvedValueOnce({ current: null, runs: [] }).mockResolvedValueOnce("demo").mockResolvedValueOnce(live);
   render(<PipelineView projectPath="/projects/demo" projectName="demo" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "RUN demo" }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_pipeline", { projectPath: "/projects/demo", executionCwd: null }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_pipeline", { projectPath: "/projects/demo", executionCwd: null, initiatorSessionId: null }));
   expect(await screen.findByText("running")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "RUN demo" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "CANCEL" })).toBeInTheDocument();

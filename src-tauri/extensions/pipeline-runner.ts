@@ -13,6 +13,18 @@ export default function (pi: ExtensionAPI) {
     },
   });
   pi.registerTool({
+    name: "provide_pipeline_input",
+    label: "Provide reviewed pipeline input",
+    description: "Submit an AI commit proposal after inspecting the current worktree diff. The host app always asks the user before forwarding it.",
+    parameters: Type.Object({
+      message: Type.String({ description: "One-line conventional commit message" }),
+      paths: Type.Array(Type.String(), { minItems: 1, description: "Explicit relative modified file paths" }),
+    }),
+    async execute(_id, input) {
+      return { content: [{ type: "text", text: "Pipeline input proposal submitted for user review." }], details: input };
+    },
+  });
+  pi.registerTool({
     name: "control_pipeline",
     label: "Control pipeline",
     description: "Retry, skip, or cancel the active app-owned pipeline. Use retry after safely fixing an ai_fix failure; use skip or cancel only after user confirmation.",
