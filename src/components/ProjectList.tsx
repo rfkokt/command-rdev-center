@@ -126,13 +126,14 @@ export default function ProjectList({
         </div>
       </div>}
       {projectToEdit && <div className="project-branch-backdrop" role="presentation">
-        <div className="project-branch-picker" role="dialog" aria-modal="true" aria-labelledby="edit-base-branch-title">
+        <div className="project-branch-picker project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-base-branch-title">
           <small>PROJECT SETTINGS</small>
-          <strong id="edit-base-branch-title">Change base branch</strong>
+          <strong id="edit-base-branch-title">{projectToEdit.name}</strong>
           <span>{projectToEdit.path}</span>
-          <ListPicker label="BASE BRANCH" value={baseBranch} options={branches} includeAll={false} onChange={setBaseBranch} />
-          <p>New chats use this branch. Existing chat baselines stay unchanged.</p>
-          <div className="project-dialog-actions"><button className="project-save-branch" onClick={saveBaseBranch}>SAVE BRANCH</button><button className="project-dialog-cancel" onClick={() => setProjectToEdit(null)}>CANCEL</button></div>
+          {projectToEdit.is_git && <section><h3>GENERAL</h3><ListPicker label="BASE BRANCH" value={baseBranch} options={branches} includeAll={false} onChange={setBaseBranch} /><p>New chats use this branch. Existing chat baselines stay unchanged.</p><button className="project-save-branch" onClick={saveBaseBranch}>SAVE BRANCH</button></section>}
+          <section><h3>PIPELINE</h3><p>Configure presets, commands, failure policies, and consult AI.</p><button className="project-open-pipeline" onClick={() => { const project = projectToEdit; setProjectToEdit(null); onPipelineSettings(project); }}>OPEN PIPELINE SETTINGS</button></section>
+          <section className="project-danger-zone"><h3>DANGER ZONE</h3><p>Remove this registration only. Repository files remain untouched.</p><button onClick={() => { setProjectToDelete(projectToEdit); setProjectToEdit(null); }}>REMOVE PROJECT</button></section>
+          <div className="project-dialog-actions"><button className="project-dialog-cancel" onClick={() => setProjectToEdit(null)}>CLOSE</button></div>
         </div>
       </div>}
       {projects.length === 0 && !err && <div className="project-empty">INDEX EMPTY</div>}
@@ -165,9 +166,7 @@ export default function ProjectList({
               >
                 <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
               </button>
-              <button className="project-pipeline-edit" onClick={() => onPipelineSettings(project)} title={`Pipeline settings for ${project.name}`} aria-label={`Configure pipeline for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg></button>
-              {project.is_git && <button className="project-branch-edit" onClick={() => editBaseBranch(project)} title={`Base branch: ${project.base_branch ?? "not set"}`} aria-label={`Change base branch for ${project.name}`}>⑂</button>}
-              <button className="project-delete" onClick={() => setProjectToDelete(project)} title={`Remove ${project.name}`} aria-label={`Remove ${project.name}`}>×</button>
+              <button className="project-settings-edit" onClick={() => void editBaseBranch(project)} title={`Project settings for ${project.name}`} aria-label={`Project settings for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2.1 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.5 3.1h5l.5-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z"/></svg></button>
             </div>
             <div className="project-sessions" data-collapsed={isCollapsed}>
               <div>

@@ -214,6 +214,7 @@ pub fn spawn_pi_rpc(
     no_session: Option<bool>,
     session_file: Option<String>,
     graph_report_path: Option<String>,
+    tools: Option<Vec<String>>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
@@ -243,6 +244,14 @@ pub fn spawn_pi_rpc(
     }
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
+    if let Some(tools) = tools {
+        if tools.is_empty() {
+            args.push("--no-tools".into());
+        } else {
+            args.push("--tools".into());
+            args.push(tools.join(","));
+        }
+    }
     if let Some(m) = &model {
         if !m.trim().is_empty() {
             args.push("--model".into());

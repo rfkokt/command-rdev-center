@@ -4,7 +4,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, test, vi } from "vitest";
 
 const invoke = vi.fn();
+const listeners = new Map<string, (event: { payload: unknown }) => void>();
 vi.mock("@tauri-apps/api/core", () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: (name: string, callback: (event: { payload: unknown }) => void) => { listeners.set(name, callback); return Promise.resolve(() => listeners.delete(name)); } }));
 
 import PipelineSettings, { type PipelineConfig } from "./PipelineSettings";
 
@@ -16,6 +18,7 @@ const config: PipelineConfig = {
 afterEach(() => {
   cleanup();
   invoke.mockReset();
+  listeners.clear();
 });
 
 test("shows target project and saves edited steps to that project", async () => {
@@ -71,4 +74,52 @@ test("keeps the latest preset when responses resolve out of order", async () => 
   await Promise.resolve();
   expect(screen.queryByDisplayValue("kai command")).not.toBeInTheDocument();
   vi.restoreAllMocks();
+});
+
+test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", async () => {
+  invoke.mockImplementation((command: string) => command === "get_pipeline_config" ? Promise.resolve(config) : Promise.resolve(undefined));
+  render(<PipelineSettings projectPath="/projects/demo" projectName="demo" onToast={vi.fn()} />);
+  await screen.findByDisplayValue("pnpm test");
+  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.objectContaining({ cwd: "/projects/demo", noSession: true, tools: [] })));
+  expect(screen.queryByRole("button", { name: "APPLY TO FORM" })).not.toBeInTheDocument();
+  const draft = { preset: "Custom", steps: [{ ...config.steps[0], command: "pnpm test --run" }] };
+  const text = `Recommendation\n\`\`\`json\n${JSON.stringify(draft)}\n\`\`\``;
+  const spawn = invoke.mock.calls.find(([command]) => command === "spawn_pi_rpc")?.[1] as { sessionId: string };
+  listeners.get("pi-rpc-event")?.({ payload: { session_id: spawn.sessionId, raw: JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } }) } });
+  listeners.get("pi-rpc-event")?.({ payload: { session_id: spawn.sessionId, raw: JSON.stringify({ type: "agent_settled" }) } });
+
+  expect(await screen.findByText("pnpm test --run")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "APPLY TO FORM" }));
+  expect(screen.getByDisplayValue("pnpm test --run")).toBeInTheDocument();
+  expect(invoke).not.toHaveBeenCalledWith("save_pipeline_config", expect.anything());
+});
+
+test("rejects invalid typed consultant drafts", async () => {
+  invoke.mockImplementation((command: string) => command === "get_pipeline_config" ? Promise.resolve(config) : Promise.resolve(undefined));
+  render(<PipelineSettings projectPath="/projects/demo" onToast={vi.fn()} />);
+  await screen.findByDisplayValue("pnpm test");
+  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()));
+  const spawn = invoke.mock.calls.find(([command]) => command === "spawn_pi_rpc")?.[1] as { sessionId: string };
+  const invalid = { preset: "Custom", steps: [{ id: "x", name: "X", command: "echo x", enabled: "yes", failure_policy: "ai_fix", max_attempts: 3 }] };
+  const text = `\`\`\`json\n${JSON.stringify(invalid)}\n\`\`\``;
+  listeners.get("pi-rpc-event")?.({ payload: { session_id: spawn.sessionId, raw: JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } }) } });
+  listeners.get("pi-rpc-event")?.({ payload: { session_id: spawn.sessionId, raw: JSON.stringify({ type: "agent_settled" }) } });
+  expect(screen.queryByRole("button", { name: "APPLY TO FORM" })).not.toBeInTheDocument();
+});
+
+test("project switch kills consultant and ignores stale startup", async () => {
+  let resolveSpawn!: () => void;
+  invoke.mockImplementation((command: string) => command === "get_pipeline_config" ? Promise.resolve(config) : command === "spawn_pi_rpc" ? new Promise<void>((resolve) => { resolveSpawn = resolve; }) : Promise.resolve(undefined));
+  const view = render(<PipelineSettings projectPath="/projects/one" onToast={vi.fn()} />);
+  await screen.findByDisplayValue("pnpm test");
+  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()));
+  const oldId = (invoke.mock.calls.find(([command]) => command === "spawn_pi_rpc")?.[1] as { sessionId: string }).sessionId;
+  view.rerender(<PipelineSettings projectPath="/projects/two" onToast={vi.fn()} />);
+  resolveSpawn();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("kill_pi_session", { sessionId: oldId }));
+  expect(screen.queryByRole("dialog", { name: "AI pipeline consultant" })).not.toBeInTheDocument();
 });
