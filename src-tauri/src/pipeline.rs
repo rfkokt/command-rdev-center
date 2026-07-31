@@ -248,7 +248,15 @@ fn finish_run(runs_path: &Path, current_path: &Path, run: &PipelineRun) -> Resul
     file.lock_exclusive().map_err(|e| e.to_string())?;
     let mut archived = run.clone();
     for stage in &mut archived.stages {
-        stage.log.clear();
+        if stage.status != "fail" {
+            stage.log.clear();
+        } else if stage.log.len() > 8_000 {
+            let mut start = stage.log.len() - 8_000;
+            while !stage.log.is_char_boundary(start) {
+                start += 1;
+            }
+            stage.log = stage.log[start..].to_string();
+        }
     }
     file.write_all(&serde_json::to_vec(&archived).map_err(|e| e.to_string())?)
         .and_then(|_| file.write_all(b"\n"))
@@ -613,16 +621,22 @@ mod tests {
     }
 
     #[test]
-    fn archived_run_can_drop_diagnostics() {
+    fn archived_run_keeps_bounded_failure_diagnostics() {
         let mut stage = PipelineStage {
             name: "build".into(),
             ms: 1,
             status: "fail".into(),
-            log: "secret output".into(),
+            log: "x".repeat(9_000),
             failure_policy: "stop".into(),
             attempts: 1,
         };
-        stage.log.clear();
-        assert!(stage.log.is_empty());
+        if stage.log.len() > 8_000 {
+            let mut start = stage.log.len() - 8_000;
+            while !stage.log.is_char_boundary(start) {
+                start += 1;
+            }
+            stage.log = stage.log[start..].to_string();
+        }
+        assert!(stage.log.len() <= 8_000);
     }
 }

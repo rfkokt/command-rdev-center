@@ -6,6 +6,11 @@ type Stage = { name: string; ms?: number; status: StageStatus; log?: string; att
 type Run = { run_id: string; project: string; project_path?: string; project_type: string; date: string; status: string; commits?: string[]; stages: Stage[] };
 type PipelineData = { runs: Run[]; current?: Run | null };
 
+function runDate(value: string) {
+  const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 function duration(ms = 0) {
   if (!ms) return "—";
   if (ms < 1000) return `${ms}ms`;
@@ -72,7 +77,7 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
         return <table key={projectType} aria-label={`${projectType} pipeline`}>
           <thead><tr><th>{projectType}</th>{columns.map((name) => <th key={name}><strong>{name}</strong><small>AVG {duration(averages[name])}</small></th>)}</tr></thead>
           <tbody>{typeRuns.map((run) => <tr key={run.run_id}>
-            <th><strong>{run.project}</strong><span>{new Date(run.date).toLocaleString()}</span><small>{run.commits?.length ?? 0} COMMITS · {run.status}</small></th>
+            <th><strong>{run.project}</strong><span>{runDate(run.date)}</span><small>{run.commits?.length ?? 0} COMMITS · {run.status}</small></th>
             {columns.map((name) => {
               const stage = run.stages.find((item) => item.name === name) ?? { name, status: "skip" as const };
               return <td key={name}><div className={`pipeline-stage ${stage.status}`} title={stage.log}><strong>{stage.status}</strong><span>{duration(stage.ms)}</span>{stage.attempts ? <small>{stage.attempts} TRY</small> : null}</div></td>;

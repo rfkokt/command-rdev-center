@@ -37,6 +37,14 @@ test("renders live and dynamic stages with averages and newest runs first", asyn
   expect(rows[2]).toHaveTextContent("demo-old");
 });
 
+test("renders unix-second timestamps without Invalid Date", async () => {
+  invoke.mockResolvedValue({ current: null, runs: [{ ...live.runs[0], date: "1785480149" }] });
+  render(<PipelineView />);
+
+  expect(await screen.findByText("demo-old")).toBeInTheDocument();
+  expect(screen.queryByText("Invalid Date")).not.toBeInTheDocument();
+});
+
 test("refreshes immediately after starting and hides duplicate run action", async () => {
   invoke.mockResolvedValueOnce({ current: null, runs: [] }).mockResolvedValueOnce("demo").mockResolvedValueOnce(live);
   render(<PipelineView projectPath="/projects/demo" projectName="demo" />);

@@ -90,6 +90,8 @@ function deriveAtQuery(text: string): string | null {
   return q;
 }
 
+const surfacedPipelineFailures = new Set<string>();
+
 export default function ChatView({
   projectPath,
   projectName,
@@ -849,27 +851,38 @@ export default function ChatView({
   }
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (!pipelineRunRef.current) return;
-      void invoke<{ current?: { run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> } }>("get_pipeline_data", { projectPath }).then((data) => {
-        const run = data.current;
-        if (!run) {
-          pipelineRunRef.current = false;
-          return;
+    let initialized = false;
+    const check = () => {
+      if (!isActive) return;
+      void invoke<{ current?: { run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }; runs: Array<{ run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }> }>("get_pipeline_data", { projectPath }).then((data) => {
+        const archived = data.runs.filter((item) => item.status === "failed");
+        if (!initialized) {
+          archived.forEach((run) => run.stages.filter((stage) => stage.status === "fail").forEach((stage) => surfacedPipelineFailures.add(`${run.run_id}:${stage.name}:${stage.attempts}`)));
+          initialized = true;
         }
-        const failed = run.stages.find((stage) => stage.status === "fail");
+        const currentFailure = data.current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
+        const run = currentFailure ? data.current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
+        pipelineRunRef.current = Boolean(data.current);
+        if (!run) return;
+        const failed = run.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         if (!failed) return;
         const key = `${run.run_id}:${failed.name}:${failed.attempts}`;
-        if (surfacedPipelineFailureRef.current === key) return;
+        if (surfacedPipelineFailures.has(key)) return;
+        surfacedPipelineFailures.add(key);
         surfacedPipelineFailureRef.current = key;
         const request = failed.failure_policy === "ai_fix"
           ? `Pipeline step ${failed.name} failed. Diagnose this output, fix the project if safe, then call retry_pipeline_step through the app workflow. Output:\n${failed.log ?? ""}`
           : `Pipeline step ${failed.name} failed and requires user confirmation. Explain the failure and ask whether to retry, skip, or abort. Output:\n${failed.log ?? ""}`;
-        void sendRaw({ type: "steer", message: request });
+        const logLines = failed.log?.split("\n").filter(Boolean) ?? [];
+        onToast(`Pipeline failed: ${failed.name}${logLines.length ? ` — ${logLines[logLines.length - 1]}` : ""}`);
+        void notifyAgent("follow-up", `Pipeline failed · ${projectName}`, chatId).catch(() => {});
+        void sendRaw({ type: agentStatus === "running" ? "steer" : "prompt", message: request });
       }).catch(() => {});
-    }, 3000);
+    };
+    check();
+    const timer = window.setInterval(check, 3000);
     return () => window.clearInterval(timer);
-  }, [projectName, sendRaw]);
+  }, [agentStatus, chatId, isActive, onToast, projectName, projectPath, sendRaw]);
 
   async function handleApprovalResponse(payload: Record<string, unknown>) {
     setApproval(null);
