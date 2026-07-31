@@ -8,7 +8,7 @@ use std::{
     process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
     thread,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -44,16 +44,41 @@ pub struct PipelineRun {
 pub struct PipelineData {
     pub runs: Vec<PipelineRun>,
     pub current: Option<PipelineRun>,
+    pub pending_input: Option<PipelinePendingInput>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PipelinePendingInput {
+    pub nonce: String,
+    pub run_id: String,
+    pub step_id: String,
+    pub mode: String,
+    pub step: String,
+    pub prompt: String,
+    pub options: Vec<String>,
+    pub execution_cwd: String,
+    pub initiator_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PipelineStep {
     pub id: String,
     pub name: String,
+    #[serde(default = "shell_mode", alias = "type")]
+    pub mode: String,
+    #[serde(default)]
     pub command: String,
     pub enabled: bool,
     pub failure_policy: String,
     pub max_attempts: u32,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
+fn shell_mode() -> String {
+    "shell".into()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -66,6 +91,24 @@ struct ActiveRun {
     cancel: bool,
     process_group: Option<u32>,
     action: Option<String>,
+    input: Option<PipelineInput>,
+    pending: Option<PipelinePendingInput>,
+    consumed_nonce: Option<String>,
+    awaiting_action: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineInput {
+    nonce: String,
+    run_id: String,
+    step_id: String,
+    mode: String,
+    session_id: Option<String>,
+    execution_cwd: String,
+    value: Option<String>,
+    message: Option<String>,
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 static ACTIVE: OnceLock<Mutex<Option<(String, Arc<Mutex<ActiveRun>>)>>> = OnceLock::new();
@@ -104,10 +147,13 @@ fn presets(name: &str) -> Vec<PipelineStep> {
         .map(|(id, label, command)| PipelineStep {
             id: (*id).into(),
             name: (*label).into(),
+            mode: "shell".into(),
             command: (*command).into(),
             enabled: true,
             failure_policy: if *id == "push" { "ask_user" } else { "ai_fix" }.into(),
             max_attempts: 3,
+            prompt: String::new(),
+            options: vec![],
         })
         .collect()
 }
@@ -146,11 +192,28 @@ fn validate_config(config: &PipelineConfig) -> Result<(), String> {
         return Err("pipeline supports at most 50 steps".into());
     }
     for step in &config.steps {
-        if step.id.trim().is_empty()
-            || step.name.trim().is_empty()
-            || step.command.trim().is_empty()
+        if step.id.trim().is_empty() || step.name.trim().is_empty() {
+            return Err("step id and name are required".into());
+        }
+        if !matches!(step.mode.as_str(), "shell" | "ai_commit" | "confirm") {
+            return Err(format!("invalid mode for {}", step.name));
+        }
+        if step.mode == "shell" && step.command.trim().is_empty() {
+            return Err("shell step command is required".into());
+        }
+        if step.mode == "confirm"
+            && (step.prompt.trim().is_empty()
+                || step.options.is_empty()
+                || step.options.len() > 10
+                || step
+                    .options
+                    .iter()
+                    .any(|option| option.trim().is_empty() || option.len() > 50))
         {
-            return Err("step id, name, and command are required".into());
+            return Err(format!(
+                "confirm step {} needs prompt and options",
+                step.name
+            ));
         }
         if !matches!(
             step.failure_policy.as_str(),
@@ -281,11 +344,25 @@ fn execute(
     run_id: &str,
     attempt: u32,
 ) -> Result<(bool, String), String> {
+    execute_with_env(project, command, &[], state, run_id, attempt)
+}
+
+fn execute_with_env(
+    project: &Path,
+    command: &str,
+    envs: &[(&str, &str)],
+    state: &Arc<Mutex<ActiveRun>>,
+    run_id: &str,
+    attempt: u32,
+) -> Result<(bool, String), String> {
     let output_path = std::env::temp_dir().join(format!("crc-pipeline-{run_id}-{attempt}.log"));
     let log = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
-    let mut child = Command::new("sh")
-        .args(["-lc", command])
-        .current_dir(project)
+    let mut child = Command::new("sh");
+    child.args(["-lc", command]).current_dir(project);
+    for (key, value) in envs {
+        child.env(key, value);
+    }
+    let mut child = child
         .process_group(0)
         .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
         .stderr(Stdio::from(log))
@@ -334,6 +411,183 @@ fn execute(
     Ok((status.success(), diagnostics))
 }
 
+fn git_paths(project: &Path, args: &[&str]) -> Result<Vec<String>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            String::from_utf8(entry.to_vec())
+                .map_err(|_| "pipeline does not support non-UTF-8 Git paths".into())
+        })
+        .collect()
+}
+
+fn modified_paths(project: &Path) -> Result<Vec<String>, String> {
+    let changed = git_paths(
+        project,
+        &[
+            "diff",
+            "--name-status",
+            "-z",
+            "--find-renames",
+            "--find-copies",
+            "HEAD",
+            "--",
+        ],
+    )?;
+    let mut paths = vec![];
+    let mut entries = changed.into_iter();
+    while let Some(status) = entries.next() {
+        if status.starts_with(['R', 'C']) {
+            let _source = entries.next().ok_or("malformed Git rename/copy status")?;
+            let _destination = entries.next().ok_or("malformed Git rename/copy status")?;
+            return Err(
+                "AI commit does not support rename/copy changes; commit them manually".into(),
+            );
+        }
+        paths.push(entries.next().ok_or("malformed Git status")?);
+    }
+    paths.extend(git_paths(
+        project,
+        &["ls-files", "--others", "--exclude-standard", "-z", "--"],
+    )?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn staged_paths(project: &Path) -> Result<Vec<String>, String> {
+    git_paths(project, &["diff", "--cached", "--name-only", "-z", "--"])
+}
+
+fn validate_commit_input(
+    project: &Path,
+    input: PipelineInput,
+) -> Result<(String, Vec<String>), String> {
+    let message = input.message.unwrap_or_default().trim().to_string();
+    if message.is_empty() || message.len() > 200 || message.contains(['\n', '\r', '\0']) {
+        return Err("commit message must be one line and at most 200 characters".into());
+    }
+    if input.paths.is_empty() {
+        return Err("commit requires explicit changed paths".into());
+    }
+    let modified = modified_paths(project)?;
+    let path_count = input.paths.len();
+    let mut validated = vec![];
+    for raw in input.paths {
+        let path = Path::new(&raw);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || !modified.contains(&raw)
+        {
+            return Err(format!("invalid or unchanged commit path: {raw}"));
+        }
+        validated.push(raw);
+    }
+    validated.sort();
+    validated.dedup();
+    if validated.len() != path_count {
+        return Err("duplicate commit paths are not allowed".into());
+    }
+    Ok((message, validated))
+}
+
+fn execute_ai_commit(project: &Path, input: PipelineInput) -> Result<(bool, String), String> {
+    let (message, paths) = validate_commit_input(project, input)?;
+    if !staged_paths(project)?.is_empty() {
+        return Err("commit blocked: Git index already contains staged changes".into());
+    }
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .arg("add")
+        .arg("--")
+        .args(&paths)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Ok((false, "git add failed".into()));
+    }
+    let mut staged = staged_paths(project)?;
+    let mut expected = paths.clone();
+    staged.sort();
+    expected.sort();
+    if staged != expected {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(project)
+            .args(["reset", "--quiet", "--"])
+            .status();
+        return Err("commit blocked: staged paths differ from explicitly authorized paths".into());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["commit", "-m", &message])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let log = format!(
+        "Paths: {}\nMessage: {message}\n{}{}",
+        paths.join(", "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok((output.status.success(), log))
+}
+
+fn random_nonce() -> Result<String, String> {
+    let mut bytes = [0u8; 24];
+    getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn wait_for_input(
+    state: &Arc<Mutex<ActiveRun>>,
+    pending: PipelinePendingInput,
+) -> Result<PipelineInput, String> {
+    wait_for_input_with_timeout(state, pending, Duration::from_secs(600))
+}
+
+fn wait_for_input_with_timeout(
+    state: &Arc<Mutex<ActiveRun>>,
+    pending: PipelinePendingInput,
+    timeout: Duration,
+) -> Result<PipelineInput, String> {
+    let started = Instant::now();
+    state.lock().map_err(|_| "pipeline state poisoned")?.pending = Some(pending.clone());
+    loop {
+        thread::sleep(Duration::from_millis(20));
+        let mut guard = state.lock().map_err(|_| "pipeline state poisoned")?;
+        if guard.cancel {
+            guard.pending = None;
+            return Err("pipeline cancelled while waiting for input".into());
+        }
+        if started.elapsed() >= timeout {
+            guard.pending = None;
+            return Err(format!(
+                "pipeline input timed out after 10 minutes: {}",
+                pending.step
+            ));
+        }
+        if let Some(input) = guard.input.take() {
+            guard.pending = None;
+            return Ok(input);
+        }
+    }
+}
+
 fn terminate_group(group: u32) {
     let target = format!("-{group}");
     let _ = Command::new("kill").args(["-TERM", &target]).status();
@@ -364,6 +618,8 @@ fn run_pipeline_thread(
     project_name: String,
     config: PipelineConfig,
     state: Arc<Mutex<ActiveRun>>,
+    execution_cwd: String,
+    initiator_session_id: Option<String>,
 ) -> Result<(), String> {
     let (runs_path, current_path) = task_paths()?;
     let mut run = PipelineRun {
@@ -410,21 +666,25 @@ fn run_pipeline_thread(
             run.stages[index].attempts += 1;
             write_current(&current_path, &run)?;
             let started = Instant::now();
-            let result = execute(
-                &project,
-                &step.command,
-                &state,
-                &run.run_id,
-                run.stages[index].attempts,
-            );
+            let result = match step.mode.as_str() {
+                "ai_commit" => wait_for_input(&state, PipelinePendingInput { nonce: random_nonce()?, run_id: run.run_id.clone(), step_id: step.id.clone(), mode: step.mode.clone(), step: step.name.clone(), prompt: if step.prompt.is_empty() { "Review the current worktree diff, propose explicit changed file paths and a conventional commit message.".into() } else { step.prompt.clone() }, options: vec![], execution_cwd: execution_cwd.clone(), initiator_session_id: initiator_session_id.clone() }).and_then(|input| execute_ai_commit(&project, input)),
+                "confirm" => wait_for_input(&state, PipelinePendingInput { nonce: random_nonce()?, run_id: run.run_id.clone(), step_id: step.id.clone(), mode: step.mode.clone(), step: step.name.clone(), prompt: step.prompt.clone(), options: step.options.clone(), execution_cwd: execution_cwd.clone(), initiator_session_id: initiator_session_id.clone() }).and_then(|input| {
+                    let value = input.value.unwrap_or_default();
+                    if !step.options.contains(&value) { return Err("invalid confirmation option".into()); }
+                    execute_with_env(&project, &step.command, &[(&"PIPELINE_INPUT", value.as_str())], &state, &run.run_id, run.stages[index].attempts)
+                }),
+                _ => execute(&project, &step.command, &state, &run.run_id, run.stages[index].attempts),
+            };
             let (success, log) = match result {
                 Ok(result) => result,
                 Err(error) => {
-                    run.stages[index].status = "fail".into();
+                    let cancelled = state.lock().map_err(|_| "pipeline state poisoned")?.cancel;
+                    run.stages[index].status = if cancelled { "skip" } else { "fail" }.into();
                     run.stages[index].log = error;
-                    run.status = "failed".into();
-                    finish_run(&runs_path, &current_path, &run)?;
+                    run.status = if cancelled { "cancelled" } else { "failed" }.into();
+                    let archived = finish_run(&runs_path, &current_path, &run);
                     remove_active(&project_key);
+                    archived?;
                     return Ok(());
                 }
             };
@@ -446,6 +706,10 @@ fn run_pipeline_thread(
                 remove_active(&project_key);
                 return Ok(());
             }
+            state
+                .lock()
+                .map_err(|_| "pipeline state poisoned")?
+                .awaiting_action = true;
             loop {
                 thread::sleep(std::time::Duration::from_millis(200));
                 let mut guard = state.lock().map_err(|_| "pipeline state poisoned")?;
@@ -457,7 +721,10 @@ fn run_pipeline_thread(
                     return Ok(());
                 }
                 match guard.action.take().as_deref() {
-                    Some("retry") if run.stages[index].attempts < step.max_attempts => break,
+                    Some("retry") if run.stages[index].attempts < step.max_attempts => {
+                        guard.awaiting_action = false;
+                        break;
+                    }
                     Some("retry") => {
                         drop(guard);
                         run.status = "failed".into();
@@ -468,6 +735,7 @@ fn run_pipeline_thread(
                         return Ok(());
                     }
                     Some("skip") => {
+                        guard.awaiting_action = false;
                         run.stages[index].status = "skip".into();
                         write_current(&current_path, &run)?;
                         break;
@@ -495,6 +763,7 @@ fn run_pipeline_thread(
 pub fn start_pipeline(
     project_path: String,
     execution_cwd: Option<String>,
+    initiator_session_id: Option<String>,
 ) -> Result<String, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
     let execution = if let Some(cwd) = execution_cwd.filter(|cwd| !cwd.trim().is_empty()) {
@@ -512,11 +781,23 @@ pub fn start_pipeline(
     if !config.steps.iter().any(|step| step.enabled) {
         return Err("pipeline has no enabled steps".into());
     }
+    if initiator_session_id.is_none()
+        && config
+            .steps
+            .iter()
+            .any(|step| step.enabled && step.mode == "ai_commit")
+    {
+        return Err("AI commit pipelines must be started from the matching project chat".into());
+    }
     let project_key = project.to_string_lossy().to_string();
     let state = Arc::new(Mutex::new(ActiveRun {
         cancel: false,
         process_group: None,
         action: None,
+        input: None,
+        pending: None,
+        consumed_nonce: None,
+        awaiting_action: false,
     }));
     {
         let mut slot = active().lock().map_err(|_| "pipeline registry poisoned")?;
@@ -527,8 +808,19 @@ pub fn start_pipeline(
     }
     let name = project_name.clone();
     let key = project_key.clone();
+    let execution_cwd = execution.to_string_lossy().into_owned();
     thread::spawn(move || {
-        if run_pipeline_thread(execution, key.clone(), name, config, state).is_err() {
+        if run_pipeline_thread(
+            execution,
+            key.clone(),
+            name,
+            config,
+            state,
+            execution_cwd,
+            initiator_session_id,
+        )
+        .is_err()
+        {
             if let Ok((_, current_path)) = task_paths() {
                 let _ = std::fs::remove_file(current_path);
             }
@@ -554,8 +846,10 @@ fn control_pipeline(project_path: String, action: &str) -> Result<(), String> {
         if let Some(group) = guard.process_group {
             thread::spawn(move || terminate_group(group));
         }
-    } else {
+    } else if guard.awaiting_action {
         guard.action = Some(action.into());
+    } else {
+        return Err("pipeline step is not waiting for retry or skip".into());
     }
     Ok(())
 }
@@ -571,6 +865,70 @@ pub fn retry_pipeline_step(project_path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn skip_pipeline_step(project_path: String) -> Result<(), String> {
     control_pipeline(project_path, "skip")
+}
+
+fn accept_pipeline_input(guard: &mut ActiveRun, input: PipelineInput) -> Result<(), String> {
+    let pending = guard
+        .pending
+        .as_ref()
+        .ok_or("pipeline is not waiting for input")?;
+    if guard.input.is_some() || guard.consumed_nonce.as_deref() == Some(&input.nonce) {
+        return Err("pipeline input already provided".into());
+    }
+    if input.nonce != pending.nonce
+        || input.run_id != pending.run_id
+        || input.step_id != pending.step_id
+        || input.mode != pending.mode
+    {
+        return Err("pipeline input identity mismatch".into());
+    }
+    if input.execution_cwd != pending.execution_cwd {
+        return Err("pipeline input worktree mismatch".into());
+    }
+    if pending.initiator_session_id != input.session_id {
+        return Err("pipeline input session mismatch".into());
+    }
+    if pending.mode == "confirm"
+        && !pending
+            .options
+            .iter()
+            .any(|option| Some(option.as_str()) == input.value.as_deref())
+    {
+        return Err("invalid confirmation option".into());
+    }
+    if pending.mode == "ai_commit" {
+        validate_commit_input(
+            Path::new(&pending.execution_cwd),
+            PipelineInput {
+                nonce: input.nonce.clone(),
+                run_id: input.run_id.clone(),
+                step_id: input.step_id.clone(),
+                mode: input.mode.clone(),
+                session_id: input.session_id.clone(),
+                execution_cwd: input.execution_cwd.clone(),
+                value: input.value.clone(),
+                message: input.message.clone(),
+                paths: input.paths.clone(),
+            },
+        )?;
+    }
+    guard.consumed_nonce = Some(input.nonce.clone());
+    guard.input = Some(input);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn provide_pipeline_input(project_path: String, input: PipelineInput) -> Result<(), String> {
+    let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let state = active()
+        .lock()
+        .map_err(|_| "pipeline registry poisoned")?
+        .as_ref()
+        .filter(|(key, _)| key == &project.to_string_lossy())
+        .map(|(_, state)| state.clone())
+        .ok_or("pipeline is not active for this project")?;
+    let mut guard = state.lock().map_err(|_| "pipeline state poisoned")?;
+    accept_pipeline_input(&mut guard, input)
 }
 
 #[tauri::command]
@@ -604,12 +962,138 @@ pub fn get_pipeline_data(project_path: Option<String>) -> Result<PipelineData, S
     } else {
         None
     };
-    Ok(PipelineData { runs, current })
+    let pending_input = active().lock().ok().and_then(|slot| {
+        slot.as_ref()
+            .filter(|(key, _)| project_key.as_ref().is_none_or(|project| project == key))
+            .and_then(|(_, state)| state.lock().ok()?.pending.clone())
+    });
+    Ok(PipelineData {
+        runs,
+        current,
+        pending_input,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_step_defaults_to_shell_mode() {
+        let step: PipelineStep = serde_json::from_str(r#"{"id":"x","name":"X","command":"echo x","enabled":true,"failure_policy":"stop","max_attempts":1}"#).unwrap();
+        assert_eq!(step.mode, "shell");
+        assert!(step.options.is_empty());
+    }
+
+    #[test]
+    fn confirm_requires_prompt_and_options() {
+        let mut step = presets("Personal").remove(0);
+        step.mode = "confirm".into();
+        let config = PipelineConfig {
+            preset: "Custom".into(),
+            steps: vec![step],
+        };
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn confirm_input_is_passed_as_env_not_shell_text() {
+        let state = Arc::new(Mutex::new(ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+            input: None,
+            pending: None,
+            consumed_nonce: None,
+            awaiting_action: false,
+        }));
+        let (success, output) = execute_with_env(
+            Path::new("/tmp"),
+            "printf '%s' \"$PIPELINE_INPUT\"",
+            &[("PIPELINE_INPUT", "patch; touch /tmp/nope")],
+            &state,
+            "env-test",
+            1,
+        )
+        .unwrap();
+        assert!(success);
+        assert_eq!(output, "patch; touch /tmp/nope");
+    }
+
+    fn pending(mode: &str) -> PipelinePendingInput {
+        PipelinePendingInput {
+            nonce: "nonce".into(),
+            run_id: "run".into(),
+            step_id: "step".into(),
+            mode: mode.into(),
+            step: "Step".into(),
+            prompt: "Prompt".into(),
+            options: vec!["patch".into()],
+            execution_cwd: "/tmp".into(),
+            initiator_session_id: Some("chat".into()),
+        }
+    }
+
+    fn input() -> PipelineInput {
+        PipelineInput {
+            nonce: "nonce".into(),
+            run_id: "run".into(),
+            step_id: "step".into(),
+            mode: "confirm".into(),
+            session_id: Some("chat".into()),
+            execution_cwd: "/tmp".into(),
+            value: Some("patch".into()),
+            message: None,
+            paths: vec![],
+        }
+    }
+
+    #[test]
+    fn pending_input_rejects_wrong_identity_and_replacement() {
+        let mut state = ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+            input: None,
+            pending: Some(pending("confirm")),
+            consumed_nonce: None,
+            awaiting_action: false,
+        };
+        let mut wrong = input();
+        wrong.nonce = "wrong".into();
+        assert!(accept_pipeline_input(&mut state, wrong)
+            .unwrap_err()
+            .contains("identity"));
+        assert!(state.pending.is_some());
+        accept_pipeline_input(&mut state, input()).unwrap();
+        assert!(accept_pipeline_input(&mut state, input())
+            .unwrap_err()
+            .contains("already"));
+    }
+
+    #[test]
+    fn pending_input_rejects_wrong_session_and_worktree() {
+        let mut state = ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+            input: None,
+            pending: Some(pending("confirm")),
+            consumed_nonce: None,
+            awaiting_action: false,
+        };
+        let mut wrong_session = input();
+        wrong_session.session_id = Some("other".into());
+        assert!(accept_pipeline_input(&mut state, wrong_session)
+            .unwrap_err()
+            .contains("session"));
+        let mut wrong_cwd = input();
+        wrong_cwd.execution_cwd = "/other".into();
+        assert!(accept_pipeline_input(&mut state, wrong_cwd)
+            .unwrap_err()
+            .contains("worktree"));
+        assert!(state.pending.is_some());
+    }
+
     #[test]
     fn presets_have_safe_failure_policies() {
         let p = presets("KAI");
@@ -649,6 +1133,10 @@ mod tests {
             cancel: false,
             process_group: None,
             action: None,
+            input: None,
+            pending: None,
+            consumed_nonce: None,
+            awaiting_action: false,
         }));
         let (success, diagnostics) =
             execute(Path::new("/tmp"), "exit 7", &state, "diagnostic-test", 1).unwrap();
@@ -657,6 +1145,178 @@ mod tests {
         assert!(diagnostics.contains("Working directory: /tmp"));
         assert!(diagnostics.contains("Result: exit code 7"));
         assert!(diagnostics.contains("Output: <empty>"));
+    }
+
+    #[test]
+    fn ai_commit_rejects_preexisting_staged_index() {
+        let dir = std::env::temp_dir().join(format!("crc-pipeline-index-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("a.txt"), "changed").unwrap();
+        Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        let input = PipelineInput {
+            nonce: "n".into(),
+            run_id: "r".into(),
+            step_id: "s".into(),
+            mode: "ai_commit".into(),
+            session_id: None,
+            execution_cwd: dir.to_string_lossy().into(),
+            value: None,
+            message: Some("fix: test".into()),
+            paths: vec!["a.txt".into()],
+        };
+        assert!(execute_ai_commit(&dir, input)
+            .unwrap_err()
+            .contains("already contains staged"));
+        assert_eq!(staged_paths(&dir).unwrap(), vec!["a.txt"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pending_input_rejects_wrong_mode_and_stays_pending() {
+        let mut state = ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+            input: None,
+            pending: Some(pending("confirm")),
+            consumed_nonce: None,
+            awaiting_action: false,
+        };
+        let mut wrong = input();
+        wrong.mode = "ai_commit".into();
+        assert!(accept_pipeline_input(&mut state, wrong)
+            .unwrap_err()
+            .contains("identity"));
+        assert!(state.pending.is_some());
+        assert!(state.input.is_none());
+    }
+
+    #[test]
+    fn timeout_and_cancel_clear_pending_input() {
+        let state = Arc::new(Mutex::new(ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+            input: None,
+            pending: None,
+            consumed_nonce: None,
+            awaiting_action: false,
+        }));
+        assert!(
+            wait_for_input_with_timeout(&state, pending("confirm"), Duration::ZERO)
+                .unwrap_err()
+                .contains("timed out")
+        );
+        assert!(state.lock().unwrap().pending.is_none());
+        state.lock().unwrap().cancel = true;
+        assert!(
+            wait_for_input_with_timeout(&state, pending("confirm"), Duration::from_secs(1))
+                .unwrap_err()
+                .contains("cancelled")
+        );
+        assert!(state.lock().unwrap().pending.is_none());
+    }
+
+    #[test]
+    fn modified_paths_rejects_rename_and_supports_spaces_and_short_names() {
+        let dir = std::env::temp_dir().join(format!("crc-pipeline-paths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "test@example.com"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("old"), "content").unwrap();
+        Command::new("git")
+            .args(["add", "old"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-qm", "init"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["mv", "old", "new name"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(modified_paths(&dir).unwrap_err().contains("rename/copy"));
+        Command::new("git")
+            .args(["reset", "--hard", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("a"), "a").unwrap();
+        std::fs::write(dir.join("x y.txt"), "x").unwrap();
+        assert_eq!(modified_paths(&dir).unwrap(), vec!["a", "x y.txt"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_paths_rejects_non_utf8_names() {
+        use std::os::unix::ffi::OsStringExt;
+        let dir = std::env::temp_dir().join(format!("crc-pipeline-nonutf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        if std::fs::write(
+            dir.join(std::ffi::OsString::from_vec(vec![b'x', 0xff])),
+            "x",
+        )
+        .is_ok()
+        {
+            assert!(modified_paths(&dir).unwrap_err().contains("non-UTF-8"));
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

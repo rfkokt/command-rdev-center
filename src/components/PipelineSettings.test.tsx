@@ -36,6 +36,18 @@ test("shows target project and saves edited steps to that project", async () => 
   }));
 });
 
+test("configures native AI commit and confirm inputs", async () => {
+  invoke.mockResolvedValueOnce(config);
+  render(<PipelineSettings projectPath="/projects/demo" onToast={vi.fn()} />);
+  await screen.findByDisplayValue("pnpm test");
+
+  fireEvent.change(screen.getByLabelText("Test mode"), { target: { value: "confirm" } });
+  expect(screen.getByPlaceholderText("Prompt")).toBeInTheDocument();
+  expect(screen.getByPlaceholderText("patch, minor, major")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Test mode"), { target: { value: "ai_commit" } });
+  expect(screen.getByLabelText("Test command")).toBeDisabled();
+});
+
 test("applies a preset then allows disabling and reordering steps", async () => {
   const preset: PipelineConfig = {
     preset: "KAI",

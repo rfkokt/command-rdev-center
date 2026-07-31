@@ -4,7 +4,8 @@ import { invoke } from "@tauri-apps/api/core";
 type StageStatus = "pass" | "fail" | "skip" | "running" | "pending";
 type Stage = { name: string; ms?: number; status: StageStatus; log?: string; attempts?: number };
 type Run = { run_id: string; project: string; project_path?: string; project_type: string; date: string; status: string; commits?: string[]; stages: Stage[] };
-type PipelineData = { runs: Run[]; current?: Run | null };
+type PipelinePendingInput = { nonce: string; run_id: string; step_id: string; mode: "ai_commit" | "confirm"; step: string; prompt: string; options: string[]; execution_cwd: string; initiator_session_id?: string | null };
+type PipelineData = { runs: Run[]; current?: Run | null; pending_input?: PipelinePendingInput | null };
 
 function runDate(value: string) {
   const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
@@ -22,6 +23,7 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
   const [data, setData] = useState<PipelineData>({ runs: [] });
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const [inputValue, setInputValue] = useState("");
 
   useEffect(() => {
     let loading = false;
@@ -49,7 +51,7 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
     setStarting(true);
     setError(null);
     try {
-      await invoke("start_pipeline", { projectPath, executionCwd: null });
+      await invoke("start_pipeline", { projectPath, executionCwd: null, initiatorSessionId: null });
       const pipeline = await invoke<PipelineData>("get_pipeline_data", { projectPath });
       setData(pipeline);
     } catch (e) {
@@ -63,8 +65,14 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
     if (["cancel_pipeline", "skip_pipeline_step"].includes(command) && !window.confirm(command === "cancel_pipeline" ? "Cancel this pipeline?" : "Skip the failed step?")) return;
     void invoke(command, { projectPath }).catch((e) => setError(String(e)));
   };
+  const pending = data.pending_input;
+  const provide = () => {
+    if (!projectPath || !pending || !inputValue) return;
+    void invoke("provide_pipeline_input", { projectPath, input: { nonce: pending.nonce, runId: pending.run_id, stepId: pending.step_id, mode: pending.mode, sessionId: null, executionCwd: pending.execution_cwd, value: inputValue, message: null, paths: [] } }).then(() => setInputValue("")).catch((e) => setError(String(e)));
+  };
   return <section className="pipeline-view">
     <header><div><small>APP-OWNED AUTOMATION</small><strong>PIPELINE</strong></div><div className="pipeline-actions">{projectPath && !current && <button onClick={() => void start()} disabled={starting}>{starting ? "STARTING…" : `RUN ${projectName ?? "PIPELINE"}`}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} RUNS · LIVE REFRESH 3S</span></header>
+    {pending && <section className="pipeline-input-prompt"><strong>{pending.step}</strong><span>{pending.mode === "ai_commit" ? "Open the matching project chat so AI can propose paths and a commit message." : pending.prompt}</span>{pending.mode === "confirm" && <div>{pending.options.map((option) => <button className={inputValue === option ? "active" : ""} onClick={() => setInputValue(option)} key={option}>{option}</button>)}<button onClick={provide} disabled={!inputValue}>CONFIRM</button></div>}</section>}
     {error ? <p className="kanban-error">{error}</p> : !runs.length ? <div className="pipeline-empty">No pipeline runs yet.</div> : <div className="pipeline-scroll">
       {projectTypes.map((projectType) => {
         const typeRuns = runs.filter((run) => run.project_type === projectType);

@@ -182,6 +182,7 @@ export default function ChatView({
   const pipelineRunRef = useRef(false);
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
+  const surfacedPipelineInputRef = useRef("");
 
   cwdRef.current = cwd;
   const sessionId = useRef(`chat-${chatId}`).current;
@@ -641,9 +642,20 @@ export default function ChatView({
           const args = (ev.args as Record<string, unknown>) ?? {};
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
           if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
-            void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current })
+            void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current, initiatorSessionId: sessionId })
               .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
+          }
+          if (!ev.isError && name === "provide_pipeline_input") {
+            const message = typeof args.message === "string" ? args.message : "";
+            const paths = Array.isArray(args.paths) ? args.paths.filter((path): path is string => typeof path === "string") : [];
+            if (message && paths.length && window.confirm(`Commit these files?\n\n${paths.join("\n")}\n\nMessage: ${message}`)) {
+              void invoke("get_pipeline_data", { projectPath }).then((data) => {
+                const pending = (data as { pending_input?: { nonce: string; run_id: string; step_id: string; execution_cwd: string; initiator_session_id?: string | null } }).pending_input;
+                if (!pending || pending.initiator_session_id !== sessionId || pending.execution_cwd !== cwdRef.current) throw new Error("Pipeline input request no longer matches this chat");
+                return invoke("provide_pipeline_input", { projectPath, input: { nonce: pending.nonce, runId: pending.run_id, stepId: pending.step_id, mode: "ai_commit", sessionId, executionCwd: cwdRef.current, value: null, message, paths } });
+              }).catch((error) => onToast(`Pipeline: ${String(error)}`));
+            }
           }
           if (!ev.isError && name === "control_pipeline" && ["retry", "skip", "cancel"].includes(String(args.action))) {
             const action = String(args.action);
@@ -879,6 +891,14 @@ export default function ChatView({
             pendingPipelineRetryRef.current = null;
           }
         }
+        const pendingInput = (data as unknown as { pending_input?: { nonce: string; run_id: string; step_id: string; mode: string; step: string; prompt: string; options: string[]; execution_cwd: string; initiator_session_id?: string | null } }).pending_input;
+        const pendingMatchesChat = pendingInput?.execution_cwd === cwdRef.current && pendingInput.initiator_session_id === sessionId;
+        const pendingKey = pendingMatchesChat ? pendingInput.nonce : "";
+        if (pendingMatchesChat && pendingInput?.mode === "ai_commit" && surfacedPipelineInputRef.current !== pendingKey) {
+          surfacedPipelineInputRef.current = pendingKey;
+          void sendRaw({ type: agentStatus === "running" ? "steer" : "prompt", message: `${pendingInput.prompt} Inspect git diff/status in the active worktree. Then call provide_pipeline_input with a one-line conventional commit message and only explicit relative modified paths belonging to this task. Do not use git add -A and do not commit directly.` });
+        }
+        if (!pendingMatchesChat) surfacedPipelineInputRef.current = "";
         const currentFailure = data.current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         const run = currentFailure ? data.current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
         pipelineRunRef.current = Boolean(data.current);

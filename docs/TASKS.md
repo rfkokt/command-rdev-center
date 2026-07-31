@@ -126,6 +126,24 @@ cloud sync, multi-user, Windows/Linux, telemetry.
 - [x] Header avg time per stage; rows per-run duration + colour per status; newest on top
 - [x] Fix Ship pipeline instrumentation: pass authoritative task/session/project metadata into pi, require workflow logging + failure reporting from Ship, and read pipeline files from the same task directory
 
+#### Interactive pipeline steps — unfinished hardening
+
+Current worktree contains an uncommitted implementation of native step modes `shell`, `ai_commit`, and `confirm`. Unit/integration validation currently passes (`cargo test`: 46, `pnpm test`: 36, `pnpm build`: pass), but do **not** merge yet.
+
+- [x] Final security/correctness review of `src-tauri/src/pipeline.rs` interactive state machine after the latest hardening pass.
+- [x] Verify `ai_commit` rejects a non-empty pre-existing Git index, stages only explicitly approved task paths, and verifies the final index exactly matches those paths before commit.
+- [x] Verify pending input is single-use and bound to nonce + run ID + step ID + mode + canonical execution worktree + initiating chat session; stale/wrong-chat responses must fail.
+- [x] Verify invalid AI/user input remains pending for correction instead of terminating or bypassing the configured failure policy.
+- [x] Verify input timeout/cancel clears the process-global active pipeline slot and leaves a terminal history record.
+- [x] Verify Git rename/copy paths from porcelain output cannot fabricate or authorize unrelated paths; add edge-case tests for rename, spaces, short names, and non-UTF-8 behavior where supported.
+- [x] Verify dashboard-started `ai_commit` cannot wait forever without a matching chat; dashboard start now rejects it and directs users to the matching project chat.
+- [x] Verify `confirm` accepts only configured options (`patch|minor|major` for tag), passes the choice via `PIPELINE_INPUT`, and never interpolates raw user input into shell text.
+- [x] Verify Pipeline Settings migration: legacy steps default to `shell`; editor and AI consultant emit only supported modes/prompts/options.
+- [x] Manually exercise one isolated-worktree commit flow; main checkout remains untouched.
+- [x] Manually exercise tag confirmation/cancel safety without creating or pushing a real tag.
+- [x] Run final gates: `cargo test` (50), `pnpm test` (36), `pnpm build`, `git diff --check`, then `graphify update .`.
+- [ ] Commit only after all above pass; merge/push separately.
+
 ## Open questions (PRD §14)
 - [x] Kanban with no JSON yet: create on first tracked task; show empty board before then
 - [x] Pipeline logging is required by the Ship handoff and receives authoritative task/session/project metadata
