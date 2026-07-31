@@ -180,6 +180,7 @@ export default function ChatView({
   const surfacedErrorRef = useRef<string | null>(null);
   const pipelineRunRef = useRef(false);
   const surfacedPipelineFailureRef = useRef("");
+  const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
 
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
@@ -860,6 +861,22 @@ export default function ChatView({
           archived.forEach((run) => run.stages.filter((stage) => stage.status === "fail").forEach((stage) => surfacedPipelineFailures.add(`${run.run_id}:${stage.name}:${stage.attempts}`)));
           initialized = true;
         }
+        const pendingRetry = pendingPipelineRetryRef.current;
+        if (pendingRetry) {
+          const retryRun = data.current?.run_id === pendingRetry.runId ? data.current : data.runs.find((item) => item.run_id === pendingRetry.runId);
+          const retryStage = retryRun?.stages.find((stage) => stage.name === pendingRetry.step);
+          const retryAttempt = retryStage?.attempts ?? 0;
+          if (retryStage && retryAttempt > pendingRetry.attempt && retryStage.status !== "running") {
+            const succeeded = retryStage.status === "pass";
+            const text = succeeded
+              ? `Pipeline retry passed: ${pendingRetry.step} completed on attempt ${retryAttempt}.`
+              : `Pipeline retry failed: ${pendingRetry.step} failed again on attempt ${retryAttempt}.\n\n${retryStage.log || "No command output captured."}`;
+            setMessages((messages) => [...messages, { id: uid(), role: "assistant", text, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
+            onToast(succeeded ? `Pipeline recovered: ${pendingRetry.step}` : `Pipeline retry failed: ${pendingRetry.step}`);
+            surfacedPipelineFailures.add(`${pendingRetry.runId}:${pendingRetry.step}:${retryAttempt}`);
+            pendingPipelineRetryRef.current = null;
+          }
+        }
         const currentFailure = data.current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         const run = currentFailure ? data.current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
         pipelineRunRef.current = Boolean(data.current);
@@ -870,9 +887,12 @@ export default function ChatView({
         if (surfacedPipelineFailures.has(key)) return;
         surfacedPipelineFailures.add(key);
         surfacedPipelineFailureRef.current = key;
+        const output = failed.log?.trim() || "No command output captured.";
+        setMessages((messages) => [...messages, { id: uid(), role: "assistant", text: `Pipeline failed · ${failed.name}\nPolicy: ${failed.failure_policy ?? "stop"} · Attempt: ${failed.attempts ?? 1}\n\n${output}`, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
+        pendingPipelineRetryRef.current = { runId: run.run_id, step: failed.name, attempt: failed.attempts ?? 1 };
         const request = failed.failure_policy === "ai_fix"
-          ? `Pipeline step ${failed.name} failed. Diagnose this output, fix the project if safe, then call retry_pipeline_step through the app workflow. Output:\n${failed.log ?? ""}`
-          : `Pipeline step ${failed.name} failed and requires user confirmation. Explain the failure and ask whether to retry, skip, or abort. Output:\n${failed.log ?? ""}`;
+          ? `Pipeline step ${failed.name} failed. First explain the concrete root cause to the user using the command output below. Then inspect and fix the project only if safe. Before calling control_pipeline retry, state exactly what you changed and why retry should pass. Never retry silently. Command output:\n${output}`
+          : `Pipeline step ${failed.name} failed and requires user confirmation. Explain the concrete root cause from the output, then ask whether to retry, skip, or abort. Do not take action before the user chooses. Command output:\n${output}`;
         const logLines = failed.log?.split("\n").filter(Boolean) ?? [];
         onToast(`Pipeline failed: ${failed.name}${logLines.length ? ` — ${logLines[logLines.length - 1]}` : ""}`);
         void notifyAgent("follow-up", `Pipeline failed · ${projectName}`, chatId).catch(() => {});
