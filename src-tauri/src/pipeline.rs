@@ -306,17 +306,32 @@ fn execute(
     let output = std::fs::read_to_string(&output_path).unwrap_or_default();
     let _ = std::fs::remove_file(&output_path);
     let status = status?;
-    Ok((
-        status.success(),
+    let output: String = output
+        .chars()
+        .rev()
+        .take(20_000)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    let diagnostics = if status.success() {
         output
-            .chars()
-            .rev()
-            .take(20_000)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect(),
-    ))
+    } else {
+        let exit = status
+            .code()
+            .map(|code| format!("exit code {code}"))
+            .unwrap_or_else(|| "terminated by signal".into());
+        format!(
+            "Command: {command}\nWorking directory: {}\nResult: {exit}\n{}",
+            project.display(),
+            if output.trim().is_empty() {
+                "Output: <empty>".into()
+            } else {
+                format!("Output:\n{output}")
+            }
+        )
+    };
+    Ok((status.success(), diagnostics))
 }
 
 fn terminate_group(group: u32) {
@@ -618,6 +633,22 @@ mod tests {
         };
         assert_eq!(config.steps.last().unwrap().name, "Push");
         assert_eq!(config.steps.len(), 5);
+    }
+
+    #[test]
+    fn failed_command_without_output_has_actionable_diagnostics() {
+        let state = Arc::new(Mutex::new(ActiveRun {
+            cancel: false,
+            process_group: None,
+            action: None,
+        }));
+        let (success, diagnostics) =
+            execute(Path::new("/tmp"), "exit 7", &state, "diagnostic-test", 1).unwrap();
+        assert!(!success);
+        assert!(diagnostics.contains("Command: exit 7"));
+        assert!(diagnostics.contains("Working directory: /tmp"));
+        assert!(diagnostics.contains("Result: exit code 7"));
+        assert!(diagnostics.contains("Output: <empty>"));
     }
 
     #[test]
