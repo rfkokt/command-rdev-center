@@ -21,12 +21,14 @@ export default function ProjectList({
   tabs,
   activeTabId,
   onResume,
+  onPipelineSettings,
 }: {
   onOpen: (project: ProjectInfo) => void;
   onSelect: (project: ProjectInfo) => void;
   tabs: Tab[];
   activeTabId: string | null;
   onResume: (id: string, project: ProjectInfo) => void;
+  onPipelineSettings: (project: ProjectInfo) => void;
 }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -163,6 +165,7 @@ export default function ProjectList({
               >
                 <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
               </button>
+              <button className="project-pipeline-edit" onClick={() => onPipelineSettings(project)} title={`Pipeline settings for ${project.name}`} aria-label={`Configure pipeline for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg></button>
               {project.is_git && <button className="project-branch-edit" onClick={() => editBaseBranch(project)} title={`Base branch: ${project.base_branch ?? "not set"}`} aria-label={`Change base branch for ${project.name}`}>⑂</button>}
               <button className="project-delete" onClick={() => setProjectToDelete(project)} title={`Remove ${project.name}`} aria-label={`Remove ${project.name}`}>×</button>
             </div>

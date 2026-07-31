@@ -16,8 +16,8 @@ const GROUPS = [
   ["Resources", "packages, extensions, skills, prompts, themes, enableSkillCommands", ["packages", "extensions", "skills", "prompts", "themes"]],
 ] as const;
 
-export default function SettingsPanel({ projectPath, onClose, onToast }: { projectPath?: string; onClose: () => void; onToast: (message: string) => void }) {
-  const [page, setPage] = useState<"pi" | "graphify" | "pipeline">("pi");
+export default function SettingsPanel({ projectPath, projectName, initialPage = "pi", onClose, onToast }: { projectPath?: string; projectName?: string; initialPage?: "pi" | "pipeline"; onClose: () => void; onToast: (message: string) => void }) {
+  const [page, setPage] = useState<"pi" | "graphify" | "pipeline">(initialPage);
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
   const [saved, setSaved] = useState("{}");
@@ -93,7 +93,7 @@ export default function SettingsPanel({ projectPath, onClose, onToast }: { proje
         <button className={page === "pipeline" ? "active" : ""} disabled={!projectPath} onClick={() => setPage("pipeline")}>PIPELINE</button>
         {page === "pi" && <><button className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>GLOBAL</button><button className={scope === "project" ? "active" : ""} disabled={!projectPath} onClick={() => setScope("project")}>PROJECT</button><span>{scope === "global" ? "~/.pi/agent/settings.json" : `${projectPath}/.pi/settings.json`}</span></>}
       </div>
-      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "pipeline" && projectPath ? <PipelineSettings projectPath={projectPath} onToast={onToast} /> : <><div className="settings-content">
+      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "pipeline" && projectPath ? <PipelineSettings projectPath={projectPath} projectName={projectName} onToast={onToast} /> : page === "pipeline" ? <div className="pipeline-project-empty"><strong>SELECT A PROJECT</strong><span>Choose the pipeline shortcut beside a project, then configure its steps here.</span></div> : <><div className="settings-content">
         <nav>{GROUPS.map(([name, detail, keys]) => <button type="button" className={activeGroup === name ? "active" : ""} key={name} onClick={() => jumpToGroup(name, keys)}><strong>{name}</strong><span>{detail}</span></button>)}</nav>
         <main>
           <div className="settings-mode"><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>FORM</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>JSON · ADVANCED</button></div>
