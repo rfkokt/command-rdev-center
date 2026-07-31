@@ -49,7 +49,7 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
     setStarting(true);
     setError(null);
     try {
-      await invoke("start_pipeline", { projectPath });
+      await invoke("start_pipeline", { projectPath, executionCwd: null });
       const pipeline = await invoke<PipelineData>("get_pipeline_data", { projectPath });
       setData(pipeline);
     } catch (e) {

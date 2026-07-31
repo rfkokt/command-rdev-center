@@ -639,7 +639,7 @@ export default function ChatView({
           const args = (ev.args as Record<string, unknown>) ?? {};
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
           if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
-            void invoke<string>("start_pipeline", { projectPath })
+            void invoke<string>("start_pipeline", { projectPath, executionCwd: cwd })
               .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
           }

@@ -50,7 +50,7 @@ test("refreshes immediately after starting and hides duplicate run action", asyn
   render(<PipelineView projectPath="/projects/demo" projectName="demo" />);
 
   fireEvent.click(await screen.findByRole("button", { name: "RUN demo" }));
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_pipeline", { projectPath: "/projects/demo" }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_pipeline", { projectPath: "/projects/demo", executionCwd: null }));
   expect(await screen.findByText("running")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "RUN demo" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "CANCEL" })).toBeInTheDocument();

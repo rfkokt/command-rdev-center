@@ -492,8 +492,16 @@ fn run_pipeline_thread(
 }
 
 #[tauri::command]
-pub fn start_pipeline(project_path: String) -> Result<String, String> {
+pub fn start_pipeline(
+    project_path: String,
+    execution_cwd: Option<String>,
+) -> Result<String, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let execution = if let Some(cwd) = execution_cwd.filter(|cwd| !cwd.trim().is_empty()) {
+        crate::projects::ensure_pipeline_cwd(&project, Path::new(&cwd))?
+    } else {
+        project.clone()
+    };
     let project_name = project
         .file_name()
         .and_then(|n| n.to_str())
@@ -520,7 +528,7 @@ pub fn start_pipeline(project_path: String) -> Result<String, String> {
     let name = project_name.clone();
     let key = project_key.clone();
     thread::spawn(move || {
-        if run_pipeline_thread(project, key.clone(), name, config, state).is_err() {
+        if run_pipeline_thread(execution, key.clone(), name, config, state).is_err() {
             if let Ok((_, current_path)) = task_paths() {
                 let _ = std::fs::remove_file(current_path);
             }

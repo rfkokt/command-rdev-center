@@ -247,6 +247,43 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
+pub fn ensure_pipeline_cwd(project: &Path, cwd: &Path) -> Result<PathBuf, String> {
+    let project = project
+        .canonicalize()
+        .map_err(|e| format!("pipeline project: {e}"))?;
+    let cwd = cwd
+        .canonicalize()
+        .map_err(|e| format!("pipeline cwd: {e}"))?;
+    if cwd == project || cwd.starts_with(&project) {
+        return Ok(cwd);
+    }
+    ensure_path_allowed(&cwd)?;
+    let output = Command::new("git")
+        .args([
+            "-C",
+            cwd.to_str().ok_or("invalid pipeline cwd")?,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("pipeline cwd is not a Git worktree".into());
+    }
+    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let expected = project
+        .join(".git")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if common != expected {
+        return Err("pipeline cwd belongs to another project".into());
+    }
+    Ok(cwd)
+}
+
 fn project_info(
     path: &Path,
     base_branch: Option<String>,
