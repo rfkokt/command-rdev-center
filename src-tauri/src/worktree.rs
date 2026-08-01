@@ -3,7 +3,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Root where all CRC worktrees live: /Volumes/ExternalM4/Project/.crc-worktrees
+/// Root where all CRC worktrees live: `<project_root>/.crc-worktrees`.
 fn worktree_root(project_root: &Path) -> PathBuf {
     project_root.join(".crc-worktrees")
 }

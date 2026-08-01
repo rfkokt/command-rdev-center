@@ -1,10 +1,8 @@
 {
-  "pi_path": "/Users/rifkioktapratama/.local/bin/pi",
-  "project_root": "/Volumes/ExternalM4/Project",
+  "pi_path": "pi",
+  "project_root": "",
   "default_provider": "anthropic",
   "default_model": "claude-opus-4-8",
   "default_thinking": "medium",
-  "projects": [
-    "/Volumes/ExternalM4/Project/command-rdev-center"
-  ]
+  "projects": []
 }
