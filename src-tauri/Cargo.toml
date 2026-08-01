@@ -1,6 +1,6 @@
 [package]
 name = "command-rdev-center"
-version = "0.1.30"
+version = "0.1.31"
 description = "Command rdev Center — pi coding agent launcher"
 authors = ["garcia"]
 edition = "2021"
