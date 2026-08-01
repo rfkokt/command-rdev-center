@@ -15,8 +15,7 @@ Guard layers (both enforced):
    Enabled only when `CRC_PROJECT_ROOT` env set (by this app's Tauri spawn).
    Hooks `tool_call` for bash/read/write/edit/ls/find/grep.
    - Extracts absolute paths from bash strings.
-   - Blocks if target under `/Volumes/ExternalM4/Project/<other>` or sibling project dir
-     not inside owning root.
+   - Blocks targets under sibling project directories that are not inside the owning root.
    - System paths (/tmp, /usr, etc) and pi's own session dir allowed.
 
 Rejected: using only `project_root=parent` with starts_with check — too permissive, allows project hopping.
