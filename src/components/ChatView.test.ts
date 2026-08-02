@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -83,6 +83,14 @@ describe("settleAgentMessages", () => {
     const assistant = { id: "a", role: "assistant", text: "", thinking: "", toolCalls: [], isStreaming: true } as ChatMessage;
 
     expect(settleAgentMessages([user, assistant])).toEqual([user]);
+  });
+});
+
+describe("shouldOfferRestart", () => {
+  test("offers chat restart for a missing Pi session", () => {
+    expect(shouldOfferRestart("Agent error: unknown session chat-acms-fe")).toBe(true);
+    expect(shouldOfferRestart("Agent process stopped unexpectedly — use Restart.")).toBe(true);
+    expect(shouldOfferRestart("Agent error: provider authentication failed")).toBe(false);
   });
 });
 

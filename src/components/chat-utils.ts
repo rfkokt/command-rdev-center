@@ -102,6 +102,10 @@ export function formatAgentError(raw: string): string {
   return `${headline}${metaLine}${retryLine}`;
 }
 
+export function shouldOfferRestart(text: string) {
+  return /agent error:.*unknown session|agent process stopped unexpectedly/i.test(text);
+}
+
 export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
   const text = `Agent error: ${formatAgentError(error)}`;
   let streamingIndex = -1;

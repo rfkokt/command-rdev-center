@@ -254,11 +254,21 @@ fn start_dev_server_blocking(
     }
     ensure_node_modules(Path::new(&cwd), &project)?;
     stop_project_dev_servers(&project)?;
-    let port = TcpListener::bind("127.0.0.1:0")
+    let vite_port = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| e.to_string())?
         .local_addr()
         .map_err(|e| e.to_string())?
         .port();
+    let artisan = Path::new(&cwd).join("artisan").is_file();
+    let port = if artisan {
+        TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| e.to_string())?
+            .local_addr()
+            .map_err(|e| e.to_string())?
+            .port()
+    } else {
+        vite_port
+    };
     let dev_script = std::fs::read_to_string(Path::new(&cwd).join("package.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
@@ -280,12 +290,18 @@ fn start_dev_server_blocking(
     } else {
         ""
     };
-    let run_command = if command == "cargo run" {
+    let frontend_command = if command == "cargo run" {
         command.clone()
     } else if webpack {
-        format!("{command}{separator} --webpack --port {port}")
+        format!("{command}{separator} --webpack --port {vite_port}")
     } else {
-        format!("{command}{separator} --port {port}")
+        format!("{command}{separator} --port {vite_port}")
+    };
+    // Laravel projects need Vite plus the PHP application server. Both share this process group.
+    let run_command = if artisan {
+        format!("({frontend_command}) & exec php artisan serve --host localhost --port {port}")
+    } else {
+        frontend_command
     };
     let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
@@ -297,7 +313,7 @@ fn start_dev_server_blocking(
         .env("PATH", format!("{}:{path}", project_bins.display()))
         .env("NODE_PATH", project.join("node_modules"))
         .env("PORT", port.to_string())
-        .env("VITE_PORT", port.to_string())
+        .env("VITE_PORT", vite_port.to_string())
         .process_group(0)
         .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
         .stderr(Stdio::from(log))

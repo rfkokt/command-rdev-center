@@ -16,6 +16,7 @@ import {
   appendAgentLog,
   settleAgentMessages,
   settleWithError,
+  shouldOfferRestart,
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
@@ -163,6 +164,7 @@ export default function ChatView({
   const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
+  const [graphError, setGraphError] = useState<string | null>(null);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
@@ -258,6 +260,7 @@ export default function ChatView({
 
   const refreshGraph = useCallback(async (full: boolean) => {
     setGraphBusy(true);
+    setGraphError(null);
     try {
       const next = await invoke<GraphStatus>("build_graph", { projectPath, full });
       graphReportRef.current = next.report_path;
@@ -270,7 +273,9 @@ export default function ChatView({
       }
       return next;
     } catch (e) {
-      onToast(`Graphify: ${String(e)}`);
+      const message = String(e);
+      setGraphError(message);
+      onToast(`Graphify: ${message}`);
       return null;
     } finally {
       setGraphBusy(false);
@@ -802,10 +807,10 @@ export default function ChatView({
   }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   useEffect(() => {
-    if (!devRunner || !worktree) return;
+    if (!devRunner) return;
     const id = window.setInterval(async () => {
       try {
-        const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd: worktree.worktree_path });
+        const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd });
         if (!runner?.running) {
           const message = `Dev server stopped unexpectedly.${runner?.error ? `\n\n${runner.error}` : " No log output available."}`;
           setDevError(message);
@@ -822,7 +827,7 @@ export default function ChatView({
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [chatId, devRunner, onToast, worktree]);
+  }, [chatId, cwd, devRunner, onToast]);
 
   async function handleSend() {
     const text = input.trim();
@@ -1012,13 +1017,12 @@ export default function ChatView({
   }
 
   async function handleRunDev() {
-    if (!worktree) return;
     try {
       const key = `crc-dev-command:${projectPath}`;
       const saved = localStorage.getItem(key);
-      const command = saved ?? await invoke<string>("detect_dev_command", { cwd: worktree.worktree_path });
+      const command = saved ?? await invoke<string>("detect_dev_command", { cwd });
       if (!saved) return setPendingDevCommand(command);
-      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command }));
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd, command }));
       setDevError(null);
       onToast(`Dev server started: ${command}`);
     } catch (error) {
@@ -1029,11 +1033,11 @@ export default function ChatView({
   }
 
   async function confirmRunDev() {
-    if (!worktree || !pendingDevCommand || devStarting) return;
+    if (!pendingDevCommand || devStarting) return;
     setDevStarting(true);
     try {
       localStorage.setItem(`crc-dev-command:${projectPath}`, pendingDevCommand);
-      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd: worktree.worktree_path, command: pendingDevCommand }));
+      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd, command: pendingDevCommand }));
       setDevError(null);
       setPendingDevCommand(null);
       onToast(`Dev server started: ${pendingDevCommand}`);
@@ -1232,9 +1236,10 @@ export default function ChatView({
           title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
           onClick={() => graphStatus.state !== "fresh" && refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
         >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}GRAPH {graphBusy ? "UPDATING…" : graphStatus.state}</button>}
+        {graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
-          {worktree && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
+          {!devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
           {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
           {devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
@@ -1253,7 +1258,7 @@ export default function ChatView({
             onChange={(event) => setPendingDevCommand(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") void confirmRunDev(); }}
           />
-          <p>Runs only in this chat worktree. This command is remembered for {projectName}.</p>
+          <p>Runs in this chat directory. Laravel projects also start <code>php artisan serve</code>. This command is remembered for {projectName}.</p>
           <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
       </div>}
@@ -1367,6 +1372,11 @@ export default function ChatView({
               </details>;
             })()}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {m.role === "system" && shouldOfferRestart(m.text) && (
+              <button onClick={() => handleRestart(true)} className="chat-restart" disabled={isRestarting}>
+                {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
+              </button>
+            )}
             {m.createdAt && <time className="chat-message-time" dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>

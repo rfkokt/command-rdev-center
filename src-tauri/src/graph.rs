@@ -2,10 +2,10 @@ use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 #[cfg(test)]
 use std::time::SystemTime;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
@@ -277,9 +277,33 @@ fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
     } else {
         command.args(["update", &project.to_string_lossy()]);
     }
-    let output = command
-        .output()
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("failed to run graphify: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while child
+        .try_wait()
+        .map_err(|e| format!("failed to poll graphify: {e}"))?
+        .is_none()
+    {
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let output = child.wait_with_output().map_err(|e| e.to_string())?;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(format!(
+                "Graphify timed out after 2 minutes.{}",
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{stderr}")
+                }
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
     if output.status.success() {
         let marker = project.join("graphify-out/.crc-code-only");
         if code_only {
