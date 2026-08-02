@@ -1020,11 +1020,7 @@ export default function ChatView({
     try {
       const key = `crc-dev-command:${projectPath}`;
       const saved = localStorage.getItem(key);
-      const command = saved ?? await invoke<string>("detect_dev_command", { cwd });
-      if (!saved) return setPendingDevCommand(command);
-      setDevRunner(await invoke<DevRunnerInfo>("start_dev_server", { chatId, cwd, command }));
-      setDevError(null);
-      onToast(`Dev server started: ${command}`);
+      setPendingDevCommand(saved ?? await invoke<string>("detect_dev_command", { cwd }));
     } catch (error) {
       const message = String(error);
       setDevError(message);
@@ -1251,14 +1247,15 @@ export default function ChatView({
         <div className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title">
           <small>DEV SERVER / {worktree?.branch}</small>
           <strong id="dev-command-title">Run detected command?</strong>
-          <input
-            aria-label="Dev command"
+          <textarea
+            aria-label="Dev commands"
             autoFocus
+            rows={3}
             value={pendingDevCommand}
             onChange={(event) => setPendingDevCommand(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter") void confirmRunDev(); }}
+            onKeyDown={(event) => { if (event.ctrlKey && event.key === "Enter") void confirmRunDev(); }}
           />
-          <p>One command per line. Choose which processes run; this is remembered for {projectName}.</p>
+          <p>One command per line. Example: <code>npm run dev</code> then <code>php artisan serve</code>. Ctrl+Enter runs. Saved for {projectName}.</p>
           <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
       </div>}
