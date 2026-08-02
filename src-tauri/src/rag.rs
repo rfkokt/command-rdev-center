@@ -75,14 +75,21 @@ fn text_file(path: &Path) -> Result<String, String> { String::from_utf8(fs::read
     let s = get_rag_settings()?; validate(&s)?; let status = Command::new("curl").args(["--silent", "--show-error", "--fail", "--proto", "=https", "--max-redirs", "0", "--max-time"]).arg(s.timeout_secs.to_string()).arg("-H").arg(format!("Authorization: Bearer {}", token()?)).arg(format!("{}/health", s.base_url)).status().map_err(|_| "RAG health check failed".to_string())?;
     if status.success() { Ok(()) } else { Err("RAG health check failed".into()) }
 }
-#[tauri::command] pub fn ingest_rag_document(file_path: String) -> Result<String, String> {
+fn ingest_rag_document_blocking(file_path: String) -> Result<String, String> {
     let s = get_rag_settings()?; validate(&s)?; let path = Path::new(&file_path); let meta = fs::metadata(path).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_BYTES || meta.len() > s.upload_limit_mb * 1024 * 1024 { return Err("Document exceeds upload limit or is not a regular file".into()); }
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase(); if !ALLOWED.contains(&ext.as_str()) { return Err("Unsupported document type".into()); }
     if PROJECT_TEXT.contains(&ext.as_str()) { return persist(safe_name(path), text_file(path)?); }
-    let output = Command::new("curl").args(["--silent", "--show-error", "--fail", "--proto", "=https", "--max-redirs", "0", "--max-time"]).arg(s.timeout_secs.to_string()).arg("-H").arg(format!("Authorization: Bearer {}", token()?)).arg("-F").arg(format!("file=@{}", path.display())).arg(format!("{}/v1/extract", s.base_url)).output().map_err(|_| "Extractor request failed".to_string())?;
-    if !output.status.success() { return Err("Extractor request failed".into()); }
+    let output = Command::new("curl").args(["--silent", "--show-error", "--fail-with-body", "--proto", "=https", "--max-redirs", "0", "--max-time"]).arg(s.timeout_secs.to_string()).arg("-H").arg(format!("Authorization: Bearer {}", token()?)).arg("-F").arg(format!("file=@{}", path.display())).arg(format!("{}/v1/extract", s.base_url)).output().map_err(|error| format!("Could not start extractor request: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(if output.stdout.is_empty() { &output.stderr } else { &output.stdout });
+        let detail = detail.trim().chars().take(500).collect::<String>();
+        return Err(if detail.is_empty() { format!("Extractor request failed ({})", output.status) } else { format!("Extractor request failed: {detail}") });
+    }
     persist(safe_name(path), String::from_utf8(output.stdout).map_err(|_| "Extractor returned invalid UTF-8".to_string())?)
+}
+#[tauri::command] pub async fn ingest_rag_document(file_path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || ingest_rag_document_blocking(file_path)).await.map_err(|error| format!("Extractor worker failed: {error}"))?
 }
 fn words(query: &str) -> Vec<String> { query.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 1).map(str::to_string).collect() }
 fn read_sources() -> Vec<Source> { fs::read_dir(corpus_dir().unwrap_or_default()).ok().into_iter().flatten().filter_map(Result::ok).filter_map(|e| fs::read_to_string(e.path()).ok()).filter_map(|raw| serde_json::from_str(&raw).ok()).collect() }

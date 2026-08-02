@@ -200,7 +200,7 @@ export default function App() {
           </div>
           {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
         </div>
-        <button className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}><span>◫</span><span>{dashboard === "knowledge" ? "Sessions" : "Knowledge"}</span></button>
+        <button className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg><span>{dashboard === "knowledge" ? "Sessions" : "Knowledge"}</span></button>
         <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}> 
           {dashboard === "kanban" ? (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M7 8h5M7 12h5M7 16h5"/><path d="M14 12h3" opacity=".6"/></svg>
