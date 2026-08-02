@@ -114,6 +114,7 @@ export default function ChatView({
   onToast,
   onOpenPipeline,
   isActive,
+  globalChat = false,
 }: {
   projectPath: string;
   projectName: string;
@@ -134,6 +135,7 @@ export default function ChatView({
   onToast: (m: string) => void;
   onOpenPipeline: () => void;
   isActive: boolean;
+  globalChat?: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
@@ -200,7 +202,7 @@ export default function ChatView({
   }, [messages]);
 
   useEffect(() => {
-    setFilePickerQuery(deriveAtQuery(input));
+    setFilePickerQuery(globalChat ? null : deriveAtQuery(input));
     const textarea = inputRef.current;
     if (textarea) {
       textarea.style.height = "auto";
@@ -294,6 +296,7 @@ export default function ChatView({
   }, [projectName, sessionId, onToast]);
 
   const updateGraphIfCodeStale = useCallback(async () => {
+    if (globalChat) return;
     try {
       const next = await invoke<GraphStatus>("get_graph_status", { projectPath });
       setGraphStatus(next);
@@ -305,7 +308,7 @@ export default function ChatView({
   }, [projectPath, refreshGraph, onToast]);
 
   useEffect(() => {
-    if (!isGit) return;
+    if (globalChat || !isGit) return;
     let fingerprint: string | null | undefined;
     const check = async () => {
       try {
@@ -733,6 +736,12 @@ export default function ChatView({
       unlisteners.push(u4);
 
       try {
+        if (globalChat) {
+          const globalCwd = await invoke<string>("get_global_chat_cwd");
+          setCwd(globalCwd);
+          const [provider, ...modelParts] = modelRef.current.split("/");
+          await invoke("spawn_pi_rpc", { sessionId, cwd: globalCwd, sessionFile: sessionFileRef.current, provider: modelParts.length ? provider : undefined, model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined, thinking: thinkingRef.current || undefined, globalChat: true });
+        } else {
         let graph = await invoke<GraphStatus>("get_graph_status", { projectPath });
         if (!mounted) return;
         setGraphStatus(graph);
@@ -778,6 +787,7 @@ export default function ChatView({
             graphReportPath: graphReportRef.current,
           });
         }
+        }
 
         const initial = () => {
           sendRaw({ type: "get_available_models" });
@@ -806,10 +816,10 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
+  }, [projectPath, projectName, isGit, globalChat, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   useEffect(() => {
-    if (!devRunner) return;
+    if (globalChat || !devRunner) return;
     const id = window.setInterval(async () => {
       try {
         const runner = await invoke<DevRunnerInfo | null>("get_dev_server", { chatId, cwd });
@@ -842,7 +852,8 @@ export default function ChatView({
     setInput("");
     setImages([]);
     pendingTaskPromptRef.current = text;
-    await sendRaw({ type: "prompt", message: text, images });
+    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : "";
+    await sendRaw({ type: "prompt", message: `${context}${text}`, images });
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -889,6 +900,7 @@ export default function ChatView({
   }
 
   useEffect(() => {
+    if (globalChat) return;
     let initialized = false;
     const check = () => {
       if (!isActive) return;
@@ -998,7 +1010,8 @@ export default function ChatView({
         provider: modelParts.length ? provider : undefined,
         model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
         thinking: thinkingRef.current || undefined,
-        graphReportPath: graphReportRef.current,
+        graphReportPath: globalChat ? undefined : graphReportRef.current,
+        globalChat,
       });
       onToast(retry ? "Agent retrying" : "Pi agent reloaded");
       setTimeout(() => {
@@ -1224,11 +1237,11 @@ export default function ChatView({
       <div style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap" }}>
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
         <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
-        {!isGit && <span className="category-tag">NOT ISOLATED</span>}
+        {!globalChat && !isGit && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
         {approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
-        {graphStatus && <button
+        {!globalChat && graphStatus && <button
           className="category-tag graph-status"
           disabled={graphBusy}
           title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
@@ -1237,9 +1250,9 @@ export default function ChatView({
         {graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
         
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
-          {!devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
-          {devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
-          {devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
+          {!globalChat && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
+          {!globalChat && devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
+          {!globalChat && devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
         </div>
@@ -1429,7 +1442,7 @@ export default function ChatView({
             ))}
           </div>
         )}
-        {filePickerQuery !== null && (
+        {!globalChat && filePickerQuery !== null && (
           <FilePicker
             projectPath={projectPath}
             query={filePickerQuery}
@@ -1524,7 +1537,7 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
+          placeholder={driveDetached ? "DRIVE DETACHED" : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
           disabled={isNewSessionLoading}
           aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
           rows={1}
@@ -1535,7 +1548,7 @@ export default function ChatView({
       </div>
       </div>
       </div>
-      {atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
+      {!globalChat && atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
       {worktree && <div className="activity-rail">
         <button className={rightSidebarOpen ? "active" : ""} onClick={() => setRightSidebarOpen((open) => !open)} title="Changes" aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length} files)` : ""}`} aria-expanded={rightSidebarOpen}>⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
       </div>}

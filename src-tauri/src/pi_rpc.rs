@@ -129,6 +129,18 @@ fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     })
 }
 
+pub fn global_chat_cwd() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    let path = PathBuf::from(home).join("Library/Application Support/command-rdev-center/global-chat");
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    Ok(path.canonicalize().map_err(|e| e.to_string())?)
+}
+
+#[tauri::command]
+pub fn get_global_chat_cwd() -> Result<String, String> {
+    Ok(global_chat_cwd()?.to_string_lossy().into())
+}
+
 fn session_args(no_session: bool, session_file: Option<String>) -> Vec<String> {
     if no_session {
         vec!["--no-session".into()]
@@ -215,6 +227,7 @@ pub fn spawn_pi_rpc(
     session_file: Option<String>,
     graph_report_path: Option<String>,
     tools: Option<Vec<String>>,
+    global_chat: Option<bool>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() {
@@ -224,8 +237,13 @@ pub fn spawn_pi_rpc(
         return Err("cwd required".to_string());
     }
 
-    // Strict per-registered-project guard — returns owning project path
-    let owning_project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
+    let global_chat = global_chat.unwrap_or(false);
+    // Global chat has an app-owned empty cwd. It never inherits project context.
+    let owning_project = if global_chat {
+        let expected = global_chat_cwd()?;
+        if Path::new(&cwd) != expected { return Err("global chat cwd is app-owned".into()); }
+        expected
+    } else { crate::projects::ensure_path_allowed(Path::new(&cwd))? };
 
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
@@ -244,7 +262,9 @@ pub fn spawn_pi_rpc(
     }
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
-    if let Some(tools) = tools {
+    if global_chat {
+        args.push("--no-tools".into());
+    } else if let Some(tools) = tools {
         if tools.is_empty() {
             args.push("--no-tools".into());
         } else {
@@ -271,23 +291,15 @@ pub fn spawn_pi_rpc(
         }
     }
     args.extend(session_args(no_session.unwrap_or(false), session_file));
-    args.push("--extension".into());
-    let extensions = crate::projects::extensions_path();
-    args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
-    args.push("--extension".into());
-    args.push(
-        extensions
-            .join("graphify-context.ts")
-            .to_string_lossy()
-            .into(),
-    );
-    args.push("--extension".into());
-    args.push(
-        extensions
-            .join("pipeline-runner.ts")
-            .to_string_lossy()
-            .into(),
-    );
+    if !global_chat {
+        args.push("--extension".into());
+        let extensions = crate::projects::extensions_path();
+        args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
+        args.push("--extension".into());
+        args.push(extensions.join("graphify-context.ts").to_string_lossy().into());
+        args.push("--extension".into());
+        args.push(extensions.join("pipeline-runner.ts").to_string_lossy().into());
+    }
     if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
         if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
             if !session_dir.trim().is_empty() {
@@ -297,36 +309,34 @@ pub fn spawn_pi_rpc(
             }
         }
     }
-    if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
+    if !global_chat { if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
         let report = crate::graph::validate_report_path(Path::new(&report))?;
         args.push("--append-system-prompt".into());
         args.push(report.to_string_lossy().to_string());
-    }
-    if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
+    }}
+    if !global_chat { if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
         let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
         std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
         args.push("--append-system-prompt".into());
         args.push(prompt_path.to_string_lossy().to_string());
-    }
+    }}
 
     // Graphs live in the durable owning checkout; disable automatic context until one exists.
     let graph_json_path = owning_project.join("graphify-out/graph.json");
-    let project_name = owning_project
-        .file_name()
-        .ok_or("project path has no name")?;
-    let task_dir = crate::kanban::task_dir()?;
-    let mut child = Command::new(&pi_path)
-        .args(&args)
-        .current_dir(&cwd)
+    let project_name = owning_project.file_name().unwrap_or_default();
+    let task_dir = if global_chat { std::env::temp_dir() } else { crate::kanban::task_dir()? };
+    let mut command = Command::new(&pi_path);
+    command.args(&args).current_dir(&cwd)
+        .env("PATH", path_for_pi(&pi_path.to_string_lossy()));
+    if !global_chat { command
         .env("CRC_PROJECT_ROOT", &owning_project)
         .env("CRC_PROJECT_CWD", &cwd)
         .env("CRC_PROJECT_NAME", project_name)
         .env("CRC_SESSION_ID", &session_id)
         .env("CRC_TASK_DIR", task_dir)
         .env("CRC_GRAPH_JSON", &graph_json_path)
-        // macOS GUI apps get a minimal PATH; pi uses `#!/usr/bin/env node`.
-        .env("PATH", path_for_pi(&pi_path.to_string_lossy()))
-        .env("GRAPHIFY_GRAPH", &graph_json_path)
+        .env("GRAPHIFY_GRAPH", &graph_json_path); }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

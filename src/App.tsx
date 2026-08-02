@@ -20,7 +20,8 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: boolean };
+type Tab = { id: string; project: ProjectInfo; global?: boolean; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: boolean };
+const GLOBAL_PROJECT: ProjectInfo = { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
 
@@ -115,6 +116,15 @@ export default function App() {
     newConversation(project);
   }
 
+  function openGlobalChat() {
+    setDashboard(null);
+    const existing = tabs.find((tab) => tab.global);
+    if (existing) return activateTab(existing.id);
+    const id = "global-chat";
+    setTabs((prev) => [...prev, { id, project: GLOBAL_PROJECT, global: true }]);
+    setActiveTabId(id);
+  }
+
   function newConversation(project = selectedProject) {
     if (!project) return;
     const id = `${project.name}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -167,7 +177,7 @@ export default function App() {
         <ProjectList
           onOpen={openProject}
           onSelect={setSelectedProject}
-          tabs={tabs}
+          tabs={tabs.filter((tab) => !tab.global)}
           activeTabId={activeTabId}
           onResume={(id, project) => { setDashboard(null); setSelectedProject(project); activateTab(id); }}
           onPipelineSettings={(project) => {
@@ -177,6 +187,7 @@ export default function App() {
             setSettingsOpen(true);
           }}
         />
+        <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>GLOBAL CHAT</span></button>
         <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}>
           {dashboard === "kanban" ? (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M7 8h5M7 12h5M7 16h5"/><path d="M14 12h3" opacity=".6"/></svg>
@@ -220,13 +231,14 @@ export default function App() {
                 projectPath={tab.project.path}
                 projectName={tab.project.name}
                 isGit={tab.project.is_git}
+                globalChat={tab.global}
                 pipelineType={tab.project.pipeline_type ?? "Personal"}
                 chatId={tab.id}
                 sessionFile={tab.sessionFile}
                 initialModel={tab.model}
                 initialThinking={tab.thinking}
                 initialInterrupted={tab.interrupted}
-                resumableSessions={tabs.filter((candidate) => candidate.id !== tab.id && candidate.project.path === tab.project.path && candidate.sessionFile).map((candidate) => ({ title: candidate.title ?? "Untitled session", sessionFile: candidate.sessionFile! }))}
+                resumableSessions={tabs.filter((candidate) => candidate.id !== tab.id && candidate.global === tab.global && candidate.project.path === tab.project.path && candidate.sessionFile).map((candidate) => ({ title: candidate.title ?? "Untitled session", sessionFile: candidate.sessionFile! }))}
                 onSessionFile={saveSessionFile}
                 onFirstMessage={saveTitle}
                 onRuntimeSettings={saveRuntimeSettings}
@@ -242,7 +254,7 @@ export default function App() {
             <div className="empty-state">
               <span className="empty-index">00</span>
               <strong>NO ACTIVE SESSION</strong>
-              <span>Add a project, then start a session.</span>
+              <span>Add a project, or open Global Chat.</span>
             </div>
           )}
         </div>

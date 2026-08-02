@@ -8,6 +8,7 @@ mod kanban;
 mod pi_rpc;
 mod pipeline;
 mod projects;
+mod rag;
 mod settings;
 mod worktree;
 
@@ -68,6 +69,10 @@ pub fn run() {
             projects::get_backlog_dir,
             projects::save_backlog_dir,
             projects::remove_project,
+            rag::get_rag_settings,
+            rag::save_rag_settings,
+            rag::test_rag_connection,
+            rag::ingest_rag_document,
             settings::get_pi_settings,
             settings::save_pi_settings,
             settings::get_graphify_settings,
@@ -75,6 +80,7 @@ pub fn run() {
             settings::save_graphify_settings,
             worktree::ensure_worktree,
             worktree::remove_worktree,
+            pi_rpc::get_global_chat_cwd,
             pi_rpc::spawn_pi_rpc,
             pi_rpc::send_pi_command,
             pi_rpc::is_pi_session_running,

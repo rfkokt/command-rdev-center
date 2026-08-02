@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import GraphifySettings from "./GraphifySettings";
 import PipelineSettings from "./PipelineSettings";
+import RagSettings from "./RagSettings";
 
 const GROUPS = [
   ["Model & Thinking", "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets", ["defaultProvider", "defaultModel", "defaultThinkingLevel", "thinkingBudgets"]],
@@ -17,7 +18,7 @@ const GROUPS = [
 ] as const;
 
 export default function SettingsPanel({ projectPath, projectName, initialPage = "pi", onClose, onToast }: { projectPath?: string; projectName?: string; initialPage?: "pi" | "pipeline"; onClose: () => void; onToast: (message: string) => void }) {
-  const [page, setPage] = useState<"pi" | "graphify" | "pipeline">(initialPage);
+  const [page, setPage] = useState<"pi" | "graphify" | "rag" | "pipeline">(initialPage);
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
   const [saved, setSaved] = useState("{}");
@@ -100,14 +101,15 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
 
   return <div className="settings-backdrop">
     <section className="settings-panel" aria-label="Settings">
-      <header><div><small>CONFIGURATION</small><strong>{page === "pi" ? "PI SETTINGS" : page === "graphify" ? "GRAPHIFY SETTINGS" : "PIPELINE SETTINGS"}</strong></div><button onClick={onClose}>ESC</button></header>
+      <header><div><small>CONFIGURATION</small><strong>{page === "pi" ? "PI SETTINGS" : page === "graphify" ? "GRAPHIFY SETTINGS" : page === "rag" ? "RAG SETTINGS" : "PIPELINE SETTINGS"}</strong></div><button onClick={onClose}>ESC</button></header>
       <div className="settings-scope">
         <button className={page === "pi" ? "active" : ""} onClick={() => setPage("pi")}>PI</button>
         <button className={page === "graphify" ? "active" : ""} onClick={() => setPage("graphify")}>GRAPHIFY</button>
+        <button className={page === "rag" ? "active" : ""} onClick={() => setPage("rag")}>RAG</button>
         <button className={page === "pipeline" ? "active" : ""} disabled={!projectPath} onClick={() => setPage("pipeline")}>PIPELINE</button>
         {page === "pi" && <><button className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>GLOBAL</button><button className={scope === "project" ? "active" : ""} disabled={!projectPath} onClick={() => setScope("project")}>PROJECT</button><span>{scope === "global" ? "~/.pi/agent/settings.json" : `${projectPath}/.pi/settings.json`}</span></>}
       </div>
-      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "pipeline" && projectPath ? <PipelineSettings projectPath={projectPath} projectName={projectName} onToast={onToast} /> : page === "pipeline" ? <div className="pipeline-project-empty"><strong>SELECT A PROJECT</strong><span>Choose the pipeline shortcut beside a project, then configure its steps here.</span></div> : <><div className="settings-content">
+      {page === "graphify" ? <GraphifySettings onToast={onToast} /> : page === "rag" ? <RagSettings onToast={onToast} /> : page === "pipeline" && projectPath ? <PipelineSettings projectPath={projectPath} projectName={projectName} onToast={onToast} /> : page === "pipeline" ? <div className="pipeline-project-empty"><strong>SELECT A PROJECT</strong><span>Choose the pipeline shortcut beside a project, then configure its steps here.</span></div> : <><div className="settings-content">
         <nav>{GROUPS.map(([name, detail, keys]) => <button type="button" className={activeGroup === name ? "active" : ""} key={name} onClick={() => jumpToGroup(name, keys)}><strong>{name}</strong><span>{detail}</span></button>)}</nav>
         <main>
           <div className="settings-mode"><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>FORM</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>JSON · ADVANCED</button></div>

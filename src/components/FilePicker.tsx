@@ -41,8 +41,8 @@ export default function FilePicker({
     onKeyDown(key) {
       const action = filePickerKey(key, selectedIdx, files.length);
       if (!action) return false;
-      if ("select" in action) setSelectedIdx(action.select);
-      else if ("pick" in action) onPick(files[action.pick]);
+      if (typeof action.select === "number") setSelectedIdx(action.select);
+      else if (typeof action.pick === "number") { const file = files[action.pick]; if (file) onPick(file); }
       else onClose();
       return true;
     },
