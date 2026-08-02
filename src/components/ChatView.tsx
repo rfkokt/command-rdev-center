@@ -179,7 +179,7 @@ export default function ChatView({
   const trackedTaskRef = useRef(false);
   // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
   const surfacedErrorRef = useRef<string | null>(null);
-  const pipelineRunRef = useRef(false);
+  const pipelineRunRef = useRef<string | null>(null);
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
   const surfacedPipelineInputRef = useRef("");
@@ -643,7 +643,7 @@ export default function ChatView({
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
           if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
             void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current, initiatorSessionId: sessionId })
-              .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
+              .then(() => { onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
           }
           if (!ev.isError && name === "report_recurring_error") {
@@ -885,7 +885,8 @@ export default function ChatView({
       void invoke<{ current?: { run_id: string; project_path: string; status: string; initiator_session_id?: string | null; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }; runs: Array<{ run_id: string; project_path: string; status: string; initiator_session_id?: string | null; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }> }>("get_pipeline_data", { projectPath }).then((data) => {
         const owns = (run: { initiator_session_id?: string | null }) => run.initiator_session_id === sessionId;
         const current = data.current && owns(data.current) ? data.current : undefined;
-        const archived = data.runs.filter((item) => owns(item) && item.status === "failed");
+        const ownedRuns = data.runs.filter(owns);
+        const archived = ownedRuns.filter((item) => item.status === "failed");
         if (!initialized) {
           archived.forEach((run) => run.stages.filter((stage) => stage.status === "fail").forEach((stage) => surfacedPipelineFailures.add(`${run.run_id}:${stage.name}:${stage.attempts}`)));
           initialized = true;
@@ -914,9 +915,19 @@ export default function ChatView({
           void sendRaw({ type: agentStatus === "running" ? "steer" : "prompt", message: `${pendingInput.prompt} Inspect git diff/status in the active worktree. Then call provide_pipeline_input with a one-line conventional commit message and only explicit relative modified paths belonging to this task. Do not use git add -A and do not commit directly.` });
         }
         if (!pendingMatchesChat) surfacedPipelineInputRef.current = "";
+        const completed = pipelineRunRef.current && !current
+          ? ownedRuns.find((item) => item.run_id === pipelineRunRef.current && item.status === "done")
+          : undefined;
+        if (completed) {
+          const passed = completed.stages.filter((stage) => stage.status === "pass").length;
+          setMessages((messages) => [...messages, { id: uid(), role: "assistant", text: `Pipeline completed · ${passed}/${completed.stages.length} stages passed.`, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
+          onToast(`Pipeline completed: ${projectName}`);
+          void notifyAgent("finished", `Pipeline completed · ${projectName}`, chatId).catch(() => {});
+          pipelineRunRef.current = null;
+        }
+        if (current) pipelineRunRef.current = current.run_id;
         const currentFailure = current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         const run = currentFailure ? current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
-        pipelineRunRef.current = Boolean(current);
         if (!run) return;
         const failed = run.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         if (!failed) return;

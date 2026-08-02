@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 
 const invoke = vi.fn();
@@ -27,14 +27,14 @@ test("renders live and dynamic stages with averages and newest runs first", asyn
   render(<PipelineView />);
 
   expect(await screen.findByText("AVG 2s")).toBeInTheDocument();
-  expect(screen.getByRole("table", { name: "KAI pipeline" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: /Deploy/ })).toBeInTheDocument();
-  expect(screen.getByText("running")).toBeInTheDocument();
+  const liveTable = screen.getByRole("table", { name: "KAI pipeline" });
+  expect(liveTable).toBeInTheDocument();
+  expect(within(liveTable).getByRole("columnheader", { name: /Deploy/ })).toBeInTheDocument();
+  expect(within(liveTable).getByText("running")).toBeInTheDocument();
 
-  const rows = screen.getAllByRole("row").slice(1);
-  expect(rows[0]).toHaveTextContent("running");
-  expect(rows[1]).toHaveTextContent("demo-new");
-  expect(rows[2]).toHaveTextContent("demo-old");
+  const historical = screen.getByRole("table", { name: /KAI pipeline · alternate/ });
+  expect(within(historical).getByText("demo-new")).toBeInTheDocument();
+  expect(within(historical).getByText("demo-old")).toBeInTheDocument();
 });
 
 test("renders unix-second timestamps without Invalid Date", async () => {

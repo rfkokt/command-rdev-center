@@ -74,24 +74,28 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
     <header><div><small>APP-OWNED AUTOMATION</small><strong>PIPELINE</strong></div><div className="pipeline-actions">{projectPath && !current && <button onClick={() => void start()} disabled={starting}>{starting ? "STARTING…" : `RUN ${projectName ?? "PIPELINE"}`}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} RUNS · LIVE REFRESH 3S</span></header>
     {pending && <section className="pipeline-input-prompt"><strong>{pending.step}</strong><span>{pending.mode === "ai_commit" ? "Open the matching project chat so AI can propose paths and a commit message." : pending.prompt}</span>{pending.mode === "confirm" && <div>{pending.options.map((option) => <button className={inputValue === option ? "active" : ""} onClick={() => setInputValue(option)} key={option}>{option}</button>)}<button onClick={provide} disabled={!inputValue}>CONFIRM</button></div>}</section>}
     {error ? <p className="kanban-error">{error}</p> : !runs.length ? <div className="pipeline-empty">No pipeline runs yet.</div> : <div className="pipeline-scroll">
-      {projectTypes.map((projectType) => {
+      {projectTypes.flatMap((projectType) => {
         const typeRuns = runs.filter((run) => run.project_type === projectType);
-        const columns = [...new Set(typeRuns.flatMap((run) => run.stages.map((stage) => stage.name)))];
-        const completed = data.runs.filter((run) => run.project_type === projectType && ["done", "pass", "success"].includes(run.status.toLowerCase()));
-        const averages = Object.fromEntries(columns.map((name) => {
-          const times = completed.flatMap((run) => run.stages.filter((stage) => stage.name === name && stage.status === "pass" && stage.ms).map((stage) => stage.ms ?? 0));
-          return [name, times.length ? times.reduce((sum, ms) => sum + ms, 0) / times.length : 0];
-        }));
-        return <table key={projectType} aria-label={`${projectType} pipeline`}>
-          <thead><tr><th>{projectType}</th>{columns.map((name) => <th key={name}><strong>{name}</strong><small>AVG {duration(averages[name])}</small></th>)}</tr></thead>
-          <tbody>{typeRuns.map((run) => <tr key={run.run_id}>
-            <th><strong>{run.project}</strong><span>{runDate(run.date)}</span><small>{run.commits?.length ?? 0} COMMITS · {run.status}</small></th>
-            {columns.map((name) => {
-              const stage = run.stages.find((item) => item.name === name) ?? { name, status: "skip" as const };
-              return <td key={name}><div className={`pipeline-stage ${stage.status}`} title={stage.log}><strong>{stage.status}</strong><span>{duration(stage.ms)}</span>{stage.attempts ? <small>{stage.attempts} TRY</small> : null}</div></td>;
-            })}
-          </tr>)}</tbody>
-        </table>;
+        const layouts = [...new Set(typeRuns.map((run) => run.stages.map((stage) => stage.name).join("\u0000")))];
+        return layouts.map((layout, layoutIndex) => {
+          const columns = layout ? layout.split("\u0000") : [];
+          const layoutRuns = typeRuns.filter((run) => run.stages.map((stage) => stage.name).join("\u0000") === layout);
+          const completed = data.runs.filter((run) => run.project_type === projectType && run.stages.map((stage) => stage.name).join("\u0000") === layout && ["done", "pass", "success"].includes(run.status.toLowerCase()));
+          const averages = Object.fromEntries(columns.map((name) => {
+            const times = completed.flatMap((run) => run.stages.filter((stage) => stage.name === name && stage.status === "pass" && stage.ms).map((stage) => stage.ms ?? 0));
+            return [name, times.length ? times.reduce((sum, ms) => sum + ms, 0) / times.length : 0];
+          }));
+          return <table key={`${projectType}-${layout}`} aria-label={layoutIndex ? `${projectType} pipeline · alternate ${layoutIndex + 1}` : `${projectType} pipeline`}>
+            <thead><tr><th>{projectType}</th>{columns.map((name) => <th key={name}><strong>{name}</strong><small>AVG {duration(averages[name])}</small></th>)}</tr></thead>
+            <tbody>{layoutRuns.map((run) => <tr key={run.run_id}>
+              <th><strong>{run.project}</strong><span>{runDate(run.date)}</span><small>{run.commits?.length ?? 0} COMMITS · {run.status}</small></th>
+              {columns.map((name) => {
+                const stage = run.stages.find((item) => item.name === name) ?? { name, status: "skip" as const };
+                return <td key={name}><div className={`pipeline-stage ${stage.status}`} title={stage.log}><strong>{stage.status}</strong><span>{duration(stage.ms)}</span>{stage.attempts ? <small>{stage.attempts} TRY</small> : null}</div></td>;
+              })}
+            </tr>)}</tbody>
+          </table>;
+        });
       })}
     </div>}
   </section>;
