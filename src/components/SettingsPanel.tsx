@@ -25,8 +25,13 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
   const [loading, setLoading] = useState(true);
   const [activeGroup, setActiveGroup] = useState("");
   const [mode, setMode] = useState<"form" | "json">("form");
+  const [backlogDir, setBacklogDir] = useState("");
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    void invoke<string>("get_backlog_dir").then(setBacklogDir).catch((e) => setError(String(e)));
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -72,6 +77,15 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
     } catch (e) { setError(String(e)); }
   }
 
+  async function chooseBacklogDir() {
+    const path = await open({ directory: true, multiple: false, title: "Choose Backlog & Error Report Storage" });
+    if (!path) return;
+    try {
+      setBacklogDir(await invoke<string>("save_backlog_dir", { path }));
+      onToast("Backlog storage saved.");
+    } catch (e) { setError(String(e)); }
+  }
+
   async function save() {
     try {
       const settings = JSON.parse(text) as unknown;
@@ -107,7 +121,7 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
               <label id="setting-theme"><span>THEME<small>Installed Pi theme name</small></span><input value={String(settings.theme ?? "")} onChange={(e) => updateSetting("theme", e.target.value)} placeholder="Pi default" /></label>
               <label id="setting-externalEditor"><span>EXTERNAL EDITOR<small>Editor command</small></span><input value={String(settings.externalEditor ?? "")} onChange={(e) => updateSetting("externalEditor", e.target.value)} placeholder="e.g. code --wait" /></label>
               <label id="setting-shellPath"><span>SHELL PATH<small>Shell executable</small></span><input value={String(settings.shellPath ?? "")} onChange={(e) => updateSetting("shellPath", e.target.value)} placeholder="System default" /></label>
-              {scope === "global" && <div className="session-storage-setting" id="setting-sessionDir"><div><strong>SESSION STORAGE</strong><span>{String(settings.sessionDir || "~/.pi/agent/sessions")}</span></div><button onClick={chooseSessionDir}>CHOOSE FOLDER</button></div>}
+              {scope === "global" && <><div className="session-storage-setting" id="setting-sessionDir"><div><strong>SESSION STORAGE</strong><span>{String(settings.sessionDir || "~/.pi/agent/sessions")}</span></div><button onClick={chooseSessionDir}>CHOOSE FOLDER</button></div><div className="session-storage-setting"><div><strong>BACKLOG & ERROR REPORTS</strong><span>{backlogDir || "Loading…"}</span></div><button onClick={chooseBacklogDir}>CHOOSE FOLDER</button></div></>}
             </>; })()}
           </div>}
           {error && <div className="settings-error">{error}</div>}

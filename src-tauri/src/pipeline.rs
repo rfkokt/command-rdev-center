@@ -38,6 +38,8 @@ pub struct PipelineRun {
     pub commits: Vec<String>,
     #[serde(default)]
     pub stages: Vec<PipelineStage>,
+    #[serde(default)]
+    pub initiator_session_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -504,6 +506,15 @@ fn validate_commit_input(
     Ok((message, validated))
 }
 
+fn unstage_paths(project: &Path, paths: &[String]) {
+    let _ = Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["reset", "--quiet", "--"])
+        .args(paths)
+        .status();
+}
+
 fn execute_ai_commit(project: &Path, input: PipelineInput) -> Result<(bool, String), String> {
     let (message, paths) = validate_commit_input(project, input)?;
     if !staged_paths(project)?.is_empty() {
@@ -518,6 +529,7 @@ fn execute_ai_commit(project: &Path, input: PipelineInput) -> Result<(bool, Stri
         .status()
         .map_err(|e| e.to_string())?;
     if !status.success() {
+        unstage_paths(project, &paths);
         return Ok((false, "git add failed".into()));
     }
     let mut staged = staged_paths(project)?;
@@ -525,11 +537,7 @@ fn execute_ai_commit(project: &Path, input: PipelineInput) -> Result<(bool, Stri
     staged.sort();
     expected.sort();
     if staged != expected {
-        let _ = Command::new("git")
-            .arg("-C")
-            .arg(project)
-            .args(["reset", "--quiet", "--"])
-            .status();
+        unstage_paths(project, &paths);
         return Err("commit blocked: staged paths differ from explicitly authorized paths".into());
     }
     let output = Command::new("git")
@@ -544,6 +552,9 @@ fn execute_ai_commit(project: &Path, input: PipelineInput) -> Result<(bool, Stri
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    if !output.status.success() {
+        unstage_paths(project, &paths);
+    }
     Ok((output.status.success(), log))
 }
 
@@ -651,6 +662,7 @@ fn run_pipeline_thread(
                 attempts: 0,
             })
             .collect(),
+        initiator_session_id: initiator_session_id.clone(),
     };
     write_current(&current_path, &run)?;
     let enabled: Vec<_> = config.steps.into_iter().filter(|s| s.enabled).collect();
@@ -1115,6 +1127,7 @@ mod tests {
     fn parses_legacy_duration_alias() {
         let runs = read_runs("{\"run_id\":\"1\",\"project\":\"demo\",\"project_type\":\"Personal\",\"date\":\"1\",\"status\":\"done\",\"stages\":[{\"name\":\"build\",\"duration_ms\":10,\"status\":\"pass\"}]}\n").unwrap();
         assert_eq!(runs[0].stages[0].ms, 10);
+        assert!(runs[0].initiator_session_id.is_none());
     }
 
     #[test]
@@ -1199,6 +1212,66 @@ mod tests {
             .unwrap_err()
             .contains("already contains staged"));
         assert_eq!(staged_paths(&dir).unwrap(), vec!["a.txt"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ai_commit_failure_unstages_authorized_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "crc-pipeline-commit-failure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        Command::new("git")
+            .args(["add", "a.txt"])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "commit",
+                "-qm",
+                "init",
+            ])
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        std::fs::write(dir.join("a.txt"), "changed").unwrap();
+        let hook = dir.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let result = execute_ai_commit(
+            &dir,
+            PipelineInput {
+                nonce: "n".into(),
+                run_id: "r".into(),
+                step_id: "s".into(),
+                mode: "ai_commit".into(),
+                session_id: None,
+                execution_cwd: dir.to_string_lossy().into(),
+                value: None,
+                message: Some("fix: test".into()),
+                paths: vec!["a.txt".into()],
+            },
+        )
+        .unwrap();
+        assert!(!result.0);
+        assert!(staged_paths(&dir).unwrap().is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

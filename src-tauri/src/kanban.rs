@@ -47,9 +47,7 @@ pub struct KanbanProject {
 }
 
 pub(crate) fn task_dir() -> Result<PathBuf, String> {
-    let root = super::projects::project_root()?;
-    let parent = root.parent().ok_or("project root has no parent")?;
-    Ok(parent.join("Task All Project"))
+    crate::projects::backlog_dir()
 }
 
 fn lock_tasks(dir: &Path) -> Result<File, String> {
@@ -124,6 +122,15 @@ pub struct ChatTaskSync {
     status: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ErrorReportTask {
+    project: String,
+    session_id: String,
+    title: String,
+    root_cause: String,
+    prevention: String,
+}
+
 #[tauri::command]
 pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
     if !valid_project(&input.project) || input.session_id.trim().is_empty() {
@@ -168,6 +175,58 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
     }
     write_tasks(&path, &tasks)?;
     Ok(Some(input.status))
+}
+
+#[tauri::command]
+pub fn create_error_report_task(input: ErrorReportTask) -> Result<String, String> {
+    if !valid_project(&input.project) || input.session_id.trim().is_empty() {
+        return Err("invalid error report identity".into());
+    }
+    let title = input.title.trim();
+    let root_cause = input.root_cause.trim();
+    let prevention = input.prevention.trim();
+    if title.is_empty() || root_cause.is_empty() || prevention.is_empty() {
+        return Err("error report title, root cause, and prevention are required".into());
+    }
+    if [title, root_cause, prevention]
+        .iter()
+        .any(|field| field.len() > 4_000)
+    {
+        return Err("error report fields are too long".into());
+    }
+    let dir = task_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let _lock = lock_tasks(&dir)?;
+    let path = dir.join(format!("{}.json", input.project));
+    let mut tasks = if path.exists() {
+        read_tasks(&path)?
+    } else {
+        Vec::new()
+    };
+    let description = format!("Error: {title}");
+    let notes = format!("Root cause: {root_cause}\n\nPrevention: {prevention}");
+    if tasks
+        .iter()
+        .any(|task| task.deskripsi == description && task.notes == notes)
+    {
+        return Ok("existing Backlog task".into());
+    }
+    tasks.push(KanbanTask {
+        no: json!(format!(
+            "error-{}-{}",
+            input.session_id.trim_start_matches("chat-"),
+            tasks.len() + 1
+        )),
+        url: String::new(),
+        deskripsi: description,
+        pic: "agent".into(),
+        status: "Backlog".into(),
+        notes,
+        session_id: Some(input.session_id),
+        extra: serde_json::Map::new(),
+    });
+    write_tasks(&path, &tasks)?;
+    Ok("Backlog".into())
 }
 
 fn update_task_status_at(path: &Path, task_no: &Value, status: &str) -> Result<(), String> {

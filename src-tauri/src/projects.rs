@@ -37,6 +37,8 @@ struct StoredConfig {
     base_branches: HashMap<String, String>,
     #[serde(default)]
     pipeline_types: HashMap<String, String>,
+    #[serde(default)]
+    backlog_dir: Option<String>,
 }
 
 fn sanitize_repo_name(name: &str) -> String {
@@ -102,6 +104,39 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
         .set(path)
         .map_err(|_| "config already initialized".to_string())?;
     migrate_base_branches()
+}
+
+pub fn backlog_dir() -> Result<PathBuf, String> {
+    let config = read_config()?;
+    if let Some(path) = config.backlog_dir.filter(|path| !path.trim().is_empty()) {
+        let path = PathBuf::from(path);
+        if !path.is_absolute() {
+            return Err("backlog storage must be an absolute path".into());
+        }
+        return Ok(path);
+    }
+    Ok(config_path()
+        .parent()
+        .ok_or("app config has no parent")?
+        .join("backlog"))
+}
+
+#[tauri::command]
+pub fn get_backlog_dir() -> Result<String, String> {
+    Ok(backlog_dir()?.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub fn save_backlog_dir(path: String) -> Result<String, String> {
+    let path = PathBuf::from(path.trim());
+    if !path.is_absolute() || !path.is_dir() {
+        return Err("backlog storage must be an existing absolute directory".into());
+    }
+    let mut config = read_config()?;
+    config.backlog_dir = Some(path.to_string_lossy().into_owned());
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 pub fn config_path() -> PathBuf {

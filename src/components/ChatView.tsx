@@ -646,6 +646,19 @@ export default function ChatView({
               .then(() => { pipelineRunRef.current = true; onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
           }
+          if (!ev.isError && name === "report_recurring_error") {
+            const title = typeof args.title === "string" ? args.title : "";
+            const rootCause = typeof args.rootCause === "string" ? args.rootCause : "";
+            const prevention = typeof args.prevention === "string" ? args.prevention : "";
+            if (title && rootCause && prevention) {
+              const draft = `Error: ${title}\n\nRoot cause:\n${rootCause}\n\nPrevention:\n${prevention}`;
+              if (window.confirm(`Save this error report as a Backlog task?\n\n${draft}`)) {
+                void invoke<string>("create_error_report_task", { input: { project: projectName, sessionId, title, rootCause, prevention } })
+                  .then((status) => onToast(`Error report saved: ${status}`))
+                  .catch((error) => onToast(`Error report: ${String(error)}`));
+              }
+            }
+          }
           if (!ev.isError && name === "provide_pipeline_input") {
             const message = typeof args.message === "string" ? args.message : "";
             const paths = Array.isArray(args.paths) ? args.paths.filter((path): path is string => typeof path === "string") : [];
@@ -869,15 +882,17 @@ export default function ChatView({
     let initialized = false;
     const check = () => {
       if (!isActive) return;
-      void invoke<{ current?: { run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }; runs: Array<{ run_id: string; project_path: string; status: string; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }> }>("get_pipeline_data", { projectPath }).then((data) => {
-        const archived = data.runs.filter((item) => item.status === "failed");
+      void invoke<{ current?: { run_id: string; project_path: string; status: string; initiator_session_id?: string | null; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }; runs: Array<{ run_id: string; project_path: string; status: string; initiator_session_id?: string | null; stages: Array<{ name: string; status: string; log?: string; failure_policy?: string; attempts?: number }> }> }>("get_pipeline_data", { projectPath }).then((data) => {
+        const owns = (run: { initiator_session_id?: string | null }) => run.initiator_session_id === sessionId;
+        const current = data.current && owns(data.current) ? data.current : undefined;
+        const archived = data.runs.filter((item) => owns(item) && item.status === "failed");
         if (!initialized) {
           archived.forEach((run) => run.stages.filter((stage) => stage.status === "fail").forEach((stage) => surfacedPipelineFailures.add(`${run.run_id}:${stage.name}:${stage.attempts}`)));
           initialized = true;
         }
         const pendingRetry = pendingPipelineRetryRef.current;
         if (pendingRetry) {
-          const retryRun = data.current?.run_id === pendingRetry.runId ? data.current : data.runs.find((item) => item.run_id === pendingRetry.runId);
+          const retryRun = current?.run_id === pendingRetry.runId ? current : data.runs.find((item) => owns(item) && item.run_id === pendingRetry.runId);
           const retryStage = retryRun?.stages.find((stage) => stage.name === pendingRetry.step);
           const retryAttempt = retryStage?.attempts ?? 0;
           if (retryStage && retryAttempt > pendingRetry.attempt && retryStage.status !== "running") {
@@ -899,9 +914,9 @@ export default function ChatView({
           void sendRaw({ type: agentStatus === "running" ? "steer" : "prompt", message: `${pendingInput.prompt} Inspect git diff/status in the active worktree. Then call provide_pipeline_input with a one-line conventional commit message and only explicit relative modified paths belonging to this task. Do not use git add -A and do not commit directly.` });
         }
         if (!pendingMatchesChat) surfacedPipelineInputRef.current = "";
-        const currentFailure = data.current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
-        const run = currentFailure ? data.current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
-        pipelineRunRef.current = Boolean(data.current);
+        const currentFailure = current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
+        const run = currentFailure ? current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
+        pipelineRunRef.current = Boolean(current);
         if (!run) return;
         const failed = run.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         if (!failed) return;
