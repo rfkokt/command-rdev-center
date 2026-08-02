@@ -1255,8 +1255,8 @@ export default function ChatView({
             onChange={(event) => setPendingDevCommand(event.target.value)}
             onKeyDown={(event) => { if (event.ctrlKey && event.key === "Enter") void confirmRunDev(); }}
           />
-          <p>One command per line. Both run together and stop together.</p>
-          <pre className="dev-command-example">npm run dev{`\n`}php artisan serve</pre>
+          <p>One command per line. Add <code>| PORT</code> to set a port. Both run and stop together.</p>
+          <pre className="dev-command-example">npm run dev | 5173{`\n`}php artisan serve | 8000</pre>
           <small className="dev-command-hint">CTRL+ENTER TO RUN · SAVED FOR {projectName}</small>
           <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
