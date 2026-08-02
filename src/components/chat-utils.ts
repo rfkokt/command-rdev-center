@@ -26,6 +26,15 @@ export function shouldSubmitCommand(input: string, command: { name: string }) {
   return input.trim() === `/${command.name}`;
 }
 
+export function filePickerKey(key: string, selectedIdx: number, count: number) {
+  if (key === "Escape") return { close: true };
+  if (!count) return null;
+  if (key === "ArrowDown") return { select: (selectedIdx + 1) % count };
+  if (key === "ArrowUp") return { select: (selectedIdx - 1 + count) % count };
+  if (key === "Enter" || key === "Tab") return { pick: selectedIdx };
+  return null;
+}
+
 export function insertSteerMessage(messages: ChatMessage[], message: ChatMessage) {
   let streamingIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {

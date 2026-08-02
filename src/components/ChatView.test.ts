@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -48,6 +48,16 @@ describe("shouldSubmitCommand", () => {
   test("submits an already completed slash command", () => {
     expect(shouldSubmitCommand("/new", { name: "new" })).toBe(true);
     expect(shouldSubmitCommand("/ne", { name: "new" })).toBe(false);
+  });
+});
+
+describe("filePickerKey", () => {
+  test("navigates and picks a visible file result", () => {
+    expect(filePickerKey("ArrowDown", 0, 3)).toEqual({ select: 1 });
+    expect(filePickerKey("ArrowUp", 0, 3)).toEqual({ select: 2 });
+    expect(filePickerKey("Enter", 1, 3)).toEqual({ pick: 1 });
+    expect(filePickerKey("Tab", 1, 3)).toEqual({ pick: 1 });
+    expect(filePickerKey("Escape", 0, 0)).toEqual({ close: true });
   });
 });
 

@@ -1,18 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useImperativeHandle, useState, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { filePickerKey } from "./chat-utils";
 
 type FileEntry = { name: string; path: string; relative: string };
+
+export type FilePickerHandle = { onKeyDown: (key: string) => boolean };
 
 export default function FilePicker({
   projectPath,
   query,
   onPick,
   onClose,
+  pickerRef,
 }: {
   projectPath: string;
   query: string;
   onPick: (f: FileEntry) => void;
   onClose: () => void;
+  pickerRef: Ref<FilePickerHandle>;
 }) {
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [error, setError] = useState("");
@@ -31,6 +36,17 @@ export default function FilePicker({
     search();
     return () => { cancelled = true; };
   }, [projectPath, query]);
+
+  useImperativeHandle(pickerRef, () => ({
+    onKeyDown(key) {
+      const action = filePickerKey(key, selectedIdx, files.length);
+      if (!action) return false;
+      if ("select" in action) setSelectedIdx(action.select);
+      else if ("pick" in action) onPick(files[action.pick]);
+      else onClose();
+      return true;
+    },
+  }), [files, onClose, onPick, selectedIdx]);
 
   if (files.length === 0 && !error) return null;
 

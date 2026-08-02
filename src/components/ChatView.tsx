@@ -24,7 +24,7 @@ import ToolCallView, { isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
-import FilePicker from "./FilePicker";
+import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import DiffPanel from "./DiffPanel";
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -176,6 +176,7 @@ export default function ChatView({
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const filePickerRef = useRef<FilePickerHandle>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const sessionFileRef = useRef(sessionFile);
   const modelRef = useRef(initialModel ?? "");
@@ -1094,7 +1095,7 @@ export default function ChatView({
 
   const tablePreviews = useMemo(() => extractMarkdownTables(input), [input]);
 
-  const atHint = filePickerQuery !== null ? `Searching: ${filePickerQuery || "(all)"} — click to insert.` : "";
+  const atHint = filePickerQuery !== null ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.` : "";
   const filteredModels = models.filter((model) => model.toLowerCase().includes(modelQuery.trim().toLowerCase()));
 
   function openModelPicker() {
@@ -1431,6 +1432,7 @@ export default function ChatView({
           <FilePicker
             projectPath={projectPath}
             query={filePickerQuery}
+            pickerRef={filePickerRef}
             onPick={(f) => {
               const atIdx = input.lastIndexOf("@");
               if (atIdx === -1) return;
@@ -1512,16 +1514,11 @@ export default function ChatView({
               else chooseCommand(command);
               return;
             }
-            if (filePickerQuery !== null && e.key === "Escape") {
+            if (filePickerQuery !== null && filePickerRef.current?.onKeyDown(e.key)) {
               e.preventDefault();
-              setFilePickerQuery(null);
               return;
             }
             if (e.key === "Enter" && !e.shiftKey) {
-              if (filePickerQuery !== null) {
-                e.preventDefault();
-                return;
-              }
               e.preventDefault();
               submitInput();
             }
