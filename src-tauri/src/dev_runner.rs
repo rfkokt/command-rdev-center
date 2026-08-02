@@ -175,20 +175,25 @@ fn remove_record(chat_id: &str) -> Result<Option<DevRunnerRecord>, String> {
     Ok(removed)
 }
 
-fn ensure_node_modules(cwd: &Path, project: &Path) -> Result<(), String> {
-    let target = cwd.join("node_modules");
-    let source = project.join("node_modules");
-    if target.exists() {
-        return Ok(());
+fn ensure_dependencies(cwd: &Path, project: &Path, needs_vendor: bool) -> Result<(), String> {
+    for directory in ["node_modules", "vendor"] {
+        if directory == "vendor" && !needs_vendor {
+            continue;
+        }
+        let target = cwd.join(directory);
+        if target.exists() {
+            continue;
+        }
+        let source = project.join(directory);
+        if !source.exists() {
+            return Err(format!(
+                "{directory} missing: run install once in {}",
+                project.display()
+            ));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source, target).map_err(|e| e.to_string())?;
     }
-    if !source.exists() {
-        return Err(format!(
-            "dependencies missing: run install once in {}",
-            project.display()
-        ));
-    }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(source, target).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -244,22 +249,29 @@ fn start_dev_server_blocking(
 ) -> Result<DevRunnerInfo, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
     let detected = detect_command(Path::new(&cwd))?;
-    let allowed = if Path::new(&cwd).join("package.json").exists() {
-        ["npm run dev", "pnpm dev", "yarn dev", "bun run dev"].contains(&command.as_str())
-    } else {
-        command == detected
-    };
+    let commands = command
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let node_commands = ["npm run dev", "pnpm dev", "yarn dev", "bun run dev"];
+    let artisan_command = "php artisan serve";
+    let allowed = !commands.is_empty()
+        && commands
+            .iter()
+            .all(|line| node_commands.contains(line) || *line == artisan_command)
+        && (Path::new(&cwd).join("package.json").exists() || commands == [detected.as_str()]);
     if !allowed {
-        return Err("unsupported dev command".into());
+        return Err("unsupported dev command; use one command per line: npm run dev, pnpm dev, yarn dev, bun run dev, or php artisan serve".into());
     }
-    ensure_node_modules(Path::new(&cwd), &project)?;
+    let artisan = commands.contains(&artisan_command);
+    ensure_dependencies(Path::new(&cwd), &project, artisan)?;
     stop_project_dev_servers(&project)?;
     let vite_port = TcpListener::bind("127.0.0.1:0")
         .map_err(|e| e.to_string())?
         .local_addr()
         .map_err(|e| e.to_string())?
         .port();
-    let artisan = Path::new(&cwd).join("artisan").is_file();
     let port = if artisan {
         TcpListener::bind("127.0.0.1:0")
             .map_err(|e| e.to_string())?
@@ -290,18 +302,21 @@ fn start_dev_server_blocking(
     } else {
         ""
     };
-    let frontend_command = if command == "cargo run" {
-        command.clone()
-    } else if webpack {
-        format!("{command}{separator} --webpack --port {vite_port}")
-    } else {
-        format!("{command}{separator} --port {vite_port}")
-    };
-    // Laravel projects need Vite plus the PHP application server. Both share this process group.
-    let run_command = if artisan {
-        format!("({frontend_command}) & exec php artisan serve --host localhost --port {port}")
-    } else {
-        frontend_command
+    let frontend = commands.iter().find(|line| node_commands.contains(line));
+    let frontend_command = frontend.map(|command| {
+        if webpack {
+            format!("{command}{separator} --webpack --port {vite_port}")
+        } else {
+            format!("{command}{separator} --port {vite_port}")
+        }
+    });
+    let run_command = match (frontend_command, artisan) {
+        (Some(frontend), true) => {
+            format!("({frontend}) & exec php artisan serve --host localhost --port {port}")
+        }
+        (Some(frontend), false) => frontend,
+        (None, true) => format!("php artisan serve --host localhost --port {port}"),
+        (None, false) => unreachable!(),
     };
     let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
@@ -493,6 +508,22 @@ pub async fn stop_dev_server(chat_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn links_laravel_vendor_from_owning_project() {
+        let root = std::env::temp_dir().join(format!("crc-laravel-vendor-{}", std::process::id()));
+        let project = root.join("project");
+        let worktree = root.join("worktree");
+        std::fs::create_dir_all(project.join("node_modules")).unwrap();
+        std::fs::create_dir_all(project.join("vendor")).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join("artisan"), "").unwrap();
+
+        ensure_dependencies(&worktree, &project, true).unwrap();
+        assert!(worktree.join("node_modules").exists());
+        assert!(worktree.join("vendor").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn project_runner_ids_include_other_worktrees_of_same_project() {

@@ -1258,7 +1258,7 @@ export default function ChatView({
             onChange={(event) => setPendingDevCommand(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Enter") void confirmRunDev(); }}
           />
-          <p>Runs in this chat directory. Laravel projects also start <code>php artisan serve</code>. This command is remembered for {projectName}.</p>
+          <p>One command per line. Choose which processes run; this is remembered for {projectName}.</p>
           <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
       </div>}
