@@ -263,7 +263,8 @@ pub fn spawn_pi_rpc(
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
     if global_chat {
-        args.push("--no-tools".into());
+        args.push("--tools".into());
+        args.push("web_search,source_check,fetch_content,get_search_content".into());
     } else if let Some(tools) = tools {
         if tools.is_empty() {
             args.push("--no-tools".into());
@@ -587,6 +588,15 @@ mod tests {
             worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn global_chat_search_tools_exclude_project_tools() {
+        let tools = "web_search,source_check,fetch_content,get_search_content";
+        assert!(tools.contains("web_search"));
+        for denied in ["read", "bash", "edit", "write", "track_kanban_task", "run_pipeline"] {
+            assert!(!tools.split(',').any(|tool| tool == denied));
+        }
     }
 
     #[test]

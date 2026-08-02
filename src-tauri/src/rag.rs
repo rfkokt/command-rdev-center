@@ -80,7 +80,8 @@ fn ingest_rag_document_blocking(file_path: String) -> Result<String, String> {
     if !meta.is_file() || meta.len() == 0 || meta.len() > MAX_BYTES || meta.len() > s.upload_limit_mb * 1024 * 1024 { return Err("Document exceeds upload limit or is not a regular file".into()); }
     let ext = path.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase(); if !ALLOWED.contains(&ext.as_str()) { return Err("Unsupported document type".into()); }
     if PROJECT_TEXT.contains(&ext.as_str()) { return persist(safe_name(path), text_file(path)?); }
-    let output = Command::new("curl").args(["--silent", "--show-error", "--fail-with-body", "--proto", "=https", "--max-redirs", "0", "--max-time"]).arg(s.timeout_secs.to_string()).arg("-H").arg(format!("Authorization: Bearer {}", token()?)).arg("-F").arg(format!("file=@{}", path.display())).arg(format!("{}/v1/extract", s.base_url)).output().map_err(|error| format!("Could not start extractor request: {error}"))?;
+    let extraction_timeout = s.timeout_secs.max(180);
+    let output = Command::new("curl").args(["--silent", "--show-error", "--fail-with-body", "--proto", "=https", "--max-redirs", "0", "--max-time"]).arg(extraction_timeout.to_string()).arg("-H").arg(format!("Authorization: Bearer {}", token()?)).arg("-F").arg(format!("file=@{}", path.display())).arg(format!("{}/v1/extract", s.base_url)).output().map_err(|error| format!("Could not start extractor request: {error}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(if output.stdout.is_empty() { &output.stderr } else { &output.stdout });
         let detail = detail.trim().chars().take(500).collect::<String>();
