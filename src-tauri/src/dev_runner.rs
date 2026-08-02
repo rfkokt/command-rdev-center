@@ -197,6 +197,62 @@ fn ensure_dependencies(cwd: &Path, project: &Path, needs_vendor: bool) -> Result
     Ok(())
 }
 
+#[derive(Debug, PartialEq)]
+struct DevCommand<'a> {
+    command: &'a str,
+    port: Option<u16>,
+}
+
+fn parse_dev_commands(value: &str) -> Result<Vec<DevCommand<'_>>, String> {
+    value
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| match line.split_once('|') {
+            Some((command, port)) => Ok(DevCommand {
+                command: command.trim(),
+                port: Some(
+                    port.trim()
+                        .parse()
+                        .map_err(|_| "port must be 1-65535".to_string())?,
+                ),
+            }),
+            None => Ok(DevCommand {
+                command: line,
+                port: None,
+            }),
+        })
+        .map(|entry| {
+            entry.and_then(|entry| {
+                if entry.port.is_some_and(|port| port == 0) || entry.command.is_empty() {
+                    Err("each dev command needs a command and optional port after |".into())
+                } else {
+                    Ok(entry)
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .and_then(|commands| {
+            let mut ports = std::collections::HashSet::new();
+            if commands
+                .iter()
+                .all(|entry| entry.port.is_none_or(|port| ports.insert(port)))
+            {
+                Ok(commands)
+            } else {
+                Err("each dev command needs a different port".into())
+            }
+        })
+}
+
+fn available_port() -> Result<u16, String> {
+    TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| e.to_string())?
+        .local_addr()
+        .map_err(|e| e.to_string())
+        .map(|address| address.port())
+}
+
 fn detect_command(cwd: &Path) -> Result<String, String> {
     if cwd.join("package.json").exists() {
         let raw = std::fs::read_to_string(cwd.join("package.json")).map_err(|e| e.to_string())?;
@@ -249,38 +305,43 @@ fn start_dev_server_blocking(
 ) -> Result<DevRunnerInfo, String> {
     let project = crate::projects::ensure_path_allowed(Path::new(&cwd))?;
     let detected = detect_command(Path::new(&cwd))?;
-    let commands = command
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>();
+    let commands = parse_dev_commands(&command)?;
     let node_commands = ["npm run dev", "pnpm dev", "yarn dev", "bun run dev"];
     let artisan_command = "php artisan serve";
     let allowed = !commands.is_empty()
-        && commands
-            .iter()
-            .all(|line| node_commands.contains(line) || *line == artisan_command)
-        && (Path::new(&cwd).join("package.json").exists() || commands == [detected.as_str()]);
+        && commands.iter().all(|entry| {
+            node_commands.contains(&entry.command) || entry.command == artisan_command
+        })
+        && (Path::new(&cwd).join("package.json").exists()
+            || commands
+                .iter()
+                .map(|entry| entry.command)
+                .eq([detected.as_str()]));
     if !allowed {
         return Err("unsupported dev command; use one command per line: npm run dev, pnpm dev, yarn dev, bun run dev, or php artisan serve".into());
     }
-    let artisan = commands.contains(&artisan_command);
+    let artisan = commands
+        .iter()
+        .any(|entry| entry.command == artisan_command);
     ensure_dependencies(Path::new(&cwd), &project, artisan)?;
     stop_project_dev_servers(&project)?;
-    let vite_port = TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| e.to_string())?
-        .local_addr()
-        .map_err(|e| e.to_string())?
-        .port();
-    let port = if artisan {
-        TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| e.to_string())?
-            .local_addr()
-            .map_err(|e| e.to_string())?
-            .port()
-    } else {
-        vite_port
-    };
+    let has_frontend = commands
+        .iter()
+        .any(|entry| node_commands.contains(&entry.command));
+    let vite_port = commands
+        .iter()
+        .find(|entry| node_commands.contains(&entry.command))
+        .and_then(|entry| entry.port)
+        .unwrap_or(available_port()?);
+    let port = commands
+        .iter()
+        .find(|entry| entry.command == artisan_command)
+        .and_then(|entry| entry.port)
+        .unwrap_or(if has_frontend {
+            available_port()?
+        } else {
+            vite_port
+        });
     let dev_script = std::fs::read_to_string(Path::new(&cwd).join("package.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
@@ -302,12 +363,17 @@ fn start_dev_server_blocking(
     } else {
         ""
     };
-    let frontend = commands.iter().find(|line| node_commands.contains(line));
-    let frontend_command = frontend.map(|command| {
+    let frontend = commands
+        .iter()
+        .find(|entry| node_commands.contains(&entry.command));
+    let frontend_command = frontend.map(|entry| {
         if webpack {
-            format!("{command}{separator} --webpack --port {vite_port}")
+            format!(
+                "{}{} --webpack --port {vite_port}",
+                entry.command, separator
+            )
         } else {
-            format!("{command}{separator} --port {vite_port}")
+            format!("{}{} --port {vite_port}", entry.command, separator)
         }
     });
     let run_command = match (frontend_command, artisan) {
@@ -508,6 +574,25 @@ pub async fn stop_dev_server(chat_id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_per_command_ports() {
+        assert_eq!(
+            parse_dev_commands("npm run dev | 5173\nphp artisan serve | 8000").unwrap(),
+            [
+                DevCommand {
+                    command: "npm run dev",
+                    port: Some(5173)
+                },
+                DevCommand {
+                    command: "php artisan serve",
+                    port: Some(8000)
+                },
+            ]
+        );
+        assert!(parse_dev_commands("npm run dev | 0").is_err());
+        assert!(parse_dev_commands("npm run dev | no").is_err());
+    }
 
     #[test]
     fn links_laravel_vendor_from_owning_project() {
