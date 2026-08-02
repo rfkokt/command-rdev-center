@@ -1245,8 +1245,8 @@ export default function ChatView({
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
         <div className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title">
-          <small>DEV SERVER / {worktree?.branch}</small>
-          <strong id="dev-command-title">Run detected command?</strong>
+          <small>DEV SERVER</small>
+          <strong id="dev-command-title">Run dev commands</strong>
           <textarea
             aria-label="Dev commands"
             autoFocus
@@ -1255,7 +1255,9 @@ export default function ChatView({
             onChange={(event) => setPendingDevCommand(event.target.value)}
             onKeyDown={(event) => { if (event.ctrlKey && event.key === "Enter") void confirmRunDev(); }}
           />
-          <p>One command per line. Example: <code>npm run dev</code> then <code>php artisan serve</code>. Ctrl+Enter runs. Saved for {projectName}.</p>
+          <p>One command per line. Both run together and stop together.</p>
+          <pre className="dev-command-example">npm run dev{`\n`}php artisan serve</pre>
+          <small className="dev-command-hint">CTRL+ENTER TO RUN · SAVED FOR {projectName}</small>
           <div className="project-dialog-actions"><button className="project-save-branch" onClick={confirmRunDev} disabled={devStarting}>{devStarting ? "STARTING…" : "RUN DEV"}</button><button className="project-dialog-cancel" onClick={() => setPendingDevCommand(null)} disabled={devStarting}>CANCEL</button></div>
         </div>
       </div>}
