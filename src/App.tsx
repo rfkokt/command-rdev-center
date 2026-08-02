@@ -234,6 +234,7 @@ export default function App() {
                 onUnread={markUnread}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
+                onOpenPipeline={() => { setSelectedProject(tab.project); setDashboard("pipeline"); }}
                 isActive={tab.id === activeTabId}
               />
             </div>

@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 test("groups statuses case-insensitively, filters, and writes canonical status", async () => {
-  invoke.mockResolvedValueOnce([
+  invoke.mockResolvedValue([]).mockResolvedValueOnce([
     { project: "alpha", tasks: [{ no: 1, deskripsi: "Ship alpha", pic: "Rifki", status: "backlog" }] },
     { project: "beta", tasks: [{ no: 2, deskripsi: "Review beta", pic: "Agent", status: "REVIEW" }] },
   ]).mockResolvedValueOnce(undefined);

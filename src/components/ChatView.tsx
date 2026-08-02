@@ -110,6 +110,7 @@ export default function ChatView({
   onUnread,
   onClose,
   onToast,
+  onOpenPipeline,
   isActive,
 }: {
   projectPath: string;
@@ -129,6 +130,7 @@ export default function ChatView({
   onUnread: (chatId: string) => void;
   onClose: () => void;
   onToast: (m: string) => void;
+  onOpenPipeline: () => void;
   isActive: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -168,6 +170,7 @@ export default function ChatView({
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [pipelineStatus, setPipelineStatus] = useState<{ step: string; completed: number; total: number } | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -925,7 +928,15 @@ export default function ChatView({
           void notifyAgent("finished", `Pipeline completed · ${projectName}`, chatId).catch(() => {});
           pipelineRunRef.current = null;
         }
-        if (current) pipelineRunRef.current = current.run_id;
+        if (current) {
+          pipelineRunRef.current = current.run_id;
+          const stages = current.stages;
+          const activeStage = stages.find((stage) => stage.status === "running")?.name ?? "Waiting for input";
+          const status = { step: activeStage, completed: stages.filter((stage) => ["pass", "skip"].includes(stage.status)).length, total: stages.length };
+          setPipelineStatus(status);
+        } else {
+          setPipelineStatus(null);
+        }
         const currentFailure = current?.stages.find((stage) => stage.status === "fail" && stage.failure_policy !== "continue");
         const run = currentFailure ? current : archived.find((item) => item.stages.some((stage) => stage.status === "fail" && !surfacedPipelineFailures.has(`${item.run_id}:${stage.name}:${stage.attempts}`)));
         if (!run) return;
@@ -1539,6 +1550,7 @@ export default function ChatView({
       />}
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
+        {pipelineStatus && <button className="pipeline-chat-status" onClick={onOpenPipeline}>PIPELINE · {pipelineStatus.step} · {pipelineStatus.completed}/{pipelineStatus.total} · OPEN VIEW ↗</button>}
         {sessionStats && <button className="usage-summary" onClick={() => setUsageOpen(true)} title="Show token usage">
           CONTEXT {sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`} · ↑ {formatTokens(sessionStats.tokens.input)} · ↓ {formatTokens(sessionStats.tokens.output)}
         </button>}
