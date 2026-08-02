@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -9,7 +10,7 @@ const MAX_CONTEXT_CHARS = 12_000;
 export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     const graph = process.env.CRC_GRAPH_JSON;
-    if (!graph || !event.prompt.trim()) return;
+    if (!graph || !existsSync(graph) || !event.prompt.trim()) return;
 
     try {
       const { stdout } = await execFileAsync(

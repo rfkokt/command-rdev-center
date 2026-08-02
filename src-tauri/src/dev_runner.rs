@@ -52,6 +52,11 @@ struct DevRunnerRecord {
     log_path: String,
 }
 
+fn port_is_reachable(port: u16) -> bool {
+    // Vite commonly binds `localhost` to IPv6 (`::1`) on macOS.
+    TcpStream::connect(("localhost", port)).is_ok()
+}
+
 fn read_log_tail(path: &str) -> String {
     let Ok(mut file) = std::fs::File::open(path) else {
         return "No dev-server.log output available.".into();
@@ -115,7 +120,7 @@ fn record_is_live(record: &DevRunnerRecord) -> bool {
         .rsplit(':')
         .next()
         .and_then(|value| value.parse::<u16>().ok());
-    command_matches && port.is_some_and(|port| TcpStream::connect(("127.0.0.1", port)).is_ok())
+    command_matches && port.is_some_and(port_is_reachable)
 }
 
 fn take_live_record(
@@ -307,7 +312,7 @@ fn start_dev_server_blocking(
                 read_log_tail(&log_path.to_string_lossy())
             ));
         }
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        if port_is_reachable(port) {
             ready_checks += 1;
             if ready_checks == 10 {
                 let url = format!("http://localhost:{port}");
@@ -392,7 +397,7 @@ fn kill_port_listener(url: &str) {
         let _ = Command::new("kill").args(["-TERM", pid]).status();
     }
     for _ in 0..20 {
-        if TcpStream::connect(("127.0.0.1", port)).is_err() {
+        if !port_is_reachable(port) {
             return;
         }
         thread::sleep(Duration::from_millis(100));
@@ -554,6 +559,12 @@ mod tests {
         let _ = server.kill();
         let _ = server.wait();
         assert!(stopped);
+    }
+
+    #[test]
+    fn localhost_reaches_ipv6_listener() {
+        let listener = TcpListener::bind("[::1]:0").unwrap();
+        assert!(port_is_reachable(listener.local_addr().unwrap().port()));
     }
 
     #[test]
