@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 
 type Settings = { enabled: boolean; base_url: string; timeout_secs: number; upload_limit_mb: number; project_paths: string[]; has_token: boolean };
 type Project = { name: string; path: string };
@@ -11,7 +10,6 @@ export default function RagSettings({ onToast }: { onToast: (message: string) =>
   useEffect(() => { void Promise.all([invoke<Settings>("get_rag_settings"), invoke<Project[]>("list_projects")]).then(([s, p]) => { setSettings(s); setProjects(p); }).catch((e) => setError(String(e))); }, []);
   const update = (patch: Partial<Settings>) => setSettings((current) => ({ ...current, ...patch }));
   async function save() { setBusy(true); setError(""); try { const next = await invoke<Settings>("save_rag_settings", { settings, bearerToken: token || null }); setSettings(next); setToken(""); onToast("RAG settings saved securely."); } catch (e) { setError(String(e)); } finally { setBusy(false); } }
-  async function upload() { const file = await open({ multiple: false, title: "Add RAG document", filters: [{ name: "Supported documents", extensions: ["pdf", "docx", "txt", "md", "csv", "json"] }] }); if (!file || Array.isArray(file)) return; setBusy(true); setError(""); try { await invoke("ingest_rag_document", { filePath: file }); onToast("Document extracted and stored locally."); } catch (e) { setError(String(e)); } finally { setBusy(false); } }
   return <main className="graphify-settings">
     <div className="settings-notice">Global Chat only. Token stays in macOS Keychain; extracted text stays local. Selected project sources include top-level UTF-8 TXT, MD, CSV, and JSON files.</div>
     <label className="settings-toggle"><span>ENABLE RAG<small>Inject bounded keyword-matched source citations into Global Chat</small></span><input type="checkbox" checked={settings.enabled} onChange={(e) => update({ enabled: e.target.checked })} /></label>
@@ -21,6 +19,6 @@ export default function RagSettings({ onToast }: { onToast: (message: string) =>
     <label>UPLOAD LIMIT MB<input type="number" min="1" max="25" value={settings.upload_limit_mb} onChange={(e) => update({ upload_limit_mb: Number(e.target.value) })} /></label>
     <div><strong className="caption-uppercase">REGISTERED PROJECT SOURCES</strong>{projects.map((project) => <label className="settings-toggle" key={project.path}><span>{project.name}<small>{project.path}</small></span><input type="checkbox" checked={settings.project_paths.includes(project.path)} onChange={(e) => update({ project_paths: e.target.checked ? [...settings.project_paths, project.path] : settings.project_paths.filter((path) => path !== project.path) })} /></label>)}</div>
     {error && <div className="settings-error" role="alert">{error}</div>}
-    <div style={{ display: "flex", gap: "var(--spacing-sm)", flexWrap: "wrap" }}><button className="save-settings" onClick={() => void save()} disabled={busy}>{busy ? "WORKING…" : "SAVE RAG SETTINGS"}</button><button onClick={() => void upload()} disabled={busy || !settings.enabled}>ADD DOCUMENT</button><button onClick={() => void invoke("test_rag_connection").then(() => onToast("RAG connection OK.")).catch((e) => setError(String(e)))} disabled={busy || !settings.base_url}>TEST CONNECTION</button></div>
+    <div style={{ display: "flex", gap: "var(--spacing-sm)", flexWrap: "wrap" }}><button className="save-settings" onClick={() => void save()} disabled={busy}>{busy ? "WORKING…" : "SAVE RAG SETTINGS"}</button><button onClick={() => void invoke("test_rag_connection").then(() => onToast("RAG connection OK.")).catch((e) => setError(String(e)))} disabled={busy || !settings.base_url}>TEST CONNECTION</button></div>
   </main>;
 }

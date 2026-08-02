@@ -10,6 +10,7 @@ import ChatView from "./components/ChatView";
 import SettingsPanel from "./components/SettingsPanel";
 import KanbanBoard from "./components/KanbanBoard";
 import PipelineView from "./components/PipelineView";
+import RagKnowledge from "./components/RagKnowledge";
 import "./App.css";
 
 type Config = {
@@ -56,7 +57,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<"pi" | "pipeline">("pi");
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
-  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | null>(null);
+  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -116,13 +117,18 @@ export default function App() {
     newConversation(project);
   }
 
-  function openGlobalChat() {
+  function newGlobalChat() {
     setDashboard(null);
-    const existing = tabs.find((tab) => tab.global);
-    if (existing) return activateTab(existing.id);
-    const id = "global-chat";
+    const id = `global-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setTabs((prev) => [...prev, { id, project: GLOBAL_PROJECT, global: true }]);
     setActiveTabId(id);
+  }
+
+  function openGlobalChat() {
+    setDashboard(null);
+    const latest = [...tabs].reverse().find((tab) => tab.global);
+    if (latest) return activateTab(latest.id);
+    newGlobalChat();
   }
 
   function newConversation(project = selectedProject) {
@@ -169,7 +175,7 @@ export default function App() {
           <span className="brand-mark">R/</span>
           <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>
         </div>
-        <button className="sidebar-action" onClick={() => newConversation()} disabled={!selectedProject}>
+        <button className="sidebar-action" onClick={() => activeTab?.global ? newGlobalChat() : newConversation()} disabled={!activeTab?.global && !selectedProject}>
           <span>＋</span> NEW SESSION
         </button>
         <div className="sidebar-label"><span>SESSION ARCHIVE</span><i /></div>
@@ -187,8 +193,15 @@ export default function App() {
             setSettingsOpen(true);
           }}
         />
-        <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>GLOBAL CHAT</span></button>
-        <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}>
+        <div className="projects-panel">
+          <div className="projects-heading"><span>GLOBAL CHAT</span><button onClick={newGlobalChat} title="New Global Chat">＋</button></div>
+          <div className="project-sessions">
+            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}</button>)}</div>
+          </div>
+          {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
+        </div>
+        <button className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}><span>◫</span><span>{dashboard === "knowledge" ? "Sessions" : "Knowledge"}</span></button>
+        <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}> 
           {dashboard === "kanban" ? (
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M7 8h5M7 12h5M7 16h5"/><path d="M14 12h3" opacity=".6"/></svg>
           ) : (
@@ -225,6 +238,7 @@ export default function App() {
         <div className="workspace-body">
           {dashboard === "kanban" && <KanbanBoard />}
           {dashboard === "pipeline" && <PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} />}
+          {dashboard === "knowledge" && <RagKnowledge onToast={addToast} />}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView

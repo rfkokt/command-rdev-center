@@ -20,6 +20,8 @@ pub struct RagSettings {
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Source { id: String, name: String, text: String }
+#[derive(Clone, Serialize)]
+pub struct RagSource { pub id: String, pub name: String, pub chars: usize, pub modified_ms: u128 }
 impl Default for RagSettings {
     fn default() -> Self { Self { enabled: false, base_url: String::new(), timeout_secs: default_timeout(), upload_limit_mb: default_limit(), project_paths: Vec::new(), has_token: false } }
 }
@@ -84,6 +86,18 @@ fn text_file(path: &Path) -> Result<String, String> { String::from_utf8(fs::read
 }
 fn words(query: &str) -> Vec<String> { query.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 1).map(str::to_string).collect() }
 fn read_sources() -> Vec<Source> { fs::read_dir(corpus_dir().unwrap_or_default()).ok().into_iter().flatten().filter_map(Result::ok).filter_map(|e| fs::read_to_string(e.path()).ok()).filter_map(|raw| serde_json::from_str(&raw).ok()).collect() }
+#[tauri::command] pub fn list_rag_sources() -> Result<Vec<RagSource>, String> {
+    let dir = corpus_dir()?; let mut sources = Vec::new();
+    for entry in fs::read_dir(&dir).ok().into_iter().flatten().filter_map(Result::ok) {
+        let path = entry.path(); let Ok(raw) = fs::read_to_string(&path) else { continue }; let Ok(source) = serde_json::from_str::<Source>(&raw) else { continue };
+        let modified_ms = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
+        sources.push(RagSource { id: source.id, name: source.name, chars: source.text.chars().count(), modified_ms });
+    }
+    sources.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms)); Ok(sources)
+}
+#[tauri::command] pub fn delete_rag_source(id: String) -> Result<(), String> {
+    let path = source_path(&id)?; if path.exists() { fs::remove_file(path).map_err(|e| e.to_string())?; } Ok(())
+}
 fn project_sources(paths: &[String]) -> Vec<Source> {
     let mut sources = Vec::new();
     for project in paths {
@@ -107,4 +121,4 @@ fn project_sources(paths: &[String]) -> Vec<Source> {
     for (_, source) in scored.into_iter().take(4) { let lower=source.text.to_lowercase(); let at=terms.iter().filter_map(|term| lower.find(term)).min().unwrap_or(0); let start=at.saturating_sub(500); let chunk=source.text.get(start..).unwrap_or(&source.text).chars().take(2_500).collect::<String>(); if used+chunk.len()>MAX_CONTEXT_BYTES { break; } used+=chunk.len(); output.push_str(&format!("\n[SOURCE: {}]\n{}\n", source.name, chunk)); }
     Ok((used>0).then_some(output).unwrap_or_default())
 }
-#[cfg(test)] mod tests { use super::*; #[test] fn rejects_http_when_enabled() { assert!(validate(&RagSettings{enabled:true,base_url:"http://bad".into(),..Default::default()}).is_err()); } #[test] fn accepts_disabled_unconfigured_rag() { assert!(validate(&RagSettings::default()).is_ok()); } #[test] fn tokenizes_keywords() { assert_eq!(words("Hello, RAG!"), vec!["hello", "rag"]); } }
+#[cfg(test)] mod tests { use super::*; #[test] fn rejects_unsafe_source_id() { assert!(source_path("../secret").is_err()); } #[test] fn rejects_http_when_enabled() { assert!(validate(&RagSettings{enabled:true,base_url:"http://bad".into(),..Default::default()}).is_err()); } #[test] fn accepts_disabled_unconfigured_rag() { assert!(validate(&RagSettings::default()).is_ok()); } #[test] fn tokenizes_keywords() { assert_eq!(words("Hello, RAG!"), vec!["hello", "rag"]); } }

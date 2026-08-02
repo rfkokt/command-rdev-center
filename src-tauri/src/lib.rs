@@ -73,6 +73,8 @@ pub fn run() {
             rag::save_rag_settings,
             rag::test_rag_connection,
             rag::ingest_rag_document,
+            rag::list_rag_sources,
+            rag::delete_rag_source,
             settings::get_pi_settings,
             settings::save_pi_settings,
             settings::get_graphify_settings,

@@ -23,6 +23,7 @@ vi.mock("./components/ProjectList", () => ({
 vi.mock("./components/SettingsPanel", () => ({ default: () => null }));
 vi.mock("./components/PipelineView", () => ({ default: () => <div>Pipeline view</div> }));
 vi.mock("./components/KanbanBoard", () => ({ default: () => <div>Kanban view</div> }));
+vi.mock("./components/RagKnowledge", () => ({ default: () => <div>Knowledge view</div> }));
 vi.mock("./components/ChatView", async () => {
   const { useEffect } = await import("react");
   return {
@@ -64,6 +65,12 @@ test("notifies when an update is available", async () => {
   expect(screen.getByRole("button", { name: /UPDATE v1.3.0/ })).toBeInTheDocument();
 });
 
+test("opens the dedicated knowledge workspace", () => {
+  render(<App />);
+  fireEvent.click(screen.getByRole("button", { name: /Knowledge/ }));
+  expect(screen.getByText("Knowledge view")).toBeInTheDocument();
+});
+
 test("keeps the active chat mounted while Kanban is open", () => {
   render(<App />);
 
@@ -72,6 +79,16 @@ test("keeps the active chat mounted while Kanban is open", () => {
   expect(screen.getByText("Kanban view")).toBeInTheDocument();
   expect(screen.getByText("Chat view")).not.toBeVisible();
   expect(unmounted).not.toHaveBeenCalled();
+});
+
+test("creates and lists multiple Global Chat sessions", () => {
+  localStorage.setItem("crc-chat-tabs", "[]");
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: /OPEN GLOBAL CHAT/ }));
+  fireEvent.click(screen.getByRole("button", { name: "＋ NEW SESSION" }));
+
+  expect(screen.getAllByText("UNTITLED SESSION")).toHaveLength(2);
 });
 
 test("keeps chat callbacks stable when the active tab changes", () => {
