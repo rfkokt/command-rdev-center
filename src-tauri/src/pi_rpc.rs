@@ -309,18 +309,8 @@ pub fn spawn_pi_rpc(
         args.push(prompt_path.to_string_lossy().to_string());
     }
 
-    // Resolve graphify-out path: prefer owning project (main repo) where graph exists, fallback cwd
-    let graph_json_path = {
-        let owning_graph = owning_project.join("graphify-out/graph.json");
-        if owning_graph.exists() {
-            owning_graph.to_string_lossy().to_string()
-        } else {
-            Path::new(&cwd)
-                .join("graphify-out/graph.json")
-                .to_string_lossy()
-                .to_string()
-        }
-    };
+    // Graphs live in the durable owning checkout; disable automatic context until one exists.
+    let graph_json_path = owning_project.join("graphify-out/graph.json");
     let project_name = owning_project
         .file_name()
         .ok_or("project path has no name")?;
