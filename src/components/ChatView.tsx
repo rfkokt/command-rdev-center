@@ -86,7 +86,8 @@ function deriveAtQuery(text: string): string | null {
   if (before !== " " && before !== "\n" && before !== "@") return null;
   const after = text.slice(atIdx + 1);
   const tokenEnd = after.search(/[\s\n]/);
-  const q = tokenEnd === -1 ? after : after.slice(0, tokenEnd);
+  if (tokenEnd !== -1) return null;
+  const q = after;
   if (q.length > 80) return null;
   return q;
 }
