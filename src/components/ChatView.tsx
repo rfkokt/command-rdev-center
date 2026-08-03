@@ -353,14 +353,14 @@ export default function ChatView({
     finally { setDiffLoading(false); }
   }, [worktree, onToast]);
 
-  useEffect(() => { if (agentStatus === "idle") void refreshDiff(); }, [agentStatus, refreshDiff]);
+  useEffect(() => { if (globalChat || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, agentStatus, refreshDiff]);
 
   useEffect(() => {
-    if (agentStatus !== "running") return;
+    if (globalChat || agentStatus !== "running") return;
     void refreshDiff();
     const id = window.setInterval(refreshDiff, 2000);
     return () => window.clearInterval(id);
-  }, [agentStatus, refreshDiff]);
+  }, [globalChat, agentStatus, refreshDiff]);
 
   useEffect(() => {
     if (agentStatus !== "running") return;
