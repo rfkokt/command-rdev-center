@@ -39,40 +39,23 @@ fn fuzzy_match(hay: &str, needle: &str) -> Option<i32> {
     Some(score)
 }
 
-fn walk_collect(base: &Path, cur: &Path, depth: usize, results: &mut Vec<(PathBuf, PathBuf)>) {
-    if depth > 4 {
-        return;
-    }
-    let entries = match std::fs::read_dir(cur) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        let file_name = match p.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n,
-            None => continue,
-        };
-        if file_name.starts_with('.') {
+fn walk_collect(base: &Path, results: &mut Vec<(PathBuf, PathBuf)>) {
+    let mut builder = ignore::WalkBuilder::new(base);
+    builder
+        .hidden(true)
+        .git_ignore(true)
+        .git_exclude(true)
+        .parents(true)
+        .require_git(false)
+        .filter_entry(|entry| entry.file_name() != ".git");
+
+    for entry in builder.build().filter_map(Result::ok) {
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
-        if file_name == "node_modules"
-            || file_name == "dist"
-            || file_name == "target"
-            || file_name == ".git"
-            || file_name == "__pycache__"
-            || file_name == ".next"
-            || file_name == "graphify-out"
-            || file_name == ".crc-worktrees"
-        {
-            continue;
-        }
-        if p.is_dir() {
-            walk_collect(base, &p, depth + 1, results);
-        } else {
-            let rel = p.strip_prefix(base).unwrap_or(&p).to_path_buf();
-            results.push((p, rel));
-        }
+        let path = entry.into_path();
+        let rel = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
+        results.push((path, rel));
     }
 }
 
@@ -85,7 +68,7 @@ fn search_files_blocking(project_path: String, query: String) -> Result<Vec<File
     }
 
     let mut candidates: Vec<(PathBuf, PathBuf)> = Vec::new();
-    walk_collect(&proj_path, &proj_path, 0, &mut candidates);
+    walk_collect(&proj_path, &mut candidates);
 
     let q = query.trim().to_lowercase();
     let mut scored: Vec<(i32, FileEntry)> = Vec::new();
@@ -121,4 +104,29 @@ pub async fn search_files(project_path: String, query: String) -> Result<Vec<Fil
     tauri::async_runtime::spawn_blocking(move || search_files_blocking(project_path, query))
         .await
         .map_err(|e| format!("File search worker failed: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walks_nested_git_repo_and_honors_its_gitignore() {
+        let root = std::env::temp_dir().join(format!("crc-file-walk-{}", std::process::id()));
+        let nested = root.join("nested");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(nested.join(".git")).unwrap();
+        std::fs::write(nested.join(".gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(nested.join("included.txt"), "included").unwrap();
+        std::fs::write(nested.join("ignored.txt"), "ignored").unwrap();
+
+        let mut files = Vec::new();
+        walk_collect(&root, &mut files);
+        let relative: Vec<_> = files.into_iter().map(|(_, path)| path).collect();
+
+        assert!(relative.contains(&PathBuf::from("nested/included.txt")));
+        assert!(!relative.contains(&PathBuf::from("nested/ignored.txt")));
+        assert!(!relative.iter().any(|path| path.starts_with("nested/.git")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
