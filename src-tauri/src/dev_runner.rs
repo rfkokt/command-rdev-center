@@ -53,8 +53,7 @@ struct DevRunnerRecord {
 }
 
 fn port_is_reachable(port: u16) -> bool {
-    // Vite commonly binds `localhost` to IPv6 (`::1`) on macOS.
-    TcpStream::connect(("localhost", port)).is_ok()
+    TcpStream::connect(("127.0.0.1", port)).is_ok() || TcpStream::connect(("::1", port)).is_ok()
 }
 
 fn read_log_tail(path: &str) -> String {
@@ -402,7 +401,7 @@ fn start_dev_server_blocking(
         .map_err(|e| e.to_string())?;
 
     let mut ready_checks = 0;
-    for _ in 0..150 {
+    for _ in 0..300 {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             return Err(format!(
                 "dev server exited before startup ({status}): {}",
@@ -459,7 +458,7 @@ fn start_dev_server_blocking(
         thread::sleep(Duration::from_millis(100));
     }
     kill_process_group(&mut child);
-    Err("dev server did not become reachable within 15 seconds".into())
+    Err("dev server did not become reachable within 30 seconds".into())
 }
 
 fn kill_process_group(child: &mut Child) {

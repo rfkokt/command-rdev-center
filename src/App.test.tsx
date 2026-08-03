@@ -74,7 +74,7 @@ test("opens the dedicated knowledge workspace", () => {
 test("keeps the active chat mounted while Kanban is open", () => {
   render(<App />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
+  fireEvent.click(screen.getByRole("button", { name: /Kanban/ }));
 
   expect(screen.getByText("Kanban view")).toBeInTheDocument();
   expect(screen.getByText("Chat view")).not.toBeVisible();
