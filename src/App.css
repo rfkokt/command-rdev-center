@@ -234,7 +234,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* VSCode-style right sidebar: explorer (project files) + source control */
 /* VSCode right sidebar: activity rail (52px) + panel 380px when open. Chat uses margin-right to avoid overlap */
 .code-sidebar-rail { position: absolute; z-index: 3; inset: 0 0 0 auto; display: flex; pointer-events: none; }
-.code-sidebar-rail .vscode-rail { position: relative; width: 52px; flex: none; pointer-events: auto; border-left: 1px solid var(--colors-hairline); background: #141512; display: flex; flex-direction: column; }
+.code-sidebar-rail .vscode-rail { position: relative; inset: auto; width: 52px; flex: none; pointer-events: auto; border-left: 1px solid var(--colors-hairline); background: #141512; display: flex; flex-direction: column; }
 .code-sidebar-panel { width: 380px; flex: none; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--colors-hairline); background: #141512; }
 .activity-rail.vscode-rail.inline { width: 44px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--colors-hairline); border-left: 0; background: #11120f; position: static; }
 .code-sidebar-section { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--colors-hairline); flex: 1; overflow: hidden; }
