@@ -1421,7 +1421,7 @@ export default function ChatView({
         </div>
       )}
 
-      <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"}>
+      <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 52 } : undefined}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
         {isNewSessionLoading && (
@@ -1484,7 +1484,7 @@ export default function ChatView({
               <div className="chat-changes">
                 <strong>FILES CHANGED</strong>
                 {worktreeDiff.files.map((file) => (
-                  <button key={file.path} onClick={() => { setExpandedDiff(file.path); setDiffPos({ x: 0, y: 0 }); }}>
+                  <button key={file.path} onClick={() => setExpandedDiff(file.path)}>
                     <span>{file.status}</span><b>{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
                   </button>
                 ))}
@@ -1721,7 +1721,7 @@ export default function ChatView({
                           <div className="code-diff-list">
                             {worktreeDiff.files.map((file) => (
                               <details key={`${file.path}-${editingFile === file.path}`} open={false}>
-                                <summary onClick={(e) => { e.preventDefault(); setExpandedDiff(file.path); setDiffPos({ x: 0, y: 0 }); }}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
+                                <summary onClick={(e) => { e.preventDefault(); setExpandedDiff(file.path); }}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
                               </details>
                             ))}
                           </div>
@@ -1768,10 +1768,11 @@ export default function ChatView({
       {previewImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
       {expandedDiff && worktreeDiff?.files.find(f => f.path === expandedDiff) && (
         <div style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", padding: 20 }}>
-          <div className="diff-panel" style={{ width: 900, maxWidth: "calc(100vw - 480px)", height: 700, maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div className="diff-panel" style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", display: "flex", flexDirection: "column" }}>
             <div 
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none", flexShrink: 0 }}
               onPointerDown={(e) => {
+                if ((e.target as HTMLElement).closest('button')) return;
                 e.preventDefault();
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                 dragRef.current = { startX: e.clientX, startY: e.clientY, initX: diffPos.x, initY: diffPos.y, headerTop: rect.top - diffPos.y };
@@ -1800,7 +1801,7 @@ export default function ChatView({
                 <small style={{ color: "var(--accent)", fontSize: 10, letterSpacing: "0.1em" }}>DIFF PREVIEW (READONLY)</small>
                 <strong style={{ fontSize: 14 }}>{expandedDiff}</strong>
               </div>
-              <button onClick={() => { setExpandedDiff(null); setDiffPos({ x: 0, y: 0 }); }} title="Close preview" style={{ padding: "6px 12px", border: "1px solid #ff7069", color: "#ff9b96", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent" }}>
+              <button onClick={() => setExpandedDiff(null)} title="Close preview" style={{ padding: "6px 12px", border: "1px solid #ff7069", color: "#ff9b96", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent" }}>
                 ✕ CLOSE
               </button>
             </div>
