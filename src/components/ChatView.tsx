@@ -1409,9 +1409,12 @@ export default function ChatView({
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
             {m.role === "assistant" && m.text && !m.isStreaming && <div className="chat-actions">
               <button className="chat-copy" onClick={() => navigator.clipboard.writeText(m.text).then(() => { setCopiedMessageId(m.id); window.setTimeout(() => setCopiedMessageId((id) => id === m.id ? null : id), 1600); }).catch((error) => onToast(`Copy failed: ${String(error)}`))} aria-label="Copy assistant response" title="Copy response">{copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}</button>
-              {globalChat && <select className="chat-save" aria-label="Save assistant response" value="" disabled={savingMessageId === m.id} onChange={async (event) => { const kind = event.target.value; if (!kind) return; setSavingMessageId(m.id); try { await invoke("save_rag_chat_response", { text: m.text, kind }); onToast(`Saved as ${kind}.`); } catch (error) { onToast(`Save failed: ${String(error)}`); } finally { setSavingMessageId(null); event.target.value = ""; } }}>
-                <option value="">{savingMessageId === m.id ? "SAVING…" : "+ SAVE"}</option><option value="knowledge">KNOWLEDGE</option><option value="memory">MEMORY</option><option value="context">CONTEXT</option><option value="skill">SKILL</option>
-              </select>}
+              {globalChat && <details className="chat-save">
+                <summary>{savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}</summary>
+                <div className="chat-save-options" aria-label="Save response as">
+                  {["knowledge", "memory", "context", "skill"].map((kind) => <button key={kind} disabled={savingMessageId === m.id} onClick={async (event) => { const details = event.currentTarget.closest("details"); setSavingMessageId(m.id); try { await invoke("save_rag_chat_response", { text: m.text, kind }); onToast(`Saved as ${kind}.`); details?.removeAttribute("open"); } catch (error) { onToast(`Save failed: ${String(error)}`); } finally { setSavingMessageId(null); } }}>{kind}<small>{kind === "knowledge" ? "Reusable answer" : kind === "context" ? "Chat reference" : kind === "memory" ? "Stored preference" : "Reusable procedure"}</small></button>)}
+                </div>
+              </details>}
             </div>}
             {m.role === "system" && shouldOfferRestart(m.text) && (
               <button onClick={() => handleRestart(true)} className="chat-restart" disabled={isRestarting}>
