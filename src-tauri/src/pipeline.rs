@@ -47,6 +47,7 @@ pub struct PipelineData {
     pub runs: Vec<PipelineRun>,
     pub current: Option<PipelineRun>,
     pub pending_input: Option<PipelinePendingInput>,
+    pub sonar_phase: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -97,6 +98,7 @@ struct ActiveRun {
     pending: Option<PipelinePendingInput>,
     consumed_nonce: Option<String>,
     awaiting_action: bool,
+    sonar_phase: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +128,7 @@ fn presets(name: &str) -> Vec<PipelineStep> {
         "KAI" => &[
             ("status", "Status", "git status --short"),
             ("review", "Review", "git diff --check"),
+            ("sonar", "Sonar", "~/bin/sonar-scan.sh"),
             ("test", "Test", "pnpm test"),
             ("build", "Build", "pnpm build"),
             ("push", "Push", "git push"),
@@ -133,11 +136,13 @@ fn presets(name: &str) -> Vec<PipelineStep> {
         "MBI" => &[
             ("status", "Status", "git status --short"),
             ("review", "Review", "git diff --check"),
+            ("sonar", "Sonar", "~/bin/sonar-scan.sh"),
             ("test", "Test", "pnpm test"),
             ("push", "Push", "git push"),
         ],
         "Personal" => &[
             ("status", "Status", "git status --short"),
+            ("sonar", "Sonar", "~/bin/sonar-scan.sh"),
             ("test", "Test", "pnpm test"),
             ("build", "Build", "pnpm build"),
             ("push", "Push", "git push"),
@@ -349,6 +354,20 @@ fn execute(
     execute_with_env(project, command, &[], state, run_id, attempt)
 }
 
+fn sonar_phase(output: &str) -> &'static str {
+    if output.contains("[4/4]") || output.contains("Quality Gate:") {
+        "Reading quality gate"
+    } else if output.contains("[3/4]") {
+        "Waiting for SonarQube report"
+    } else if output.contains("[2/4]") {
+        "Running scanner on VPS"
+    } else if output.contains("[1/4]") {
+        "Uploading source to VPS"
+    } else {
+        "Preparing Sonar scan"
+    }
+}
+
 fn execute_with_env(
     project: &Path,
     command: &str,
@@ -378,13 +397,31 @@ fn execute_with_env(
             terminate_group(group);
         }
     }
-    let status = child.wait().map_err(|e| e.to_string());
+    let is_sonar = command.contains("sonar-scan.sh");
+    if is_sonar {
+        state
+            .lock()
+            .map_err(|_| "pipeline state poisoned")?
+            .sonar_phase = Some("Preparing Sonar scan".into());
+    }
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break status;
+        }
+        if is_sonar {
+            let output = std::fs::read_to_string(&output_path).unwrap_or_default();
+            if let Ok(mut guard) = state.lock() {
+                guard.sonar_phase = Some(sonar_phase(&output).into());
+            }
+        }
+        thread::sleep(Duration::from_millis(250));
+    };
     if let Ok(mut guard) = state.lock() {
         guard.process_group = None;
+        guard.sonar_phase = None;
     }
     let output = std::fs::read_to_string(&output_path).unwrap_or_default();
     let _ = std::fs::remove_file(&output_path);
-    let status = status?;
     let output: String = output
         .chars()
         .rev()
@@ -810,6 +847,7 @@ pub fn start_pipeline(
         pending: None,
         consumed_nonce: None,
         awaiting_action: false,
+        sonar_phase: None,
     }));
     {
         let mut slot = active().lock().map_err(|_| "pipeline registry poisoned")?;
@@ -979,10 +1017,16 @@ pub fn get_pipeline_data(project_path: Option<String>) -> Result<PipelineData, S
             .filter(|(key, _)| project_key.as_ref().is_none_or(|project| project == key))
             .and_then(|(_, state)| state.lock().ok()?.pending.clone())
     });
+    let sonar_phase = active().lock().ok().and_then(|slot| {
+        slot.as_ref()
+            .filter(|(key, _)| project_key.as_ref().is_none_or(|project| project == key))
+            .and_then(|(_, state)| state.lock().ok()?.sonar_phase.clone())
+    });
     Ok(PipelineData {
         runs,
         current,
         pending_input,
+        sonar_phase,
     })
 }
 
@@ -1017,6 +1061,7 @@ mod tests {
             pending: None,
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         }));
         let (success, output) = execute_with_env(
             Path::new("/tmp"),
@@ -1069,6 +1114,7 @@ mod tests {
             pending: Some(pending("confirm")),
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         };
         let mut wrong = input();
         wrong.nonce = "wrong".into();
@@ -1092,6 +1138,7 @@ mod tests {
             pending: Some(pending("confirm")),
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         };
         let mut wrong_session = input();
         wrong_session.session_id = Some("other".into());
@@ -1137,7 +1184,8 @@ mod tests {
             steps: presets("KAI"),
         };
         assert_eq!(config.steps.last().unwrap().name, "Push");
-        assert_eq!(config.steps.len(), 5);
+        assert_eq!(config.steps.len(), 6);
+        assert_eq!(config.steps[2].name, "Sonar");
     }
 
     #[test]
@@ -1150,6 +1198,7 @@ mod tests {
             pending: None,
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         }));
         let (success, diagnostics) =
             execute(Path::new("/tmp"), "exit 7", &state, "diagnostic-test", 1).unwrap();
@@ -1285,6 +1334,7 @@ mod tests {
             pending: Some(pending("confirm")),
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         };
         let mut wrong = input();
         wrong.mode = "ai_commit".into();
@@ -1305,6 +1355,7 @@ mod tests {
             pending: None,
             consumed_nonce: None,
             awaiting_action: false,
+            sonar_phase: None,
         }));
         assert!(
             wait_for_input_with_timeout(&state, pending("confirm"), Duration::ZERO)

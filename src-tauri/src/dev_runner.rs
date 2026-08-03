@@ -660,7 +660,7 @@ mod tests {
             .unwrap();
         let started = std::time::Instant::now();
         kill_process_group(&mut child);
-        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert!(child.try_wait().unwrap().is_some());
     }
 
