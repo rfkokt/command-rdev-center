@@ -1296,7 +1296,7 @@ export default function ChatView({
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
-      <div style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap", flexShrink: 0 }}>
+      <div className={globalChat ? "" : rightSidebarOpen ? "has-code-rail-rail-open" : "has-code-rail"} style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", padding: "var(--spacing-sm) var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap", flexShrink: 0 }}>
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
         <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
         {!globalChat && !isGit && <span className="category-tag">NOT ISOLATED</span>}
