@@ -324,23 +324,20 @@ fn start_dev_server_blocking(
         .any(|entry| entry.command == artisan_command);
     ensure_dependencies(Path::new(&cwd), &project, artisan)?;
     stop_project_dev_servers(&project)?;
-    let has_frontend = commands
-        .iter()
-        .any(|entry| node_commands.contains(&entry.command));
     let vite_port = commands
         .iter()
         .find(|entry| node_commands.contains(&entry.command))
         .and_then(|entry| entry.port)
         .unwrap_or(available_port()?);
-    let port = commands
-        .iter()
-        .find(|entry| entry.command == artisan_command)
-        .and_then(|entry| entry.port)
-        .unwrap_or(if has_frontend {
-            available_port()?
-        } else {
-            vite_port
-        });
+    let port = if artisan {
+        commands
+            .iter()
+            .find(|entry| entry.command == artisan_command)
+            .and_then(|entry| entry.port)
+            .unwrap_or(available_port()?)
+    } else {
+        vite_port
+    };
     let dev_script = std::fs::read_to_string(Path::new(&cwd).join("package.json"))
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
