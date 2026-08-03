@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-type Source = { id: string; name: string; chars: number; modified_ms: number };
+type Source = { id: string; name: string; kind: string; chars: number; modified_ms: number };
 const EXTENSIONS = ["pdf", "docx", "txt", "md", "csv", "json"];
 
 export default function RagKnowledge({ onToast }: { onToast: (message: string) => void }) {
@@ -49,6 +49,6 @@ export default function RagKnowledge({ onToast }: { onToast: (message: string) =
     <header className="pipeline-header"><div><small>GLOBAL CHAT / RAG</small><h1>KNOWLEDGE SOURCES</h1><p>Extracted text stored locally. Original uploads are not retained.</p></div><button className="save-settings" onClick={() => void upload()} disabled={busy}>{busy ? "WORKING…" : "ADD DOCUMENT"}</button></header>
     <button className="settings-notice" style={{ width: "100%", minHeight: 90, borderStyle: "dashed" }} onClick={() => void upload()} disabled={busy}>DROP A DOCUMENT ANYWHERE ON THIS PAGE · OR CLICK TO BROWSE</button>
     {error && <div className="settings-error" role="alert">{error}</div>}
-    {sources.length === 0 ? <div className="pipeline-project-empty"><strong>NO UPLOADED SOURCES</strong><span>Add PDF, DOCX, TXT, MD, CSV, or JSON knowledge.</span></div> : <div className="pipeline-table-wrap"><table className="pipeline-table"><thead><tr><th>Source</th><th>Extracted text</th><th>Added</th><th /></tr></thead><tbody>{sources.map((source) => <tr key={source.id}><td>{source.name}</td><td>{source.chars.toLocaleString()} chars</td><td>{new Date(source.modified_ms).toLocaleString()}</td><td><button onClick={() => void remove(source)} disabled={busy}>DELETE</button></td></tr>)}</tbody></table></div>}
+    {sources.length === 0 ? <div className="pipeline-project-empty"><strong>NO UPLOADED SOURCES</strong><span>Add PDF, DOCX, TXT, MD, CSV, or JSON knowledge.</span></div> : <div className="pipeline-table-wrap"><table className="pipeline-table"><thead><tr><th>Source</th><th>Type</th><th>Extracted text</th><th>Added</th><th /></tr></thead><tbody>{sources.map((source) => <tr key={source.id}><td>{source.name}</td><td>{source.kind.toUpperCase()}</td><td>{source.chars.toLocaleString()} chars</td><td>{new Date(source.modified_ms).toLocaleString()}</td><td><button onClick={() => void remove(source)} disabled={busy}>DELETE</button></td></tr>)}</tbody></table></div>}
   </section>;
 }

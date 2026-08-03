@@ -19,6 +19,7 @@ export type ChatMessage = {
   thinking?: string;
   toolCalls: ToolCall[];
   createdAt?: number;
+  durationMs?: number;
   // streaming flags
   isStreaming?: boolean;
 };
