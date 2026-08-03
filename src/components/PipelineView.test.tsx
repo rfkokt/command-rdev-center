@@ -37,6 +37,14 @@ test("renders live and dynamic stages with averages and newest runs first", asyn
   expect(within(historical).getByText("demo-old")).toBeInTheDocument();
 });
 
+test("shows the current Sonar phase as live progress", async () => {
+  invoke.mockResolvedValue({ ...live, sonar_phase: "Running scanner on VPS" });
+  render(<PipelineView />);
+
+  expect(await screen.findByRole("status")).toHaveTextContent("SONARQUBE QUALITY GATE");
+  expect(screen.getByRole("status")).toHaveTextContent("Running scanner on VPS");
+});
+
 test("renders unix-second timestamps without Invalid Date", async () => {
   invoke.mockResolvedValue({ current: null, runs: [{ ...live.runs[0], date: "1785480149" }] });
   render(<PipelineView />);

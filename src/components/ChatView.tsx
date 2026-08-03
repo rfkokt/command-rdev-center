@@ -99,6 +99,17 @@ function deriveAtQuery(text: string): string | null {
   return q;
 }
 
+function buildPhase(tool: ToolCall) {
+  if (tool.phase === "end" || !["bash", "functions.bash"].includes(tool.name)) return null;
+  const command = String(tool.args.command ?? "").toLowerCase();
+  if (!/(npm|pnpm|yarn|bun|cargo|gradle|mvn|make).*(build|package|compile)|tauri build|vite build|tsc/.test(command)) return null;
+  if (command.includes("check:version")) return "Checking app version";
+  if (command.includes("tsc")) return "Compiling TypeScript";
+  if (command.includes("vite build")) return "Bundling frontend assets";
+  if (command.includes("cargo") || command.includes("tauri build")) return "Compiling desktop application";
+  return "Building project";
+}
+
 const surfacedPipelineFailures = new Set<string>();
 
 export default function ChatView({
@@ -1437,6 +1448,7 @@ export default function ChatView({
             )}
           </div>
         ))}
+        {(() => { const phase = messages.flatMap((message) => message.toolCalls).map(buildPhase).find(Boolean); return phase ? <div className="build-progress" role="status" aria-live="polite"><span className="build-bars" aria-hidden="true"><i /><i /><i /><i /></span><div><small>AI AGENT BUILD</small><strong>{phase}</strong><span>Build masih berjalan. Jangan tutup chat ini.</span></div><em>LIVE</em></div> : null; })()}
         {agentStatus === "running" && (
           <div className="agent-working" role="status" aria-live="polite">
             <span className="agent-working-mark"><i /><i /><i /></span>
