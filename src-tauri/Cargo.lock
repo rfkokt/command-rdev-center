@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "command-rdev-center"
-version = "0.1.44"
+version = "0.1.45"
 dependencies = [
  "fs2",
  "getrandom 0.3.4",
