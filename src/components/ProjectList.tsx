@@ -13,7 +13,7 @@ export type ProjectInfo = {
   pipeline_type?: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; title?: string; unread?: boolean; interrupted?: boolean };
+type Tab = { id: string; project: ProjectInfo; title?: string; unread?: number; interrupted?: boolean };
 
 export default function ProjectList({
   onOpen,
@@ -180,7 +180,7 @@ export default function ProjectList({
                     onClick={() => onResume(tab.id, project)}
                   >
                     <span>{tab.title ?? "UNTITLED SESSION"}</span>
-                    {tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}
+                    {tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge" style={{ background: "var(--accent)", color: "#111", padding: "1px 5px", borderRadius: "8px", fontSize: "9px", fontWeight: "bold" }}>{tab.unread}</span>}
                   </button>
                 ))}
               </div>

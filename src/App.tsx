@@ -21,7 +21,7 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; global?: boolean; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: boolean };
+type Tab = { id: string; project: ProjectInfo; global?: boolean; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: number };
 const GLOBAL_PROJECT: ProjectInfo = { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
@@ -68,8 +68,13 @@ export default function App() {
     setTimeout(() => setToasts((prev) => prev.slice(1)), 6000);
   }, []);
 
-  useEffect(() => {
+  const fetchConfig = () => {
+    setConfigErr(null);
     invoke<Config>("get_config").catch((e) => setConfigErr(String(e)));
+  };
+
+  useEffect(() => {
+    fetchConfig();
     getVersion().then(setAppVersion).catch(() => {});
     check()
       .then((update) => {
@@ -101,11 +106,11 @@ export default function App() {
   }, []);
 
   const markUnread = useCallback((tabId: string) => {
-    setTabs((prev) => prev.map((item) => item.id === tabId && item.id !== activeTabIdRef.current ? { ...item, unread: true } : item));
+    setTabs((prev) => prev.map((item) => item.id === tabId && item.id !== activeTabIdRef.current ? { ...item, unread: (item.unread || 0) + 1 } : item));
   }, []);
 
   function activateTab(tabId: string) {
-    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, unread: false } : item));
+    setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, unread: 0 } : item));
     setActiveTabId(tabId);
   }
 
@@ -178,7 +183,7 @@ export default function App() {
           <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>
         </div>
         <div className="sidebar-label"><span>SESSION ARCHIVE</span><i /></div>
-        {configErr && <div className="sidebar-error">Config error: {configErr}</div>}
+        {configErr && <div className="sidebar-error">Config error: {configErr} <button onClick={fetchConfig} style={{ color: "var(--accent)", marginLeft: "6px", textDecoration: "underline" }}>Retry</button></div>}
         <ProjectList
           onOpen={openProject}
           onSelect={(project) => { setDashboard(null); setSelectedProject(project); }} 
@@ -196,27 +201,16 @@ export default function App() {
         <div className="projects-panel">
           <div className="projects-heading"><span>GLOBAL CHAT</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat">＋</button></div>
           <div className="project-sessions">
-            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}</button>)}</div>
+            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge" style={{ background: "var(--accent)", color: "#111", padding: "1px 5px", borderRadius: "8px", fontSize: "9px", fontWeight: "bold" }}>{tab.unread}</span>}</button>)}</div>
           </div>
           {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
         </div>
-        <button className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg><span>{dashboard === "knowledge" ? "Sessions" : "Knowledge"}</span></button>
-        <button className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}> 
-          {dashboard === "kanban" ? (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="3" y="3" width="18" height="18" rx="2.5"/><path d="M7 8h5M7 12h5M7 16h5"/><path d="M14 12h3" opacity=".6"/></svg>
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="2.5" y="3" width="19" height="18" rx="2.5"/><rect x="6" y="7" width="3.5" height="10" rx="1"/><rect x="10.5" y="7" width="3.5" height="12" rx="1"/><rect x="15" y="7" width="3.5" height="7" rx="1"/></svg>
-          )}
-          <span>{dashboard === "kanban" ? "Sessions" : "Kanban"}</span>
-        </button>
-        <button className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "pipeline" ? null : "pipeline")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg>
-          <span>{dashboard === "pipeline" ? "Sessions" : "Pipeline"}</span>
-        </button>
-        <button className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
-          <span>Settings</span>
-        </button>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px", margin: "auto 10px 10px" }}>
+          <button title="Knowledge Base" className="settings-button dashboard-button" style={{ justifyContent: "center", minHeight: "36px", padding: 0 }} onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg></button>
+          <button title="Kanban Board" className="settings-button" style={{ justifyContent: "center", minHeight: "36px", padding: 0, marginTop: 0 }} onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="2.5" y="3" width="19" height="18" rx="2.5"/><rect x="6" y="7" width="3.5" height="10" rx="1"/><rect x="10.5" y="7" width="3.5" height="12" rx="1"/><rect x="15" y="7" width="3.5" height="7" rx="1"/></svg></button>
+          <button title="Pipeline" className="settings-button dashboard-button" style={{ justifyContent: "center", minHeight: "36px", padding: 0 }} onClick={() => setDashboard((view) => view === "pipeline" ? null : "pipeline")}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg></button>
+          <button title="Settings" className="settings-button dashboard-button" style={{ justifyContent: "center", minHeight: "36px", padding: 0 }} onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+        </div>
         {appVersion && <small className="app-version">v{appVersion}</small>}
       </aside>
 
@@ -272,14 +266,24 @@ export default function App() {
             </div>
           )}
         </div>
-        {toasts[toasts.length - 1] && <div className="toast" role="status">
-          <span>{toasts[toasts.length - 1]}</span>
-          <button
-            onClick={() => navigator.clipboard.writeText(toasts[toasts.length - 1]).then(() => addToast("Toast copied")).catch((e) => addToast(`Copy failed: ${String(e)}`))}
-            title="Copy toast"
-            aria-label="Copy toast"
-          >⧉</button>
-        </div>}
+        <div className="toast-container" style={{ position: "fixed", bottom: 18, right: 18, display: "flex", flexDirection: "column", gap: 8, zIndex: 120 }}>
+          {toasts.map((toast, i) => (
+            <div key={i} className="toast" role="status" style={{ position: "relative", inset: "auto" }}>
+              <span>{toast}</span>
+              <button
+                onClick={(e) => {
+                  navigator.clipboard.writeText(toast).catch(() => {});
+                  const btn = e.currentTarget;
+                  const original = btn.textContent;
+                  btn.textContent = "✓";
+                  setTimeout(() => { if (btn) btn.textContent = original; }, 1200);
+                }}
+                title="Copy toast"
+                aria-label="Copy toast"
+              >⧉</button>
+            </div>
+          ))}
+        </div>
         {settingsOpen && <SettingsPanel projectPath={settingsProject?.path ?? selectedProject?.path ?? activeTab?.project.path} projectName={settingsProject?.name ?? selectedProject?.name ?? activeTab?.project.name} initialPage={settingsPage} onClose={() => setSettingsOpen(false)} onToast={addToast} />}
       </section>
     </main>

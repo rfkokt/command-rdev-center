@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import MarkdownMessage from "./MarkdownMessage";
 
 type ProjectFile = { name: string; path: string; relative: string; chars: number; modified_ms: number };
 
@@ -49,6 +50,8 @@ export default function ProjectFilesSidebar({
   const [filter, setFilter] = useState("");
   const [preview, setPreview] = useState<{ name: string; content: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
   const [recentPaths, setRecentPaths] = useState<string[]>(() => {
     try {
@@ -209,25 +212,88 @@ export default function ProjectFilesSidebar({
       )}
 
       {(previewLoading || preview) && (
-        <div className="pfs-preview">
-          <header>
-            <div>
-              <small>READONLY</small>
-              <strong title={preview?.name}>{preview?.name ?? "Loading…"}</strong>
+        <div style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", padding: 20 }}>
+          <div className="diff-panel" style={{ width: 900, maxWidth: "calc(100vw - 480px)", height: 700, maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", overflow: "hidden" }}>
+            <div 
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none" }}
+              onPointerDown={(e) => {
+                e.preventDefault(); // Prevent text selection
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                dragRef.current = { 
+                  startX: e.clientX, 
+                  startY: e.clientY, 
+                  initX: previewPos.x, 
+                  initY: previewPos.y,
+                  headerTop: rect.top - previewPos.y
+                };
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grabbing";
+              }}
+              onPointerMove={(e) => {
+                if (!dragRef.current) return;
+                const { startX, startY, initX, initY, headerTop } = dragRef.current;
+                let newY = initY + e.clientY - startY;
+                if (headerTop + newY < 62) {
+                  newY = 62 - headerTop;
+                }
+                setPreviewPos({ x: initX + e.clientX - startX, y: newY });
+              }}
+              onPointerUp={(e) => {
+                dragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grab";
+              }}
+              onPointerCancel={(e) => {
+                dragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grab";
+              }}
+            >
+              <div style={{ display: "grid", gap: 4 }}>
+                <small style={{ color: "var(--accent)", fontSize: 10, letterSpacing: "0.1em" }}>FILE PREVIEW (READONLY)</small>
+                <strong style={{ fontSize: 14 }}>{preview?.name ?? "Loading…"}</strong>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" style={{ padding: "6px 12px", border: "1px solid var(--colors-hairline-strong)", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent", color: "var(--colors-body)" }} onPointerDown={(e) => e.stopPropagation()}>
+                  ⧉ COPY
+                </button>
+                <button onClick={() => { setPreview(null); setPreviewPos({ x: 0, y: 0 }); }} title="Close preview" style={{ padding: "6px 12px", border: "1px solid #ff7069", color: "#ff9b96", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent" }} onPointerDown={(e) => e.stopPropagation()}>
+                  ✕ CLOSE
+                </button>
+              </div>
             </div>
-            <div className="pfs-preview-actions">
-              <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content">
-                ⧉
-              </button>
-              <button onClick={() => setPreview(null)} title="Close preview">
-                ✕
-              </button>
-            </div>
-          </header>
-          {previewLoading ? <div className="pfs-loading">LOADING…</div> : preview && <pre className="rag-readonly-pre pfs-pre">{preview.content}</pre>}
-          <footer>
-            <span>Readonly · {preview ? `${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat</span>
-          </footer>
+            <style>{`.clickable-import:hover { color: var(--accent) !important; background: #2a2b27; border-radius: 2px; cursor: pointer; }`}</style>
+            {previewLoading ? <div style={{ margin: "auto", color: "var(--colors-muted)" }}>LOADING FILE…</div> : preview && (
+              preview.name.endsWith(".md") || preview.name.endsWith(".mdx") ? (
+                <div style={{ margin: 0, padding: "20px 30px", flex: 1, overflow: "auto", background: "#0e0f0c", color: "#dcded2" }}>
+                  <MarkdownMessage>{preview.content}</MarkdownMessage>
+                </div>
+              ) : (
+                <pre className="rag-readonly-pre" style={{ margin: 0, padding: 20, flex: 1, overflow: "auto", background: "#0e0f0c", font: "12px/1.55 var(--font-mono)", color: "#dcded2", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} onClick={(e) => {
+                  if (e.metaKey || e.ctrlKey) {
+                    const target = e.target as HTMLElement;
+                    if (target.dataset.path && preview) {
+                      const currentPath = preview.name.split('/');
+                      currentPath.pop();
+                      const targetParts = target.dataset.path.split('/');
+                      for (const p of targetParts) {
+                        if (p === '.') continue;
+                        if (p === '..') currentPath.pop();
+                        else currentPath.push(p);
+                      }
+                      const resolved = currentPath.join('/');
+                      const possible = [resolved, resolved + '.ts', resolved + '.tsx', resolved + '.js', resolved + '/index.ts', resolved + '/index.tsx', target.dataset.path, target.dataset.path.slice(1)];
+                      const found = files.find(f => possible.includes(f.relative));
+                      if (found) void openFile(found);
+                    }
+                  }
+                }} dangerouslySetInnerHTML={{ __html: highlightCode(preview.content) }} />
+              )
+            )}
+            <footer style={{ padding: "8px 20px", borderTop: "1px solid var(--colors-hairline)", fontSize: 10, color: "var(--colors-muted-soft)", background: "#1a1b18" }}>
+              <span>{preview ? `${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
+            </footer>
+          </div>
         </div>
       )}
     </section>
@@ -335,4 +401,19 @@ function iconFor(name: string) {
     default:
       return "—";
   }
+}
+
+function highlightCode(code: string) {
+  let html = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return html.replace(/(\/\/.*|\/\*[\s\S]*?\*\/)|(["'])(.*?)\2|\b(import|export|from|const|let|var|function|async|await|class|interface|type|if|else|return|for|while|switch|case|default|break|continue|try|catch|finally|true|false|null|undefined|string|number|boolean)\b/g, 
+  (match, comment, quote, innerString, keyword) => {
+    if (comment) return `<span style="color: #67685f;">${comment}</span>`;
+    if (quote) {
+      const isPath = innerString.startsWith(".") || innerString.startsWith("/") || innerString.startsWith("@");
+      const dataAttr = isPath ? ` class="clickable-import" data-path="${innerString}" style="text-decoration: underline;" title="Cmd+Click to go"` : "";
+      return `<span style="color: #a8d976;"${dataAttr}>${quote}${innerString}${quote}</span>`;
+    }
+    if (keyword) return `<span style="color: #e27b72;">${keyword}</span>`;
+    return match;
+  });
 }
