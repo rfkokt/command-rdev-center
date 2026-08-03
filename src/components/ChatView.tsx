@@ -40,6 +40,13 @@ type SessionStats = {
 
 const MAX_HISTORY = 600;
 
+function formatTaskDuration(ms: number) {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
 function formatMessageTime(timestamp: number) {
   const date = new Date(timestamp);
   const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -176,6 +183,7 @@ export default function ChatView({
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [savingMessageId, setSavingMessageId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<{ step: string; completed: number; total: number } | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -193,6 +201,7 @@ export default function ChatView({
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
   const surfacedPipelineInputRef = useRef("");
+  const taskStartedAtRef = useRef<number | null>(null);
 
   cwdRef.current = cwd;
   const sessionId = useRef(`chat-${chatId}`).current;
@@ -591,7 +600,17 @@ export default function ChatView({
           onAgentRunning(chatId, false);
           onUnread(chatId);
           setIsStreaming(false);
-          setMessages(settleAgentMessages);
+          const completedAt = Date.now();
+          setMessages((prev) => {
+            const settled = settleAgentMessages(prev);
+            let index = settled.length - 1;
+            while (index >= 0 && (settled[index].role !== "assistant" || !settled[index].text)) index--;
+            if (index < 0 || taskStartedAtRef.current === null) return settled;
+            const copy = [...settled];
+            copy[index] = { ...copy[index], durationMs: completedAt - taskStartedAtRef.current };
+            return copy;
+          });
+          taskStartedAtRef.current = null;
           surfacedErrorRef.current = null;
           void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
@@ -846,6 +865,7 @@ export default function ChatView({
     const text = input.trim();
     if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
+    taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => {
       const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage];
       return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
@@ -1387,13 +1407,18 @@ export default function ChatView({
               </details>;
             })()}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
-            {m.role === "assistant" && m.text && !m.isStreaming && <button className="chat-copy" onClick={() => navigator.clipboard.writeText(m.text).then(() => { setCopiedMessageId(m.id); window.setTimeout(() => setCopiedMessageId((id) => id === m.id ? null : id), 1600); }).catch((error) => onToast(`Copy failed: ${String(error)}`))} aria-label="Copy assistant response" title="Copy response">{copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}</button>}
+            {m.role === "assistant" && m.text && !m.isStreaming && <div className="chat-actions">
+              <button className="chat-copy" onClick={() => navigator.clipboard.writeText(m.text).then(() => { setCopiedMessageId(m.id); window.setTimeout(() => setCopiedMessageId((id) => id === m.id ? null : id), 1600); }).catch((error) => onToast(`Copy failed: ${String(error)}`))} aria-label="Copy assistant response" title="Copy response">{copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}</button>
+              {globalChat && <select className="chat-save" aria-label="Save assistant response" value="" disabled={savingMessageId === m.id} onChange={async (event) => { const kind = event.target.value; if (!kind) return; setSavingMessageId(m.id); try { await invoke("save_rag_chat_response", { text: m.text, kind }); onToast(`Saved as ${kind}.`); } catch (error) { onToast(`Save failed: ${String(error)}`); } finally { setSavingMessageId(null); event.target.value = ""; } }}>
+                <option value="">{savingMessageId === m.id ? "SAVING…" : "+ SAVE"}</option><option value="knowledge">KNOWLEDGE</option><option value="memory">MEMORY</option><option value="context">CONTEXT</option><option value="skill">SKILL</option>
+              </select>}
+            </div>}
             {m.role === "system" && shouldOfferRestart(m.text) && (
               <button onClick={() => handleRestart(true)} className="chat-restart" disabled={isRestarting}>
                 {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
               </button>
             )}
-            {m.createdAt && <time className="chat-message-time" dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}
+            {(m.createdAt || m.durationMs) && <div className="chat-message-meta">{m.createdAt && <time dateTime={new Date(m.createdAt).toISOString()}>{formatMessageTime(m.createdAt)}</time>}{m.role === "assistant" && m.durationMs && <span title="Task completion time">SELESAI DALAM {formatTaskDuration(m.durationMs)}</span>}</div>}
             {agentStatus === "stopped" && m.role === "user" && m.id === messages[messages.length - 1]?.id && (
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
             )}
