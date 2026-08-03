@@ -210,7 +210,11 @@ export default function ChatView({
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [rightChangesCollapsed, setRightChangesCollapsed] = useState(false);
   const [rightExplorerCollapsed, setRightExplorerCollapsed] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(380);
+  const [explorerHeight, setExplorerHeight] = useState(400);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
+  const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
@@ -1480,7 +1484,7 @@ export default function ChatView({
               <div className="chat-changes">
                 <strong>FILES CHANGED</strong>
                 {worktreeDiff.files.map((file) => (
-                  <button key={file.path} onClick={() => { setEditingFile(file.path); setRightSidebarOpen(true); }}>
+                  <button key={file.path} onClick={() => { setExpandedDiff(file.path); setDiffPos({ x: 0, y: 0 }); }}>
                     <span>{file.status}</span><b>{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
                   </button>
                 ))}
@@ -1662,8 +1666,19 @@ export default function ChatView({
             {rightSidebarOpen && <button onClick={() => setRightSidebarOpen(false)} title="Hide sidebar" aria-label="Hide sidebar" style={{ marginTop: "auto" }}>✕</button>}
           </div>
           {rightSidebarOpen && (
-            <div className="code-sidebar-panel">
-              <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`}>
+            <div className="code-sidebar-panel" style={{ width: rightPanelWidth, position: "relative" }}>
+              <div 
+                style={{ position: "absolute", left: -4, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 10 }}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  const startX = e.clientX;
+                  const startWidth = rightPanelWidth;
+                  const target = e.currentTarget;
+                  target.onpointermove = (ev) => setRightPanelWidth(Math.max(200, Math.min(800, startWidth + (startX - ev.clientX))));
+                  target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
+                }}
+              />
+              <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`} style={{ flex: rightExplorerCollapsed ? "none" : `0 0 ${explorerHeight}px` }}>
                 <button className="code-section-toggle" onClick={() => setRightExplorerCollapsed((c) => !c)} aria-expanded={!rightExplorerCollapsed}>
                   <span>{rightExplorerCollapsed ? "›" : "⌄"}</span><small>EXPLORER</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName.toUpperCase()}</strong>
                 </button>
@@ -1678,8 +1693,21 @@ export default function ChatView({
                   </div>
                 )}
               </section>
+              {worktree && !rightExplorerCollapsed && !rightChangesCollapsed && (
+                <div 
+                  style={{ height: 8, cursor: "row-resize", margin: "-4px 0", zIndex: 10, flexShrink: 0 }}
+                  onPointerDown={(e) => {
+                    e.currentTarget.setPointerCapture(e.pointerId);
+                    const startY = e.clientY;
+                    const startHeight = explorerHeight;
+                    const target = e.currentTarget;
+                    target.onpointermove = (ev) => setExplorerHeight(Math.max(100, Math.min(window.innerHeight - 150, startHeight + (ev.clientY - startY))));
+                    target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
+                  }}
+                />
+              )}
               {worktree && (
-                <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`}>
+                <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`} style={{ flex: 1, maxHeight: "none" }}>
                   <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
                     <span>{rightChangesCollapsed ? "›" : "⌄"}</span><small>SOURCE CONTROL</small><strong>CHANGES{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
                     {diffLoading && <small style={{ marginLeft: "auto" }}>LOADING…</small>}
@@ -1692,9 +1720,8 @@ export default function ChatView({
                         <>
                           <div className="code-diff-list">
                             {worktreeDiff.files.map((file) => (
-                              <details key={`${file.path}-${editingFile === file.path}`} open={expandedDiff ? expandedDiff === file.path : editingFile === file.path || undefined}>
-                                <summary onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
-                                {file.patch ? <div className="split-diff vscode-split"><header><span>BEFORE</span><span>AFTER</span></header>{splitPatch(file.patch)}</div> : <p className="code-empty">Binary or untracked — no textual diff.</p>}
+                              <details key={`${file.path}-${editingFile === file.path}`} open={false}>
+                                <summary onClick={(e) => { e.preventDefault(); setExpandedDiff(file.path); setDiffPos({ x: 0, y: 0 }); }}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
                               </details>
                             ))}
                           </div>
@@ -1739,6 +1766,55 @@ export default function ChatView({
         </section>
       </div>}
       {previewImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
+      {expandedDiff && worktreeDiff?.files.find(f => f.path === expandedDiff) && (
+        <div style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", padding: 20 }}>
+          <div className="diff-panel" style={{ width: 900, maxWidth: "calc(100vw - 480px)", height: 700, maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            <div 
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none", flexShrink: 0 }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                dragRef.current = { startX: e.clientX, startY: e.clientY, initX: diffPos.x, initY: diffPos.y, headerTop: rect.top - diffPos.y };
+                e.currentTarget.setPointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grabbing";
+              }}
+              onPointerMove={(e) => {
+                if (!dragRef.current) return;
+                const { startX, startY, initX, initY, headerTop } = dragRef.current;
+                let newY = initY + e.clientY - startY;
+                if (headerTop + newY < 62) newY = 62 - headerTop;
+                setDiffPos({ x: initX + e.clientX - startX, y: newY });
+              }}
+              onPointerUp={(e) => {
+                dragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grab";
+              }}
+              onPointerCancel={(e) => {
+                dragRef.current = null;
+                e.currentTarget.releasePointerCapture(e.pointerId);
+                e.currentTarget.style.cursor = "grab";
+              }}
+            >
+              <div style={{ display: "grid", gap: 4 }}>
+                <small style={{ color: "var(--accent)", fontSize: 10, letterSpacing: "0.1em" }}>DIFF PREVIEW (READONLY)</small>
+                <strong style={{ fontSize: 14 }}>{expandedDiff}</strong>
+              </div>
+              <button onClick={() => { setExpandedDiff(null); setDiffPos({ x: 0, y: 0 }); }} title="Close preview" style={{ padding: "6px 12px", border: "1px solid #ff7069", color: "#ff9b96", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent" }}>
+                ✕ CLOSE
+              </button>
+            </div>
+            
+            <div style={{ flex: 1, overflow: "auto", background: "#0e0f0c" }}>
+              {(() => {
+                const file = worktreeDiff.files.find(f => f.path === expandedDiff);
+                if (!file || !file.patch) return <p className="code-empty" style={{ padding: 20 }}>Binary or untracked — no textual diff.</p>;
+                return <div className="split-diff vscode-split" style={{ maxHeight: "none" }}><header><span>BEFORE</span><span>AFTER</span></header>{splitPatch(file.patch)}</div>;
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
       {approval && <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />}
     </div>
   );
