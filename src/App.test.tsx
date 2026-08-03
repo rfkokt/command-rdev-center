@@ -16,8 +16,8 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   onAction: vi.fn(() => Promise.resolve({ unregister: vi.fn(() => Promise.resolve()) })),
 }));
 vi.mock("./components/ProjectList", () => ({
-  default: ({ tabs, onResume }: { tabs: Array<{ id: string; project: unknown }>; onResume: (id: string, project: unknown) => void }) => (
-    <>{tabs.map((tab) => <button key={tab.id} onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button>)}</>
+  default: ({ tabs, onResume, onSelect, onNewSession }: { tabs: Array<{ id: string; project: { name: string } }>; onResume: (id: string, project: unknown) => void; onSelect: (project: unknown) => void; onNewSession: (project: unknown) => void }) => (
+    <>{tabs.map((tab) => <span key={tab.id}><button onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button><button onClick={() => onSelect(tab.project)}>Select {tab.project.name}</button><button onClick={() => onNewSession(tab.project)}>New {tab.project.name}</button></span>)}</>
   ),
 }));
 vi.mock("./components/SettingsPanel", () => ({ default: () => null }));
@@ -86,9 +86,24 @@ test("creates and lists multiple Global Chat sessions", () => {
   render(<App />);
 
   fireEvent.click(screen.getByRole("button", { name: /OPEN GLOBAL CHAT/ }));
-  fireEvent.click(screen.getByRole("button", { name: "＋ NEW SESSION" }));
+  fireEvent.click(screen.getByRole("button", { name: "New Global Chat" }));
 
   expect(screen.getAllByText("UNTITLED SESSION")).toHaveLength(2);
+});
+
+test("creates a project session after switching from Global Chat to a project", () => {
+  localStorage.setItem("crc-chat-tabs", JSON.stringify([
+    { id: "global-1", global: true, project: { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false } },
+    { id: "chat-1", project: { name: "demo", path: "/tmp/demo", kinds: [], mtime_ms: 0, is_git: false } },
+  ]));
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Select demo" }));
+  fireEvent.click(screen.getByRole("button", { name: "New demo" }));
+
+  const saved = JSON.parse(localStorage.getItem("crc-chat-tabs") ?? "[]") as Array<{ global?: boolean; project: { path: string } }>;
+  expect(saved.filter((tab) => tab.project.path === "/tmp/demo")).toHaveLength(2);
+  expect(saved.filter((tab) => tab.global)).toHaveLength(1);
 });
 
 test("keeps chat callbacks stable when the active tab changes", () => {

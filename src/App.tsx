@@ -119,6 +119,7 @@ export default function App() {
 
   function newGlobalChat() {
     setDashboard(null);
+    setSelectedProject(null);
     const id = `global-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setTabs((prev) => [...prev, { id, project: GLOBAL_PROJECT, global: true }]);
     setActiveTabId(id);
@@ -126,6 +127,7 @@ export default function App() {
 
   function openGlobalChat() {
     setDashboard(null);
+    setSelectedProject(null);
     const latest = [...tabs].reverse().find((tab) => tab.global);
     if (latest) return activateTab(latest.id);
     newGlobalChat();
@@ -175,17 +177,15 @@ export default function App() {
           <span className="brand-mark">R/</span>
           <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>
         </div>
-        <button className="sidebar-action" onClick={() => activeTab?.global ? newGlobalChat() : newConversation()} disabled={!activeTab?.global && !selectedProject}>
-          <span>＋</span> NEW SESSION
-        </button>
         <div className="sidebar-label"><span>SESSION ARCHIVE</span><i /></div>
         {configErr && <div className="sidebar-error">Config error: {configErr}</div>}
         <ProjectList
           onOpen={openProject}
-          onSelect={setSelectedProject}
+          onSelect={(project) => { setDashboard(null); setSelectedProject(project); }} 
           tabs={tabs.filter((tab) => !tab.global)}
           activeTabId={activeTabId}
           onResume={(id, project) => { setDashboard(null); setSelectedProject(project); activateTab(id); }}
+          onNewSession={newConversation}
           onPipelineSettings={(project) => {
             setSelectedProject(project);
             setSettingsProject(project);
@@ -194,9 +194,9 @@ export default function App() {
           }}
         />
         <div className="projects-panel">
-          <div className="projects-heading"><span>GLOBAL CHAT</span><button onClick={newGlobalChat} title="New Global Chat">＋</button></div>
+          <div className="projects-heading"><span>GLOBAL CHAT</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat">＋</button></div>
           <div className="project-sessions">
-            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}</button>)}</div>
+            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : tab.unread && <i aria-label="Unread activity" />}</button>)}</div>
           </div>
           {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
         </div>

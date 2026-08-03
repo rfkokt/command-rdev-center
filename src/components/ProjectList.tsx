@@ -22,6 +22,7 @@ export default function ProjectList({
   activeTabId,
   onResume,
   onPipelineSettings,
+  onNewSession,
 }: {
   onOpen: (project: ProjectInfo) => void;
   onSelect: (project: ProjectInfo) => void;
@@ -29,6 +30,7 @@ export default function ProjectList({
   activeTabId: string | null;
   onResume: (id: string, project: ProjectInfo) => void;
   onPipelineSettings: (project: ProjectInfo) => void;
+  onNewSession: (project: ProjectInfo) => void;
 }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -166,6 +168,7 @@ export default function ProjectList({
               >
                 <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
               </button>
+              <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>
               <button className="project-settings-edit" onClick={() => void editBaseBranch(project)} title={`Project settings for ${project.name}`} aria-label={`Project settings for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2.1 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.5 3.1h5l.5-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z"/></svg></button>
             </div>
             <div className="project-sessions" data-collapsed={isCollapsed}>

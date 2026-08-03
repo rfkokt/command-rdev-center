@@ -175,6 +175,7 @@ export default function ChatView({
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<{ step: string; completed: number; total: number } | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -1386,6 +1387,7 @@ export default function ChatView({
               </details>;
             })()}
             {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {m.role === "assistant" && m.text && !m.isStreaming && <button className="chat-copy" onClick={() => navigator.clipboard.writeText(m.text).then(() => { setCopiedMessageId(m.id); window.setTimeout(() => setCopiedMessageId((id) => id === m.id ? null : id), 1600); }).catch((error) => onToast(`Copy failed: ${String(error)}`))} aria-label="Copy assistant response" title="Copy response">{copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}</button>}
             {m.role === "system" && shouldOfferRestart(m.text) && (
               <button onClick={() => handleRestart(true)} className="chat-restart" disabled={isRestarting}>
                 {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
