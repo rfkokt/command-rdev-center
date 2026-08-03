@@ -25,7 +25,7 @@ import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
-import DiffPanel from "./DiffPanel";
+import ProjectFilesSidebar from "./ProjectFilesSidebar";
 
 type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
@@ -39,6 +39,33 @@ type SessionStats = {
 };
 
 const MAX_HISTORY = 600;
+type DiffSide = { number?: number; text: string; kind: "same" | "removed" | "added" | "empty" };
+type DiffRow = { before: DiffSide; after: DiffSide };
+function sideBySide(patch: string): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let oldLine = 0, newLine = 0;
+  const removed: DiffSide[] = [], added: DiffSide[] = [];
+  const flush = () => {
+    const count = Math.max(removed.length, added.length);
+    for (let i = 0; i < count; i++) rows.push({ before: removed[i] ?? { text: "", kind: "empty" }, after: added[i] ?? { text: "", kind: "empty" } });
+    removed.length = added.length = 0;
+  };
+  for (const line of patch.split("\n")) {
+    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunk) { flush(); oldLine = Number(hunk[1]); newLine = Number(hunk[2]); continue; }
+    if (/^(diff --git|index |--- |\+\+\+ )/.test(line) || (!oldLine && !newLine)) continue;
+    if (line.startsWith("-")) removed.push({ number: oldLine++, text: line.slice(1), kind: "removed" });
+    else if (line.startsWith("+")) added.push({ number: newLine++, text: line.slice(1), kind: "added" });
+    else { flush(); const text = line.startsWith(" ") ? line.slice(1) : line; rows.push({ before: { number: oldLine++, text, kind: "same" }, after: { number: newLine++, text, kind: "same" } }); }
+  }
+  flush(); return rows;
+}
+function splitPatch(patch: string) {
+  const rows = sideBySide(patch);
+  return rows.map((row, index) => (
+    <div className="split-row" key={index}>{[row.before, row.after].map((side, si) => <div className={`diff-line ${side.kind}`} key={si}><span>{side.number ?? ""}</span><code>{side.text || " "}</code></div>)}</div>
+  ));
+}
 
 function formatTaskDuration(ms: number) {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -181,6 +208,9 @@ export default function ChatView({
   const [commandIndex, setCommandIndex] = useState(0);
   const [editingFile, setEditingFile] = useState<string | null>(null);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [rightChangesCollapsed, setRightChangesCollapsed] = useState(false);
+  const [rightExplorerCollapsed, setRightExplorerCollapsed] = useState(false);
+  const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
@@ -1377,7 +1407,7 @@ export default function ChatView({
         </div>
       )}
 
-      <div className={worktree ? "chat-content has-activity-rail" : "chat-content"}>
+      <div className={worktree || !globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
         {isNewSessionLoading && (
@@ -1591,25 +1621,86 @@ export default function ChatView({
       </div>
       </div>
       {!globalChat && atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
-      {worktree && <div className="activity-rail">
-        <button className={rightSidebarOpen ? "active" : ""} onClick={() => setRightSidebarOpen((open) => !open)} title="Changes" aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length} files)` : ""}`} aria-expanded={rightSidebarOpen}>⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
-      </div>}
-      {worktree && rightSidebarOpen && <DiffPanel
-        worktreePath={worktree.worktree_path}
-        parentRef={worktree.parent_ref}
-        editingFile={editingFile}
-        open={rightSidebarOpen}
-        diff={worktreeDiff}
-        loading={diffLoading}
-        onRefresh={refreshDiff}
-        onClose={() => setRightSidebarOpen(false)}
-        onToast={onToast}
-        onHandoff={() => {
-          const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}. Follow its required pipeline logging and report any logging failure.`;
-          setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
-          sendRaw({ type: "prompt", message });
-        }}
-      />}
+      {/* VSCode-style right sidebar: activity bar + explorer (project files) + view diff */}
+      <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}${!globalChat ? "" : " hidden-rail"}`}>
+        {!globalChat && (
+          <div className="activity-rail vscode-rail">
+            <button
+              className={`${!rightExplorerCollapsed ? "active" : ""}`}
+              onClick={() => { setRightSidebarOpen(true); setRightExplorerCollapsed(false); }}
+              title="Explorer · Project files"
+              aria-label="Explorer"
+              aria-expanded={!rightExplorerCollapsed && rightSidebarOpen}
+            >≣</button>
+            {worktree && (
+              <button
+                className={`${!rightChangesCollapsed ? "active" : ""}`}
+                onClick={() => { setRightSidebarOpen(true); setRightChangesCollapsed(false); }}
+                title="Source Control · Changes"
+                aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
+                aria-expanded={!rightChangesCollapsed && rightSidebarOpen}
+              >⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
+            )}
+            <button onClick={refreshDiff} disabled={diffLoading || !worktree} title="Refresh diff" aria-label="Refresh diff">↻</button>
+          </div>
+        )}
+        {rightSidebarOpen && !globalChat && (
+          <div className="code-sidebar-panel">
+            {/* Explorer section */}
+            <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`}>
+              <button className="code-section-toggle" onClick={() => setRightExplorerCollapsed((c) => !c)} aria-expanded={!rightExplorerCollapsed}>
+                <span>{rightExplorerCollapsed ? "›" : "⌄"}</span><small>EXPLORER</small><strong>{projectName.toUpperCase()}</strong>
+              </button>
+              {!rightExplorerCollapsed && (
+                <div className="code-section-body">
+                  <ProjectFilesSidebar
+                    projectPath={projectPath}
+                    projectName={projectName}
+                    refreshKey={worktreeDiff?.files.length ?? 0}
+                    onOpenAt={(name) => { setEditingFile(name); setExpandedDiff(name); }}
+                  />
+                </div>
+              )}
+            </section>
+            {/* Source Control / Diff */}
+            {worktree && (
+              <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`}>
+                <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
+                  <span>{rightChangesCollapsed ? "›" : "⌄"}</span><small>SOURCE CONTROL</small><strong>CHANGES{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
+                  {diffLoading && <small style={{ marginLeft: "auto" }}>LOADING…</small>}
+                </button>
+                {!rightChangesCollapsed && (
+                  <div className="code-section-body diff-code-body">
+                    {!worktreeDiff || worktreeDiff.files.length === 0 ? (
+                      <p className="code-empty">{diffLoading ? "LOADING…" : "WORKTREE CLEAN"}</p>
+                    ) : (
+                      <>
+                        <div className="code-diff-list">
+                          {worktreeDiff.files.map((file) => (
+                            <details key={`${file.path}-${editingFile === file.path}`} open={expandedDiff ? expandedDiff === file.path : editingFile === file.path || undefined}>
+                              <summary onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
+                              {file.patch ? <div className="split-diff vscode-split"><header><span>BEFORE</span><span>AFTER</span></header>{splitPatch(file.patch)}</div> : <p className="code-empty">Binary or untracked — no textual diff.</p>}
+                            </details>
+                          ))}
+                        </div>
+                        <button
+                          className="ship-changes"
+                          disabled={!worktreeDiff.files.length}
+                          onClick={() => {
+                            const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}. Follow its required pipeline logging and report any logging failure.`;
+                            setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
+                            void sendRaw({ type: "prompt", message });
+                          }}
+                        >SHIP CHANGES</button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+          </div>
+        )}
+      </div>
       <footer className="chat-status">
         <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
         {pipelineStatus && <button className="pipeline-chat-status" onClick={onOpenPipeline}>PIPELINE · {pipelineStatus.step} · {pipelineStatus.completed}/{pipelineStatus.total} · OPEN VIEW ↗</button>}
