@@ -62,6 +62,26 @@ fn safe_name(path: &Path) -> String {
         .collect::<String>()
 }
 const MAX_PROJECT_TEXT_BYTES: u64 = 1024 * 1024;
+const MAX_PROJECT_FILES: usize = 3000;
+const IGNORE_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".next",
+    ".turbo",
+    "graphify-out",
+    ".crc-worktrees",
+    "vendor",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".idea",
+    ".parcel-cache",
+    "coverage",
+];
+const IGNORE_FILES: &[&str] = &[".DS_Store", "Thumbs.db"]; 
 fn persist(name: String, text: String, kind: String) -> Result<String, String> {
     let text = text.trim().chars().take(2_000_000).collect::<String>();
     if text.is_empty() { return Err("Source text is empty".into()); }
@@ -75,7 +95,13 @@ fn text_file(path: &Path) -> Result<String, String> { String::from_utf8(fs::read
 #[derive(Clone, Serialize)]
 pub struct RagSourceDetail { pub id: String, pub name: String, pub kind: String, pub chars: usize, pub modified_ms: u128, pub text: String }
 #[derive(Clone, Serialize)]
-pub struct ProjectFile { pub name: String, pub path: String, pub chars: usize, pub modified_ms: u128 }
+pub struct ProjectFile {
+    pub name: String,
+    pub path: String,
+    pub relative: String,
+    pub chars: usize,
+    pub modified_ms: u128,
+}
 #[tauri::command]
 pub fn get_rag_source(id: String) -> Result<RagSourceDetail, String> {
     let path = source_path(&id)?;
@@ -87,36 +113,74 @@ pub fn get_rag_source(id: String) -> Result<RagSourceDetail, String> {
 #[tauri::command]
 pub fn list_project_files(project_path: String) -> Result<Vec<ProjectFile>, String> {
     let canonical = crate::projects::ensure_registered_project_returning(Path::new(&project_path))?;
-    let mut files = Vec::new();
-    for entry in fs::read_dir(&canonical).map_err(|e| e.to_string())?.filter_map(Result::ok) {
-        let p = entry.path();
-        if p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) { continue; }
-        let meta = match fs::metadata(&p) { Ok(m) => m, Err(_) => continue };
-        if !meta.is_file() || meta.len() > MAX_PROJECT_TEXT_BYTES { continue; }
-        let Some(ext) = p.extension().and_then(|x| x.to_str()).map(|s| s.to_ascii_lowercase()) else { continue };
-        if !PROJECT_TEXT.contains(&ext.as_str()) { continue; }
-        let chars = text_file(&p).map(|t| t.chars().count()).unwrap_or(0);
-        let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
-        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
-        files.push(ProjectFile { name, path: p.to_string_lossy().to_string(), chars, modified_ms });
+    let mut files: Vec<ProjectFile> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![canonical.clone()];
+    let mut visited_dirs = 0usize;
+    while let Some(dir) = stack.pop() {
+        visited_dirs += 1;
+        if visited_dirs > 600 { break; }
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.filter_map(Result::ok) {
+            if files.len() >= MAX_PROJECT_FILES { break; }
+            let p = entry.path();
+            let fname_os = match p.file_name() { Some(n) => n, None => continue };
+            let fname = match fname_os.to_str() { Some(s) => s, None => continue };
+            if IGNORE_DIRS.contains(&fname) { continue; }
+            if IGNORE_FILES.contains(&fname) { continue; }
+            // hide dot dirs except .github
+            if fname.starts_with('.') && fname != ".github" {
+                // if it's a dir, skip entirely; if file like .env we allow
+                if fs::metadata(&p).map(|m| m.is_dir()).unwrap_or(false) { continue; }
+            }
+            let meta = match fs::metadata(&p) { Ok(m) => m, Err(_) => continue };
+            if meta.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            if !meta.is_file() { continue; }
+            if meta.len() > MAX_PROJECT_TEXT_BYTES { continue; }
+            let relative = match p.strip_prefix(&canonical) {
+                Ok(r) => r.to_string_lossy().to_string(),
+                Err(_) => fname.to_string(),
+            };
+            if relative.is_empty() { continue; }
+            let chars = match text_file(&p) { Ok(t) => t.chars().count(), Err(_) => 0 };
+            let modified_ms = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
+            files.push(ProjectFile {
+                name: fname.to_string(),
+                path: p.to_string_lossy().to_string(),
+                relative,
+                chars,
+                modified_ms,
+            });
+        }
+        if files.len() >= MAX_PROJECT_FILES { break; }
     }
-    files.sort_by(|a,b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    files.sort_by(|a, b| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()));
     Ok(files)
 }
 #[tauri::command]
 pub fn get_project_file_content(project_path: String, file_name: String) -> Result<String, String> {
-    if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") { return Err("Invalid file name".into()); }
-    let file_name = file_name.trim();
-    if file_name.is_empty() { return Err("File name required".into()); }
+    // file_name is relative path like src/App.tsx
+    let file_rel = file_name.trim();
+    if file_rel.is_empty() { return Err("File name required".into()); }
+    if file_rel.contains(".." ) || file_rel.contains('\0') { return Err("Invalid file path".into()); }
+    if Path::new(file_rel).is_absolute() { return Err("Absolute path not allowed".into()); }
+    for comp in Path::new(file_rel).components() {
+        if matches!(comp, std::path::Component::ParentDir) { return Err("Invalid file path".into()); }
+    }
     let canonical = crate::projects::ensure_registered_project_returning(Path::new(&project_path))?;
-    let target = canonical.join(file_name);
+    let target = canonical.join(file_rel);
     let target_canon = target.canonicalize().map_err(|e| format!("File not found: {e}"))?;
     if !target_canon.starts_with(&canonical) { return Err("Invalid file path".into()); }
     let meta = fs::metadata(&target_canon).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > MAX_PROJECT_TEXT_BYTES { return Err("File too large or not a regular file".into()); }
-    let ext = target_canon.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
-    if !PROJECT_TEXT.contains(&ext.as_str()) { return Err("Unsupported file type".into()); }
-    let content = text_file(&target_canon)?;
+    let content = text_file(&target_canon).map_err(|_| {
+        "Binary or non-UTF8 file — preview not available".to_string()
+    })?;
     Ok(content.chars().take(100_000).collect())
 }
 
