@@ -233,7 +233,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-panel > footer { border-top: 1px solid #37382f; border-bottom: 0; color: #6f7067; font-size: 10px; letter-spacing: .1em; }.settings-panel > footer div { display: flex; gap: 8px; }.settings-panel > footer button { padding: 8px 12px; }.settings-panel .save-settings { background: var(--accent); color: #111210; }
 /* VSCode-style right sidebar: explorer (project files) + source control */
 /* VSCode right sidebar: activity rail (52px) + panel 380px when open. Chat uses margin-right to avoid overlap */
-.code-sidebar-rail { position: absolute; z-index: 3; top: 0; right: 0; bottom: 30px; display: flex; pointer-events: none; }
+.code-sidebar-rail { position: absolute; z-index: 3; inset: 0 0 0 auto; display: flex; pointer-events: none; }
 .code-sidebar-rail .vscode-rail { position: relative; width: 52px; flex: none; pointer-events: auto; border-left: 1px solid var(--colors-hairline); background: #141512; display: flex; flex-direction: column; }
 .code-sidebar-panel { width: 380px; flex: none; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--colors-hairline); background: #141512; }
 .activity-rail.vscode-rail.inline { width: 44px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--colors-hairline); border-left: 0; background: #11120f; position: static; }
