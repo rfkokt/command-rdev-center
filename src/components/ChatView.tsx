@@ -146,6 +146,7 @@ export default function ChatView({
   projectPath,
   projectName,
   isGit,
+  repositories,
   pipelineType,
   chatId,
   sessionFile,
@@ -167,6 +168,7 @@ export default function ChatView({
   projectPath: string;
   projectName: string;
   isGit: boolean;
+  repositories: Array<{ name: string; path: string; base_branch?: string }>;
   pipelineType: string;
   chatId: string;
   sessionFile?: string;
@@ -194,6 +196,7 @@ export default function ChatView({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
+  const isWorkspace = repositories.length > 0;
   const [cwd, setCwd] = useState(projectPath);
   const cwdRef = useRef(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
@@ -390,12 +393,16 @@ export default function ChatView({
   }, [isActive, isGit, projectPath, refreshGraph, onToast]);
 
   const refreshDiff = useCallback(async () => {
-    if (!worktree) return;
+    if (!worktree && !isWorkspace) return;
     setDiffLoading(true);
-    try { setWorktreeDiff(await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree.worktree_path, parentRef: worktree.parent_ref })); }
+    try {
+      setWorktreeDiff(isWorkspace
+        ? await invoke<WorktreeDiff>("get_workspace_diff", { repositories: repositories.map((repository) => [repository.name, repository.path, repository.base_branch ?? "main"]) })
+        : await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree!.worktree_path, parentRef: worktree!.parent_ref }));
+    }
     catch (error) { onToast(String(error)); }
     finally { setDiffLoading(false); }
-  }, [worktree, onToast]);
+  }, [worktree, isWorkspace, repositories, onToast]);
 
   useEffect(() => { if (globalChat || !isActive || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, isActive, agentStatus, refreshDiff]);
 
@@ -830,7 +837,7 @@ export default function ChatView({
         }
         graphReportRef.current = graph.report_path;
 
-        if (!isGit) {
+        if (!isGit || isWorkspace) {
           setCwd(projectPath);
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
@@ -892,7 +899,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, globalChat, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
+  }, [projectPath, projectName, isGit, isWorkspace, globalChat, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   useEffect(() => {
     if (globalChat || !devRunner) return;
@@ -1316,7 +1323,7 @@ export default function ChatView({
       <div className={globalChat ? "" : rightSidebarOpen ? "has-code-rail-rail-open" : "has-code-rail"} style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", paddingTop: "var(--spacing-sm)", paddingBottom: "var(--spacing-sm)", paddingLeft: "var(--spacing-md)", paddingRight: !globalChat ? (rightSidebarOpen ? "448px" : "68px") : "var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap", flexShrink: 0 }}>
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
         <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
-        {!globalChat && !isGit && <span className="category-tag">NOT ISOLATED</span>}
+        {!globalChat && !isGit && !isWorkspace && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
         {approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
@@ -1663,7 +1670,7 @@ export default function ChatView({
               aria-label="Explorer"
               aria-expanded={rightSidebarOpen && !rightExplorerCollapsed}
             >≣</button>
-            {worktree && (
+            {(worktree || isWorkspace) && (
               <button
                 className={rightSidebarOpen && !rightChangesCollapsed ? "active" : ""}
                 onClick={() => {
@@ -1675,7 +1682,7 @@ export default function ChatView({
                 aria-expanded={rightSidebarOpen && !rightChangesCollapsed}
               >⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
-            <button onClick={refreshDiff} disabled={diffLoading || !worktree} title="Refresh diff" aria-label="Refresh diff">↻</button>
+            <button onClick={refreshDiff} disabled={diffLoading || (!worktree && !isWorkspace)} title="Refresh diff" aria-label="Refresh diff">↻</button>
             {rightSidebarOpen && <button onClick={() => setRightSidebarOpen(false)} title="Hide sidebar" aria-label="Hide sidebar" style={{ marginTop: "auto" }}>✕</button>}
           </div>
           {rightSidebarOpen && (
@@ -1706,7 +1713,7 @@ export default function ChatView({
                   </div>
                 )}
               </section>
-              {worktree && !rightExplorerCollapsed && !rightChangesCollapsed && (
+              {(worktree || isWorkspace) && !rightExplorerCollapsed && !rightChangesCollapsed && (
                 <div 
                   style={{ height: 8, cursor: "row-resize", margin: "-4px 0", zIndex: 10, flexShrink: 0 }}
                   onPointerDown={(e) => {
@@ -1719,7 +1726,7 @@ export default function ChatView({
                   }}
                 />
               )}
-              {worktree && (
+              {(worktree || isWorkspace) && (
                 <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`} style={{ flex: 1, maxHeight: "none" }}>
                   <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
                     <span>{rightChangesCollapsed ? "›" : "⌄"}</span><small>SOURCE CONTROL</small><strong>CHANGES{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
@@ -1758,7 +1765,7 @@ export default function ChatView({
         </div>
       )}
       <footer className="chat-status">
-        <span>⑂ {worktree?.branch ?? (isGit ? "main" : "not isolated")}</span>
+        <span>⑂ {worktree?.branch ?? (isWorkspace ? `${repositories.length} repositories` : isGit ? "main" : "not isolated")}</span>
         {pipelineStatus && <button className="pipeline-chat-status" onClick={onOpenPipeline}>PIPELINE · {pipelineStatus.step} · {pipelineStatus.completed}/{pipelineStatus.total} · OPEN VIEW ↗</button>}
         {sessionStats && <button className="usage-summary" onClick={() => setUsageOpen(true)} title="Show token usage">
           CONTEXT {sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`} · ↑ {formatTokens(sessionStats.tokens.input)} · ↓ {formatTokens(sessionStats.tokens.output)}

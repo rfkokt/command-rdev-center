@@ -260,6 +260,7 @@ export default function App() {
                 projectPath={tab.project.path}
                 projectName={tab.project.name}
                 isGit={tab.project.is_git}
+                repositories={tab.project.repositories ?? []}
                 globalChat={tab.global}
                 pipelineType={tab.project.pipeline_type ?? "Personal"}
                 chatId={tab.id}
