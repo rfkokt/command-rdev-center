@@ -21,6 +21,7 @@ pub struct ProjectInfo {
     pub is_git: bool,
     pub base_branch: Option<String>,
     pub pipeline_type: Option<String>,
+    pub repositories: Vec<ProjectInfo>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -243,9 +244,15 @@ pub fn find_owning_project(child: &Path) -> Option<PathBuf> {
         return None;
     };
     for saved in cfg.projects {
-        let saved_path = PathBuf::from(&saved);
-        let saved_canon = canonicalize_or_original(&saved_path);
+        let saved_canon = canonicalize_or_original(Path::new(&saved));
         if child_canon == saved_canon || child_canon.starts_with(&saved_canon) {
+            if let Some(repository) = child_canon
+                .ancestors()
+                .take_while(|ancestor| ancestor.starts_with(&saved_canon))
+                .find(|ancestor| ancestor.join(".git").exists())
+            {
+                return Some(repository.to_path_buf());
+            }
             return Some(saved_canon);
         }
     }
@@ -270,18 +277,20 @@ fn find_owning_project_for_worktree(cwd: &Path) -> Option<PathBuf> {
     let Ok(cfg) = read_config() else {
         return None;
     };
-    for saved in &cfg.projects {
-        let p = PathBuf::from(saved);
-        let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if repo_dir == sanitize_repo_name(fname) || repo_dir == fname {
-            return Some(canonicalize_or_original(&p));
-        }
-    }
     for saved in cfg.projects {
-        let p = PathBuf::from(&saved);
-        let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if sanitize_repo_name(fname).to_lowercase() == repo_dir.to_lowercase() {
-            return Some(canonicalize_or_original(&p));
+        let root = canonicalize_or_original(Path::new(&saved));
+        let mut repositories = discover_git_repositories(&root);
+        if root.join(".git").exists() && !repositories.contains(&root) {
+            repositories.push(root.clone());
+        }
+        if let Some(repository) = repositories.into_iter().find(|repository| {
+            let name = repository
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            repo_dir == name || repo_dir == sanitize_repo_name(name)
+        }) {
+            return Some(repository);
         }
     }
     None
@@ -360,6 +369,7 @@ fn project_info(
         is_git,
         base_branch,
         pipeline_type,
+        repositories: Vec::new(),
     })
 }
 
@@ -373,7 +383,7 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
             let canonical = canonicalize_or_original(Path::new(path))
                 .to_string_lossy()
                 .to_string();
-            project_info(
+            let mut project = project_info(
                 Path::new(path),
                 config
                     .base_branches
@@ -385,7 +395,23 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
                     .get(path)
                     .or_else(|| config.pipeline_types.get(&canonical))
                     .cloned(),
-            )
+            )?;
+            if !project.is_git {
+                project.repositories = discover_git_repositories(Path::new(&project.path))
+                    .into_iter()
+                    .map(|repository| {
+                        let canonical = canonicalize_or_original(&repository)
+                            .to_string_lossy()
+                            .to_string();
+                        project_info(
+                            &repository,
+                            config.base_branches.get(&canonical).cloned(),
+                            config.pipeline_types.get(&canonical).cloned(),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            }
+            Ok(project)
         })
         .collect()
 }
@@ -451,6 +477,50 @@ pub fn discover_projects(path: String) -> Result<Vec<ProjectInfo>, String> {
             project_info(&repository, Some(branch), None)
         })
         .collect()
+}
+
+#[tauri::command]
+pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
+    let root = canonicalize_or_original(Path::new(&path));
+    if !root.is_dir() {
+        return Err(format!("project directory not found: {}", root.display()));
+    }
+    let repositories = discover_git_repositories(&root);
+    if repositories.len() <= 1
+        && repositories
+            .first()
+            .is_none_or(|repository| repository == &root)
+    {
+        let branch = current_branch(root.to_string_lossy().as_ref());
+        return add_project(root.to_string_lossy().into_owned(), branch);
+    }
+    let mut config = read_config()?;
+    let root_string = root.to_string_lossy().into_owned();
+    config.projects.retain(|saved| {
+        let saved = canonicalize_or_original(Path::new(saved));
+        saved == root || !saved.starts_with(&root)
+    });
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)) == root)
+    {
+        config.projects.push(root_string.clone());
+    }
+    for repository in repositories {
+        let repository = canonicalize_or_original(&repository)
+            .to_string_lossy()
+            .into_owned();
+        let branch = current_branch(&repository)
+            .ok_or_else(|| format!("Git repository has no active branch: {repository}"))?;
+        config.base_branches.insert(repository, branch);
+    }
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    list_projects()?
+        .into_iter()
+        .find(|project| project.path == root_string)
+        .ok_or("workspace registration failed".into())
 }
 
 #[tauri::command]
