@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -23,6 +23,16 @@ describe("formatTokens", () => {
   test("formats footer token counts compactly", () => {
     expect(formatTokens(1_250)).toBe("1.3K");
     expect(formatTokens(128_000)).toBe("128K");
+  });
+});
+
+describe("inactive session memory bounds", () => {
+  test("keeps only the newest restored messages", () => {
+    expect(recentItems([1, 2, 3, 4], 2)).toEqual([3, 4]);
+  });
+
+  test("caps streamed thinking while preserving the newest content", () => {
+    expect(appendBoundedText("1234", "567", 5)).toBe("34567");
   });
 });
 

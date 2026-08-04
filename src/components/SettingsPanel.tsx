@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import GraphifySettings from "./GraphifySettings";
 import PipelineSettings from "./PipelineSettings";
 import RagSettings from "./RagSettings";
+import { useModalFocus } from "./useModalFocus";
 
 const GROUPS = [
   ["Model & Thinking", "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets", ["defaultProvider", "defaultModel", "defaultThinkingLevel", "thinkingBudgets"]],
@@ -29,6 +30,7 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
   const [backlogDir, setBacklogDir] = useState("");
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const panelRef = useModalFocus<HTMLElement>(onClose);
 
   useEffect(() => {
     void invoke<string>("get_backlog_dir").then(setBacklogDir).catch((e) => setError(String(e)));
@@ -100,8 +102,8 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
   }
 
   return <div className="settings-backdrop">
-    <section className="settings-panel" aria-label="Settings">
-      <header><div><small>CONFIGURATION</small><strong>{page === "pi" ? "PI SETTINGS" : page === "graphify" ? "GRAPHIFY SETTINGS" : page === "rag" ? "RAG SETTINGS" : "PIPELINE SETTINGS"}</strong></div><button onClick={onClose}>ESC</button></header>
+    <section ref={panelRef} className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
+      <header><div><small>CONFIGURATION</small><strong id="settings-title">{page === "pi" ? "PI SETTINGS" : page === "graphify" ? "GRAPHIFY SETTINGS" : page === "rag" ? "RAG SETTINGS" : "PIPELINE SETTINGS"}</strong></div><button onClick={onClose} aria-label="Close settings">ESC</button></header>
       <div className="settings-scope">
         <button className={page === "pi" ? "active" : ""} onClick={() => setPage("pi")}>PI</button>
         <button className={page === "graphify" ? "active" : ""} onClick={() => setPage("graphify")}>GRAPHIFY</button>

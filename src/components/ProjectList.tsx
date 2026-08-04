@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ListPicker from "./ListPicker";
+import { useModalFocus } from "./useModalFocus";
 
 export type ProjectInfo = {
   name: string;
@@ -40,6 +41,9 @@ export default function ProjectList({
   const [baseBranch, setBaseBranch] = useState("");
   const [projectToDelete, setProjectToDelete] = useState<ProjectInfo | null>(null);
   const [projectToEdit, setProjectToEdit] = useState<ProjectInfo | null>(null);
+  const registerDialogRef = useModalFocus<HTMLDivElement>(() => setPendingPath(null), Boolean(pendingPath));
+  const settingsDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToEdit(null), Boolean(projectToEdit));
+  const removeDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToDelete(null), Boolean(projectToDelete));
 
   useEffect(() => {
     invoke<ProjectInfo[]>("list_projects").then(setProjects).catch((e) => setErr(String(e)));
@@ -118,7 +122,7 @@ export default function ProjectList({
       <div className="projects-heading"><span>PROJECT INDEX</span><button onClick={addProject} title="Add project">＋</button></div>
       {err && <div className="sidebar-error">{err}</div>}
       {pendingPath && <div className="project-branch-backdrop" role="presentation">
-        <div className="project-branch-picker" role="dialog" aria-modal="true" aria-labelledby="base-branch-title">
+        <div ref={registerDialogRef} className="project-branch-picker" role="dialog" aria-modal="true" aria-labelledby="base-branch-title" tabIndex={-1}>
           <small>REGISTER PROJECT</small>
           <strong id="base-branch-title">Choose base branch</strong>
           <span>{pendingPath}</span>
@@ -128,7 +132,7 @@ export default function ProjectList({
         </div>
       </div>}
       {projectToEdit && <div className="project-branch-backdrop" role="presentation">
-        <div className="project-branch-picker project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-base-branch-title">
+        <div ref={settingsDialogRef} className="project-branch-picker project-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-base-branch-title" tabIndex={-1}>
           <small>PROJECT SETTINGS</small>
           <strong id="edit-base-branch-title">{projectToEdit.name}</strong>
           <span>{projectToEdit.path}</span>
@@ -140,7 +144,7 @@ export default function ProjectList({
       </div>}
       {projects.length === 0 && !err && <div className="project-empty">INDEX EMPTY</div>}
       {projectToDelete && <div className="project-branch-backdrop" role="presentation">
-        <div className="project-branch-picker project-remove-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-project-title">
+        <div ref={removeDialogRef} className="project-branch-picker project-remove-dialog" role="alertdialog" aria-modal="true" aria-labelledby="remove-project-title" tabIndex={-1}>
           <small>PROJECT INDEX / DESTRUCTIVE ACTION</small>
           <strong id="remove-project-title">Remove {projectToDelete.name}?</strong>
           <span>{projectToDelete.path}</span>

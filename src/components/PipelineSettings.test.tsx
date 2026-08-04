@@ -88,6 +88,22 @@ test("keeps the latest preset when responses resolve out of order", async () => 
   vi.restoreAllMocks();
 });
 
+test("consultant dialog closes on Escape and restores trigger focus", async () => {
+  invoke.mockImplementation((command: string) => command === "get_pipeline_config" ? Promise.resolve(config) : Promise.resolve(undefined));
+  render(<PipelineSettings projectPath="/projects/demo" projectName="demo" onToast={vi.fn()} />);
+  await screen.findByDisplayValue("pnpm test");
+  const trigger = screen.getByRole("button", { name: /CONSULT AI/ });
+  trigger.focus();
+  fireEvent.click(trigger);
+
+  const dialog = await screen.findByRole("dialog", { name: "AI pipeline consultant" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
+  fireEvent.keyDown(document, { key: "Escape" });
+
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "AI pipeline consultant" })).not.toBeInTheDocument());
+  expect(trigger).toHaveFocus();
+});
+
 test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", async () => {
   invoke.mockImplementation((command: string) => command === "get_pipeline_config" ? Promise.resolve(config) : Promise.resolve(undefined));
   render(<PipelineSettings projectPath="/projects/demo" projectName="demo" onToast={vi.fn()} />);

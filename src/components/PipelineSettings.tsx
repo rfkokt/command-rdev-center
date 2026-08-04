@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useModalFocus } from "./useModalFocus";
 
 export type PipelineStep = { id: string; name: string; mode?: "shell" | "ai_commit" | "confirm"; command: string; enabled: boolean; failure_policy: "ai_fix" | "ask_user" | "stop" | "continue"; max_attempts: number; prompt?: string; options?: string[] };
 export type PipelineConfig = { preset: "Personal" | "KAI" | "MBI" | "Custom"; steps: PipelineStep[] };
@@ -70,6 +71,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
   const consultantGeneration = useRef(0);
   const consultInputRef = useRef<HTMLTextAreaElement>(null);
   const requestRef = useRef(0);
+  const consultantRef = useModalFocus<HTMLElement>(closeConsultant, consultOpen);
 
   useEffect(() => {
     let active = true;
@@ -91,14 +93,6 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
     setDraft(null);
     return resetConsultant;
   }, [projectPath]);
-
-  useEffect(() => {
-    if (!consultOpen) return;
-    consultInputRef.current?.focus();
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") closeConsultant(); };
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
-  }, [consultOpen]);
 
   if (!config) return <div className="settings-loading">{error || "LOADING PIPELINE…"}</div>;
 
@@ -258,7 +252,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
       {invalid && <div className="settings-error" role="alert">Every step needs a name, command, and 1–10 attempts.</div>}
       {error && <div className="settings-error" role="alert">{error}</div>}
     </div>
-    {consultOpen && <aside className="pipeline-consult-drawer" role="dialog" aria-modal="true" aria-label="AI pipeline consultant">
+    {consultOpen && <aside ref={consultantRef} className="pipeline-consult-drawer" role="dialog" aria-modal="true" aria-label="AI pipeline consultant" tabIndex={-1}>
       <header><div><small>PROJECT COPILOT</small><strong>PIPELINE CONSULTANT</strong></div><button onClick={closeConsultant} aria-label="Close pipeline consultant">×</button></header>
       <div className="pipeline-consult-copy">Describe what should happen before push, merge, deploy, or release. The AI asks questions, then returns a draft for review.</div>
       <div className="pipeline-consult-chat">{consultMessages.map((message, index) => <article className={message.role} key={index}><small>{message.role === "user" ? "YOU" : "AI"}</small><p>{message.text}</p></article>)}</div>

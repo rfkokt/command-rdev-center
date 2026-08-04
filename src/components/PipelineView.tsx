@@ -24,20 +24,25 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [inputValue, setInputValue] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let loading = false;
+    let active = true;
+    setLoaded(false);
+    setData({ runs: [] });
     const load = () => {
       if (loading || document.hidden) return;
       loading = true;
       void invoke<PipelineData>("get_pipeline_data", { projectPath: projectPath ?? null }).then((pipeline) => {
+        if (!active) return;
         setData(pipeline);
         setError(null);
-      }).catch((e) => setError(String(e))).finally(() => { loading = false; });
+      }).catch((e) => { if (active) setError(String(e)); }).finally(() => { if (active) { loading = false; setLoaded(true); } });
     };
     load();
     const timer = setInterval(load, 3000);
-    return () => clearInterval(timer);
+    return () => { active = false; clearInterval(timer); };
   }, [projectPath]);
 
   const runs = data.current
@@ -71,10 +76,10 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
     void invoke("provide_pipeline_input", { projectPath, input: { nonce: pending.nonce, runId: pending.run_id, stepId: pending.step_id, mode: pending.mode, sessionId: null, executionCwd: pending.execution_cwd, value: inputValue, message: null, paths: [] } }).then(() => setInputValue("")).catch((e) => setError(String(e)));
   };
   return <section className="pipeline-view">
-    <header><div><small>APP-OWNED AUTOMATION</small><strong>PIPELINE</strong></div><div className="pipeline-actions">{projectPath && !current && <button onClick={() => void start()} disabled={starting}>{starting ? "STARTING…" : `RUN ${projectName ?? "PIPELINE"}`}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} RUNS · LIVE REFRESH 3S</span></header>
+    <header><div><small>{projectName ? `PROJECT · ${projectName}` : "PROJECT REQUIRED"}</small><strong>Pipeline</strong></div><div className="pipeline-actions">{projectPath && !current && <button onClick={() => void start()} disabled={starting}>{starting ? "STARTING…" : `RUN ${projectName ?? "PIPELINE"}`}</button>}{current && <><button onClick={() => control("cancel_pipeline")}>CANCEL</button>{current.stages.some((stage) => stage.status === "fail") && <><button onClick={() => control("retry_pipeline_step")}>RETRY</button><button onClick={() => control("skip_pipeline_step")}>SKIP</button></>}</>}</div><span>{runs.length} runs · live refresh 3s</span></header>
     {current && data.sonar_phase && <section className="sonar-progress" role="status" aria-live="polite"><span className="sonar-radar" aria-hidden="true"><i /><i /><b /></span><div><small>SONARQUBE QUALITY GATE</small><strong>{data.sonar_phase}</strong><span>Scan masih berjalan. Pipeline akan lanjut otomatis setelah Quality Gate selesai.</span></div><em>LIVE</em></section>}
     {pending && <section className="pipeline-input-prompt"><strong>{pending.step}</strong><span>{pending.mode === "ai_commit" ? "Open the matching project chat so AI can propose paths and a commit message." : pending.prompt}</span>{pending.mode === "confirm" && <div>{pending.options.map((option) => <button className={inputValue === option ? "active" : ""} onClick={() => setInputValue(option)} key={option}>{option}</button>)}<button onClick={provide} disabled={!inputValue}>CONFIRM</button></div>}</section>}
-    {error ? <p className="kanban-error">{error}</p> : !runs.length ? <div className="pipeline-empty">No pipeline runs yet.</div> : <div className="pipeline-scroll">
+    {!loaded ? <div className="pipeline-project-empty"><strong>Loading pipeline</strong><span>Reading current run and local history…</span></div> : error ? <p className="kanban-error" role="alert">{error}</p> : !projectPath && !runs.length ? <div className="pipeline-project-empty"><strong>Choose a project</strong><span>Select a project session before opening its automation history.</span></div> : !runs.length ? <div className="pipeline-empty">No pipeline runs yet. Start the first run from this project.</div> : <div className="pipeline-scroll">
       {projectTypes.flatMap((projectType) => {
         const typeRuns = runs.filter((run) => run.project_type === projectType);
         const layouts = [...new Set(typeRuns.map((run) => run.stages.map((stage) => stage.name).join("\u0000")))];

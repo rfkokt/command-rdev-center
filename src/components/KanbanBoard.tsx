@@ -12,6 +12,7 @@ export default function KanbanBoard() {
   const [projectFilter, setProjectFilter] = useState("");
   const [picFilter, setPicFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let loading = false;
@@ -21,7 +22,7 @@ export default function KanbanBoard() {
       void invoke<KanbanProject[]>("list_kanban_tasks").then((tasks) => {
         setProjects(tasks);
         setError(null);
-      }).catch((e) => setError(String(e))).finally(() => { loading = false; });
+      }).catch((e) => setError(String(e))).finally(() => { loading = false; setLoaded(true); });
     };
     load();
     const timer = setInterval(load, 3000);
@@ -51,14 +52,14 @@ export default function KanbanBoard() {
 
   return <section className="kanban-board">
     <header>
-      <div><small>LOCAL BACKLOG</small><strong>KANBAN</strong></div>
+      <div><small>PROJECT OPERATIONS</small><strong>Tasks</strong></div>
       <div className="kanban-filters">
         <ListPicker label="Project" value={projectFilter} options={projects.map(({ project }) => project)} onChange={setProjectFilter} />
         <ListPicker label="PIC" value={picFilter} options={pics} onChange={setPicFilter} />
       </div>
-      <span>{tasks.length} / {allTasks.length} TASKS · {projects.length} PROJECTS</span>
+      <span>{tasks.length} / {allTasks.length} tasks · {projects.length} projects</span>
     </header>
-    {error ? <p className="kanban-error">{error}</p> : <div className="kanban-columns">
+    {!loaded ? <div className="pipeline-project-empty" role="status"><strong>Loading tasks</strong><span>Reading local project backlogs…</span></div> : error ? <p className="kanban-error" role="alert">{error}</p> : allTasks.length === 0 ? <div className="pipeline-project-empty"><strong>No tasks yet</strong><span>Backlog items from configured projects will appear here.</span></div> : tasks.length === 0 ? <div className="pipeline-project-empty"><strong>No matching tasks</strong><span>Clear one or more filters to restore the board.</span></div> : <div className="kanban-columns">
       {COLUMNS.map((column) => {
         const items = tasks.filter((task) => task.status?.trim().toLowerCase() === column.toLowerCase());
         return <section className="kanban-column" key={column}>

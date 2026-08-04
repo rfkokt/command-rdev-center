@@ -65,18 +65,18 @@ test("notifies when an update is available", async () => {
   expect(screen.getByRole("button", { name: /UPDATE v1.3.0/ })).toBeInTheDocument();
 });
 
-test("opens the dedicated knowledge workspace", () => {
+test("opens the dedicated knowledge workspace", async () => {
   render(<App />);
   fireEvent.click(screen.getByRole("button", { name: /Knowledge/ }));
-  expect(screen.getByText("Knowledge view")).toBeInTheDocument();
+  expect(await screen.findByText("Knowledge view")).toBeInTheDocument();
 });
 
-test("keeps the active chat mounted while Kanban is open", () => {
+test("keeps the active chat mounted while Kanban is open", async () => {
   render(<App />);
 
   fireEvent.click(screen.getByRole("button", { name: /Kanban/ }));
 
-  expect(screen.getByText("Kanban view")).toBeInTheDocument();
+  expect(await screen.findByText("Kanban view")).toBeInTheDocument();
   expect(screen.getByText("Chat view")).not.toBeVisible();
   expect(unmounted).not.toHaveBeenCalled();
 });

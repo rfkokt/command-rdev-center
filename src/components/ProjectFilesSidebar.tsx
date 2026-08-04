@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import MarkdownMessage from "./MarkdownMessage";
+import { useModalFocus } from "./useModalFocus";
 
 type ProjectFile = { name: string; path: string; relative: string; chars: number; modified_ms: number };
 
@@ -52,6 +53,8 @@ export default function ProjectFilesSidebar({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
+  const closePreview = useCallback(() => { setPreview(null); setPreviewPos({ x: 0, y: 0 }); }, []);
+  const previewRef = useModalFocus<HTMLDivElement>(closePreview, previewLoading || preview !== null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
   const [recentPaths, setRecentPaths] = useState<string[]>(() => {
     try {
@@ -136,6 +139,7 @@ export default function ProjectFilesSidebar({
     <section className="project-files-sidebar" aria-label={`Files in ${projectName}`}>
       <div className="pfs-toolbar">
         <input
+          aria-label="Filter project files"
           placeholder="FILTER FILES…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
@@ -206,16 +210,16 @@ export default function ProjectFilesSidebar({
           <small>1MB max · ignored: node_modules, target, dist, etc</small>
         </div>
       ) : (
-        <div className="pfs-tree" role="tree">
+        <ul className="pfs-tree">
           <TreeFolder folder={tree} depth={0} expanded={expanded} toggleFolder={toggleFolder} openFile={openFile} previewName={preview?.name ?? null} />
-        </div>
+        </ul>
       )}
 
       {(previewLoading || preview) && (
-        <div style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", padding: 20 }}>
-          <div className="diff-panel" style={{ width: 900, maxWidth: "calc(100vw - 480px)", height: 700, maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", overflow: "hidden" }}>
+        <div className="file-preview-backdrop">
+          <div ref={previewRef} className="diff-panel file-preview-dialog" role="dialog" aria-modal="true" aria-label={preview ? `Preview ${preview.name}` : "Loading file preview"} tabIndex={-1} style={{ transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out" }}>
             <div 
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none" }}
+              className="file-preview-header"
               onPointerDown={(e) => {
                 e.preventDefault(); // Prevent text selection
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -249,15 +253,15 @@ export default function ProjectFilesSidebar({
                 e.currentTarget.style.cursor = "grab";
               }}
             >
-              <div style={{ display: "grid", gap: 4 }}>
-                <small style={{ color: "var(--accent)", fontSize: 10, letterSpacing: "0.1em" }}>FILE PREVIEW (READONLY)</small>
-                <strong style={{ fontSize: 14 }}>{preview?.name ?? "Loading…"}</strong>
+              <div className="file-preview-title">
+                <small>FILE PREVIEW (READONLY)</small>
+                <strong>{preview?.name ?? "Loading…"}</strong>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" style={{ padding: "6px 12px", border: "1px solid var(--colors-hairline-strong)", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent", color: "var(--colors-body)" }} onPointerDown={(e) => e.stopPropagation()}>
+              <div className="file-preview-actions">
+                <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" onPointerDown={(e) => e.stopPropagation()}>
                   ⧉ COPY
                 </button>
-                <button onClick={() => { setPreview(null); setPreviewPos({ x: 0, y: 0 }); }} title="Close preview" style={{ padding: "6px 12px", border: "1px solid #ff7069", color: "#ff9b96", fontSize: 10, letterSpacing: "0.1em", borderRadius: 4, cursor: "pointer", background: "transparent" }} onPointerDown={(e) => e.stopPropagation()}>
+                <button className="file-preview-close" onClick={closePreview} title="Close preview" onPointerDown={(e) => e.stopPropagation()}>
                   ✕ CLOSE
                 </button>
               </div>
@@ -265,7 +269,7 @@ export default function ProjectFilesSidebar({
             <style>{`.clickable-import:hover { color: var(--accent) !important; background: #2a2b27; border-radius: 2px; cursor: pointer; }`}</style>
             {previewLoading ? <div style={{ margin: "auto", color: "var(--colors-muted)" }}>LOADING FILE…</div> : preview && (
               preview.name.endsWith(".md") || preview.name.endsWith(".mdx") ? (
-                <div style={{ margin: 0, padding: "20px 30px", flex: 1, overflow: "auto", background: "#0e0f0c", color: "#dcded2" }}>
+                <div className="file-preview-content markdown-preview">
                   <MarkdownMessage>{preview.content}</MarkdownMessage>
                 </div>
               ) : (
@@ -290,7 +294,7 @@ export default function ProjectFilesSidebar({
                 }} dangerouslySetInnerHTML={{ __html: highlightCode(preview.content) }} />
               )
             )}
-            <footer style={{ padding: "8px 20px", borderTop: "1px solid var(--colors-hairline)", fontSize: 10, color: "var(--colors-muted-soft)", background: "#1a1b18" }}>
+            <footer className="file-preview-footer">
               <span>{preview ? `${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
             </footer>
           </div>
@@ -319,42 +323,36 @@ function TreeFolder({
   const sortedFolders = [...folder.folders.values()].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   const sortedFiles = [...folder.files].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
-  return (
-    <>
-      {depth > 0 && (
-        <button className="pfs-folder" style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
-          <span className="pfs-folder-chevron">{isExpanded ? "⌄" : "›"}</span>
-          <span className="pfs-folder-icon">{isExpanded ? "📂" : "📁"}</span>
-          <span className="pfs-folder-name">{folder.name}</span>
-          <small className="pfs-folder-count">
-            {folder.folders.size + folder.files.length}
-          </small>
+  const children = (depth === 0 || isExpanded) && <>
+    {sortedFolders.map((sub) => (
+      <TreeFolder key={sub.rel} folder={sub} depth={depth + 1} expanded={expanded} toggleFolder={toggleFolder} openFile={openFile} previewName={previewName} />
+    ))}
+    {sortedFiles.map((f) => (
+      <li key={f.path}>
+        <button
+          className={`pfs-file${previewName === f.relative ? " active" : ""}`}
+          style={{ paddingLeft: 8 + depth * 12 + (depth > 0 ? 16 : 0) }}
+          onClick={() => openFile(f)}
+          title={`${f.relative} · ${f.chars} chars`}
+        >
+          <span className="pfs-file-icon" aria-hidden>{iconFor(f.name)}</span>
+          <span className="pfs-file-name">{f.name}</span>
+          <small className="pfs-file-meta">{f.chars ? shortChars(f.chars) : "bin"}</small>
         </button>
-      )}
-      {(depth === 0 || isExpanded) && (
-        <>
-          {sortedFolders.map((sub) => (
-            <TreeFolder key={sub.rel} folder={sub} depth={depth + 1} expanded={expanded} toggleFolder={toggleFolder} openFile={openFile} previewName={previewName} />
-          ))}
-          {sortedFiles.map((f) => (
-            <button
-              key={f.path}
-              className={`pfs-file${previewName === f.relative ? " active" : ""}`}
-              style={{ paddingLeft: 8 + depth * 12 + (depth > 0 ? 16 : 0) }}
-              onClick={() => openFile(f)}
-              title={`${f.relative} · ${f.chars} chars`}
-            >
-              <span className="pfs-file-icon" aria-hidden>
-                {iconFor(f.name)}
-              </span>
-              <span className="pfs-file-name">{f.name}</span>
-              <small className="pfs-file-meta">{f.chars ? shortChars(f.chars) : "bin"}</small>
-            </button>
-          ))}
-        </>
-      )}
-    </>
-  );
+      </li>
+    ))}
+  </>;
+
+  if (depth === 0) return children;
+  return <li>
+    <button className="pfs-folder" style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
+      <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? "⌄" : "›"}</span>
+      <span className="pfs-folder-icon" aria-hidden>{isExpanded ? "📂" : "📁"}</span>
+      <span className="pfs-folder-name">{folder.name}</span>
+      <small className="pfs-folder-count">{folder.folders.size + folder.files.length}</small>
+    </button>
+    {isExpanded && <ul>{children}</ul>}
+  </li>;
 }
 
 function shortChars(n: number) {

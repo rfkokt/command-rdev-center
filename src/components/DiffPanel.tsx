@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useModalFocus } from "./useModalFocus";
 
 type DiffFile = { path: string; status: string; added: number; removed: number; patch: string };
 type WorktreeDiff = { merge_base: string; files: DiffFile[] };
@@ -50,6 +51,7 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, open, 
   const [localLoading, setLocalLoading] = useState(false);
   const currentDiff = diff === undefined ? localDiff : diff;
   const isLoading = loading ?? localLoading;
+  const dialogRef = useModalFocus<HTMLElement>(onClose, open);
 
   const refresh = useCallback(async () => {
     if (onRefresh) return onRefresh();
@@ -60,15 +62,9 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, open, 
   }, [worktreePath, parentRef, onToast, onRefresh]);
 
   useEffect(() => { if (open && diff === undefined) refresh(); }, [open, diff, refresh]);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: KeyboardEvent) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [open, onClose]);
 
-  return <div className="diff-backdrop" role="dialog" aria-modal="true" aria-label="Changes" onMouseDown={onClose}>
-    <aside className="diff-panel" onMouseDown={(event) => event.stopPropagation()}>
+  return <div className="diff-backdrop" onMouseDown={onClose}>
+    <aside ref={dialogRef} className="diff-panel" role="dialog" aria-modal="true" aria-label="Changes" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
     <header>
       <strong>CHANGES</strong>
       <span>{editingFile ? `EDITING ${editingFile}` : currentDiff ? `${currentDiff.files.length} FILES` : "VIEW DIFF"}</span>

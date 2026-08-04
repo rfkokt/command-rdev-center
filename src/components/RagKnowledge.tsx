@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import MarkdownMessage from "./MarkdownMessage";
+import { useModalFocus } from "./useModalFocus";
 
 type Source = { id: string; name: string; kind: string; chars: number; modified_ms: number };
 type SourceDetail = { id: string; name: string; kind: string; chars: number; modified_ms: number; text: string };
@@ -16,8 +17,10 @@ export default function RagKnowledge({ onToast }: { onToast: (message: string) =
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<SourceDetail | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const previewRef = useModalFocus<HTMLElement>(() => setPreview(null), previewLoading || Boolean(preview));
 
-  const reload = useCallback(() => invoke<Source[]>("list_rag_sources").then(setSources).catch((e) => setError(String(e))), []);
+  const reload = useCallback(() => invoke<Source[]>("list_rag_sources").then((items) => { setSources(items); setError(""); }).catch((e) => setError(String(e))).finally(() => setLoaded(true)), []);
 
   const uploadPath = useCallback(async (file: string) => {
     const extension = file.split(".").pop()?.toLowerCase();
@@ -85,19 +88,17 @@ export default function RagKnowledge({ onToast }: { onToast: (message: string) =
     {dragging && <div className="rag-drop-hint"><div><strong>DROP DOCUMENT HERE</strong><small>PDF · DOCX · TXT · MD · CSV · JSON</small></div></div>}
 
     <header className="pipeline-header">
-      <div><small>GLOBAL CHAT / RAG</small><h1>KNOWLEDGE SOURCES</h1><p>Extracted text stored locally. Original uploads are not retained. Uploads are non-blocking.</p></div>
-      <button className="save-settings" onClick={() => void upload()}>ADD DOCUMENT</button>
+      <div><small>GLOBAL WORKSPACE</small><h1>Knowledge</h1><p>Local sources available to Global Chat. Extracted text stays on this device; original uploads are not retained.</p></div>
+      <button className="save-settings" onClick={() => void upload()}>Add source</button>
     </header>
 
-    <button className="settings-notice" style={{ width: "100%", minHeight: 90, borderStyle: "dashed" }} onClick={() => void upload()}>DROP A DOCUMENT ANYWHERE ON THIS PAGE · OR CLICK TO BROWSE · {uploading.length ? `${uploading.length} extracting…` : "idle"}</button>
+    <button className="settings-notice" style={{ width: "100%", minHeight: 90, borderStyle: "dashed" }} onClick={() => void upload()}>Drop a PDF, DOCX, TXT, MD, CSV, or JSON file here — or browse</button>
 
-    {error && <div className="settings-error" role="alert">{error}</div>}
-
-    {sources.length === 0 ? <div className="pipeline-project-empty"><strong>NO UPLOADED SOURCES</strong><span>Add PDF, DOCX, TXT, MD, CSV, or JSON knowledge. You can preview extracted text after upload.</span></div> : <div className="pipeline-table-wrap"><table className="pipeline-table"><thead><tr><th>Source</th><th>Type</th><th>Extracted text</th><th>Added</th><th /></tr></thead><tbody>{sources.map((source) => <tr key={source.id}><td><button className="rag-preview-link" onClick={() => void openPreview(source)} title="Preview extracted text">{source.name}</button></td><td>{source.kind.toUpperCase()}</td><td>{source.chars.toLocaleString()} chars</td><td>{new Date(source.modified_ms).toLocaleString()}</td><td style={{ display: "flex", gap: 6 }}><button onClick={() => void openPreview(source)}>PREVIEW</button><button onClick={() => void remove(source)}>DELETE</button></td></tr>)}</tbody></table></div>}
+    {!loaded ? <div className="pipeline-project-empty" role="status"><strong>Loading knowledge</strong><span>Reading locally extracted sources…</span></div> : error ? <div className="settings-error" role="alert">{error}</div> : sources.length === 0 ? <div className="pipeline-project-empty"><strong>No sources yet</strong><span>Add a supported document to make it available to Global Chat.</span></div> : <div className="pipeline-table-wrap"><table className="pipeline-table"><thead><tr><th>Source</th><th>Type</th><th>Extracted text</th><th>Added</th><th /></tr></thead><tbody>{sources.map((source) => <tr key={source.id}><td><button className="rag-preview-link" onClick={() => void openPreview(source)} title="Preview extracted text">{source.name}</button></td><td>{source.kind.toUpperCase()}</td><td>{source.chars.toLocaleString()} chars</td><td>{new Date(source.modified_ms).toLocaleString()}</td><td style={{ display: "flex", gap: 6 }}><button onClick={() => void openPreview(source)}>PREVIEW</button><button onClick={() => void remove(source)}>DELETE</button></td></tr>)}</tbody></table></div>}
 
     {/* Source preview modal */}
-    {(previewLoading || preview) && <div className="settings-backdrop" onClick={() => setPreview(null)}><section className="rag-preview-panel" onClick={(e) => e.stopPropagation()} aria-label="Preview extracted source">
-      <header><div><small>EXTRACTED TEXT · READONLY</small><strong>{preview?.name ?? "Loading…"}</strong><span>{preview ? `${preview.chars.toLocaleString()} chars · ${preview.kind}` : ""}</span></div><button onClick={() => setPreview(null)}>✕</button></header>
+    {(previewLoading || preview) && <div className="settings-backdrop" onClick={() => setPreview(null)}><section ref={previewRef} className="rag-preview-panel" role="dialog" aria-modal="true" aria-label={preview ? `Preview ${preview.name}` : "Loading source preview"} tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+      <header><div><small>EXTRACTED TEXT · READONLY</small><strong>{preview?.name ?? "Loading…"}</strong><span>{preview ? `${preview.chars.toLocaleString()} chars · ${preview.kind}` : ""}</span></div><button onClick={() => setPreview(null)} aria-label="Close source preview">✕</button></header>
       {previewLoading ? <div className="settings-loading">LOADING…</div> : preview && <main><MarkdownMessage>{preview.text.slice(0, 100000)}</MarkdownMessage></main>}
       <footer><span>{preview ? "Readonly preview · original file not retained" : ""}</span><button className="save-settings" onClick={() => setPreview(null)}>CLOSE</button></footer>
     </section></div>}

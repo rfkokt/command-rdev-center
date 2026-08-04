@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ApprovalRequest } from "../lib/rpc";
+import { useModalFocus } from "./useModalFocus";
 
 export default function ApprovalDialog({
   req,
@@ -10,10 +11,12 @@ export default function ApprovalDialog({
 }) {
   const [inputVal, setInputVal] = useState(req.prefill ?? "");
   const respond = (payload: Record<string, unknown>) => onRespond({ type: "extension_ui_response", id: req.id, ...payload });
+  const cancel = () => respond({ cancelled: true });
+  const dialogRef = useModalFocus<HTMLElement>(cancel);
 
   return (
-    <div className="approval-backdrop" role="dialog" aria-modal="true" aria-labelledby="approval-title" aria-describedby={req.message ? "approval-message" : undefined}>
-      <section className="approval-dialog">
+    <div className="approval-backdrop">
+      <section ref={dialogRef} className="approval-dialog" role="dialog" aria-modal="true" aria-labelledby="approval-title" aria-describedby={req.message ? "approval-message" : undefined} tabIndex={-1}>
         <header>
           <small>AGENT · FOLLOW-UP</small>
           <h2 id="approval-title">{req.title ?? "Input required"}</h2>
@@ -60,7 +63,7 @@ export default function ApprovalDialog({
           {(req.method === "input" || req.method === "editor") && (
             <button className="approval-submit" onClick={() => respond({ value: inputVal })}>Submit response →</button>
           )}
-          <button className="approval-cancel" onClick={() => respond({ cancelled: true })}>Cancel</button>
+          <button className="approval-cancel" onClick={cancel}>Cancel</button>
         </footer>
       </section>
     </div>

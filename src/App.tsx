@@ -1,8 +1,5 @@
-import "@fontsource/plus-jakarta-sans/400.css";
-import "@fontsource/plus-jakarta-sans/500.css";
-import "@fontsource/plus-jakarta-sans/700.css";
 import "@fontsource/jetbrains-mono/400.css";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { exit } from "@tauri-apps/plugin-process";
@@ -10,11 +7,13 @@ import { check } from "@tauri-apps/plugin-updater";
 import { onAction, registerActionTypes } from "@tauri-apps/plugin-notification";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
-import SettingsPanel from "./components/SettingsPanel";
-import KanbanBoard from "./components/KanbanBoard";
-import PipelineView from "./components/PipelineView";
-import RagKnowledge from "./components/RagKnowledge";
+const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
+const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
+const PipelineView = lazy(() => import("./components/PipelineView"));
+const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 import "./App.css";
+import "./core-workspace.css";
+import "./application-redesign.css";
 
 type Config = {
   pi_path: string;
@@ -180,13 +179,14 @@ export default function App() {
 
   return (
     <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
-      <aside className="sidebar">
+      <a className="skip-link" href="#workspace-content">Skip to workspace</a>
+      <aside className="sidebar" aria-label="Projects and sessions">
         <div className="sidebar-brand">
           <span className="brand-mark">R/</span>
           <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>
         </div>
-        <div className="sidebar-label"><span>SESSION ARCHIVE</span><i /></div>
-        {configErr && <div className="sidebar-error">Config error: {configErr} <button onClick={fetchConfig} style={{ color: "var(--accent)", marginLeft: "6px", textDecoration: "underline" }}>Retry</button></div>}
+        <div className="sidebar-label"><span>Sessions</span><i /></div>
+        {configErr && <div className="sidebar-error" role="alert">Config error: {configErr} <button onClick={fetchConfig}>Retry</button></div>}
         <ProjectList
           onOpen={openProject}
           onSelect={(project) => { setDashboard(null); setSelectedProject(project); }} 
@@ -202,30 +202,36 @@ export default function App() {
           }}
         />
         <div className="projects-panel">
-          <div className="projects-heading"><span>GLOBAL CHAT</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat">＋</button></div>
+          <div className="projects-heading"><span>Global chat</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat">＋</button></div>
           <div className="project-sessions">
             <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge" style={{ background: "var(--accent)", color: "#111", padding: "1px 5px", borderRadius: "8px", fontSize: "11px", fontWeight: "bold" }}>{tab.unread}</span>}</button>)}</div>
           </div>
           {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "2px", margin: "auto 10px 10px" }}>
-          <button title="Knowledge Base" className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "knowledge" ? null : "knowledge")}>
+        <nav className="sidebar-nav" aria-label="Workspace views">
+          <div className="sidebar-nav-label">Global</div>
+          <button title="Chat" className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`} aria-current={dashboard === null ? "page" : undefined} onClick={() => setDashboard(null)}>
+            <span className="nav-glyph" aria-hidden="true">›_</span><span>Chat</span>
+          </button>
+          <button title="Knowledge" className={`settings-button dashboard-button ${dashboard === "knowledge" ? "active" : ""}`} aria-current={dashboard === "knowledge" ? "page" : undefined} onClick={() => setDashboard("knowledge")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg>
-            <span>Knowledge Base</span>
+            <span>Knowledge</span>
           </button>
-          <button title="Kanban Board" className="settings-button" onClick={() => setDashboard((view) => view === "kanban" ? null : "kanban")}>
+          <div className="sidebar-nav-label">Project operations</div>
+          <button title="Tasks" aria-label="Kanban tasks" className={`settings-button ${dashboard === "kanban" ? "active" : ""}`} aria-current={dashboard === "kanban" ? "page" : undefined} onClick={() => setDashboard("kanban")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="2.5" y="3" width="19" height="18" rx="2.5"/><rect x="6" y="7" width="3.5" height="10" rx="1"/><rect x="10.5" y="7" width="3.5" height="12" rx="1"/><rect x="15" y="7" width="3.5" height="7" rx="1"/></svg>
-            <span>Kanban Board</span>
+            <span>Tasks</span>
           </button>
-          <button title="Pipeline" className="settings-button dashboard-button" onClick={() => setDashboard((view) => view === "pipeline" ? null : "pipeline")}>
+          <button title="Pipeline" className={`settings-button dashboard-button ${dashboard === "pipeline" ? "active" : ""}`} aria-current={dashboard === "pipeline" ? "page" : undefined} onClick={() => setDashboard("pipeline")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg>
             <span>Pipeline</span>
           </button>
+          <div className="sidebar-nav-label">System</div>
           <button title="Settings" className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
             <span>Settings</span>
           </button>
-        </div>
+        </nav>
         {appVersion && <small className="app-version">v{appVersion}</small>}
       </aside>
 
@@ -233,21 +239,21 @@ export default function App() {
         <header className="app-toolbar">
           <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>☰</button>
           <div className="workspace-title">
-            <span className="live-dot" />
-            <div><strong>{dashboard?.toUpperCase() ?? activeTab?.project.name ?? "NO PROJECT SELECTED"}</strong><small>LOCAL WORKSPACE</small></div>
+            <span className="live-dot" aria-hidden="true" />
+            <div><strong>{dashboard ?? activeTab?.project.name ?? "No project selected"}</strong><small>{activeTab ? "Local workspace · Ready" : "Local workspace · Idle"}</small></div>
           </div>
           <div className="toolbar-actions">
-            <button className="open-ide" onClick={installUpdate} disabled={updating}>
-              <span>{updating ? "UPDATING…" : availableVersion ? `UPDATE v${availableVersion}` : "CHECK UPDATE"}</span><b>↻</b>
+            <button className="toolbar-button toolbar-button-secondary" onClick={installUpdate} disabled={updating} aria-busy={updating} aria-label={updating ? "UPDATING" : availableVersion ? `UPDATE v${availableVersion}` : "CHECK UPDATE"}>
+              <span>{updating ? "Updating…" : availableVersion ? `Update v${availableVersion}` : "Check update"}</span><b aria-hidden="true">↻</b>
             </button>
-            <button className="open-ide"><span>OPEN IDE</span><b>↗</b></button>
+            <button className="toolbar-button toolbar-button-primary"><span>Open IDE</span><b aria-hidden="true">↗</b></button>
           </div>
         </header>
 
-        <div className="workspace-body">
-          {dashboard === "kanban" && <KanbanBoard />}
-          {dashboard === "pipeline" && <PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} />}
-          {dashboard === "knowledge" && <RagKnowledge onToast={addToast} />}
+        <div className="workspace-body" id="workspace-content" tabIndex={-1}>
+          {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard /></Suspense>}
+          {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
+          {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView
@@ -275,9 +281,10 @@ export default function App() {
             </div>
           )) : dashboard === null && (
             <div className="empty-state">
-              <span className="empty-index">00</span>
-              <strong>NO ACTIVE SESSION</strong>
-              <span>Add a project, or open Global Chat.</span>
+              <span className="empty-status"><i aria-hidden="true" /> Workspace idle</span>
+              <strong>No active session</strong>
+              <span>Open a project session or start Global Chat.</span>
+              <div><button onClick={openGlobalChat}>Open Global Chat</button></div>
             </div>
           )}
         </div>
@@ -299,7 +306,7 @@ export default function App() {
             </div>
           ))}
         </div>
-        {settingsOpen && <SettingsPanel projectPath={settingsProject?.path ?? selectedProject?.path ?? activeTab?.project.path} projectName={settingsProject?.name ?? selectedProject?.name ?? activeTab?.project.name} initialPage={settingsPage} onClose={() => setSettingsOpen(false)} onToast={addToast} />}
+        {settingsOpen && <Suspense fallback={<div className="settings-backdrop"><div className="settings-loading" role="status">Loading settings…</div></div>}><SettingsPanel projectPath={settingsProject?.path ?? selectedProject?.path ?? activeTab?.project.path} projectName={settingsProject?.name ?? selectedProject?.name ?? activeTab?.project.name} initialPage={settingsPage} onClose={() => setSettingsOpen(false)} onToast={addToast} /></Suspense>}
       </section>
     </main>
   );

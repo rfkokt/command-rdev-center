@@ -16,6 +16,14 @@ export function shouldShowChanges(message: Pick<ChatMessage, "id" | "role">, las
   return message.role === "assistant" && message.id === lastAssistantId && fileCount > 0;
 }
 
+export function appendBoundedText(current: string, delta: string, maxLength: number) {
+  return (current + delta).slice(-maxLength);
+}
+
+export function recentItems<T>(items: T[], maxItems: number) {
+  return items.slice(-maxItems);
+}
+
 export function preserveStreamedContent(streamed: string, completed: string) {
   if (!completed || streamed.endsWith(completed)) return streamed;
   if (!streamed) return completed;

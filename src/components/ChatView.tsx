@@ -7,6 +7,8 @@ import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/r
 import { parseApprovalRequest } from "../lib/rpc";
 import {
   formatTokens,
+  appendBoundedText,
+  recentItems,
   uid,
   shouldShowChanges,
   preserveStreamedContent,
@@ -26,6 +28,7 @@ import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
+import { useModalFocus } from "./useModalFocus";
 
 type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
@@ -247,16 +250,23 @@ export default function ChatView({
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
   const surfacedPipelineInputRef = useRef("");
   const taskStartedAtRef = useRef<number | null>(null);
+  const devDialogRef = useModalFocus<HTMLDivElement>(() => setPendingDevCommand(null), Boolean(pendingDevCommand) && !devStarting);
+  const modelDialogRef = useModalFocus<HTMLElement>(() => setModelPickerOpen(false), modelPickerOpen);
+  const resumeDialogRef = useModalFocus<HTMLElement>(() => setResumePickerOpen(false), resumePickerOpen);
+  const usageDialogRef = useModalFocus<HTMLElement>(() => setUsageOpen(false), usageOpen);
+  const imageDialogRef = useModalFocus<HTMLDivElement>(() => setPreviewImage(null), Boolean(previewImage));
+  const expandedDiffRef = useModalFocus<HTMLDivElement>(() => setExpandedDiff(null), Boolean(expandedDiff));
 
   cwdRef.current = cwd;
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (isActive) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [isActive, messages]);
 
   useEffect(() => {
+    if (!isActive) return;
     setFilePickerQuery(globalChat ? null : deriveAtQuery(input));
     const textarea = inputRef.current;
     if (textarea) {
@@ -309,7 +319,7 @@ export default function ChatView({
       const copy = [...prev];
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
-          copy[i] = { ...copy[i], thinking: (copy[i].thinking ?? "") + delta };
+          copy[i] = { ...copy[i], thinking: appendBoundedText(copy[i].thinking ?? "", delta, 200_000) };
           break;
         }
       }
@@ -363,7 +373,7 @@ export default function ChatView({
   }, [projectPath, refreshGraph, onToast]);
 
   useEffect(() => {
-    if (globalChat || !isGit) return;
+    if (globalChat || !isGit || !isActive) return;
     let fingerprint: string | null | undefined;
     const check = async () => {
       try {
@@ -377,7 +387,7 @@ export default function ChatView({
     void check();
     const id = window.setInterval(check, 5000);
     return () => window.clearInterval(id);
-  }, [isGit, projectPath, refreshGraph, onToast]);
+  }, [isActive, isGit, projectPath, refreshGraph, onToast]);
 
   const refreshDiff = useCallback(async () => {
     if (!worktree) return;
@@ -387,14 +397,14 @@ export default function ChatView({
     finally { setDiffLoading(false); }
   }, [worktree, onToast]);
 
-  useEffect(() => { if (globalChat || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, agentStatus, refreshDiff]);
+  useEffect(() => { if (globalChat || !isActive || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, isActive, agentStatus, refreshDiff]);
 
   useEffect(() => {
-    if (globalChat || agentStatus !== "running") return;
+    if (globalChat || !isActive || agentStatus !== "running") return;
     void refreshDiff();
     const id = window.setInterval(refreshDiff, 2000);
     return () => window.clearInterval(id);
-  }, [globalChat, agentStatus, refreshDiff]);
+  }, [globalChat, isActive, agentStatus, refreshDiff]);
 
   useEffect(() => {
     if (agentStatus !== "running") return;
@@ -591,8 +601,9 @@ export default function ChatView({
                 })
                 .filter(Boolean) as ChatMessage[];
               if (mapped.length > 0) {
-                setMessages((prev) => (prev.length === 0 ? mapped : prev));
-                if (mapped[mapped.length - 1].role === "user") setAgentStatus("stopped");
+                const recent = recentItems(mapped, MAX_HISTORY);
+                setMessages((prev) => (prev.length === 0 ? recent : prev));
+                if (recent[recent.length - 1].role === "user") setAgentStatus("stopped");
               }
             }
           }
@@ -1298,6 +1309,8 @@ export default function ChatView({
 
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
 
+  if (!isActive) return null;
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
       <div className={globalChat ? "" : rightSidebarOpen ? "has-code-rail-rail-open" : "has-code-rail"} style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", paddingTop: "var(--spacing-sm)", paddingBottom: "var(--spacing-sm)", paddingLeft: "var(--spacing-md)", paddingRight: !globalChat ? (rightSidebarOpen ? "448px" : "68px") : "var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap", flexShrink: 0 }}>
@@ -1335,7 +1348,7 @@ export default function ChatView({
       </div>
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
-        <div className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title">
+        <div ref={devDialogRef} className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title" tabIndex={-1}>
           <small>DEV SERVER</small>
           <strong id="dev-command-title">Run dev commands</strong>
           <textarea
@@ -1355,7 +1368,7 @@ export default function ChatView({
 
       {modelPickerOpen && (
         <div className="model-picker-backdrop" onMouseDown={() => setModelPickerOpen(false)}>
-          <section className="model-picker" role="dialog" aria-modal="true" aria-label="Select model" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={modelDialogRef} className="model-picker" role="dialog" aria-modal="true" aria-label="Select model" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <span>MODEL CATALOG</span>
               <button onClick={() => setModelPickerOpen(false)} aria-label="Close model picker">ESC</button>
@@ -1404,7 +1417,7 @@ export default function ChatView({
 
       {resumePickerOpen && (
         <div className="model-picker-backdrop" onMouseDown={() => setResumePickerOpen(false)}>
-          <section className="model-picker" role="dialog" aria-modal="true" aria-label="Resume session" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={resumeDialogRef} className="model-picker" role="dialog" aria-modal="true" aria-label="Resume session" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
             <header><span>PROJECT SESSIONS</span><button onClick={() => setResumePickerOpen(false)} aria-label="Close session picker">ESC</button></header>
             <div className="model-list" role="listbox">
               {resumableSessions.map((session) => <button key={session.sessionFile} onClick={() => { setResumePickerOpen(false); void sendRaw({ type: "switch_session", sessionPath: session.sessionFile }); }} role="option"><span className="model-arrow">→</span><strong>{session.title}</strong><small>{session.sessionFile}</small><b /></button>)}
@@ -1753,7 +1766,7 @@ export default function ChatView({
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
       </footer>
       {usageOpen && sessionStats && <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
-        <section className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" onMouseDown={(event) => event.stopPropagation()}>
+        <section ref={usageDialogRef} className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
           <header><strong id="usage-title">CONTEXT USAGE</strong><button onClick={() => setUsageOpen(false)} aria-label="Close context usage">×</button></header>
           <div className="usage-meter" role="meter" aria-label="Context used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={sessionStats.contextUsage?.percent ?? undefined}><i style={{ width: `${Math.min(100, sessionStats.contextUsage?.percent ?? 0)}%` }} /></div>
           <strong className="usage-percent">{sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`}</strong>
@@ -1765,10 +1778,10 @@ export default function ChatView({
           </dl>
         </section>
       </div>}
-      {previewImage && <div className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
+      {previewImage && <div ref={imageDialogRef} className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" tabIndex={-1} onClick={() => setPreviewImage(null)}><button onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
       {expandedDiff && worktreeDiff?.files.find(f => f.path === expandedDiff) && (
         <div style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none", padding: 20 }}>
-          <div className="diff-panel" style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", display: "flex", flexDirection: "column" }}>
+          <div ref={expandedDiffRef} className="diff-panel" role="dialog" aria-modal="true" aria-label={`Diff preview for ${expandedDiff}`} tabIndex={-1} style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", display: "flex", flexDirection: "column" }}>
             <div 
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none", flexShrink: 0 }}
               onPointerDown={(e) => {
