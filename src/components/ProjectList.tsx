@@ -161,9 +161,7 @@ export default function ProjectList({
         </div>
       </div>}
       {projects.map((project) => {
-        const repositories = project.repositories?.length ? project.repositories : [project];
-        const repositoryPaths = new Set(repositories.map((repository) => repository.path));
-        const projectTabs = tabs.filter((tab) => repositoryPaths.has(tab.project.path));
+        const projectTabs = tabs.filter((tab) => tab.project.path === project.path);
         const isCollapsed = collapsed.has(project.path);
         return (
           <div className="project-group" key={project.path}>
@@ -182,17 +180,11 @@ export default function ProjectList({
               >
                 <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
               </button>
-              {repositories.length === 1 && <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>}
+              <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>
               <button className="project-settings-edit" onClick={() => void editBaseBranch(project)} title={`Project settings for ${project.name}`} aria-label={`Project settings for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2.1 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.5 3.1h5l.5-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z"/></svg></button>
             </div>
             <div className="project-sessions" data-collapsed={isCollapsed}>
               <div>
-                {repositories.length > 1 && repositories.map((repository) => (
-                  <div className="project-row-wrap" key={repository.path}>
-                    <button className="conversation-row" onClick={() => onSelect(repository)}><span>⑂ {repository.name}</span></button>
-                    <button className="project-settings-edit" onClick={() => onNewSession(repository)} title={`New session for ${repository.name}`} aria-label={`New session for ${repository.name}`}>＋</button>
-                  </div>
-                ))}
                 {projectTabs.map((tab) => (
                   <button
                     key={tab.id}

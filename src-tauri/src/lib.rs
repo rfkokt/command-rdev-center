@@ -61,6 +61,7 @@ pub fn run() {
             pipeline::skip_pipeline_step,
             pipeline::provide_pipeline_input,
             diff::get_worktree_diff,
+            diff::get_workspace_diff,
             projects::list_projects,
             projects::list_project_branches,
             projects::discover_projects,

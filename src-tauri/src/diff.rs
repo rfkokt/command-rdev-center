@@ -158,6 +158,29 @@ fn get_worktree_diff_blocking(
 }
 
 #[tauri::command]
+pub async fn get_workspace_diff(
+    repositories: Vec<(String, String, String)>,
+) -> Result<WorktreeDiff, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut files = Vec::new();
+        for (name, path, parent_ref) in repositories {
+            crate::projects::ensure_path_allowed(Path::new(&path))?;
+            let diff = get_worktree_diff_blocking(path, parent_ref)?;
+            files.extend(diff.files.into_iter().map(|mut file| {
+                file.path = format!("{name}/{}", file.path);
+                file
+            }));
+        }
+        Ok(WorktreeDiff {
+            merge_base: String::new(),
+            files,
+        })
+    })
+    .await
+    .map_err(|error| format!("Workspace diff worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub async fn get_worktree_diff(
     worktree_path: String,
     parent_ref: String,
