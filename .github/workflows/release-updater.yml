@@ -45,6 +45,9 @@ jobs:
         run: |
           git pull --ff-only origin main
           VERSION="$(node -p 'const [major, minor, patch] = require("./package.json").version.split(".").map(Number); `${major}.${minor}.${patch + 1}`')"
+          while git rev-parse --verify --quiet "refs/tags/v$VERSION"; do
+            VERSION="$(VERSION="$VERSION" node -p 'const [major, minor, patch] = process.env.VERSION.split(".").map(Number); `${major}.${minor}.${patch + 1}`')"
+          done
           VERSION="$VERSION" node --input-type=module <<'JS'
           import { readFileSync, writeFileSync } from "node:fs";
 
