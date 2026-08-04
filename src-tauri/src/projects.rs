@@ -78,6 +78,24 @@ fn detect_kinds(dir: &Path) -> (Vec<String>, bool) {
     (kinds, is_git)
 }
 
+fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
+    let mut repositories = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .parents(true)
+        .require_git(false)
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .build()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
+        .map(|entry| entry.into_path())
+        .filter(|path| path.join(".git").exists())
+        .collect::<Vec<_>>();
+    repositories.sort();
+    repositories
+}
+
 fn dir_mtime_ms(path: &Path) -> u64 {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
@@ -411,6 +429,31 @@ pub fn project_base_branch(path: &Path) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn discover_projects(path: String) -> Result<Vec<ProjectInfo>, String> {
+    let root = PathBuf::from(path);
+    if !root.is_dir() {
+        return Err(format!("project directory not found: {}", root.display()));
+    }
+    let repositories = discover_git_repositories(&root);
+    if repositories.is_empty() {
+        return Ok(vec![project_info(&root, None, None)?]);
+    }
+    repositories
+        .into_iter()
+        .map(|repository| {
+            let branch =
+                current_branch(repository.to_string_lossy().as_ref()).ok_or_else(|| {
+                    format!(
+                        "Git repository has no active branch: {}",
+                        repository.display()
+                    )
+                })?;
+            project_info(&repository, Some(branch), None)
+        })
+        .collect()
+}
+
+#[tauri::command]
 pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectInfo, String> {
     let mut project = project_info(Path::new(&path), base_branch.clone(), None)?;
     if project.is_git {
@@ -574,5 +617,23 @@ mod tests {
         serde_json::from_str::<StoredConfig>(DEFAULT_CONFIG).unwrap();
         assert!(KANBAN_EXTENSION.contains("track_kanban_task"));
         assert!(GRAPHIFY_EXTENSION.contains("before_agent_start"));
+    }
+
+    #[test]
+    fn discovers_nested_git_repositories() {
+        let root =
+            std::env::temp_dir().join(format!("crc-project-discovery-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("backend/.git")).unwrap();
+        std::fs::create_dir_all(root.join("frontend/.git")).unwrap();
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+
+        let repositories = discover_git_repositories(&root);
+
+        assert_eq!(
+            repositories,
+            vec![root.join("backend"), root.join("frontend")]
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

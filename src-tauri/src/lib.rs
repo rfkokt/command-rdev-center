@@ -63,6 +63,7 @@ pub fn run() {
             diff::get_worktree_diff,
             projects::list_projects,
             projects::list_project_branches,
+            projects::discover_projects,
             projects::add_project,
             projects::update_project_base_branch,
             projects::update_project_pipeline_type,

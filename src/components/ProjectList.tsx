@@ -53,6 +53,16 @@ export default function ProjectList({
     const path = await open({ directory: true, multiple: false, title: "Add Project" });
     if (!path) return;
     try {
+      const discovered = await invoke<ProjectInfo[]>("discover_projects", { path });
+      if (discovered.length > 1 || discovered[0]?.path !== path) {
+        const registered = await Promise.all(discovered.map((project) =>
+          invoke<ProjectInfo>("add_project", { path: project.path, baseBranch: project.base_branch ?? null })
+        ));
+        setProjects((prev) => [...prev.filter((item) => !registered.some((project) => project.path === item.path)), ...registered]);
+        registered.forEach(onOpen);
+        setErr(null);
+        return;
+      }
       const nextBranches = await invoke<string[]>("list_project_branches", { path });
       if (nextBranches.length === 0) return registerProject(path);
       setPendingPath(path);
