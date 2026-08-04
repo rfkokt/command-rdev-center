@@ -27,3 +27,4 @@ src-tauri/target/
 **/graphify-out/
 .graphify_python
 .graphify_detect.json
+.github

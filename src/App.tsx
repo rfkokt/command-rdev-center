@@ -64,6 +64,8 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [availableVersion, setAvailableVersion] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(250);
+  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const addToast = useCallback((msg: string) => {
     setToasts((prev) => [...prev, msg].slice(-6));
@@ -180,7 +182,28 @@ export default function App() {
   return (
     <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
       <a className="skip-link" href="#workspace-content">Skip to workspace</a>
-      <aside className="sidebar" aria-label="Projects and sessions">
+      <aside className="sidebar" aria-label="Projects and sessions" style={{ width: sidebarWidth, position: "relative" }}>
+        <div
+          style={{ position: "absolute", top: 0, right: -4, bottom: 0, width: 8, cursor: "col-resize", zIndex: 100 }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            sidebarDragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            if (!sidebarDragRef.current) return;
+            const { startX, startWidth } = sidebarDragRef.current;
+            setSidebarWidth(Math.max(180, Math.min(600, startWidth + (e.clientX - startX))));
+          }}
+          onPointerUp={(e) => {
+            sidebarDragRef.current = null;
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }}
+          onPointerCancel={(e) => {
+            sidebarDragRef.current = null;
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }}
+        />
         <div className="sidebar-brand">
           <span className="brand-mark">R/</span>
           <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>

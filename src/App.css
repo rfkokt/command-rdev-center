@@ -287,6 +287,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .pfs-empty small { font-size: 13px; line-height: 1.4; }
 .pfs-list { list-style: none; margin: 0; padding: 0; overflow: auto; max-height: 280px; }
 .pfs-list.pfs-flat { max-height: none; flex: 1; }
+.pfs-tree, .pfs-tree ul { list-style: none; margin: 0; padding: 0; }
 .pfs-tree { flex: 1; overflow: auto; padding-bottom: 8px; }
 .pfs-folder { width: 100%; display: flex; align-items: center; gap: 5px; padding: 4px 8px; text-align: left; color: var(--colors-body); font-size: 13px; }
 .pfs-folder:hover { background: #1d1e1a; color: var(--colors-on-dark); }
@@ -315,3 +316,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-content.has-code-rail-rail-open { margin-right: 432px; }
 @media (max-width: 1100px) { .code-sidebar-panel { width: 320px; } .chat-content.has-code-rail-rail-open { margin-right: 372px; } }
 @media (max-width: 760px) { .sidebar { width: 230px; } .approval-backdrop { padding: 8px; } .approval-dialog { box-shadow: 8px 8px 0 #080906; } .approval-dialog header, .approval-message, .approval-input { padding-inline: 15px; } .approval-options { grid-template-columns: 1fr; } .diff-backdrop, .model-picker-backdrop { padding: 8px; }.diff-panel { height: calc(100vh - 16px); } .model-picker-backdrop { padding: 8px; } .model-picker { height: calc(100vh - 16px); } .model-list button { grid-template-columns: 20px minmax(0, 1fr) 18px; } .model-list small { display: none; }.open-ide span { display: none; }.settings-backdrop { padding: 8px; }.settings-panel { height: calc(100vh - 16px); }.settings-scope { overflow-x: auto; }.settings-scope span { display: none; }.settings-content { grid-template-columns: 1fr; }.settings-content nav { display: none; }.settings-form > label { grid-template-columns: 1fr; gap: 8px; } .code-sidebar-rail { display: none !important; } .chat-content.has-code-rail, .chat-content.has-code-rail-rail-open { margin-right: 0 !important; } }
+
+/* Chat UI Refinements */
+.chat-session { background: var(--colors-canvas, #090a08); }
+.chat-content { padding: 0 16px; }
+.chat-bubble-user, .chat-bubble-assistant { margin-bottom: 24px; }
+.tool-stack, .tool-call, .thinking-block { border-radius: 8px; overflow: hidden; margin-bottom: 12px; }
+.chat-status { padding: 8px 16px; background: var(--colors-surface-card, #11120f); border-top: 1px solid var(--colors-hairline); }
