@@ -64,6 +64,7 @@ pub fn run() {
             projects::list_projects,
             projects::list_project_branches,
             projects::discover_projects,
+            projects::add_workspace,
             projects::add_project,
             projects::update_project_base_branch,
             projects::update_project_pipeline_type,

@@ -12,6 +12,7 @@ export type ProjectInfo = {
   is_git: boolean;
   base_branch?: string;
   pipeline_type?: string;
+  repositories?: ProjectInfo[];
 };
 
 type Tab = { id: string; project: ProjectInfo; title?: string; unread?: number; interrupted?: boolean };
@@ -55,11 +56,8 @@ export default function ProjectList({
     try {
       const discovered = await invoke<ProjectInfo[]>("discover_projects", { path });
       if (discovered.length > 1 || discovered[0]?.path !== path) {
-        const registered = await Promise.all(discovered.map((project) =>
-          invoke<ProjectInfo>("add_project", { path: project.path, baseBranch: project.base_branch ?? null })
-        ));
-        setProjects((prev) => [...prev.filter((item) => !registered.some((project) => project.path === item.path)), ...registered]);
-        registered.forEach(onOpen);
+        const workspace = await invoke<ProjectInfo>("add_workspace", { path });
+        setProjects((prev) => [...prev.filter((item) => item.path !== workspace.path && !item.path.startsWith(`${workspace.path}/`)), workspace]);
         setErr(null);
         return;
       }
@@ -163,7 +161,9 @@ export default function ProjectList({
         </div>
       </div>}
       {projects.map((project) => {
-        const projectTabs = tabs.filter((tab) => tab.project.path === project.path);
+        const repositories = project.repositories?.length ? project.repositories : [project];
+        const repositoryPaths = new Set(repositories.map((repository) => repository.path));
+        const projectTabs = tabs.filter((tab) => repositoryPaths.has(tab.project.path));
         const isCollapsed = collapsed.has(project.path);
         return (
           <div className="project-group" key={project.path}>
@@ -182,11 +182,17 @@ export default function ProjectList({
               >
                 <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
               </button>
-              <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>
+              {repositories.length === 1 && <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>}
               <button className="project-settings-edit" onClick={() => void editBaseBranch(project)} title={`Project settings for ${project.name}`} aria-label={`Project settings for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2.1 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.5 3.1h5l.5-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z"/></svg></button>
             </div>
             <div className="project-sessions" data-collapsed={isCollapsed}>
               <div>
+                {repositories.length > 1 && repositories.map((repository) => (
+                  <div className="project-row-wrap" key={repository.path}>
+                    <button className="conversation-row" onClick={() => onSelect(repository)}><span>⑂ {repository.name}</span></button>
+                    <button className="project-settings-edit" onClick={() => onNewSession(repository)} title={`New session for ${repository.name}`} aria-label={`New session for ${repository.name}`}>＋</button>
+                  </div>
+                ))}
                 {projectTabs.map((tab) => (
                   <button
                     key={tab.id}
