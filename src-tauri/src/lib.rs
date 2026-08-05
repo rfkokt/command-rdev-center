@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+mod deep_research;
 mod dev_runner;
 mod diff;
 mod files;
@@ -35,11 +36,18 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| projects::init_config(app.handle()).map_err(Into::into))
+        .setup(|app| {
+            projects::init_config(app.handle())?;
+            deep_research::reconcile_startup().map_err(Into::into)
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            deep_research::start_deep_research,
+            deep_research::get_deep_research_data,
+            deep_research::cancel_deep_research,
+            deep_research::resume_deep_research,
             dev_runner::detect_dev_command,
             dev_runner::get_dev_server,
             dev_runner::start_dev_server,

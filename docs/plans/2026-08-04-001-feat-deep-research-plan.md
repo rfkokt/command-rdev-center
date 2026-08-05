@@ -221,7 +221,7 @@ flowchart TB
 
 ## Implementation Units
 
-- [ ] U1. **Extract a reusable isolated Pi session profile**
+- [x] U1. **Extract a reusable isolated Pi session profile**
 
 **Goal:** Allow internal callers to spawn a web-only research session without changing existing chat behavior or duplicating the Pi subprocess implementation.
 
@@ -255,7 +255,7 @@ flowchart TB
 
 ---
 
-- [ ] U2. **Add the durable research run store**
+- [x] U2. **Add the durable research run store**
 
 **Goal:** Persist one authoritative, recoverable snapshot per run without adding a database or second transcript store.
 
@@ -294,7 +294,7 @@ flowchart TB
 
 ---
 
-- [ ] U3. **Implement start, cancel, and resume orchestration**
+- [x] U3. **Implement start, cancel, and resume orchestration**
 
 **Goal:** Own the run lifecycle around dedicated Pi sessions with one active run, safe terminal races, and partial preservation.
 
@@ -337,7 +337,7 @@ flowchart TB
 
 ---
 
-- [ ] U4. **Reduce RPC events into progress and validated reports**
+- [x] U4. **Reduce RPC events into progress and validated reports**
 
 **Goal:** Convert existing Pi events into durable qualitative progress, partial output, sources, and a valid final report without a parallel event protocol.
 
@@ -380,7 +380,7 @@ flowchart TB
 
 ---
 
-- [ ] U5. **Build the global dashboard and report library**
+- [x] U5. **Build the global dashboard and report library**
 
 **Goal:** Provide start, active progress, cancellation, recovery actions, history, and safe report reading in the existing operations-console UI.
 
@@ -428,7 +428,7 @@ flowchart TB
 
 ---
 
-- [ ] U6. **Harden recovery and cross-layer integration**
+- [x] U6. **Harden recovery and cross-layer integration**
 
 **Goal:** Prove lifecycle behavior across process errors, app restart, stale events, storage failures, and UI reconciliation.
 
