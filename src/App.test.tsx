@@ -71,9 +71,9 @@ test("opens the dedicated knowledge workspace", async () => {
   expect(await screen.findByText("Knowledge view")).toBeInTheDocument();
 });
 
-test("does not expose Deep Research as a dedicated dashboard", () => {
+test("exposes the Deep Research report library", () => {
   render(<App />);
-  expect(screen.queryByTitle("Deep Research")).not.toBeInTheDocument();
+  expect(screen.getByTitle("Deep Research")).toBeInTheDocument();
 });
 
 test("keeps the active chat mounted while Kanban is open", async () => {

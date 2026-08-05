@@ -29,6 +29,7 @@ import ApprovalDialog from "./ApprovalDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import DeepResearchView from "./DeepResearchView";
+import type { ResearchRun } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -163,6 +164,7 @@ export default function ChatView({
   onClose,
   onToast,
   onOpenPipeline,
+  onOpenResearch,
   isActive,
   globalChat = false,
 }: {
@@ -185,11 +187,15 @@ export default function ChatView({
   onClose: () => void;
   onToast: (m: string) => void;
   onOpenPipeline: () => void;
+  onOpenResearch: (runId: string) => void;
   isActive: boolean;
   globalChat?: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [mode, setMode] = useState<"chat" | "research">("chat");
+  const [researchResults, setResearchResults] = useState<ResearchRun[]>([]);
+  const [researchHandoffError, setResearchHandoffError] = useState<string | null>(null);
+  const researchHandoffRef = useRef<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
@@ -1316,6 +1322,34 @@ export default function ChatView({
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [agentStatus, sendRaw, models, currentModel, isActive, mode]);
 
+  const loadResearchResults = useCallback(async () => {
+    const data = await invoke<{ runs: ResearchRun[] }>("get_deep_research_data");
+    setResearchResults(data.runs.filter((run) => run.origin_chat_id === chatId && run.handoff_delivered));
+  }, [chatId]);
+
+  useEffect(() => { void loadResearchResults().catch(() => {}); }, [loadResearchResults]);
+
+  const handleResearchCompleted = useCallback(async (run: ResearchRun) => {
+    if (run.origin_chat_id !== chatId || run.origin_session_id !== sessionId || researchHandoffRef.current) return;
+    researchHandoffRef.current = run.id;
+    setResearchHandoffError(null);
+    try {
+      const result = await invoke<{ outcome: "delivered" | "no_op"; run: ResearchRun }>("handoff_deep_research", { runId: run.id, originSessionId: sessionId });
+      if (result.outcome === "delivered" || result.run.handoff_delivered) {
+        await loadResearchResults();
+        setMode("chat");
+        window.setTimeout(() => inputRef.current?.focus(), 0);
+        onToast("Deep Research accepted by this chat process");
+      }
+    } catch (error) {
+      const message = String(error);
+      setResearchHandoffError(message);
+      onToast(`Research context handoff failed: ${message}`);
+    } finally {
+      researchHandoffRef.current = null;
+    }
+  }, [chatId, loadResearchResults, onToast, sessionId]);
+
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
 
   if (!isActive) return null;
@@ -1447,7 +1481,7 @@ export default function ChatView({
         </div>
       )}
 
-      {mode === "research" ? <DeepResearchView embedded /> : <>
+      {mode === "research" ? <><DeepResearchView embedded originChatId={chatId} originSessionId={sessionId} onCompleted={handleResearchCompleted} />{researchHandoffError && <div className="research-run-error" role="alert">Context handoff failed: {researchHandoffError}. Retry by reopening this completed run.</div>}</> : <>
       <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 52 } : undefined}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
@@ -1467,6 +1501,15 @@ export default function ChatView({
             AGENT IDLE. SEND PROMPT.
           </div>
         ))}
+        {researchResults.map((run) => {
+          const report = run.final_report ?? run.partial_report;
+          const preview = report.replace(/^#+\s.*$/gm, "").replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").trim();
+          return <article className="research-result-card" key={run.id}>
+            <small>Deep Research result</small><h3>{run.query}</h3>
+            <p>{preview.slice(0, 420)}{preview.length > 420 ? "…" : ""}</p>
+            <footer><span>{run.sources.length} sources</span><button onClick={() => onOpenResearch(run.id)}>Read full report</button></footer>
+          </article>;
+        })}
         {messages.map((m) => (
           <div
             key={m.id}
