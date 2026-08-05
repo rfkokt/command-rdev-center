@@ -31,6 +31,7 @@ const baseProps = {
   onClose: vi.fn(),
   onToast: vi.fn(),
   onOpenPipeline: vi.fn(),
+  onOpenResearch: vi.fn(),
   isActive: true,
 };
 
@@ -118,6 +119,6 @@ it("starts research only through the isolated research command", async () => {
   fireEvent.change(await screen.findByLabelText("Research question"), { target: { value: "Investigate this" } });
   fireEvent.click(screen.getByRole("button", { name: "Start research" }));
 
-  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_deep_research", { input: { query: "Investigate this", model: null, provider: null, thinking: null } }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_deep_research", { input: { query: "Investigate this", model: null, provider: null, thinking: null, originChatId: "chat-one", originSessionId: "chat-chat-one" } }));
   expect(invoke).not.toHaveBeenCalledWith("send_pi_command", expect.objectContaining({ jsonLine: expect.stringContaining("Investigate this") }));
 });
