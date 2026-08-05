@@ -4,7 +4,7 @@
 
 ## Platform
 
-web
+Tauri v2 desktop (macOS Apple Silicon), React 19 + Vite 7 + Rust, pnpm — single-user local-first
 
 ## Users
 

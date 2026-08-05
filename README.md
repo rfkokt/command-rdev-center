@@ -27,16 +27,28 @@ The global **Deep Research** dashboard runs one dedicated Pi session with only `
 ## Development
 
 ```bash
-npm install
-npm run tauri dev
+pnpm install
+pnpm tauri dev
+# or frontend only
+pnpm dev
 ```
 
 ## Checks
 
 ```bash
-npm test
-npm run build
+pnpm test
+pnpm run check:version  # cargo/tauri conf ↔ package.json sync
+pnpm build              # check:version + tsc + vite build
 ```
+
+## Scripts
+
+- `dev` — Vite dev server
+- `test` — vitest run (jsdom)
+- `check:version` — version sync gate
+- `build` — gate + typecheck + bundle
+- `preview` — serve build
+- `tauri` — Tauri CLI proxy (`pnpm tauri dev/build`)
 
 ## Documentation
 
