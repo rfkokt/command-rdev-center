@@ -28,6 +28,7 @@ import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
+import DeepResearchView from "./DeepResearchView";
 import { useModalFocus } from "./useModalFocus";
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -188,6 +189,7 @@ export default function ChatView({
   globalChat?: boolean;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [mode, setMode] = useState<"chat" | "research">("chat");
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
@@ -1295,7 +1297,7 @@ export default function ChatView({
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
-      if (!isActive) return;
+      if (!isActive || mode !== "chat") return;
       if (event.key === "Escape" && agentStatus === "running") {
         event.preventDefault();
         void handleAbort();
@@ -1312,7 +1314,7 @@ export default function ChatView({
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [agentStatus, sendRaw, models, currentModel, isActive]);
+  }, [agentStatus, sendRaw, models, currentModel, isActive, mode]);
 
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
 
@@ -1322,20 +1324,24 @@ export default function ChatView({
     <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", minHeight: 0, position: "relative" }}>
       <div className={globalChat ? "" : rightSidebarOpen ? "has-code-rail-rail-open" : "has-code-rail"} style={{ display: "flex", gap: "var(--spacing-xs)", alignItems: "center", paddingTop: "var(--spacing-sm)", paddingBottom: "var(--spacing-sm)", paddingLeft: "var(--spacing-md)", paddingRight: !globalChat ? (rightSidebarOpen ? "448px" : "68px") : "var(--spacing-md)", borderBottom: "1px solid var(--colors-hairline)", flexWrap: "wrap", flexShrink: 0 }}>
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
+        <div className="chat-mode-toggle" role="group" aria-label="Workspace mode">
+          <button className={mode === "chat" ? "active" : ""} aria-pressed={mode === "chat"} onClick={() => setMode("chat")}>Chat</button>
+          <button className={mode === "research" ? "active" : ""} aria-pressed={mode === "research"} onClick={() => setMode("research")}>Deep Research</button>
+        </div>
         <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
         {!globalChat && !isGit && !isWorkspace && <span className="category-tag">NOT ISOLATED</span>}
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
-        {approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
-        {!globalChat && graphStatus && <button
+        {mode === "chat" && approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
+        {mode === "chat" && !globalChat && graphStatus && <button
           className="category-tag graph-status"
           disabled={graphBusy}
           title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
           onClick={() => graphStatus.state !== "fresh" && refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
         >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}GRAPH {graphBusy ? "UPDATING…" : graphStatus.state}</button>}
-        {graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
+        {mode === "chat" && graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
         
-        <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
+        {mode === "chat" && <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
           {!globalChat && (
             <button
               onClick={() => setRightSidebarOpen((o) => !o)}
@@ -1351,7 +1357,7 @@ export default function ChatView({
           {!globalChat && devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
-        </div>
+        </div>}
       </div>
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
@@ -1441,6 +1447,7 @@ export default function ChatView({
         </div>
       )}
 
+      {mode === "research" ? <DeepResearchView embedded /> : <>
       <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 52 } : undefined}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
@@ -1772,6 +1779,7 @@ export default function ChatView({
         </button>}
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
       </footer>
+      </>}
       {usageOpen && sessionStats && <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
         <section ref={usageDialogRef} className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
           <header><strong id="usage-title">CONTEXT USAGE</strong><button onClick={() => setUsageOpen(false)} aria-label="Close context usage">×</button></header>
