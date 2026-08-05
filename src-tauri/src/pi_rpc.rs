@@ -131,7 +131,8 @@ fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
 
 pub fn global_chat_cwd() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-    let path = PathBuf::from(home).join("Library/Application Support/command-rdev-center/global-chat");
+    let path =
+        PathBuf::from(home).join("Library/Application Support/command-rdev-center/global-chat");
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path.canonicalize().map_err(|e| e.to_string())?)
 }
@@ -241,21 +242,31 @@ pub fn spawn_pi_rpc(
     // Global chat has an app-owned empty cwd. It never inherits project context.
     let owning_project = if global_chat {
         let expected = global_chat_cwd()?;
-        if Path::new(&cwd) != expected { return Err("global chat cwd is app-owned".into()); }
+        if Path::new(&cwd) != expected {
+            return Err("global chat cwd is app-owned".into());
+        }
         expected
-    } else { crate::projects::ensure_path_allowed(Path::new(&cwd))? };
+    } else {
+        crate::projects::ensure_path_allowed(Path::new(&cwd))?
+    };
 
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
     }
     let pi_path = ensure_pi_installed(&configured_pi_path)?;
 
-    // If session already exists, kill old one first (replace)
-    if let Ok(map) = sessions_map().lock() {
-        if let Some(h) = map.get(&session_id) {
-            if let Ok(mut maybe_child) = h.child.lock() {
-                if let Some(child) = maybe_child.as_mut() {
-                    let _ = child.kill();
+    // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
+    if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
+        return Err("research session is already running".into());
+    }
+    // Existing chat behavior remains replace-and-restart.
+    if !session_id.starts_with("research-") {
+        if let Ok(map) = sessions_map().lock() {
+            if let Some(h) = map.get(&session_id) {
+                if let Ok(mut maybe_child) = h.child.lock() {
+                    if let Some(child) = maybe_child.as_mut() {
+                        let _ = child.kill();
+                    }
                 }
             }
         }
@@ -297,9 +308,19 @@ pub fn spawn_pi_rpc(
         let extensions = crate::projects::extensions_path();
         args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
         args.push("--extension".into());
-        args.push(extensions.join("graphify-context.ts").to_string_lossy().into());
+        args.push(
+            extensions
+                .join("graphify-context.ts")
+                .to_string_lossy()
+                .into(),
+        );
         args.push("--extension".into());
-        args.push(extensions.join("pipeline-runner.ts").to_string_lossy().into());
+        args.push(
+            extensions
+                .join("pipeline-runner.ts")
+                .to_string_lossy()
+                .into(),
+        );
     }
     if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
         if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
@@ -310,33 +331,45 @@ pub fn spawn_pi_rpc(
             }
         }
     }
-    if !global_chat { if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
-        let report = crate::graph::validate_report_path(Path::new(&report))?;
-        args.push("--append-system-prompt".into());
-        args.push(report.to_string_lossy().to_string());
-    }}
-    if !global_chat { if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
-        let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
-        std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
-        args.push("--append-system-prompt".into());
-        args.push(prompt_path.to_string_lossy().to_string());
-    }}
+    if !global_chat {
+        if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
+            let report = crate::graph::validate_report_path(Path::new(&report))?;
+            args.push("--append-system-prompt".into());
+            args.push(report.to_string_lossy().to_string());
+        }
+    }
+    if !global_chat {
+        if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
+            let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
+            std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
+            args.push("--append-system-prompt".into());
+            args.push(prompt_path.to_string_lossy().to_string());
+        }
+    }
 
     // Graphs live in the durable owning checkout; disable automatic context until one exists.
     let graph_json_path = owning_project.join("graphify-out/graph.json");
     let project_name = owning_project.file_name().unwrap_or_default();
-    let task_dir = if global_chat { std::env::temp_dir() } else { crate::kanban::task_dir()? };
+    let task_dir = if global_chat {
+        std::env::temp_dir()
+    } else {
+        crate::kanban::task_dir()?
+    };
     let mut command = Command::new(&pi_path);
-    command.args(&args).current_dir(&cwd)
+    command
+        .args(&args)
+        .current_dir(&cwd)
         .env("PATH", path_for_pi(&pi_path.to_string_lossy()));
-    if !global_chat { command
-        .env("CRC_PROJECT_ROOT", &owning_project)
-        .env("CRC_PROJECT_CWD", &cwd)
-        .env("CRC_PROJECT_NAME", project_name)
-        .env("CRC_SESSION_ID", &session_id)
-        .env("CRC_TASK_DIR", task_dir)
-        .env("CRC_GRAPH_JSON", &graph_json_path)
-        .env("GRAPHIFY_GRAPH", &graph_json_path); }
+    if !global_chat {
+        command
+            .env("CRC_PROJECT_ROOT", &owning_project)
+            .env("CRC_PROJECT_CWD", &cwd)
+            .env("CRC_PROJECT_NAME", project_name)
+            .env("CRC_SESSION_ID", &session_id)
+            .env("CRC_TASK_DIR", task_dir)
+            .env("CRC_GRAPH_JSON", &graph_json_path)
+            .env("GRAPHIFY_GRAPH", &graph_json_path);
+    }
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -378,9 +411,12 @@ pub fn spawn_pi_rpc(
                         "pi-rpc-event",
                         RpcEvent {
                             session_id: sid.clone(),
-                            raw: line,
+                            raw: line.clone(),
                         },
                     );
+                    if sid.starts_with("research-") {
+                        crate::deep_research::observe_rpc(&app_clone, &sid, &line);
+                    }
                 }
                 Err(e) => {
                     let _ = app_clone.emit(
@@ -408,6 +444,9 @@ pub fn spawn_pi_rpc(
             })
             == Some(process_id);
         if is_current {
+            if sid.starts_with("research-") {
+                crate::deep_research::observe_end(&app_clone, &sid);
+            }
             let _ = app_clone.emit(
                 "pi-rpc-ended",
                 serde_json::json!({
@@ -594,7 +633,15 @@ mod tests {
     fn global_chat_search_tools_exclude_project_tools() {
         let tools = "web_search,source_check,fetch_content,get_search_content";
         assert!(tools.contains("web_search"));
-        for denied in ["read", "bash", "edit", "write", "track_kanban_task", "run_pipeline"] {
+        for denied in [
+            "read",
+            "bash",
+            "edit",
+            "write",
+            "track_kanban_task",
+            "run_pipeline",
+            "graphify",
+        ] {
             assert!(!tools.split(',').any(|tool| tool == denied));
         }
     }

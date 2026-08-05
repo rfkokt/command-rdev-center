@@ -2,7 +2,11 @@
 
 A local-first macOS desktop app for running the [`pi`](https://github.com/badlogic/pi-mono) coding agent across local projects.
 
-Command RDev Center combines project discovery, isolated task worktrees, native agent chat, git diff review, Graphify context, Kanban tracking, and push-pipeline visibility in one Tauri app.
+Command RDev Center combines project discovery, isolated task worktrees, native agent chat, local Deep Research, git diff review, Graphify context, Kanban tracking, and push-pipeline visibility in one Tauri app.
+
+## Deep Research
+
+The global **Deep Research** dashboard runs one dedicated Pi session with only `web_search`, `source_check`, `fetch_content`, and `get_search_content`. It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
 
 ## Stack
 
