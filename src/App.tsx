@@ -10,7 +10,6 @@ import ChatView from "./components/ChatView";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
-const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 import "./App.css";
 import "./core-workspace.css";
@@ -50,8 +49,6 @@ export default function App() {
     const unlisten = onAction((notification) => {
       const chatId = notification.extra?.chatId as string | undefined;
       if (chatId) setActiveTabId(chatId);
-      const runId = notification.extra?.researchRunId as string | undefined;
-      if (runId) { setResearchRunId(runId); setDashboard("research"); }
     });
     return () => { void unlisten.then((listener) => listener.unregister()); };
   }, []);
@@ -62,8 +59,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<"pi" | "pipeline">("pi");
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
-  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | null>(null);
-  const [researchRunId, setResearchRunId] = useState<string | null>(null);
+  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -240,10 +236,6 @@ export default function App() {
           <button title="Chat" className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`} aria-current={dashboard === null ? "page" : undefined} onClick={() => setDashboard(null)}>
             <span className="nav-glyph" aria-hidden="true">›_</span><span>Chat</span>
           </button>
-          <button title="Deep Research" className={`settings-button dashboard-button ${dashboard === "research" ? "active" : ""}`} aria-current={dashboard === "research" ? "page" : undefined} onClick={() => setDashboard("research")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M11 8v6M8 11h6"/></svg>
-            <span>Deep Research</span>
-          </button>
           <button title="Knowledge" className={`settings-button dashboard-button ${dashboard === "knowledge" ? "active" : ""}`} aria-current={dashboard === "knowledge" ? "page" : undefined} onClick={() => setDashboard("knowledge")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg>
             <span>Knowledge</span>
@@ -285,7 +277,6 @@ export default function App() {
           {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard /></Suspense>}
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
-          {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading Deep Research…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView

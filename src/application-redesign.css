@@ -208,7 +208,11 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
 .approval-submit { background: var(--app-accent); }
 .toast, .rag-upload-toast { border: 1px solid var(--app-line-strong); background: var(--app-panel-raised); box-shadow: 8px 8px 0 #080906; }
 
+.chat-mode-toggle { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--app-line); border-radius: 4px; background: var(--app-canvas); }
+.chat-mode-toggle button { min-height: 28px; padding: 0 9px; border-radius: 3px; color: var(--app-muted); font-size: 12px; font-weight: 700; }
+.chat-mode-toggle button.active { background: var(--app-panel-raised); color: var(--app-info); }
 .deep-research-view { min-height: 0; flex: 1; overflow: auto; padding: 24px 28px; background: var(--app-canvas); }
+.deep-research-view.embedded { width: 100%; }
 .deep-research-header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--app-line); }
 .deep-research-header div { display: grid; gap: 3px; }.deep-research-header small { color: var(--app-info); }.deep-research-header h1 { margin: 0; color: var(--app-ink); font-size: 20px; }.deep-research-header p, .deep-research-header > span { margin: 0; color: var(--app-muted); }
 .research-composer { display: grid; gap: 8px; margin: 20px 0; padding: 16px; border: 1px solid var(--app-line); background: var(--app-sidebar); }.research-composer label { color: var(--app-ink); font-weight: 700; }.research-composer textarea { min-height: 88px; padding: 12px; resize: vertical; border: 1px solid var(--app-line-strong); background: var(--app-canvas); }.research-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--app-muted); }.research-composer button, .research-detail > header button { min-height: 38px; padding: 0 14px; border: 1px solid var(--app-accent); color: var(--app-accent); font-weight: 700; }
