@@ -22,7 +22,7 @@ import {
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
-import ToolCallView, { isWebSearchTool } from "./ToolCall";
+import ToolCallView, { activityKind, isSubagentTool, isWebSearchTool, type ActivityKind } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
@@ -1519,15 +1519,36 @@ export default function ChatView({
             )}
           </div>
         ))}
-        {(() => { const phase = messages.flatMap((message) => message.toolCalls).map(buildPhase).find(Boolean); return phase ? <div className="build-progress" role="status" aria-live="polite"><span className="build-bars" aria-hidden="true"><i /><i /><i /><i /></span><div><small>AI AGENT BUILD</small><strong>{phase}</strong><span>Build masih berjalan. Jangan tutup chat ini.</span></div><em>LIVE</em></div> : null; })()}
-        {agentStatus === "running" && (
-          <div className="agent-working" role="status" aria-live="polite">
-            <span className="agent-working-mark"><i /><i /><i /></span>
-            <div><strong>AGENT WORKING</strong><small>{messages.some((message) => message.toolCalls.some((tool) => tool.phase !== "end")) ? "RUNNING TOOLS" : "THINKING"}</small></div>
+        {agentStatus === "running" && (() => {
+          const activeTool = messages.flatMap((message) => message.toolCalls).reverse().find((tool) => tool.phase !== "end");
+          const build = activeTool ? buildPhase(activeTool) : null;
+          const activity: ActivityKind | "subagent" | "web" | "build" | null = build
+            ? "build"
+            : activeTool && isSubagentTool(activeTool.name)
+              ? "subagent"
+              : activeTool && isWebSearchTool(activeTool.name)
+                ? "web"
+                : activeTool ? activityKind(activeTool.name) : null;
+          const working = activity === "subagent"
+            ? { title: "SUB-AGENT WORKING", detail: "DELEGATED TASK", icon: "nodes" }
+            : activity === "web"
+              ? { title: "WEB RESEARCH", detail: "SEARCHING SOURCES", icon: "search" }
+              : activity === "build"
+                ? { title: "AI AGENT BUILD", detail: build ?? "BUILDING PROJECT", icon: "build" }
+                : activity === "process"
+                  ? { title: "EXTERNAL AGENT", detail: "SESSION ACTIVE", icon: "terminal" }
+                  : activity === "index"
+                    ? { title: "CODEBASE MEMORY", detail: "INDEXING GRAPH", icon: "graph" }
+                    : activity === "loop"
+                      ? { title: "ITERATION LOOP", detail: "AUTONOMOUS PASS", icon: "loop" }
+                      : { title: "AGENT WORKING", detail: activeTool ? "RUNNING TOOLS" : "THINKING", icon: "meter" };
+          return <div className={`agent-working activity-${working.icon}`} role="status" aria-live="polite">
+            <span className="agent-working-mark" aria-hidden="true"><i /><i /><i /></span>
+            <div><strong>{working.title}</strong><small>{working.detail}</small></div>
             <span className="agent-working-line" />
             <button onClick={handleAbort}>ABORT</button>
-          </div>
-        )}
+          </div>;
+        })()}
         <div ref={bottomRef} />
       </div>
       </div>

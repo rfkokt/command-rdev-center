@@ -46,56 +46,6 @@ export function activityKind(name: string): ActivityKind | null {
   return null;
 }
 
-function subagentSummary(args: Record<string, unknown>) {
-  if (typeof args.action === "string") return { mode: "CONTROL", label: args.action };
-  if (Array.isArray(args.tasks)) return { mode: "PARALLEL", label: `${args.tasks.length} child agents` };
-  if (Array.isArray(args.chain)) return { mode: "CHAIN", label: `${args.chain.length} stages` };
-  return { mode: "DELEGATED", label: typeof args.agent === "string" ? args.agent : "child agent" };
-}
-
-function activityState(tc: TC) {
-  if (tc.phase !== "end") return { label: "RUNNING", className: "running" };
-  return tc.isError ? { label: "FAILED", className: "failed" } : { label: "COMPLETE", className: "complete" };
-}
-
-function SubagentView({ tc }: Readonly<{ tc: TC }>) {
-  const running = tc.phase !== "end";
-  const waiting = /(?:^|\.)subagent_wait$/.test(tc.name);
-  const summary = waiting ? { mode: "WAIT", label: typeof tc.args.id === "string" ? tc.args.id : "child agents" } : subagentSummary(tc.args);
-  const state = activityState(tc);
-  return <details className={`subagent-card ${state.className}`} open={running}>
-    <summary>
-      <span className="subagent-orbit" aria-hidden="true"><i /><i /></span>
-      <span><small>SUB-AGENT · {summary.mode}</small><strong>{summary.label}</strong></span>
-      <b>{state.label}</b>
-    </summary>
-    <div className="subagent-scan" aria-hidden="true"><i /></div>
-    <div className="subagent-detail"><strong>DELEGATION</strong><pre className="json-view"><JsonValue value={tc.args} /></pre>{tc.result != null && tc.phase === "end" && <><strong>{tc.isError ? "ERROR" : "RESULT"}</strong><pre className="json-view"><JsonValue value={tc.result} /></pre></>}</div>
-  </details>;
-}
-
-const activityCopy: Record<ActivityKind, { eyebrow: string; running: string; icon: string }> = {
-  process: { eyebrow: "EXTERNAL AGENT", running: "SESSION ACTIVE", icon: ">_" },
-  index: { eyebrow: "CODEBASE MEMORY", running: "INDEXING GRAPH", icon: "◇" },
-  loop: { eyebrow: "ITERATION LOOP", running: "AUTONOMOUS PASS", icon: "∞" },
-};
-
-function ActivityView({ tc, kind }: Readonly<{ tc: TC; kind: ActivityKind }>) {
-  const running = tc.phase !== "end";
-  const copy = activityCopy[kind];
-  const state = activityState(tc);
-  const stateLabel = running ? copy.running : state.label;
-  return <details className={`activity-card ${kind} ${state.className}`} open={running}>
-    <summary>
-      <span className="activity-glyph" aria-hidden="true">{copy.icon}</span>
-      <span><small>{copy.eyebrow}</small><strong>{preview(tc.args) || tc.name}</strong></span>
-      <b>{stateLabel}</b>
-    </summary>
-    <div className="activity-track" aria-hidden="true"><i /></div>
-    <div className="activity-detail"><strong>INPUT</strong><pre className="json-view"><JsonValue value={tc.args} /></pre>{tc.result != null && tc.phase === "end" && <><strong>{tc.isError ? "ERROR" : "RESULT"}</strong><pre className="json-view"><JsonValue value={tc.result} /></pre></>}</div>
-  </details>;
-}
-
 function WebSearchView({ tc }: { tc: TC }) {
   const queries = (Array.isArray(tc.args.queries) ? tc.args.queries : [tc.args.query]).filter((query): query is string => typeof query === "string" && Boolean(query));
   const result = normalize(tc.result) as { details?: { progress?: number; currentQuery?: string } } | null;
@@ -114,9 +64,6 @@ function WebSearchView({ tc }: { tc: TC }) {
 
 export default function ToolCallView({ tc }: { tc: TC }) {
   if (isWebSearchTool(tc.name)) return <WebSearchView tc={tc} />;
-  if (isSubagentTool(tc.name)) return <SubagentView tc={tc} />;
-  const activity = activityKind(tc.name);
-  if (activity) return <ActivityView tc={tc} kind={activity} />;
   const isStreaming = tc.phase !== "end";
   return <details className={`tool-call ${isStreaming ? "running" : ""}`} open={isStreaming}>
     <summary>
