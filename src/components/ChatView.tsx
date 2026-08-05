@@ -28,8 +28,7 @@ import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
-import DeepResearchView from "./DeepResearchView";
-import type { ResearchRun } from "../lib/deep-research";
+import { isActiveResearch, type ResearchRun } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -194,6 +193,7 @@ export default function ChatView({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [mode, setMode] = useState<"chat" | "research">("chat");
   const [researchResults, setResearchResults] = useState<ResearchRun[]>([]);
+  const [researchBusy, setResearchBusy] = useState(false);
   const [researchHandoffError, setResearchHandoffError] = useState<string | null>(null);
   const researchHandoffRef = useRef<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
@@ -1201,7 +1201,7 @@ export default function ChatView({
 
   const tablePreviews = useMemo(() => extractMarkdownTables(input), [input]);
 
-  const atHint = filePickerQuery !== null ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.` : "";
+  const atHint = mode === "chat" && filePickerQuery !== null ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.` : "";
   const filteredModels = models.filter((model) => model.toLowerCase().includes(modelQuery.trim().toLowerCase()));
 
   function openModelPicker() {
@@ -1218,7 +1218,7 @@ export default function ChatView({
     { name: "thinking", description: "Set reasoning level", source: "client" },
     { name: "compact", description: "Compact session context", source: "client" },
   ];
-  const slashCommands = slashQuery === null ? [] : [...clientCommands, ...commands]
+  const slashCommands = mode === "research" || slashQuery === null ? [] : [...clientCommands, ...commands]
     .filter((command, index, all) => command.name.toLowerCase().includes(slashQuery) && all.findIndex((item) => item.name === command.name) === index)
     .slice(0, 12);
 
@@ -1231,8 +1231,31 @@ export default function ChatView({
     setCommandIndex(0);
   }
 
-  async function submitInput(mode: "prompt" | "follow_up" | "steer" = "prompt") {
+  async function submitInput(submitMode: "prompt" | "follow_up" | "steer" = "prompt") {
     const text = input.trim();
+    if (mode === "research") {
+      if (!text || images.length || researchBusy || researchResults.some(isActiveResearch)) return;
+      setResearchBusy(true);
+      try {
+        const slash = modelRef.current.indexOf("/");
+        await invoke<ResearchRun>("start_deep_research", { input: {
+          query: text,
+          model: slash < 0 ? modelRef.current || null : modelRef.current.slice(slash + 1),
+          provider: slash < 0 ? null : modelRef.current.slice(0, slash),
+          thinking: thinkingRef.current || null,
+          originChatId: chatId,
+          originSessionId: sessionId,
+        } });
+        setInput("");
+        await loadResearchResults();
+        onToast("Deep Research started");
+      } catch (error) {
+        onToast(`Deep Research failed: ${String(error)}`);
+      } finally {
+        setResearchBusy(false);
+      }
+      return;
+    }
     if (text === "/new") {
       setInput("");
       setIsNewSessionLoading(true);
@@ -1267,7 +1290,7 @@ export default function ChatView({
     }
     if (agentStatus === "running") {
       if (!text) return;
-      const type = mode === "steer" ? "steer" : "follow_up";
+      const type = submitMode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
         const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
         const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
@@ -1324,10 +1347,14 @@ export default function ChatView({
 
   const loadResearchResults = useCallback(async () => {
     const data = await invoke<{ runs: ResearchRun[] }>("get_deep_research_data");
-    setResearchResults(data.runs.filter((run) => run.origin_chat_id === chatId && run.handoff_delivered));
-  }, [chatId]);
+    setResearchResults(data.runs.filter((run) => run.origin_chat_id === chatId && run.origin_session_id === sessionId));
+  }, [chatId, sessionId]);
 
-  useEffect(() => { void loadResearchResults().catch(() => {}); }, [loadResearchResults]);
+  useEffect(() => {
+    void loadResearchResults().catch(() => {});
+    const unlisten = listen("deep-research-changed", () => void loadResearchResults().catch(() => {}));
+    return () => { void unlisten.then((fn) => fn()); };
+  }, [loadResearchResults]);
 
   const handleResearchCompleted = useCallback(async (run: ResearchRun) => {
     if (run.origin_chat_id !== chatId || run.origin_session_id !== sessionId || researchHandoffRef.current) return;
@@ -1350,6 +1377,11 @@ export default function ChatView({
     }
   }, [chatId, loadResearchResults, onToast, sessionId]);
 
+  useEffect(() => {
+    const completed = researchResults.find((run) => run.state === "completed" && !run.handoff_delivered && run.handoff_state !== "delivering");
+    if (completed) void handleResearchCompleted(completed);
+  }, [handleResearchCompleted, researchResults]);
+
   const lastAssistantId = [...messages].reverse().find((message) => message.role === "assistant")?.id;
 
   if (!isActive) return null;
@@ -1360,7 +1392,14 @@ export default function ChatView({
         <strong className="title-md" style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}>{projectName}</strong>
         <div className="chat-mode-toggle" role="group" aria-label="Workspace mode">
           <button className={mode === "chat" ? "active" : ""} aria-pressed={mode === "chat"} onClick={() => setMode("chat")}>Chat</button>
-          <button className={mode === "research" ? "active" : ""} aria-pressed={mode === "research"} onClick={() => setMode("research")}>Deep Research</button>
+          <button
+            className={mode === "research" ? "active" : ""}
+            aria-pressed={mode === "research"}
+            disabled={images.length > 0}
+            title={images.length > 0 ? "Remove image attachments before starting Deep Research" : "Use the composer for Deep Research"}
+            aria-label={images.length > 0 ? "Deep Research unavailable while image attachments are present" : "Deep Research"}
+            onClick={() => setMode("research")}
+          >Deep Research</button>
         </div>
         <button onClick={handleClose} className="small-icon-button" title="Close chat" aria-label="Close chat">✕</button>
         {!globalChat && !isGit && !isWorkspace && <span className="category-tag">NOT ISOLATED</span>}
@@ -1481,7 +1520,6 @@ export default function ChatView({
         </div>
       )}
 
-      {mode === "research" ? <><DeepResearchView embedded originChatId={chatId} originSessionId={sessionId} onCompleted={handleResearchCompleted} />{researchHandoffError && <div className="research-run-error" role="alert">Context handoff failed: {researchHandoffError}. Retry by reopening this completed run.</div>}</> : <>
       <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 52 } : undefined}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
@@ -1501,13 +1539,14 @@ export default function ChatView({
             AGENT IDLE. SEND PROMPT.
           </div>
         ))}
+        {researchHandoffError && <div className="research-run-error" role="alert">Context handoff failed: {researchHandoffError}. Open the report to retry.</div>}
         {researchResults.map((run) => {
           const report = run.final_report ?? run.partial_report;
           const preview = report.replace(/^#+\s.*$/gm, "").replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").trim();
           return <article className="research-result-card" key={run.id}>
-            <small>Deep Research result</small><h3>{run.query}</h3>
-            <p>{preview.slice(0, 420)}{preview.length > 420 ? "…" : ""}</p>
-            <footer><span>{run.sources.length} sources</span><button onClick={() => onOpenResearch(run.id)}>Read full report</button></footer>
+            <small>{isActiveResearch(run) ? `Deep Research · ${run.progress.phase || run.state}` : "Deep Research result"}</small><h3>{run.query}</h3>
+            {isActiveResearch(run) ? <p>{run.progress.activity || "Preparing research…"}</p> : <p>{preview.slice(0, 420)}{preview.length > 420 ? "…" : ""}</p>}
+            <footer><span>{run.progress.searches} searches · {run.progress.reads} reads · {run.progress.checks} checks · {run.sources.length} sources</span><button onClick={() => onOpenResearch(run.id)}>{isActiveResearch(run) ? "Open progress" : "Read full report"}</button></footer>
           </article>;
         })}
         {messages.map((m) => (
@@ -1619,7 +1658,7 @@ export default function ChatView({
             ))}
           </div>
         )}
-        {!globalChat && filePickerQuery !== null && (
+        {mode === "chat" && !globalChat && filePickerQuery !== null && (
           <FilePicker
             projectPath={projectPath}
             query={filePickerQuery}
@@ -1672,7 +1711,7 @@ export default function ChatView({
             {tablePreviews[0].rows.length > 30 && <small className="table-preview-more">+{tablePreviews[0].rows.length - 30} more rows hidden — will still send full table</small>}
           </div>
         )}
-        {images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
+        {mode === "chat" && images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
         {agentStatus === "running" && <div className={`queue-status${pendingMessageCount ? " has-queue" : ""}`} role="status">
           <strong>{pendingMessageCount ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED` : "AGENT IS WORKING"}</strong>
           <span>Enter queues next turn · Option/Alt + Enter steers current turn</span>
@@ -1680,7 +1719,7 @@ export default function ChatView({
         <textarea
           ref={inputRef}
           value={input}
-          onPaste={handlePaste}
+          onPaste={mode === "chat" ? handlePaste : undefined}
           onChange={(e) => { setInput(e.target.value); setCommandIndex(0); }}
           onKeyDown={(e) => {
             if (e.altKey && e.key === "Enter") {
@@ -1714,14 +1753,14 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
+          placeholder={driveDetached ? "DRIVE DETACHED" : mode === "research" ? "TYPE A RESEARCH QUESTION… SHIFT+ENTER NEWLINE." : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
           disabled={isNewSessionLoading}
           aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || (!input.trim() && images.length === 0)} className="button-primary chat-action">{isNewSessionLoading ? "LOADING…" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
+        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0)} className="button-primary chat-action">{researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
 
@@ -1843,7 +1882,6 @@ export default function ChatView({
         </button>}
         <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
       </footer>
-      </>}
       {usageOpen && sessionStats && <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
         <section ref={usageDialogRef} className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
           <header><strong id="usage-title">CONTEXT USAGE</strong><button onClick={() => setUsageOpen(false)} aria-label="Close context usage">×</button></header>
