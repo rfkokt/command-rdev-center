@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { activityKind, isSubagentTool, isWebSearchTool } from "./ToolCall";
+import { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
 
 describe("isWebSearchTool", () => {
   test("distinguishes web research from ordinary tools", () => {
@@ -28,5 +28,15 @@ describe("activityKind", () => {
     expect(activityKind("ralph_start")).toBe("loop");
     expect(activityKind("functions.read")).toBeNull();
     expect(activityKind("manage_todo_list")).toBeNull();
+  });
+});
+
+describe("getSubagentMeta", () => {
+  test("extracts counts from parallel and chain payloads", () => {
+    expect(getSubagentMeta({ tasks: [{}, {}, {}] }).count).toBe(3);
+    expect(getSubagentMeta({ tasks: [{}, {}] }).mode).toBe("PARALLEL");
+    expect(getSubagentMeta({ chain: [{}, {}] }).count).toBe(2);
+    expect(getSubagentMeta({ chain: [{}, {}] }).mode).toBe("CHAIN");
+    expect(getSubagentMeta({ agent: "design" }).detail).toContain("DESIGN");
   });
 });

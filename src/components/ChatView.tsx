@@ -22,7 +22,7 @@ import {
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
-import ToolCallView, { activityKind, isSubagentTool, isWebSearchTool, type ActivityKind } from "./ToolCall";
+import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool, type ActivityKind } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
@@ -1520,17 +1520,26 @@ export default function ChatView({
           </div>
         ))}
         {agentStatus === "running" && (() => {
-          const activeTool = messages.flatMap((message) => message.toolCalls).reverse().find((tool) => tool.phase !== "end");
+          const allActive = messages.flatMap((message) => message.toolCalls).filter((tool) => tool.phase !== "end");
+          const activeTool = [...allActive].reverse()[0];
           const build = activeTool ? buildPhase(activeTool) : null;
+          const activeSubagents = allActive.filter((t) => isSubagentTool(t.name));
+          const primarySubagent = [...activeSubagents].reverse()[0];
+          const subMeta = primarySubagent ? getSubagentMeta(primarySubagent.args) : null;
+          const totalSubagentTasks = activeSubagents.reduce((acc, t) => acc + getSubagentMeta(t.args).count, 0);
           const activity: ActivityKind | "subagent" | "web" | "build" | null = build
             ? "build"
-            : activeTool && isSubagentTool(activeTool.name)
+            : subMeta
               ? "subagent"
               : activeTool && isWebSearchTool(activeTool.name)
                 ? "web"
                 : activeTool ? activityKind(activeTool.name) : null;
-          const working = activity === "subagent"
-            ? { title: "SUB-AGENT WORKING", detail: "DELEGATED TASK", icon: "nodes" }
+          const working = activity === "subagent" && subMeta
+            ? {
+                title: totalSubagentTasks > 1 || activeSubagents.length > 1 ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)` : "SUB-AGENT WORKING",
+                detail: totalSubagentTasks > 1 ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}` : subMeta.detail,
+                icon: "nodes" as const,
+              }
             : activity === "web"
               ? { title: "WEB RESEARCH", detail: "SEARCHING SOURCES", icon: "search" }
               : activity === "build"
