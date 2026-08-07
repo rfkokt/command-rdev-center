@@ -92,7 +92,7 @@ fn candidate_pi_paths(configured: &str) -> Vec<PathBuf> {
     }
     candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
     candidates.push(PathBuf::from("/usr/local/bin/pi"));
-    configured
+    candidates
 }
 
 fn installed_pi(configured: &str) -> Option<PathBuf> {
@@ -420,9 +420,9 @@ pub fn spawn_pi_rpc(
         command
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_PROJECT_CWD", &cwd)
-            .env("CRC_PROJECT_NAME", project_name)
+            .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
-            .env("CRC_TASK_DIR", task_dir)
+            .env("CRC_TASK_DIR", task_dir.clone())
             .env("CRC_GRAPH_JSON", &graph_json_path)
             .env("GRAPHIFY_GRAPH", &graph_json_path);
     }
