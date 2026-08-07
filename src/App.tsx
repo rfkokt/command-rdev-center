@@ -334,6 +334,12 @@ export default function App() {
                 title="Copy toast"
                 aria-label="Copy toast"
               >⧉</button>
+              <button
+                onClick={() => setToasts((prev) => prev.filter((_, idx) => idx !== i))}
+                title="Dismiss"
+                aria-label="Dismiss toast"
+                className="toast-close"
+              >×</button>
             </div>
           ))}
         </div>

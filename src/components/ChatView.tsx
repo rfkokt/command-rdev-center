@@ -22,7 +22,7 @@ import {
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
-import ToolCallView, { activityKind, isSubagentTool, isWebSearchTool, type ActivityKind } from "./ToolCall";
+import ToolCallView, { activityKind, isSubagentTool, isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
@@ -141,6 +141,34 @@ function buildPhase(tool: ToolCall) {
   return "Building project";
 }
 
+function describeToolActivity(tool: ToolCall): string {
+  const name = tool.name.replace(/^functions\./, "");
+  const a = tool.args;
+  if (name === "bash" || name === "functions.bash") {
+    const cmd = String(a.command ?? "").replace(/\s+/g, " ").trim();
+    return cmd.length > 60 ? cmd.slice(0, 57) + "…" : cmd || "Running command";
+  }
+  if (name === "edit" || name === "write" || name === "read" || name === "view") {
+    const p = String(a.path ?? a.file ?? a.target ?? "");
+    const base = p.split("/").pop() || p;
+    const verb = name === "edit" ? "Editing" : name === "write" ? "Writing" : "Reading";
+    return base ? `${verb} ${base}` : `${verb} file`;
+  }
+  if (name === "search" || name === "grep" || name === "ripgrep") {
+    const q = String(a.query ?? a.pattern ?? "").slice(0, 40);
+    return q ? `Searching "${q}"` : "Searching codebase";
+  }
+  if (name === "web_search" || name === "fetch_content") {
+    const q = String(a.query ?? a.url ?? "").slice(0, 40);
+    return q ? `Web: ${q}` : "Searching web";
+  }
+  if (name === "subagent" || name === "subagent_wait") {
+    const task = String(a.task ?? a.description ?? "").slice(0, 50);
+    return task || "Delegating task";
+  }
+  return name.replace(/_/g, " ");
+}
+
 const surfacedPipelineFailures = new Set<string>();
 
 export default function ChatView({
@@ -241,6 +269,7 @@ export default function ChatView({
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [savingMessageId, setSavingMessageId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<{ step: string; completed: number; total: number } | null>(null);
@@ -437,6 +466,15 @@ export default function ChatView({
     const id = window.setInterval(check, 3000);
     return () => window.clearInterval(id);
   }, [agentStatus, chatId, onAgentRunning, onToast, sessionId]);
+
+  // Elapsed timer for agent running duration
+  useEffect(() => {
+    if (agentStatus !== "running") { setElapsedSeconds(0); return; }
+    const start = taskStartedAtRef.current ?? Date.now();
+    setElapsedSeconds(Math.round((Date.now() - start) / 1000));
+    const id = window.setInterval(() => setElapsedSeconds(Math.round((Date.now() - start) / 1000)), 1000);
+    return () => window.clearInterval(id);
+  }, [agentStatus]);
 
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
@@ -1602,32 +1640,63 @@ export default function ChatView({
           </div>
         ))}
         {agentStatus === "running" && (() => {
-          const activeTool = messages.flatMap((message) => message.toolCalls).reverse().find((tool) => tool.phase !== "end");
-          const build = activeTool ? buildPhase(activeTool) : null;
-          const activity: ActivityKind | "subagent" | "web" | "build" | null = build
-            ? "build"
-            : activeTool && isSubagentTool(activeTool.name)
-              ? "subagent"
-              : activeTool && isWebSearchTool(activeTool.name)
-                ? "web"
-                : activeTool ? activityKind(activeTool.name) : null;
-          const working = activity === "subagent"
-            ? { title: "SUB-AGENT WORKING", detail: "DELEGATED TASK", icon: "nodes" }
-            : activity === "web"
-              ? { title: "WEB RESEARCH", detail: "SEARCHING SOURCES", icon: "search" }
-              : activity === "build"
-                ? { title: "AI AGENT BUILD", detail: build ?? "BUILDING PROJECT", icon: "build" }
-                : activity === "process"
-                  ? { title: "EXTERNAL AGENT", detail: "SESSION ACTIVE", icon: "terminal" }
-                  : activity === "index"
-                    ? { title: "CODEBASE MEMORY", detail: "INDEXING GRAPH", icon: "graph" }
-                    : activity === "loop"
-                      ? { title: "ITERATION LOOP", detail: "AUTONOMOUS PASS", icon: "loop" }
-                      : { title: "AGENT WORKING", detail: activeTool ? "RUNNING TOOLS" : "THINKING", icon: "meter" };
-          return <div className={`agent-working activity-${working.icon}`} role="status" aria-live="polite">
+          const allTools = messages.flatMap((message) => message.toolCalls);
+          const activeTool = [...allTools].reverse().find((tool) => tool.phase !== "end");
+          const completedCount = allTools.filter((tool) => tool.phase === "end").length;
+          const lastCompleted = [...allTools].reverse().find((tool) => tool.phase === "end");
+          const streamingMsg = [...messages].reverse().find((m) => m.role === "assistant" && m.isStreaming);
+          const streamingText = streamingMsg?.text?.trim() || "";
+          const thinkingText = streamingMsg?.thinking?.trim() || "";
+
+          // Three states: executing tool, writing response, thinking/planning
+          let title: string;
+          let detail: string;
+          let icon: string;
+          let phase: "executing" | "writing" | "thinking";
+
+          if (activeTool) {
+            phase = "executing";
+            const build = buildPhase(activeTool);
+            if (build) {
+              title = "BUILDING"; detail = build; icon = "build";
+            } else if (isSubagentTool(activeTool.name)) {
+              title = "DELEGATING"; detail = describeToolActivity(activeTool); icon = "nodes";
+            } else if (isWebSearchTool(activeTool.name)) {
+              title = "SEARCHING WEB"; detail = describeToolActivity(activeTool); icon = "search";
+            } else {
+              const kind = activityKind(activeTool.name);
+              if (kind === "process") { title = "RUNNING SESSION"; detail = "Interactive shell"; icon = "terminal"; }
+              else if (kind === "index") { title = "INDEXING"; detail = "Building knowledge graph"; icon = "graph"; }
+              else if (kind === "loop") { title = "ITERATING"; detail = "Autonomous pass"; icon = "loop"; }
+              else { title = "EXECUTING"; detail = describeToolActivity(activeTool); icon = "meter"; }
+            }
+          } else if (streamingText) {
+            phase = "writing";
+            const lastLine = streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+            title = "RESPONDING";
+            detail = lastLine ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}` : "Writing response";
+            icon = "meter";
+          } else {
+            phase = "thinking";
+            const lastLine = thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+            if (lastLine) {
+              title = "REASONING";
+              detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
+            } else if (lastCompleted) {
+              title = "PLANNING NEXT";
+              detail = describeToolActivity(lastCompleted);
+            } else {
+              title = "THINKING";
+              detail = "Analyzing request";
+            }
+            icon = "meter";
+          }
+
+          const elapsed = elapsedSeconds >= 60 ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s` : `${elapsedSeconds}s`;
+          return <div className={`agent-working activity-${icon} phase-${phase}`} role="status" aria-live="polite">
             <span className="agent-working-mark" aria-hidden="true"><i /><i /><i /></span>
-            <div><strong>{working.title}</strong><small>{working.detail}</small></div>
-            <span className="agent-working-line" />
+            <div><strong>{title}</strong><small className="agent-working-detail" title={detail}>{detail}</small></div>
+            <span className="agent-working-stats">{completedCount > 0 && <span>{completedCount} tool{completedCount !== 1 ? "s" : ""}</span>}{elapsedSeconds > 0 && <span>{elapsed}</span>}</span>
             <button onClick={handleAbort}>ABORT</button>
           </div>;
         })()}
