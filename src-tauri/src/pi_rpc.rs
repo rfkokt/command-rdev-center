@@ -81,22 +81,33 @@ fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
     std::env::join_paths(paths).unwrap_or_else(|_| pi_dir.as_os_str().to_owned())
 }
 
-fn installed_pi(configured: &str) -> Option<PathBuf> {
+fn candidate_pi_paths(configured: &str) -> Vec<PathBuf> {
     let configured = PathBuf::from(configured);
-    if configured.is_file() {
-        return Some(configured);
+    let mut candidates = vec![configured.clone()];
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        candidates.push(home.join(".local/bin/pi"));
+        candidates.push(home.join(".pi/bin/pi"));
+        candidates.push(home.join("bin/pi"));
+        candidates.push(home.join(".cargo/bin/pi"));
     }
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".local/bin/pi"))
-        .filter(|path| path.is_file())
+    candidates.push(PathBuf::from("/opt/homebrew/bin/pi"));
+    candidates.push(PathBuf::from("/usr/local/bin/pi"));
+    configured
 }
 
-fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
-    if let Some(path) = installed_pi(configured) {
-        return Ok(path);
+fn installed_pi(configured: &str) -> Option<PathBuf> {
+    for path in candidate_pi_paths(configured) {
+        if path.is_file() {
+            // verify it actually runs
+            if Command::new(&path).arg("--version").output().is_ok() {
+                return Some(path);
+            }
+        }
     }
+    None
+}
 
+fn install_pi_via_curl() -> Result<(), String> {
     let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
     let download = Command::new("curl")
         .args(["-fsSL", "https://pi.dev/install.sh", "-o"])
@@ -106,16 +117,61 @@ fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
     if !download.success() {
         return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
     }
-
     let install = Command::new("sh").arg(&installer).status();
     let _ = std::fs::remove_file(&installer);
     let install = install.map_err(|error| format!("failed to run Pi installer: {error}"))?;
     if !install.success() {
         return Err(format!("Pi installer failed with {install}"));
     }
+    Ok(())
+}
 
+fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
+    if let Some(path) = installed_pi(configured) {
+        return Ok(path);
+    }
+
+    install_pi_via_curl()?;
+
+    // retry after first install
+    if let Some(path) = installed_pi(configured) {
+        return Ok(path);
+    }
+
+    // Some installers place shim that needs PATH refresh, try again with home candidates
+    // Give filesystem a moment
+    std::thread::sleep(std::time::Duration::from_millis(300));
     installed_pi(configured).ok_or_else(|| {
-        format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi")
+        format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi. Please run: curl -fsSL https://pi.dev/install.sh | sh")
+    })
+}
+
+fn ensure_pi_installed_with_repair(app: Option<&tauri::AppHandle>, configured: &str) -> Result<PathBuf, String> {
+    if let Some(path) = installed_pi(configured) {
+        return Ok(path);
+    }
+    if let Some(app) = app {
+        let _ = app.emit(
+            "pi-rpc-stderr",
+            serde_json::json!({
+                "session_id": "system",
+                "line": "⚠️ Pi binary not found on this Mac — reinstalling via https://pi.dev/install.sh ..."
+            }),
+        );
+    }
+    install_pi_via_curl()?;
+    if let Some(app) = app {
+        let _ = app.emit(
+            "pi-rpc-stderr",
+            serde_json::json!({
+                "session_id": "system",
+                "line": "✅ Pi reinstall finished, retrying spawn..."
+            }),
+        );
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    installed_pi(configured).ok_or_else(|| {
+        format!("Pi still missing after auto-reinstall. Manually run: curl -fsSL https://pi.dev/install.sh | sh (checked: {:?})", candidate_pi_paths(configured))
     })
 }
 
@@ -253,7 +309,7 @@ pub fn spawn_pi_rpc(
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
     }
-    let pi_path = ensure_pi_installed(&configured_pi_path)?;
+    let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path).or_else(|_| ensure_pi_installed(&configured_pi_path))?;
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -370,12 +426,52 @@ pub fn spawn_pi_rpc(
             .env("CRC_GRAPH_JSON", &graph_json_path)
             .env("GRAPHIFY_GRAPH", &graph_json_path);
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn pi: {}", e))?;
+    let mut spawn_attempts = 0;
+    let mut child = loop {
+        match command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => break child,
+            Err(e) if spawn_attempts == 0 && e.kind() == std::io::ErrorKind::NotFound => {
+                // pi vanished mid-flight on macOS (nvm cleanup / brew unlink / spotlight?), auto-repair once
+                let _ = app.emit(
+                    "pi-rpc-stderr",
+                    serde_json::json!({
+                        "session_id": session_id,
+                        "line": format!("⚠️ Pi spawn failed (NotFound: {e}) — auto-reinstalling...")
+                    }),
+                );
+                match ensure_pi_installed_with_repair(Some(&app), &configured_pi_path) {
+                    Ok(new_pi) => {
+                        command = Command::new(&new_pi);
+                        command
+                            .args(&args)
+                            .current_dir(&cwd)
+                            .env("PATH", path_for_pi(&new_pi.to_string_lossy()));
+                        if !global_chat {
+                            command
+                                .env("CRC_PROJECT_ROOT", &owning_project)
+                                .env("CRC_PROJECT_CWD", &cwd)
+                                .env("CRC_PROJECT_NAME", project_name.clone())
+                                .env("CRC_SESSION_ID", &session_id)
+                                .env("CRC_TASK_DIR", task_dir.clone())
+                                .env("CRC_GRAPH_JSON", &graph_json_path)
+                                .env("GRAPHIFY_GRAPH", &graph_json_path);
+                        }
+                        spawn_attempts += 1;
+                        continue;
+                    }
+                    Err(repair_err) => {
+                        return Err(format!("failed to spawn pi after auto-repair: {repair_err} (original: {e})"));
+                    }
+                }
+            }
+            Err(e) => return Err(format!("failed to spawn pi: {e}")),
+        }
+    };
 
     let process_id = child.id();
     let stdout = child.stdout.take().ok_or("no stdout")?;
@@ -495,11 +591,11 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         .map_err(|_| "poisoned sessions lock".to_string())?;
     let h = map
         .get(&session_id)
-        .ok_or_else(|| format!("unknown session {}", session_id))?;
+        .ok_or_else(|| format!("unknown session {} — it may have crashed and been auto-reinstalled, try sending again", session_id))?;
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
-    let stdin = guard
-        .as_mut()
-        .ok_or_else(|| "stdin closed (pi crashed?)".to_string())?;
+    let stdin = guard.as_mut().ok_or_else(|| {
+        "stdin closed — pi process crashed on macOS (common when binary disappears). The app has auto-reinstalled it; please resend your message / restart the session.".to_string()
+    })?;
 
     // Append LF
     let mut payload = json_line.as_bytes().to_vec();

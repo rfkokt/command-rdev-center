@@ -22,7 +22,7 @@ import {
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
-import ToolCallView, { activityKind, isSubagentTool, isWebSearchTool } from "./ToolCall";
+import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
@@ -1641,14 +1641,20 @@ export default function ChatView({
         ))}
         {agentStatus === "running" && (() => {
           const allTools = messages.flatMap((message) => message.toolCalls);
-          const activeTool = [...allTools].reverse().find((tool) => tool.phase !== "end");
+          const allActive = allTools.filter((tool) => tool.phase !== "end");
+          const activeTool = [...allActive].reverse()[0];
           const completedCount = allTools.filter((tool) => tool.phase === "end").length;
           const lastCompleted = [...allTools].reverse().find((tool) => tool.phase === "end");
           const streamingMsg = [...messages].reverse().find((m) => m.role === "assistant" && m.isStreaming);
           const streamingText = streamingMsg?.text?.trim() || "";
           const thinkingText = streamingMsg?.thinking?.trim() || "";
 
-          // Three states: executing tool, writing response, thinking/planning
+          // Multi sub-agent aggregation
+          const activeSubagents = allActive.filter((t) => isSubagentTool(t.name));
+          const primarySubagent = [...activeSubagents].reverse()[0];
+          const subMeta = primarySubagent ? getSubagentMeta(primarySubagent.args) : null;
+          const totalSubagentTasks = activeSubagents.reduce((acc, t) => acc + getSubagentMeta(t.args).count, 0);
+
           let title: string;
           let detail: string;
           let icon: string;
@@ -1657,10 +1663,17 @@ export default function ChatView({
           if (activeTool) {
             phase = "executing";
             const build = buildPhase(activeTool);
+            const isMultiSub = activeSubagents.length > 0 && subMeta;
             if (build) {
               title = "BUILDING"; detail = build; icon = "build";
-            } else if (isSubagentTool(activeTool.name)) {
-              title = "DELEGATING"; detail = describeToolActivity(activeTool); icon = "nodes";
+            } else if (isMultiSub && subMeta) {
+              title = totalSubagentTasks > 1 || activeSubagents.length > 1
+                ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)`
+                : "SUB-AGENT WORKING";
+              detail = totalSubagentTasks > 1
+                ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}`
+                : subMeta.detail;
+              icon = "nodes";
             } else if (isWebSearchTool(activeTool.name)) {
               title = "SEARCHING WEB"; detail = describeToolActivity(activeTool); icon = "search";
             } else {
@@ -1680,14 +1693,11 @@ export default function ChatView({
             phase = "thinking";
             const lastLine = thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
             if (lastLine) {
-              title = "REASONING";
-              detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
+              title = "REASONING"; detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
             } else if (lastCompleted) {
-              title = "PLANNING NEXT";
-              detail = describeToolActivity(lastCompleted);
+              title = "PLANNING NEXT"; detail = describeToolActivity(lastCompleted);
             } else {
-              title = "THINKING";
-              detail = "Analyzing request";
+              title = "THINKING"; detail = "Analyzing request";
             }
             icon = "meter";
           }

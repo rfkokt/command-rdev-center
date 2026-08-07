@@ -39,6 +39,27 @@ export function isSubagentTool(name: string) {
 
 export type ActivityKind = "process" | "index" | "loop";
 
+export type SubagentMeta = { count: number; mode: "PARALLEL" | "CHAIN" | "DELEGATED" | "WAIT" | "CONTROL"; label: string; detail: string };
+
+export function getSubagentMeta(args: Record<string, unknown>): SubagentMeta {
+  if (typeof args.action === "string") {
+    return { count: 1, mode: "CONTROL", label: args.action, detail: args.action.toUpperCase() };
+  }
+  if (Array.isArray(args.tasks)) {
+    const c = args.tasks.length || 1;
+    return { count: c, mode: "PARALLEL", label: `${c} child agents`, detail: `${c} CHILD AGENTS · PARALLEL` };
+  }
+  if (Array.isArray(args.chain)) {
+    const c = args.chain.length || 1;
+    return { count: c, mode: "CHAIN", label: `${c} stages`, detail: `${c} STAGES · CHAIN` };
+  }
+  if (typeof args.id === "string" && args.id) {
+    return { count: 1, mode: "WAIT", label: args.id, detail: `WAITING · ${args.id.slice(0, 24)}` };
+  }
+  const agent = typeof args.agent === "string" ? args.agent : "";
+  return { count: 1, mode: "DELEGATED", label: agent || "child agent", detail: agent ? agent.toUpperCase() : "DELEGATED TASK" };
+}
+
 export function activityKind(name: string): ActivityKind | null {
   if (/(?:^|\.)interactive_shell$/.test(name)) return "process";
   if (/(?:^|\.)(?:index_and_search_cbm|build_graph)$/.test(name)) return "index";
