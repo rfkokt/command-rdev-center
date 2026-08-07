@@ -273,7 +273,12 @@ export default function ProjectFilesSidebar({
                   <MarkdownMessage>{preview.content}</MarkdownMessage>
                 </div>
               ) : (
-                <pre className="rag-readonly-pre" style={{ margin: 0, padding: 20, flex: 1, overflow: "auto", background: "#0e0f0c", font: "12px/1.55 var(--font-mono)", color: "#dcded2", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} onClick={(e) => {
+                (() => {
+                  const lines = splitLines(preview.content);
+                  return (
+                    <div className="pfs-code-wrap">
+                      <div className="pfs-code-gutter" aria-hidden>{lines.map((_, i) => <span key={i}>{i + 1}</span>)}</div>
+                      <pre className="pfs-code-content rag-readonly-pre" style={{ margin: 0, padding: "10px 20px 10px 16px", flex: 1, overflow: "visible", background: "transparent", font: "12px/1.62 var(--font-mono)", color: "#dcded2", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} onClick={(e) => {
                   if (e.metaKey || e.ctrlKey) {
                     const target = e.target as HTMLElement;
                     if (target.dataset.path && preview) {
@@ -287,15 +292,18 @@ export default function ProjectFilesSidebar({
                       }
                       const resolved = currentPath.join('/');
                       const possible = [resolved, resolved + '.ts', resolved + '.tsx', resolved + '.js', resolved + '/index.ts', resolved + '/index.tsx', target.dataset.path, target.dataset.path.slice(1)];
-                      const found = files.find(f => possible.includes(f.relative));
+                          const found = files.find(f => possible.includes(f.relative));
                       if (found) void openFile(found);
                     }
                   }
-                }} dangerouslySetInnerHTML={{ __html: highlightCode(preview.content) }} />
+                    }} dangerouslySetInnerHTML={{ __html: highlightCode(preview.content) }} />
+                    </div>
+                  );
+                })()
               )
             )}
             <footer className="file-preview-footer">
-              <span>{preview ? `${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
+              <span>{preview ? `${splitLines(preview.content).length.toLocaleString()} lines · ${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
             </footer>
           </div>
         </div>
@@ -414,4 +422,8 @@ function highlightCode(code: string) {
     if (keyword) return `<span style="color: #e27b72;">${keyword}</span>`;
     return match;
   });
+}
+
+function splitLines(code: string): string[] {
+  return code.split("\n");
 }
