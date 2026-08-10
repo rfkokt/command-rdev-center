@@ -63,6 +63,7 @@ export default function App() {
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
   const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | "documentary" | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
+  const [documentaryResearch, setDocumentaryResearch] = useState<{ runId: string; query: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
@@ -286,8 +287,8 @@ export default function App() {
           {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard /></Suspense>}
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
-          {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
-          {dashboard === "documentary" && <Suspense fallback={<div className="session-loading" role="status">Loading production packages…</div>}><DocumentaryView /></Suspense>}
+          {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} onCreateDocumentary={(run) => { setDocumentaryResearch({ runId: run.id, query: run.query }); setDashboard("documentary"); }} /></Suspense>}
+          {dashboard === "documentary" && <Suspense fallback={<div className="session-loading" role="status">Loading production packages…</div>}><DocumentaryView handoffResearchRunId={documentaryResearch?.runId} handoffResearchQuery={documentaryResearch?.query} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView

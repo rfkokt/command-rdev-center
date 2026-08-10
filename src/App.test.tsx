@@ -24,6 +24,8 @@ vi.mock("./components/SettingsPanel", () => ({ default: () => null }));
 vi.mock("./components/PipelineView", () => ({ default: () => <div>Pipeline view</div> }));
 vi.mock("./components/KanbanBoard", () => ({ default: () => <div>Kanban view</div> }));
 vi.mock("./components/RagKnowledge", () => ({ default: () => <div>Knowledge view</div> }));
+vi.mock("./components/DeepResearchView", () => ({ default: ({ onCreateDocumentary }: { onCreateDocumentary?: (run: { id: string; query: string }) => void }) => <button onClick={() => onCreateDocumentary?.({ id: "run-1", query: "Research question" })}>Create documentary</button> }));
+vi.mock("./components/DocumentaryView", () => ({ default: ({ handoffResearchRunId, handoffResearchQuery }: { handoffResearchRunId?: string; handoffResearchQuery?: string }) => <div>Documentary {handoffResearchRunId} {handoffResearchQuery}</div> }));
 vi.mock("./components/ChatView", async () => {
   const { useEffect } = await import("react");
   return {
@@ -74,6 +76,15 @@ test("opens the dedicated knowledge workspace", async () => {
 test("exposes the Deep Research report library", () => {
   render(<App />);
   expect(screen.getByTitle("Deep Research")).toBeInTheDocument();
+});
+
+test("hands a completed research run to documentary creation", async () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByTitle("Deep Research"));
+  fireEvent.click(await screen.findByRole("button", { name: "Create documentary" }));
+
+  expect(await screen.findByText("Documentary run-1 Research question")).toBeInTheDocument();
 });
 
 test("keeps the active chat mounted while Kanban is open", async () => {
