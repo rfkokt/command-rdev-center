@@ -215,7 +215,17 @@ fn load_at(d: &Path) -> DocumentaryData {
             continue;
         }
         match read_one(&p).or_else(|_| read_one(&p.with_extension("json.bak"))) {
-            Ok(package) if package.version == VERSION => packages.push(package),
+            Ok(mut package) if package.version == VERSION => {
+                // A worker cannot survive an app restart; never display its stale snapshot as active.
+                if package.state == PackageState::Generating {
+                    package.state = PackageState::Failed;
+                    package.error = Some("Generation was interrupted before completion. Generate again to retry.".into());
+                    if let Err(error) = write_at(d, &package) {
+                        warnings.push(format!("Could not save interrupted documentary state: {error}"));
+                    }
+                }
+                packages.push(package);
+            }
             Ok(_) => warnings.push(format!("Unsupported documentary snapshot: {}", p.display())),
             Err(_) => warnings.push(format!(
                 "Could not read documentary snapshot: {}",
@@ -398,6 +408,14 @@ pub fn generate_documentary_package(
     Ok(())
 }
 
+fn failed_generation(original: DocumentaryPackage, error: String) -> DocumentaryPackage {
+    DocumentaryPackage {
+        state: PackageState::Failed,
+        error: Some(error),
+        ..original
+    }
+}
+
 fn generate_documentary_in_background(app: tauri::AppHandle, original: DocumentaryPackage) {
     let result = (|| {
         let prompt = generation_prompt(&original)?;
@@ -420,11 +438,7 @@ fn generate_documentary_in_background(app: tauri::AppHandle, original: Documenta
     let Ok(_guard) = LOCK.lock() else { return };
     let package = match result {
         Ok(package) => package,
-        Err(error) => DocumentaryPackage {
-            state: PackageState::Failed,
-            error: Some(error),
-            ..original
-        },
+        Err(error) => failed_generation(original, error),
     };
     let _ = save(&app, &package);
     if let Ok(mut generation_running) = GENERATION_RUNNING.lock() {
@@ -658,7 +672,8 @@ mod tests {
     }
     #[test]
     fn snapshot_recovers_backup_and_isolates_corruption() {
-        let d = std::env::temp_dir().join(format!("crc-doc-{}", now()));
+        let d = std::env::temp_dir().join(format!("crc-doc-snapshot-{}", now()));
+        let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let p = sample();
         write_at(&d, &p).unwrap();
@@ -714,6 +729,20 @@ mod tests {
             }],
         });
         assert!(validate(&p).is_err());
+    }
+    #[test]
+    fn interrupted_generation_becomes_visible_failure_on_load() {
+        let d = std::env::temp_dir().join(format!("crc-doc-interrupted-{}", now()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let mut p = sample();
+        p.state = PackageState::Generating;
+        write_at(&d, &p).unwrap();
+        let loaded = load_at(&d);
+        assert_eq!(loaded.packages[0].state, PackageState::Failed);
+        assert!(loaded.packages[0].error.as_deref().unwrap().contains("interrupted"));
+        assert_eq!(read_one(&path(&d, "test").unwrap()).unwrap().state, PackageState::Failed);
+        std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn generation_rejects_untrusted_output_without_mutating_draft() {

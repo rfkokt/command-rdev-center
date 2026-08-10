@@ -77,20 +77,7 @@ pub(crate) fn generate_documentary_once(
     session_id: String,
     prompt: String,
 ) -> Result<String, String> {
-    let cwd = global_chat_cwd()?;
-    spawn_pi_rpc(
-        app,
-        session_id.clone(),
-        cwd.to_string_lossy().into_owned(),
-        None,
-        None,
-        None,
-        Some(true),
-        None,
-        None,
-        Some(vec![]),
-        Some(true),
-    )?;
+    // Register before spawn: a fast Pi failure can settle before spawn_pi_rpc returns.
     let (sender, receiver) = mpsc::channel();
     one_shot_results()
         .lock()
@@ -102,6 +89,26 @@ pub(crate) fn generate_documentary_once(
                 sender,
             },
         );
+    let cwd = global_chat_cwd()?;
+    if let Err(error) = spawn_pi_rpc(
+        app,
+        session_id.clone(),
+        cwd.to_string_lossy().into_owned(),
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        Some(vec![]),
+        Some(true),
+    ) {
+        one_shot_results()
+            .lock()
+            .ok()
+            .and_then(|mut results| results.remove(&session_id));
+        return Err(error);
+    }
     if let Err(error) = send_pi_command(
         session_id.clone(),
         serde_json::json!({"type":"prompt","message":prompt}).to_string(),
@@ -695,6 +702,12 @@ pub fn spawn_pi_rpc(
         if is_current {
             if sid.starts_with("research-") {
                 crate::deep_research::observe_end(&app_clone, &sid);
+            } else if sid.starts_with("documentary-") {
+                if let Ok(mut results) = one_shot_results().lock() {
+                    if let Some(result) = results.remove(&sid) {
+                        let _ = result.sender.send(Err("Pi generation ended before returning output".into()));
+                    }
+                }
             }
             let _ = app_clone.emit(
                 "pi-rpc-ended",
