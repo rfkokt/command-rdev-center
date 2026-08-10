@@ -17,12 +17,17 @@ Element.prototype.scrollIntoView = vi.fn();
 const baseProps = { projectPath: "/tmp/demo", projectName: "demo", isGit: false, repositories: [], pipelineType: "Personal", chatId: "chat-one", resumableSessions: [], onSessionFile: vi.fn(), onFirstMessage: vi.fn(), onRuntimeSettings: vi.fn(), onAgentRunning: vi.fn(), onUnread: vi.fn(), onClose: vi.fn(), onToast: vi.fn(), onOpenPipeline: vi.fn(), onOpenResearch: vi.fn(), isActive: true };
 
 function mockBackend(runs: unknown[] = []) {
+  let currentRuns = runs;
   invoke.mockImplementation((command: string) => {
-    if (command === "get_deep_research_data") return Promise.resolve({ runs, warnings: [] });
+    if (command === "get_deep_research_data") return Promise.resolve({ runs: currentRuns, warnings: [] });
     if (command === "get_global_chat_cwd") return Promise.resolve("/tmp/global");
     if (command === "get_graph_status") return Promise.resolve({ state: "fresh", code_stale: false, docs_stale: false });
     if (command === "get_dev_server") return Promise.resolve(null);
-    if (command === "start_deep_research") return Promise.resolve({ id: "run-one" });
+    if (command === "start_deep_research") {
+      const run = { id: "run-one", query: "Investigate this", state: "creating", partial_report: "", progress: { phase: "creating", activity: "Starting", searches: 0, reads: 0, checks: 0, active_calls: [] }, sources: [] };
+      currentRuns = [run];
+      return Promise.resolve(run);
+    }
     return Promise.resolve({});
   });
 }
@@ -51,6 +56,7 @@ it("routes SEND only through the isolated research command", async () => {
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_deep_research", { input: expect.objectContaining({ query: "Investigate this", originChatId: "chat-one", originSessionId: "chat-chat-one" }) }));
   expect(screen.getByRole("textbox")).toHaveValue("");
   expect(invoke).not.toHaveBeenCalledWith("send_pi_command", expect.objectContaining({ jsonLine: expect.stringContaining("Investigate this") }));
+  expect(await screen.findByText("Deep Research · creating")).toBeInTheDocument();
 });
 
 it("shows compact active research and routes full progress to the library", async () => {

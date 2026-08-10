@@ -222,6 +222,7 @@ export default function ChatView({
   const [mode, setMode] = useState<"chat" | "research">("chat");
   const [researchResults, setResearchResults] = useState<ResearchRun[]>([]);
   const [researchBusy, setResearchBusy] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
   const [researchHandoffError, setResearchHandoffError] = useState<string | null>(null);
   const researchHandoffRef = useRef<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
@@ -303,7 +304,7 @@ export default function ChatView({
 
   useEffect(() => {
     if (isActive) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [isActive, messages]);
+  }, [isActive, messages, researchResults]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -926,6 +927,7 @@ export default function ChatView({
           sendRaw({ type: "get_session_stats" });
         };
         initial();
+        setChatReady(true);
         // pi boot takes time for extensions, retry models
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 2000));
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 5000));
@@ -942,6 +944,7 @@ export default function ChatView({
     run();
     return () => {
       mounted = false;
+      setChatReady(false);
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
@@ -1276,7 +1279,7 @@ export default function ChatView({
       setResearchBusy(true);
       try {
         const slash = modelRef.current.indexOf("/");
-        await invoke<ResearchRun>("start_deep_research", { input: {
+        const run = await invoke<ResearchRun>("start_deep_research", { input: {
           query: text,
           model: slash < 0 ? modelRef.current || null : modelRef.current.slice(slash + 1),
           provider: slash < 0 ? null : modelRef.current.slice(0, slash),
@@ -1284,8 +1287,8 @@ export default function ChatView({
           originChatId: chatId,
           originSessionId: sessionId,
         } });
+        setResearchResults((runs) => [run, ...runs.filter((item) => item.id !== run.id)]);
         setInput("");
-        await loadResearchResults();
         onToast("Deep Research started");
       } catch (error) {
         onToast(`Deep Research failed: ${String(error)}`);
@@ -1395,13 +1398,14 @@ export default function ChatView({
   }, [loadResearchResults]);
 
   const handleResearchCompleted = useCallback(async (run: ResearchRun) => {
-    if (run.origin_chat_id !== chatId || run.origin_session_id !== sessionId || researchHandoffRef.current) return;
+    if (!chatReady || run.origin_chat_id !== chatId || run.origin_session_id !== sessionId || researchHandoffRef.current) return;
     researchHandoffRef.current = run.id;
     setResearchHandoffError(null);
     try {
       const result = await invoke<{ outcome: "delivered" | "no_op"; run: ResearchRun }>("handoff_deep_research", { runId: run.id, originSessionId: sessionId });
       if (result.outcome === "delivered" || result.run.handoff_delivered) {
         await loadResearchResults();
+        setMessages((messages) => [...messages, { id: uid(), role: "system", text: "Deep Research selesai. Laporan dan sitasinya sudah ditambahkan ke konteks chat ini — lanjutkan dengan pertanyaan follow-up.", thinking: "", toolCalls: [], createdAt: Date.now() }]);
         setMode("chat");
         window.setTimeout(() => inputRef.current?.focus(), 0);
         onToast("Deep Research accepted by this chat process");
@@ -1413,7 +1417,7 @@ export default function ChatView({
     } finally {
       researchHandoffRef.current = null;
     }
-  }, [chatId, loadResearchResults, onToast, sessionId]);
+  }, [chatId, chatReady, loadResearchResults, onToast, sessionId]);
 
   useEffect(() => {
     const completed = researchResults.find((run) => run.state === "completed" && !run.handoff_delivered && run.handoff_state !== "delivering");
@@ -1588,7 +1592,7 @@ export default function ChatView({
         {researchResults.map((run) => {
           const report = run.final_report ?? run.partial_report;
           const preview = report.replace(/^#+\s.*$/gm, "").replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").trim();
-          return <article className="research-result-card" key={run.id}>
+          return <article className="research-result-card" key={run.id} aria-live={isActiveResearch(run) ? "polite" : undefined}>
             <small>{isActiveResearch(run) ? `Deep Research · ${run.progress.phase || run.state}` : "Deep Research result"}</small><h3>{run.query}</h3>
             {isActiveResearch(run) ? <p>{run.progress.activity || "Preparing research…"}</p> : <p>{preview.slice(0, 420)}{preview.length > 420 ? "…" : ""}</p>}
             <footer><span>{run.progress.searches} searches · {run.progress.reads} reads · {run.progress.checks} checks · {run.sources.length} sources</span><button onClick={() => onOpenResearch(run.id)}>{isActiveResearch(run) ? "Open progress" : "Read full report"}</button></footer>
