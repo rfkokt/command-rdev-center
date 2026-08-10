@@ -108,6 +108,7 @@ pub fn run() {
             pi_rpc::kill_pi_session,
             pi_rpc::list_pi_sessions,
             files::search_files,
+            files::install_poppler,
             files::read_chat_attachments
         ])
         .run(tauri::generate_context!())

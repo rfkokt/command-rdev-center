@@ -119,6 +119,23 @@ pub async fn search_files(project_path: String, query: String) -> Result<Vec<Fil
 }
 
 #[tauri::command]
+pub async fn install_poppler() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let output = Command::new("brew")
+            .args(["install", "poppler"])
+            .output()
+            .map_err(|_| "Homebrew is required to install Poppler. Install Homebrew first: https://brew.sh".to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("Poppler installer failed: {e}"))?
+}
+
+#[tauri::command]
 pub async fn read_chat_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachment>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let attachments: Result<Vec<_>, String> = paths.into_iter().map(|path| {
