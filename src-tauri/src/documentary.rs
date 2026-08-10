@@ -215,17 +215,7 @@ fn load_at(d: &Path) -> DocumentaryData {
             continue;
         }
         match read_one(&p).or_else(|_| read_one(&p.with_extension("json.bak"))) {
-            Ok(mut package) if package.version == VERSION => {
-                // A worker cannot survive an app restart; never display its stale snapshot as active.
-                if package.state == PackageState::Generating {
-                    package.state = PackageState::Failed;
-                    package.error = Some("Generation was interrupted before completion. Generate again to retry.".into());
-                    if let Err(error) = write_at(d, &package) {
-                        warnings.push(format!("Could not save interrupted documentary state: {error}"));
-                    }
-                }
-                packages.push(package);
-            }
+            Ok(package) if package.version == VERSION => packages.push(package),
             Ok(_) => warnings.push(format!("Unsupported documentary snapshot: {}", p.display())),
             Err(_) => warnings.push(format!(
                 "Could not read documentary snapshot: {}",
@@ -236,6 +226,25 @@ fn load_at(d: &Path) -> DocumentaryData {
     packages.sort_by(|a, b| a.id.cmp(&b.id));
     DocumentaryData { packages, warnings }
 }
+fn reconcile_at(d: &Path) -> Result<(), String> {
+    let data = load_at(d);
+    for mut package in data.packages {
+        if package.state == PackageState::Generating {
+            package.state = PackageState::Failed;
+            package.error = Some(
+                "Generation was interrupted before completion. Generate again to retry.".into(),
+            );
+            write_at(d, &package)?;
+        }
+    }
+    Ok(())
+}
+
+pub fn reconcile_startup() -> Result<(), String> {
+    let _guard = LOCK.lock().map_err(|_| "documentary store poisoned")?;
+    reconcile_at(&dir()?)
+}
+
 fn bounded(s: &str) -> bool {
     !s.trim().is_empty() && s.chars().count() <= MAX_TEXT
 }
@@ -731,17 +740,36 @@ mod tests {
         assert!(validate(&p).is_err());
     }
     #[test]
-    fn interrupted_generation_becomes_visible_failure_on_load() {
+    fn generating_package_survives_listing() {
+        let d = std::env::temp_dir().join(format!("crc-doc-generating-{}", now()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let mut p = sample();
+        p.state = PackageState::Generating;
+        write_at(&d, &p).unwrap();
+        assert_eq!(load_at(&d).packages[0].state, PackageState::Generating);
+        assert_eq!(
+            read_one(&path(&d, "test").unwrap()).unwrap().state,
+            PackageState::Generating
+        );
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn interrupted_generation_fails_only_during_reconcile() {
         let d = std::env::temp_dir().join(format!("crc-doc-interrupted-{}", now()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let mut p = sample();
         p.state = PackageState::Generating;
         write_at(&d, &p).unwrap();
+        reconcile_at(&d).unwrap();
         let loaded = load_at(&d);
         assert_eq!(loaded.packages[0].state, PackageState::Failed);
-        assert!(loaded.packages[0].error.as_deref().unwrap().contains("interrupted"));
-        assert_eq!(read_one(&path(&d, "test").unwrap()).unwrap().state, PackageState::Failed);
+        assert!(loaded.packages[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("interrupted"));
         std::fs::remove_dir_all(d).unwrap();
     }
     #[test]

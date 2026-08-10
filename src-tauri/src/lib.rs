@@ -39,7 +39,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             projects::init_config(app.handle())?;
-            deep_research::reconcile_startup().map_err(Into::into)
+            deep_research::reconcile_startup()
+                .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+            documentary::reconcile_startup()
+                .map_err(|error| -> Box<dyn std::error::Error> { error.into() })
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
