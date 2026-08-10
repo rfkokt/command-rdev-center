@@ -288,7 +288,7 @@ export default function App() {
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} onCreateDocumentary={(run) => { setDocumentaryResearch({ runId: run.id, query: run.query }); setDashboard("documentary"); }} /></Suspense>}
-          {dashboard === "documentary" && <Suspense fallback={<div className="session-loading" role="status">Loading production packages…</div>}><DocumentaryView handoffResearchRunId={documentaryResearch?.runId} handoffResearchQuery={documentaryResearch?.query} /></Suspense>}
+          {dashboard === "documentary" && <Suspense fallback={<div className="session-loading" role="status">Loading production packages…</div>}><DocumentaryView handoffResearchRunId={documentaryResearch?.runId} handoffResearchQuery={documentaryResearch?.query} onOpenDeepResearch={() => setDashboard("research")} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView
