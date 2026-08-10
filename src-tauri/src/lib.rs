@@ -47,6 +47,7 @@ pub fn run() {
             deep_research::start_deep_research,
             deep_research::get_deep_research_data,
             deep_research::handoff_deep_research,
+            deep_research::delete_deep_research,
             deep_research::cancel_deep_research,
             deep_research::resume_deep_research,
             dev_runner::detect_dev_command,

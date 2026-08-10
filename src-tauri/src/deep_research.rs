@@ -838,6 +838,21 @@ pub fn handoff_deep_research(
     })
 }
 #[tauri::command]
+pub fn delete_deep_research(app: tauri::AppHandle, run_id: String) -> Result<(), String> {
+    let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
+    let run = read_one(&path(&runs_dir()?, &run_id))?;
+    if !run.state.terminal() {
+        return Err("cannot delete active Deep Research".into());
+    }
+    let dir = runs_dir()?;
+    std::fs::remove_file(path(&dir, &run_id)).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(path(&dir, &run_id).with_extension("json.bak"));
+    clear_active(&run_id);
+    let _ = app.emit("deep-research-changed", serde_json::json!({"run_id":run_id,"state":"deleted"}));
+    Ok(())
+}
+
+#[tauri::command]
 pub fn cancel_deep_research(app: tauri::AppHandle, run_id: String) -> Result<ResearchRun, String> {
     let Some(run) = mutate(&run_id, |r| {
         if !matches!(r.state, RunState::Creating | RunState::Running) {
