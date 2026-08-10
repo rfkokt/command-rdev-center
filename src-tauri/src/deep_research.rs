@@ -102,6 +102,8 @@ pub struct ResearchRun {
     #[serde(default)]
     pub origin_session_id: Option<String>,
     #[serde(default)]
+    pub documentary_package_id: Option<String>,
+    #[serde(default)]
     pub handoff_delivered: bool,
     #[serde(default)]
     pub handoff_state: HandoffState,
@@ -123,6 +125,8 @@ pub struct StartInput {
     pub origin_chat_id: Option<String>,
     #[serde(default)]
     pub origin_session_id: Option<String>,
+    #[serde(default)]
+    pub documentary_package_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -747,6 +751,7 @@ pub fn start_deep_research(
         error: None,
         origin_chat_id: input.origin_chat_id.clone(),
         origin_session_id: input.origin_session_id.clone(),
+        documentary_package_id: input.documentary_package_id.clone(),
         handoff_delivered: false,
         handoff_state: HandoffState::Pending,
         completed_calls: vec![],
@@ -939,6 +944,7 @@ pub fn resume_deep_research(app: tauri::AppHandle, run_id: String) -> Result<Res
         thinking: None,
         origin_chat_id: run.origin_chat_id.clone(),
         origin_session_id: run.origin_session_id.clone(),
+        documentary_package_id: run.documentary_package_id.clone(),
     };
     match launch(app.clone(), run.clone(), &input, !exact) {
         Ok(r) => Ok(r),
@@ -974,21 +980,24 @@ mod tests {
             error: None,
             origin_chat_id: None,
             origin_session_id: None,
+            documentary_package_id: None,
             handoff_delivered: false,
             handoff_state: HandoffState::Pending,
             completed_calls: vec![],
         }
     }
     #[test]
-    fn old_snapshots_default_origin_and_handoff_fields() {
+    fn old_snapshots_default_origin_documentary_and_handoff_fields() {
         let value = serde_json::to_value(sample("legacy")).unwrap();
         let mut object = value.as_object().unwrap().clone();
         object.remove("origin_chat_id");
         object.remove("origin_session_id");
+        object.remove("documentary_package_id");
         object.remove("handoff_delivered");
         let run: ResearchRun = serde_json::from_value(Value::Object(object)).unwrap();
         assert_eq!(run.origin_chat_id, None);
         assert_eq!(run.origin_session_id, None);
+        assert_eq!(run.documentary_package_id, None);
         assert!(!run.handoff_delivered);
     }
 
