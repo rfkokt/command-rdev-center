@@ -6,6 +6,13 @@ const MAX_TEXT_ATTACHMENT_BYTES: u64 = 512 * 1024;
 const MAX_PDF_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_ATTACHMENT_TEXT_BYTES: usize = 1_000_000;
 
+fn macos_tool(name: &str) -> String {
+    [format!("/opt/homebrew/bin/{name}"), format!("/usr/local/bin/{name}"), name.into()]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .unwrap_or_else(|| name.into())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChatAttachment {
     pub name: String,
@@ -121,7 +128,7 @@ pub async fn search_files(project_path: String, query: String) -> Result<Vec<Fil
 #[tauri::command]
 pub async fn install_poppler() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let output = Command::new("brew")
+        let output = Command::new(macos_tool("brew"))
             .args(["install", "poppler"])
             .output()
             .map_err(|_| "Homebrew is required to install Poppler. Install Homebrew first: https://brew.sh".to_string())?;
@@ -146,7 +153,7 @@ pub async fn read_chat_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachm
             let limit = if is_pdf { MAX_PDF_ATTACHMENT_BYTES } else { MAX_TEXT_ATTACHMENT_BYTES };
             if metadata.len() > limit { return Err(format!("File exceeds {} MB: {path}", limit / 1024 / 1024)); }
             let content = if is_pdf {
-                let output = Command::new("pdftotext").arg(&path).arg("-").output()
+                let output = Command::new(macos_tool("pdftotext")).arg(&path).arg("-").output()
                     .map_err(|_| "PDF support requires pdftotext (install Poppler).".to_string())?;
                 if !output.status.success() { return Err(format!("Could not extract PDF text from {path}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
                 String::from_utf8(output.stdout).map_err(|_| format!("PDF text is not UTF-8: {path}"))?
@@ -166,6 +173,11 @@ pub async fn read_chat_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_tool_prefers_known_homebrew_paths() {
+        assert!(macos_tool("pdftotext").ends_with("pdftotext"));
+    }
 
     #[test]
     fn walks_nested_git_repo_and_honors_its_gitignore() {
