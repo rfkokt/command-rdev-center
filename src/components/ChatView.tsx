@@ -1467,8 +1467,8 @@ export default function ChatView({
             className={mode === "research" ? "active" : ""}
             aria-pressed={mode === "research"}
             disabled={images.length > 0 || files.length > 0}
-            title={images.length > 0 || files.length > 0 ? "Remove attachments before starting Deep Research" : "Use the composer for Deep Research"}
-            aria-label={images.length > 0 || files.length > 0 ? "Deep Research unavailable while attachments are present" : "Deep Research"}
+            title={images.length > 0 ? "Remove image attachments before starting Deep Research" : files.length > 0 ? "Remove file attachments before starting Deep Research" : "Use the composer for Deep Research"}
+            aria-label={images.length > 0 ? "Deep Research unavailable while image attachments are present" : files.length > 0 ? "Deep Research unavailable while file attachments are present" : "Deep Research"}
             onClick={() => setMode("research")}
           >Deep Research</button>
         </div>
