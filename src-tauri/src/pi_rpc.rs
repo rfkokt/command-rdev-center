@@ -287,8 +287,8 @@ pub fn spawn_pi_rpc(
     global_chat: Option<bool>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
-    if session_id.trim().is_empty() {
-        return Err("session_id required".to_string());
+    if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
+        return Err("session_id must not contain path separators".to_string());
     }
     if cwd.trim().is_empty() {
         return Err("cwd required".to_string());
@@ -329,9 +329,20 @@ pub fn spawn_pi_rpc(
     }
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
+    let figma = crate::settings::get_figma_mcp_settings()?;
+    if figma.enabled {
+        let config_path = std::env::temp_dir().join(format!("crc-figma-mcp-{session_id}.json"));
+        let config = serde_json::json!({
+            "mcpServers": { "figma": { "url": figma.url, "auth": "oauth" } }
+        });
+        std::fs::write(&config_path, serde_json::to_string(&config).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("Figma MCP config: {e}"))?;
+        args.push("--mcp-config".into());
+        args.push(config_path.to_string_lossy().into());
+    }
     if global_chat {
         args.push("--tools".into());
-        args.push("web_search,source_check,fetch_content,get_search_content".into());
+        args.push("web_search,source_check,fetch_content,get_search_content,mcp".into());
     } else if let Some(tools) = tools {
         if tools.is_empty() {
             args.push("--no-tools".into());

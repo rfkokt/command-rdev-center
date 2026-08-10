@@ -94,6 +94,8 @@ pub fn run() {
             rag::get_project_file_content,
             settings::get_pi_settings,
             settings::save_pi_settings,
+            settings::get_figma_mcp_settings,
+            settings::save_figma_mcp_settings,
             settings::get_graphify_settings,
             settings::fetch_graphify_models,
             settings::save_graphify_settings,
