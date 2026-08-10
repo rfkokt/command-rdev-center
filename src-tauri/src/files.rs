@@ -1,5 +1,17 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+
+const MAX_TEXT_ATTACHMENT_BYTES: u64 = 512 * 1024;
+const MAX_PDF_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_ATTACHMENT_TEXT_BYTES: usize = 1_000_000;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatAttachment {
+    pub name: String,
+    pub path: String,
+    pub content: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileEntry {
@@ -104,6 +116,34 @@ pub async fn search_files(project_path: String, query: String) -> Result<Vec<Fil
     tauri::async_runtime::spawn_blocking(move || search_files_blocking(project_path, query))
         .await
         .map_err(|e| format!("File search worker failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn read_chat_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachment>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let attachments: Result<Vec<_>, String> = paths.into_iter().map(|path| {
+            let metadata = std::fs::metadata(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+            if !metadata.is_file() { return Err(format!("Not a file: {path}")); }
+            let name = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
+            let is_pdf = Path::new(&path).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+            let limit = if is_pdf { MAX_PDF_ATTACHMENT_BYTES } else { MAX_TEXT_ATTACHMENT_BYTES };
+            if metadata.len() > limit { return Err(format!("File exceeds {} MB: {path}", limit / 1024 / 1024)); }
+            let content = if is_pdf {
+                let output = Command::new("pdftotext").arg(&path).arg("-").output()
+                    .map_err(|_| "PDF support requires pdftotext (install Poppler).".to_string())?;
+                if !output.status.success() { return Err(format!("Could not extract PDF text from {path}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+                String::from_utf8(output.stdout).map_err(|_| format!("PDF text is not UTF-8: {path}"))?
+            } else {
+                std::fs::read_to_string(&path).map_err(|_| format!("File is not UTF-8 text: {path}"))?
+            };
+            Ok(ChatAttachment { name, path, content })
+        }).collect();
+        let attachments = attachments?;
+        if attachments.iter().map(|attachment| attachment.content.len()).sum::<usize>() > MAX_ATTACHMENT_TEXT_BYTES {
+            return Err(format!("Total attachment text exceeds {} MB", MAX_ATTACHMENT_TEXT_BYTES / 1_000_000));
+        }
+        Ok(attachments)
+    }).await.map_err(|e| format!("Attachment reader failed: {e}"))?
 }
 
 #[cfg(test)]

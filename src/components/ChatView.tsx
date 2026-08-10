@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { ChatImage, ChatMessage, ToolCall, ApprovalRequest } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
 import {
@@ -41,6 +42,8 @@ type SessionStats = {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
 };
+type ChatFile = { name: string; path: string };
+type ChatAttachment = ChatFile & { content: string };
 
 const MAX_HISTORY = 600;
 type DiffSide = { number?: number; text: string; kind: "same" | "removed" | "added" | "empty" };
@@ -229,6 +232,7 @@ export default function ChatView({
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<ChatImage[]>([]);
+  const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
@@ -973,20 +977,41 @@ export default function ChatView({
     return () => window.clearInterval(id);
   }, [chatId, cwd, devRunner, onToast]);
 
+  async function readAttachments() {
+    if (!files.length) return "";
+    const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths: files.map((file) => file.path) });
+    return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+  }
+
   async function handleSend() {
     const text = input.trim();
-    if ((!text && images.length === 0) || driveDetached || agentStatus === "stopped") return;
+    if ((!text && images.length === 0 && files.length === 0) || driveDetached || agentStatus === "stopped") return;
+    let fileContext = "";
+    try { fileContext = await readAttachments(); } catch (error) { onToast(`File attachment: ${String(error)}`); return; }
+    const message = `${text}${fileContext}`;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => {
-      const next = [...prev, { id: uid(), role: "user", text, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage];
+      const next = [...prev, { id: uid(), role: "user", text: message, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage];
       return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
     });
     setInput("");
     setImages([]);
-    pendingTaskPromptRef.current = text;
+    setFiles([]);
+    pendingTaskPromptRef.current = message;
     const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : "";
-    await sendRaw({ type: "prompt", message: `${context}${text}`, images });
+    await sendRaw({ type: "prompt", message: `${context}${message}`, images });
+  }
+
+  async function attachFiles() {
+    try {
+      const paths = await open({ multiple: true, title: "Attach files to chat" });
+      if (!paths) return;
+      const selected = (Array.isArray(paths) ? paths : [paths]).map((path) => ({ path, name: path.split(/[\\/]/).pop() || path }));
+      setFiles((current) => [...current, ...selected.filter((file) => !current.some((item) => item.path === file.path))]);
+    } catch (error) {
+      onToast(`File attachment: ${String(error)}`);
+    }
   }
 
   function handlePaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
@@ -1275,7 +1300,7 @@ export default function ChatView({
   async function submitInput(submitMode: "prompt" | "follow_up" | "steer" = "prompt") {
     const text = input.trim();
     if (mode === "research") {
-      if (!text || images.length || researchBusy || researchResults.some(isActiveResearch)) return;
+      if (!text || images.length || files.length || researchBusy || researchResults.some(isActiveResearch)) return;
       setResearchBusy(true);
       try {
         const slash = modelRef.current.indexOf("/");
@@ -1330,16 +1355,20 @@ export default function ChatView({
       return;
     }
     if (agentStatus === "running") {
-      if (!text) return;
+      if (!text && files.length === 0) return;
+      let fileContext = "";
+      try { fileContext = await readAttachments(); } catch (error) { onToast(`File attachment: ${String(error)}`); return; }
+      const messageText = `${text}${fileContext}`;
       const type = submitMode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
-        const message = { id: uid(), role: "user", text, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
+        const message = { id: uid(), role: "user", text: messageText, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
         const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
       setInput("");
+      setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
-      await sendRaw({ type, message: text });
+      await sendRaw({ type, message: messageText });
       onToast(type === "steer" ? "Steering current turn" : "Message queued for next turn");
       return;
     }
@@ -1367,17 +1396,17 @@ export default function ChatView({
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
-      if (!isActive || mode !== "chat") return;
-      if (event.key === "Escape" && agentStatus === "running") {
+      if (!isActive || event.defaultPrevented) return;
+      if (event.key === "Escape") {
         event.preventDefault();
-        void handleAbort();
-      } else if (event.ctrlKey && event.key.toLowerCase() === "l") {
+        if (mode === "chat" && agentStatus === "running") void handleAbort();
+      } else if (mode === "chat" && event.ctrlKey && event.key.toLowerCase() === "l") {
         event.preventDefault();
         openModelPicker();
-      } else if (event.ctrlKey && event.key.toLowerCase() === "p") {
+      } else if (mode === "chat" && event.ctrlKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         sendRaw({ type: "cycle_model" });
-      } else if (event.key === "Tab" && event.shiftKey) {
+      } else if (mode === "chat" && event.key === "Tab" && event.shiftKey) {
         event.preventDefault();
         sendRaw({ type: "cycle_thinking_level" });
       }
@@ -1437,9 +1466,9 @@ export default function ChatView({
           <button
             className={mode === "research" ? "active" : ""}
             aria-pressed={mode === "research"}
-            disabled={images.length > 0}
-            title={images.length > 0 ? "Remove image attachments before starting Deep Research" : "Use the composer for Deep Research"}
-            aria-label={images.length > 0 ? "Deep Research unavailable while image attachments are present" : "Deep Research"}
+            disabled={images.length > 0 || files.length > 0}
+            title={images.length > 0 || files.length > 0 ? "Remove attachments before starting Deep Research" : "Use the composer for Deep Research"}
+            aria-label={images.length > 0 || files.length > 0 ? "Deep Research unavailable while attachments are present" : "Deep Research"}
             onClick={() => setMode("research")}
           >Deep Research</button>
         </div>
@@ -1802,6 +1831,7 @@ export default function ChatView({
           </div>
         )}
         {mode === "chat" && images.length > 0 && <div className="image-previews">{images.map((image, index) => <div key={index}><button onClick={() => setPreviewImage(image)} title="Preview image"><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment preview" /></button><button className="image-remove" onClick={() => setImages((prev) => prev.filter((_, i) => i !== index))} title="Remove image" aria-label="Remove image">×</button></div>)}</div>}
+        {mode === "chat" && files.length > 0 && <div className="image-previews" aria-label="File attachments">{files.map((file) => <div key={file.path} className="file-attachment"><span title={file.path}>📎 {file.name}</span><button className="image-remove" onClick={() => setFiles((current) => current.filter((item) => item.path !== file.path))} title="Remove file" aria-label={`Remove ${file.name}`}>×</button></div>)}</div>}
         {agentStatus === "running" && <div className={`queue-status${pendingMessageCount ? " has-queue" : ""}`} role="status">
           <strong>{pendingMessageCount ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED` : "AGENT IS WORKING"}</strong>
           <span>Enter queues next turn · Option/Alt + Enter steers current turn</span>
@@ -1850,7 +1880,8 @@ export default function ChatView({
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0)} className="button-primary chat-action">{researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
+        {mode === "chat" && <button onClick={() => void attachFiles()} disabled={isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
+        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || files.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0 && files.length === 0)} className="button-primary chat-action">{researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
 

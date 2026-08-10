@@ -105,7 +105,8 @@ pub fn run() {
             pi_rpc::is_pi_session_running,
             pi_rpc::kill_pi_session,
             pi_rpc::list_pi_sessions,
-            files::search_files
+            files::search_files,
+            files::read_chat_attachments
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
