@@ -12,6 +12,7 @@ use tauri::Emitter;
 const VERSION: u32 = 1;
 const MAX_TEXT: usize = 20_000;
 static LOCK: Mutex<()> = Mutex::new(());
+static GENERATION_RUNNING: Mutex<bool> = Mutex::new(false);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -376,25 +377,59 @@ fn repair_prompt(output: &str, error: &str) -> String {
 pub fn generate_documentary_package(
     app: tauri::AppHandle,
     package_id: String,
-) -> Result<DocumentaryPackage, String> {
-    let _guard = LOCK.lock().map_err(|_| "documentary store poisoned")?;
-    let original = read_one(&path(&dir()?, &package_id)?)?;
-    let prompt = generation_prompt(&original)?;
-    let session_id = format!("documentary-generate-{}-{}", original.id, now());
-    let first = crate::pi_rpc::generate_documentary_once(app.clone(), session_id.clone(), prompt)?;
-    let generated = match parse_generation(&first, &original) {
-        Ok(package) => package,
-        Err(validation_error) => {
-            let repaired = crate::pi_rpc::repair_documentary_once(
-                session_id,
-                repair_prompt(&first, &validation_error),
-            )?;
-            parse_generation(&repaired, &original)
-                .map_err(|error| format!("generation failed after one repair: {error}"))?
+) -> Result<(), String> {
+    let original = {
+        let _guard = LOCK.lock().map_err(|_| "documentary store poisoned")?;
+        let mut generation_running = GENERATION_RUNNING
+            .lock()
+            .map_err(|_| "documentary generation lock poisoned")?;
+        if *generation_running {
+            return Err("documentary package generation is already running".into());
         }
+        let mut package = read_one(&path(&dir()?, &package_id)?)?;
+        let _ = generation_prompt(&package)?;
+        package.state = PackageState::Generating;
+        package.error = None;
+        save(&app, &package)?;
+        *generation_running = true;
+        package
     };
-    save(&app, &generated)?;
-    Ok(generated)
+    std::thread::spawn(move || generate_documentary_in_background(app, original));
+    Ok(())
+}
+
+fn generate_documentary_in_background(app: tauri::AppHandle, original: DocumentaryPackage) {
+    let result = (|| {
+        let prompt = generation_prompt(&original)?;
+        let session_id = format!("documentary-generate-{}-{}", original.id, now());
+        let first =
+            crate::pi_rpc::generate_documentary_once(app.clone(), session_id.clone(), prompt)?;
+        match parse_generation(&first, &original) {
+            Ok(package) => Ok(package),
+            Err(validation_error) => {
+                let repaired = crate::pi_rpc::repair_documentary_once(
+                    session_id,
+                    repair_prompt(&first, &validation_error),
+                )?;
+                parse_generation(&repaired, &original)
+                    .map_err(|error| format!("generation failed after one repair: {error}"))
+            }
+        }
+    })();
+
+    let Ok(_guard) = LOCK.lock() else { return };
+    let package = match result {
+        Ok(package) => package,
+        Err(error) => DocumentaryPackage {
+            state: PackageState::Failed,
+            error: Some(error),
+            ..original
+        },
+    };
+    let _ = save(&app, &package);
+    if let Ok(mut generation_running) = GENERATION_RUNNING.lock() {
+        *generation_running = false;
+    }
 }
 
 #[tauri::command]
