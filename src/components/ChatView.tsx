@@ -979,8 +979,18 @@ export default function ChatView({
 
   async function readAttachments() {
     if (!files.length) return "";
-    const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths: files.map((file) => file.path) });
-    return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+    const paths = files.map((file) => file.path);
+    try {
+      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
+      return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+    } catch (error) {
+      if (!String(error).includes("PDF support requires pdftotext") || !window.confirm("PDF support needs Poppler. Install it with Homebrew now?")) throw error;
+      onToast("Installing Poppler…");
+      await invoke("install_poppler");
+      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
+      onToast("Poppler installed.");
+      return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+    }
   }
 
   async function handleSend() {
