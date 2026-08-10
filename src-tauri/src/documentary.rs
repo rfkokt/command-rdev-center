@@ -354,7 +354,7 @@ fn generation_prompt(p: &DocumentaryPackage) -> Result<String, String> {
         return Err("approve at least one source before generation".into());
     }
     Ok(format!(
-        "Generate a {duration}-second vertical documentary package about {topic} for {audience} in {language}. Use ONLY these approved source IDs for verified claims: {sources}. Return ONLY one JSON object with fields script and scenes. script={{title,hook,narration,claims:[{{id,text,sourceIds,status}}]}}. scenes has 5-8 ordered entries with {{id,order,voiceover,claimIds,onScreenText,emotionalBeat,visualConcept,motionSuggestion,assetNeeds}}. status is verified or uncertain; uncertain sourceIds must be empty. verified sourceIds must be approved IDs. motionSuggestion is paper_entrance, drift, parallax, or hard_cut. Every scene needs a required non-audio visual asset. At least one required narration asset exists. Each asset need is {{id,kind,description,orientation,minimumResolution?,required,purpose,rightsReminder}}. No markdown.",
+        "Generate a {duration}-second vertical documentary package about {topic} for {audience} in {language}. Use ONLY these approved source IDs for verified claims: {sources}. Return ONLY one JSON object with fields script and scenes. Arrays must always be JSON arrays, for example: script={{title,hook,narration,claims:[{{id,text,sourceIds:[\"source-1\"],status}}]}} and scenes=[{{id,order,voiceover,claimIds:[\"claim-1\"],onScreenText:[\"Short caption\"],emotionalBeat,visualConcept,motionSuggestion,assetNeeds:[{{id,kind,description,orientation,minimumResolution?,required,purpose,rightsReminder}}]}}]. scenes has 5-8 ordered entries. status is verified or uncertain; uncertain sourceIds must be empty. verified sourceIds must be approved IDs. motionSuggestion is paper_entrance, drift, parallax, or hard_cut. Every scene needs a required non-audio visual asset. At least one required narration asset exists. No markdown.",
         duration = p.duration_seconds,
         topic = serde_json::to_string(&p.topic).map_err(|e| e.to_string())?,
         audience = serde_json::to_string(&p.audience).map_err(|e| e.to_string())?,
@@ -370,12 +370,62 @@ struct GenerationOutput {
     scenes: Vec<Scene>,
 }
 
+fn normalize_string_array(value: &mut serde_json::Value) {
+    if matches!(
+        value,
+        serde_json::Value::String(_) | serde_json::Value::Null
+    ) {
+        *value = match std::mem::take(value) {
+            serde_json::Value::String(item) => serde_json::Value::Array(vec![item.into()]),
+            _ => serde_json::Value::Array(vec![]),
+        };
+    }
+}
+
+fn normalize_generation(value: &mut serde_json::Value) {
+    let Some(output) = value.as_object_mut() else {
+        return;
+    };
+    if let Some(claims) = output
+        .get_mut("script")
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|script| script.get_mut("claims"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for claim in claims {
+            if let Some(source_ids) = claim
+                .as_object_mut()
+                .and_then(|claim| claim.get_mut("sourceIds"))
+            {
+                normalize_string_array(source_ids);
+            }
+        }
+    }
+    if let Some(scenes) = output
+        .get_mut("scenes")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for scene in scenes {
+            if let Some(scene) = scene.as_object_mut() {
+                for field in ["claimIds", "onScreenText"] {
+                    if let Some(value) = scene.get_mut(field) {
+                        normalize_string_array(value);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn parse_generation(raw: &str, base: &DocumentaryPackage) -> Result<DocumentaryPackage, String> {
     let raw = raw.trim();
     if raw.contains("```") {
         return Err("generation must be a JSON object without markdown".into());
     }
-    let output: GenerationOutput = serde_json::from_str(raw)
+    let mut value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| format!("generation JSON is invalid: {error}"))?;
+    normalize_generation(&mut value);
+    let output: GenerationOutput = serde_json::from_value(value)
         .map_err(|error| format!("generation JSON is invalid: {error}"))?;
     let mut generated = base.clone();
     generated.script = Some(output.script);
@@ -386,9 +436,9 @@ fn parse_generation(raw: &str, base: &DocumentaryPackage) -> Result<DocumentaryP
     Ok(generated)
 }
 
-fn repair_prompt(output: &str, error: &str) -> String {
+fn repair_prompt(_output: &str, error: &str) -> String {
     format!(
-        "Return a corrected JSON object only. Previous output: {output}\nValidation error: {error}"
+        "Return a corrected JSON object only. Expected shapes: script.claims is an array; claim.sourceIds is an array of strings; scenes is an array of 5-8 entries; scene.claimIds and scene.onScreenText are arrays of strings; scene.assetNeeds is an array. Validation error: {error}"
     )
 }
 
@@ -778,5 +828,36 @@ mod tests {
         let output = r#"{"script":{"title":"t","hook":"h","narration":"n","claims":[]},"scenes":[{"id":"1","order":1,"voiceover":"v","claimIds":[],"onScreenText":[],"emotionalBeat":"e","visualConcept":"v","motionSuggestion":"unsupported","assetNeeds":[]}]}"#;
         assert!(parse_generation(output, &p).is_err());
         assert_eq!(p, sample());
+    }
+    #[test]
+    fn generation_normalizes_string_array_fields() {
+        let mut p = sample();
+        p.sources = vec![SourceSnapshot {
+            id: "source-1".into(),
+            url: "https://example.com".into(),
+            canonical_url: "https://example.com".into(),
+            title: "Example".into(),
+            cited: true,
+            approved: true,
+        }];
+        let scenes = (1..=5)
+            .map(|order| serde_json::json!({
+                "id": format!("scene-{order}"), "order": order, "voiceover": "v",
+                "claimIds": "claim-1", "onScreenText": "Short caption",
+                "emotionalBeat": "e", "visualConcept": "v", "motionSuggestion": "drift",
+                "assetNeeds": [
+                    {"id": format!("narration-{order}"), "kind": "narration", "description": "d", "orientation": "audio", "required": true, "purpose": "p", "rightsReminder": "r"},
+                    {"id": format!("visual-{order}"), "kind": "background", "description": "d", "orientation": "portrait", "required": true, "purpose": "p", "rightsReminder": "r"}
+                ]
+            }))
+            .collect::<Vec<_>>();
+        let output = serde_json::json!({
+            "script": {"title": "t", "hook": "h", "narration": "n", "claims": [{"id": "claim-1", "text": "fact", "sourceIds": "source-1", "status": "verified"}]},
+            "scenes": scenes
+        });
+        let generated = parse_generation(&output.to_string(), &p).unwrap();
+        assert_eq!(generated.script.unwrap().claims[0].source_ids, ["source-1"]);
+        assert_eq!(generated.scenes[0].claim_ids, ["claim-1"]);
+        assert_eq!(generated.scenes[0].on_screen_text, ["Short caption"]);
     }
 }
