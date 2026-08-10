@@ -770,6 +770,18 @@ pub fn get_deep_research_data() -> Result<ResearchData, String> {
     Ok(load_at(&runs_dir()?))
 }
 
+pub fn completed_documentary_research(run_id: &str) -> Result<ResearchRun, String> {
+    let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
+    let run = read_one(&path(&runs_dir()?, run_id))?;
+    if run.state != RunState::Completed
+        || run.final_report.as_deref().map_or(true, str::is_empty)
+        || run.sources.is_empty()
+    {
+        return Err("documentary research must be completed with a report and sources".into());
+    }
+    Ok(run)
+}
+
 #[tauri::command]
 pub fn handoff_deep_research(
     app: tauri::AppHandle,
@@ -848,7 +860,10 @@ pub fn delete_deep_research(app: tauri::AppHandle, run_id: String) -> Result<(),
     std::fs::remove_file(path(&dir, &run_id)).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(path(&dir, &run_id).with_extension("json.bak"));
     clear_active(&run_id);
-    let _ = app.emit("deep-research-changed", serde_json::json!({"run_id":run_id,"state":"deleted"}));
+    let _ = app.emit(
+        "deep-research-changed",
+        serde_json::json!({"run_id":run_id,"state":"deleted"}),
+    );
     Ok(())
 }
 

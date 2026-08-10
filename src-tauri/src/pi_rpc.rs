@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Duration;
 use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,9 +29,139 @@ struct SessionHandle {
 type SharedSessionHandle = Arc<SessionHandle>;
 
 static SESSIONS: OnceLock<Mutex<HashMap<String, SharedSessionHandle>>> = OnceLock::new();
+static ONE_SHOT_RESULTS: OnceLock<Mutex<HashMap<String, OneShotResult>>> = OnceLock::new();
+
+struct OneShotResult {
+    text: String,
+    sender: mpsc::Sender<Result<String, String>>,
+}
 
 fn sessions_map() -> &'static Mutex<HashMap<String, SharedSessionHandle>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn one_shot_results() -> &'static Mutex<HashMap<String, OneShotResult>> {
+    ONE_SHOT_RESULTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn observe_one_shot(session_id: &str, raw: &str) {
+    let Ok(event) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return;
+    };
+    let Ok(mut results) = one_shot_results().lock() else {
+        return;
+    };
+    let Some(result) = results.get_mut(session_id) else {
+        return;
+    };
+    if event.get("type").and_then(serde_json::Value::as_str) == Some("message_update") {
+        if let Some(delta) = event
+            .pointer("/assistantMessageEvent/delta")
+            .and_then(serde_json::Value::as_str)
+        {
+            result.text.push_str(delta);
+        }
+    }
+    if event.get("type").and_then(serde_json::Value::as_str) == Some("agent_settled") {
+        let result = results.remove(session_id).expect("one-shot result exists");
+        let _ = result.sender.send(if result.text.trim().is_empty() {
+            Err("Pi returned no generation output".into())
+        } else {
+            Ok(result.text)
+        });
+    }
+}
+
+pub(crate) fn generate_documentary_once(
+    app: tauri::AppHandle,
+    session_id: String,
+    prompt: String,
+) -> Result<String, String> {
+    let cwd = global_chat_cwd()?;
+    spawn_pi_rpc(
+        app,
+        session_id.clone(),
+        cwd.to_string_lossy().into_owned(),
+        None,
+        None,
+        None,
+        Some(true),
+        None,
+        None,
+        Some(vec![]),
+        Some(true),
+    )?;
+    let (sender, receiver) = mpsc::channel();
+    one_shot_results()
+        .lock()
+        .map_err(|_| "one-shot result lock poisoned")?
+        .insert(
+            session_id.clone(),
+            OneShotResult {
+                text: String::new(),
+                sender,
+            },
+        );
+    if let Err(error) = send_pi_command(
+        session_id.clone(),
+        serde_json::json!({"type":"prompt","message":prompt}).to_string(),
+    ) {
+        one_shot_results()
+            .lock()
+            .ok()
+            .and_then(|mut results| results.remove(&session_id));
+        let _ = kill_pi_session(session_id);
+        return Err(error);
+    }
+    match receiver.recv_timeout(Duration::from_secs(120)) {
+        Ok(result) => result,
+        Err(_) => {
+            one_shot_results()
+                .lock()
+                .ok()
+                .and_then(|mut results| results.remove(&session_id));
+            let _ = kill_pi_session(session_id);
+            Err("Pi generation timed out".into())
+        }
+    }
+}
+
+pub(crate) fn repair_documentary_once(
+    session_id: String,
+    prompt: String,
+) -> Result<String, String> {
+    let (sender, receiver) = mpsc::channel();
+    one_shot_results()
+        .lock()
+        .map_err(|_| "one-shot result lock poisoned")?
+        .insert(
+            session_id.clone(),
+            OneShotResult {
+                text: String::new(),
+                sender,
+            },
+        );
+    if let Err(error) = send_pi_command(
+        session_id.clone(),
+        serde_json::json!({"type":"prompt","message":prompt}).to_string(),
+    ) {
+        one_shot_results()
+            .lock()
+            .ok()
+            .and_then(|mut results| results.remove(&session_id));
+        let _ = kill_pi_session(session_id);
+        return Err(error);
+    }
+    let result = receiver
+        .recv_timeout(Duration::from_secs(120))
+        .map_err(|_| "Pi generation repair timed out".to_string())
+        .and_then(|result| result);
+    one_shot_results()
+        .lock()
+        .ok()
+        .and_then(|mut results| results.remove(&session_id));
+    let _ = kill_pi_session(session_id);
+    result
 }
 
 fn read_pi_config() -> Result<(String, serde_json::Value), String> {
@@ -146,7 +277,10 @@ fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
     })
 }
 
-fn ensure_pi_installed_with_repair(app: Option<&tauri::AppHandle>, configured: &str) -> Result<PathBuf, String> {
+fn ensure_pi_installed_with_repair(
+    app: Option<&tauri::AppHandle>,
+    configured: &str,
+) -> Result<PathBuf, String> {
     if let Some(path) = installed_pi(configured) {
         return Ok(path);
     }
@@ -309,7 +443,8 @@ pub fn spawn_pi_rpc(
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
     }
-    let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path).or_else(|_| ensure_pi_installed(&configured_pi_path))?;
+    let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
+        .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -335,12 +470,15 @@ pub fn spawn_pi_rpc(
         let config = serde_json::json!({
             "mcpServers": { "figma": { "url": figma.url, "auth": "oauth" } }
         });
-        std::fs::write(&config_path, serde_json::to_string(&config).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("Figma MCP config: {e}"))?;
+        std::fs::write(
+            &config_path,
+            serde_json::to_string(&config).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("Figma MCP config: {e}"))?;
         args.push("--mcp-config".into());
         args.push(config_path.to_string_lossy().into());
     }
-    if global_chat {
+    if global_chat && tools.is_none() {
         args.push("--tools".into());
         args.push("web_search,source_check,fetch_content,get_search_content,mcp".into());
     } else if let Some(tools) = tools {
@@ -476,7 +614,9 @@ pub fn spawn_pi_rpc(
                         continue;
                     }
                     Err(repair_err) => {
-                        return Err(format!("failed to spawn pi after auto-repair: {repair_err} (original: {e})"));
+                        return Err(format!(
+                            "failed to spawn pi after auto-repair: {repair_err} (original: {e})"
+                        ));
                     }
                 }
             }
@@ -523,6 +663,8 @@ pub fn spawn_pi_rpc(
                     );
                     if sid.starts_with("research-") {
                         crate::deep_research::observe_rpc(&app_clone, &sid, &line);
+                    } else if sid.starts_with("documentary-") {
+                        observe_one_shot(&sid, &line);
                     }
                 }
                 Err(e) => {
@@ -600,9 +742,12 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
     let map = sessions_map()
         .lock()
         .map_err(|_| "poisoned sessions lock".to_string())?;
-    let h = map
-        .get(&session_id)
-        .ok_or_else(|| format!("unknown session {} — it may have crashed and been auto-reinstalled, try sending again", session_id))?;
+    let h = map.get(&session_id).ok_or_else(|| {
+        format!(
+            "unknown session {} — it may have crashed and been auto-reinstalled, try sending again",
+            session_id
+        )
+    })?;
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
     let stdin = guard.as_mut().ok_or_else(|| {
         "stdin closed — pi process crashed on macOS (common when binary disappears). The app has auto-reinstalled it; please resend your message / restart the session.".to_string()

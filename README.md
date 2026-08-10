@@ -8,6 +8,12 @@ Command RDev Center combines project discovery, isolated task worktrees, native 
 
 The global **Deep Research** dashboard runs one dedicated Pi session with only `web_search`, `source_check`, `fetch_content`, and `get_search_content`. It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
 
+## Documentary production packages
+
+The global **Documentary** dashboard turns completed, user-approved Deep Research into a 30, 45, or 60-second vertical-reel production package. It stores editable source snapshots, cited script claims, a 5–8 scene storyboard, and a manual asset checklist locally; it exports `research.md`, `sources.json`, `script.md`, `scenes.json`, and `asset-checklist.md`.
+
+Phase 1 does not render video, import assets, generate media, or provide an editor. Users remain responsible for source review and asset rights. See [ADR-0006](docs/adr/0006-documentary-production-package-first.md) for the renderer phase gate.
+
 ## Stack
 
 - Tauri 2

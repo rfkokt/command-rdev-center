@@ -12,6 +12,7 @@ const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
+const DocumentaryView = lazy(() => import("./components/DocumentaryView"));
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
@@ -60,7 +61,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<"pi" | "pipeline">("pi");
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
-  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | null>(null);
+  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | "documentary" | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -245,6 +246,9 @@ export default function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg>
             <span>Knowledge</span>
           </button>
+          <button title="Documentary" className={`settings-button dashboard-button ${dashboard === "documentary" ? "active" : ""}`} aria-current={dashboard === "documentary" ? "page" : undefined} onClick={() => setDashboard("documentary")}>
+            <span className="nav-glyph" aria-hidden="true">▣</span><span>Documentary</span>
+          </button>
           <div className="sidebar-nav-label">Project operations</div>
           <button title="Tasks" aria-label="Kanban tasks" className={`settings-button ${dashboard === "kanban" ? "active" : ""}`} aria-current={dashboard === "kanban" ? "page" : undefined} onClick={() => setDashboard("kanban")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="2.5" y="3" width="19" height="18" rx="2.5"/><rect x="6" y="7" width="3.5" height="10" rx="1"/><rect x="10.5" y="7" width="3.5" height="12" rx="1"/><rect x="15" y="7" width="3.5" height="7" rx="1"/></svg>
@@ -283,6 +287,7 @@ export default function App() {
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
+          {dashboard === "documentary" && <Suspense fallback={<div className="session-loading" role="status">Loading production packages…</div>}><DocumentaryView /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView

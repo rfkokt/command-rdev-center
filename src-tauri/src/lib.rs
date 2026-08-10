@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 mod deep_research;
 mod dev_runner;
 mod diff;
+mod documentary;
 mod files;
 mod graph;
 mod kanban;
@@ -50,6 +51,15 @@ pub fn run() {
             deep_research::delete_deep_research,
             deep_research::cancel_deep_research,
             deep_research::resume_deep_research,
+            documentary::create_documentary_package,
+            documentary::list_documentary_packages,
+            documentary::get_documentary_package,
+            documentary::update_documentary_package,
+            documentary::delete_documentary_package,
+            documentary::attach_documentary_research,
+            documentary::approve_documentary_source,
+            documentary::generate_documentary_package,
+            documentary::export_documentary_package,
             dev_runner::detect_dev_command,
             dev_runner::get_dev_server,
             dev_runner::start_dev_server,
