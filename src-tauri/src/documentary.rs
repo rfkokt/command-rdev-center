@@ -483,6 +483,23 @@ pub fn delete_documentary_package(app: tauri::AppHandle, package_id: String) -> 
     );
     Ok(())
 }
+fn source_snapshot(index: usize, source: &crate::deep_research::Source) -> SourceSnapshot {
+    SourceSnapshot {
+        id: format!("source-{}", index + 1),
+        url: source.url.clone(),
+        canonical_url: source.canonical_url.clone(),
+        title: if bounded(&source.title) {
+            source.title.clone()
+        } else if bounded(&source.canonical_url) {
+            source.canonical_url.clone()
+        } else {
+            source.url.clone()
+        },
+        cited: source.cited,
+        approved: false,
+    }
+}
+
 #[tauri::command]
 pub fn attach_documentary_research(
     app: tauri::AppHandle,
@@ -498,14 +515,7 @@ pub fn attach_documentary_research(
         .sources
         .iter()
         .enumerate()
-        .map(|(i, s)| SourceSnapshot {
-            id: format!("source-{}", i + 1),
-            url: s.url.clone(),
-            canonical_url: s.canonical_url.clone(),
-            title: s.title.clone(),
-            cited: s.cited,
-            approved: false,
-        })
+        .map(|(i, source)| source_snapshot(i, source))
         .collect();
     p.state = PackageState::ReviewingSources;
     p.error = None;
@@ -624,6 +634,19 @@ mod tests {
         assert_eq!(data.packages, vec![p]);
         assert_eq!(data.warnings.len(), 1);
         std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn blank_research_source_title_uses_canonical_url_and_validates() {
+        let source = crate::deep_research::Source {
+            url: "https://example.com/article".into(),
+            canonical_url: "https://example.com/article".into(),
+            title: " ".into(),
+            cited: true,
+        };
+        let mut p = sample();
+        p.sources = vec![source_snapshot(0, &source)];
+        assert_eq!(p.sources[0].title, source.canonical_url);
+        assert!(validate(&p).is_ok());
     }
     #[test]
     fn attachment_copy_is_independent() {
