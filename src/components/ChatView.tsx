@@ -1453,6 +1453,13 @@ export default function ChatView({
         {mode === "chat" && graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
         
         {mode === "chat" && <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
+          <button
+            onClick={openModelPicker}
+            className="dev-control"
+            style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+            title="Change model (Ctrl+L or /model) — works in Global and project chat"
+            aria-label="Change model"
+          >◍ {currentModel ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ?? "MODEL") : "MODEL"}</button>
           {!globalChat && (
             <button
               onClick={() => setRightSidebarOpen((o) => !o)}
@@ -1959,7 +1966,7 @@ export default function ChatView({
         {sessionStats && <button className="usage-summary" onClick={() => setUsageOpen(true)} title="Show token usage">
           CONTEXT {sessionStats.contextUsage?.percent == null ? "—" : `${Math.round(sessionStats.contextUsage.percent)}%`} · ↑ {formatTokens(sessionStats.tokens.input)} · ↓ {formatTokens(sessionStats.tokens.output)}
         </button>}
-        <span>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</span>
+        <button className="chat-status-model" onClick={openModelPicker} title="Change model — Ctrl+L or /model" style={{ background: "transparent", border: "1px solid transparent", color: "inherit", cursor: "pointer", padding: "2px 6px", fontSize: "inherit", fontFamily: "inherit", letterSpacing: "0.08em" } as React.CSSProperties}>{currentModel ? currentModel.replace("/", " | ") : "model loading…"}{currentThinking ? ` | ${currentThinking}` : ""}</button>
       </footer>
       {usageOpen && sessionStats && <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
         <section ref={usageDialogRef} className="usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title" tabIndex={-1} onMouseDown={(event) => event.stopPropagation()}>
