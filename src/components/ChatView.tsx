@@ -1660,7 +1660,7 @@ export default function ChatView({
                 <div className="tool-stack-items">{tools.map((tool) => <ToolCallView key={tool.callId} tc={tool} />)}</div>
               </details>;
             })()}
-            {m.text && <MarkdownMessage>{m.text}</MarkdownMessage>}
+            {m.text && <MarkdownMessage isStreaming={m.isStreaming}>{m.text}</MarkdownMessage>}
             {m.role === "assistant" && m.text && !m.isStreaming && <div className="chat-actions">
               <button className="chat-copy" onClick={() => navigator.clipboard.writeText(m.text).then(() => { setCopiedMessageId(m.id); window.setTimeout(() => setCopiedMessageId((id) => id === m.id ? null : id), 1600); }).catch((error) => onToast(`Copy failed: ${String(error)}`))} aria-label="Copy assistant response" title="Copy response">{copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}</button>
               {globalChat && <details className="chat-save">
