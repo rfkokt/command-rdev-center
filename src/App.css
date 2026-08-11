@@ -168,6 +168,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .approval-options button span { flex: none; color: var(--accent); font-size: 13px; }
 .approval-options button:hover, .approval-options button:focus-visible { outline: none; background: #292b23; color: var(--colors-on-dark); box-shadow: inset 3px 0 0 var(--accent); }
 .approval-options .approval-primary { background: #252a19; color: var(--accent); }
+.approval-options .approval-primary.approval-danger { background: #2a1616; color: #e05656; }
 .approval-input { display: grid; gap: 8px; padding: 18px 22px; }
 .approval-input input, .approval-input textarea { width: 100%; padding: 12px 13px; resize: vertical; border: 1px solid var(--colors-hairline-strong); outline: none; background: #0b0c0a; color: var(--colors-on-dark); }
 .approval-input input:focus, .approval-input textarea:focus { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }

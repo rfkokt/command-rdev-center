@@ -12,6 +12,7 @@ const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
+import { ConfirmHost } from "./components/ConfirmDialog";
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
@@ -345,6 +346,7 @@ export default function App() {
         </div>
         {settingsOpen && <Suspense fallback={<div className="settings-backdrop"><div className="settings-loading" role="status">Loading settings…</div></div>}><SettingsPanel projectPath={settingsProject?.path ?? selectedProject?.path ?? activeTab?.project.path} projectName={settingsProject?.name ?? selectedProject?.name ?? activeTab?.project.name} initialPage={settingsPage} onClose={() => setSettingsOpen(false)} onToast={addToast} /></Suspense>}
       </section>
+      <ConfirmHost />
     </main>
   );
 }

@@ -27,6 +27,7 @@ import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearc
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
+import { confirm } from "./ConfirmDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import { isActiveResearch, type ResearchRun } from "../lib/deep-research";
@@ -381,7 +382,7 @@ export default function ChatView({
       setGraphStatus(next);
       if (next.tracked_warning) onToast(next.tracked_warning);
       onToast(full ? "Graph built" : "Graph updated");
-      if (full && window.confirm("Add Graphify exclusions to ~/.gitignore_global as a safety net?")) {
+      if (full && await confirm({ title: "Graphify safety net", message: "Add Graphify exclusions to ~/.gitignore_global as a safety net?", confirmLabel: "Add", cancelLabel: "Skip" })) {
         const path = await invoke<string>("enable_global_graphignore");
         onToast(`Global Graphify ignore enabled: ${path}`);
       }
@@ -546,7 +547,7 @@ export default function ChatView({
       });
     }
 
-    function handleRaw(raw: string) {
+    async function handleRaw(raw: string) {
       if (!mounted) return;
       try {
         const ev = JSON.parse(raw) as Record<string, unknown>;
@@ -788,7 +789,7 @@ export default function ChatView({
           const name = String(ev.toolName ?? "");
           const args = (ev.args as Record<string, unknown>) ?? {};
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
-          if (!ev.isError && name === "run_pipeline" && window.confirm(`Run saved pipeline for ${projectName}?`)) {
+          if (!ev.isError && name === "run_pipeline" && await confirm({ title: "Run pipeline", message: `Run saved pipeline for ${projectName}?`, confirmLabel: "Run", cancelLabel: "Cancel" })) {
             void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current, initiatorSessionId: sessionId })
               .then(() => { onToast(`Pipeline started: ${projectName}`); })
               .catch((error) => onToast(`Pipeline: ${String(error)}`));
@@ -799,7 +800,7 @@ export default function ChatView({
             const prevention = typeof args.prevention === "string" ? args.prevention : "";
             if (title && rootCause && prevention) {
               const draft = `Error: ${title}\n\nRoot cause:\n${rootCause}\n\nPrevention:\n${prevention}`;
-              if (window.confirm(`Save this error report as a Backlog task?\n\n${draft}`)) {
+              if (await confirm({ title: "Save Backlog task", message: `Save this error report as a Backlog task?\n\n${draft}`, confirmLabel: "Save", cancelLabel: "Discard" })) {
                 void invoke<string>("create_error_report_task", { input: { project: projectName, sessionId, title, rootCause, prevention } })
                   .then((status) => onToast(`Error report saved: ${status}`))
                   .catch((error) => onToast(`Error report: ${String(error)}`));
@@ -809,7 +810,7 @@ export default function ChatView({
           if (!ev.isError && name === "provide_pipeline_input") {
             const message = typeof args.message === "string" ? args.message : "";
             const paths = Array.isArray(args.paths) ? args.paths.filter((path): path is string => typeof path === "string") : [];
-            if (message && paths.length && window.confirm(`Commit these files?\n\n${paths.join("\n")}\n\nMessage: ${message}`)) {
+            if (message && paths.length && await confirm({ title: "Commit files", message: `Commit these files?\n\n${paths.join("\n")}\n\nMessage: ${message}`, confirmLabel: "Commit", cancelLabel: "Cancel" })) {
               void invoke("get_pipeline_data", { projectPath }).then((data) => {
                 const pending = (data as { pending_input?: { nonce: string; run_id: string; step_id: string; execution_cwd: string; initiator_session_id?: string | null } }).pending_input;
                 if (!pending || pending.initiator_session_id !== sessionId || pending.execution_cwd !== cwdRef.current) throw new Error("Pipeline input request no longer matches this chat");
@@ -819,7 +820,7 @@ export default function ChatView({
           }
           if (!ev.isError && name === "control_pipeline" && ["retry", "skip", "cancel"].includes(String(args.action))) {
             const action = String(args.action);
-            const allowed = action === "retry" || window.confirm(`${action === "skip" ? "Skip failed step" : "Cancel pipeline"} for ${projectName}?`);
+            const allowed = action === "retry" || await confirm({ title: action === "skip" ? "Skip step" : "Cancel pipeline", message: `${action === "skip" ? "Skip failed step" : "Cancel pipeline"} for ${projectName}?`, confirmLabel: action === "skip" ? "Skip" : "Cancel pipeline", cancelLabel: "Keep running", danger: action !== "skip" });
             if (allowed) {
               const command = action === "retry" ? "retry_pipeline_step" : action === "skip" ? "skip_pipeline_step" : "cancel_pipeline";
               void invoke(command, { projectPath }).catch((error) => onToast(`Pipeline: ${String(error)}`));
@@ -881,7 +882,7 @@ export default function ChatView({
         setGraphStatus(graph);
         graphReportRef.current = graph.report_path;
         if (graph.tracked_warning) onToast(graph.tracked_warning);
-        if (graph.state === "none" && window.confirm(`Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`)) {
+        if (graph.state === "none" && await confirm({ title: "Build knowledge graph", message: `Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`, confirmLabel: "Build", cancelLabel: "Cancel" })) {
           graph = await refreshGraph(true) ?? graph;
         } else if (graph.code_stale) {
           graph = await refreshGraph(false) ?? graph;
@@ -984,7 +985,7 @@ export default function ChatView({
       const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
       return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
     } catch (error) {
-      if (!String(error).includes("PDF support requires pdftotext") || !window.confirm("PDF support needs Poppler. Install it with Homebrew now?")) throw error;
+      if (!String(error).includes("PDF support requires pdftotext") || !await confirm({ title: "Install Poppler", message: "PDF support needs Poppler. Install it with Homebrew now?", confirmLabel: "Install", cancelLabel: "Cancel" })) throw error;
       onToast("Installing Poppler…");
       await invoke("install_poppler");
       const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
@@ -1311,6 +1312,7 @@ export default function ChatView({
     const text = input.trim();
     if (mode === "research") {
       if (!text || images.length || files.length || researchBusy || researchResults.some(isActiveResearch)) return;
+      if (!await confirm({ title: "Run Deep Research", message: `${text}\n\nThis spins up a multi-step web research job that uses tokens.`, confirmLabel: "Run", cancelLabel: "Cancel" })) return;
       setResearchBusy(true);
       try {
         const slash = modelRef.current.indexOf("/");

@@ -14,6 +14,9 @@ vi.mock("./FilePicker", () => ({ default: () => null }));
 import ChatView from "./ChatView";
 
 Element.prototype.scrollIntoView = vi.fn();
+// ConfirmHost (styled confirm) is only mounted in App; in isolation its module-level opener is null,
+// so confirm() falls back to window.confirm, which jsdom returns false from. Stub it true so research submit proceeds.
+window.confirm = vi.fn(() => true);
 const baseProps = { projectPath: "/tmp/demo", projectName: "demo", isGit: false, repositories: [], pipelineType: "Personal", chatId: "chat-one", resumableSessions: [], onSessionFile: vi.fn(), onFirstMessage: vi.fn(), onRuntimeSettings: vi.fn(), onAgentRunning: vi.fn(), onUnread: vi.fn(), onClose: vi.fn(), onToast: vi.fn(), onOpenPipeline: vi.fn(), onOpenResearch: vi.fn(), isActive: true };
 
 function mockBackend(runs: unknown[] = []) {
