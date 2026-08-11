@@ -380,6 +380,10 @@ fn start_dev_server_blocking(
         (None, true) => format!("php artisan serve --host localhost --port {port}"),
         (None, false) => unreachable!(),
     };
+    // A stale dev server may not be in our registry (for example after an app restart).
+    // Clear the selected listener before launching so fixed-port scripts can restart cleanly.
+    kill_port_listener(&format!("http://localhost:{port}"));
+
     let path = shell_path();
     let project_bins = project.join("node_modules/.bin");
     let log_path = std::env::temp_dir().join(format!("command-rdev-center-dev-{chat_id}.log"));
