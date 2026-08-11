@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import MarkdownMessage from "./MarkdownMessage";
+import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
 
 type Source = { id: string; name: string; kind: string; chars: number; modified_ms: number };
@@ -66,7 +67,7 @@ export default function RagKnowledge({ onToast }: { onToast: (message: string) =
   }
 
   async function remove(source: Source) {
-    if (!window.confirm(`Delete extracted source “${source.name}”? This cannot be undone.`)) return;
+    if (!await confirm({ title: "Delete source", message: `Delete extracted source “${source.name}”? This cannot be undone.`, confirmLabel: "Delete", cancelLabel: "Keep", danger: true })) return;
     setError("");
     try { await invoke("delete_rag_source", { id: source.id }); await reload(); onToast(`Deleted ${source.name}.`); if (preview?.id === source.id) setPreview(null); }
     catch (e) { setError(String(e)); }

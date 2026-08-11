@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirm } from "./ConfirmDialog";
 
 type StageStatus = "pass" | "fail" | "skip" | "running" | "pending";
 type Stage = { name: string; ms?: number; status: StageStatus; log?: string; attempts?: number };
@@ -65,11 +66,11 @@ export default function PipelineView({ projectPath, projectName }: { projectPath
       setStarting(false);
     }
   };
-  const control = (command: string) => {
+  async function control(command: string) {
     if (!projectPath) return;
-    if (["cancel_pipeline", "skip_pipeline_step"].includes(command) && !window.confirm(command === "cancel_pipeline" ? "Cancel this pipeline?" : "Skip the failed step?")) return;
+    if (["cancel_pipeline", "skip_pipeline_step"].includes(command) && !await confirm({ title: command === "cancel_pipeline" ? "Cancel pipeline" : "Skip step", message: command === "cancel_pipeline" ? "Cancel this pipeline?" : "Skip the failed step?", confirmLabel: command === "cancel_pipeline" ? "Cancel pipeline" : "Skip", cancelLabel: "Keep running", danger: command === "cancel_pipeline" })) return;
     void invoke(command, { projectPath }).catch((e) => setError(String(e)));
-  };
+  }
   const pending = data.pending_input;
   const provide = () => {
     if (!projectPath || !pending || !inputValue) return;

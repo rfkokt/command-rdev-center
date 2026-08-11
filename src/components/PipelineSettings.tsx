@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useModalFocus } from "./useModalFocus";
+import { confirm } from "./ConfirmDialog";
 
 export type PipelineStep = { id: string; name: string; mode?: "shell" | "ai_commit" | "confirm"; command: string; enabled: boolean; failure_policy: "ai_fix" | "ask_user" | "stop" | "continue"; max_attempts: number; prompt?: string; options?: string[] };
 export type PipelineConfig = { preset: "Personal" | "KAI" | "MBI" | "Custom"; steps: PipelineStep[] };
@@ -110,7 +111,7 @@ export default function PipelineSettings({ projectPath, projectName, onToast }: 
 
   async function selectPreset(preset: PipelineConfig["preset"]) {
     if (preset === "Custom") return setConfig((current) => current && { ...current, preset });
-    if (dirty && !window.confirm(`Replace unsaved steps with the ${preset} preset?`)) return;
+    if (dirty && !await confirm({ title: "Apply preset", message: `Replace unsaved steps with the ${preset} preset?`, confirmLabel: "Replace", cancelLabel: "Keep" })) return;
     const request = ++requestRef.current;
     try {
       const next = await invoke<PipelineConfig>("get_pipeline_config", { projectPath, preset });
