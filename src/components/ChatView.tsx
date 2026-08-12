@@ -30,6 +30,7 @@ import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
+import TerminalPanel from "./TerminalPanel";
 import { isActiveResearch, type ResearchRun } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
 
@@ -269,6 +270,8 @@ export default function ChatView({
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
+  const [showTerminal, setShowTerminal] = useState(false);
+  const [terminalMounted, setTerminalMounted] = useState(false);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
   const [devStarting, setDevStarting] = useState(false);
@@ -1200,6 +1203,11 @@ export default function ChatView({
     }
   }
 
+  async function handleOpenTerminal() {
+    setTerminalMounted(true);
+    setShowTerminal((v) => !v);
+  }
+
   async function handleRunDev() {
     try {
       const key = `crc-dev-command:${projectPath}`;
@@ -1516,12 +1524,15 @@ export default function ChatView({
             >{rightSidebarOpen ? "◧ HIDE" : "◨ EXPLORER + CHANGES"}</button>
           )}
           {!globalChat && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
+          {!globalChat && <button onClick={handleOpenTerminal} className={`dev-control open${showTerminal ? " active" : ""}`}>⌘ TERMINAL</button>}
           {!globalChat && devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
           {!globalChat && devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
           {agentStatus !== "running" && <button onClick={() => handleRestart()} className="caption-uppercase" disabled={isRestarting}>{isRestarting ? "RELOADING…" : agentStatus === "stopped" ? "RESTART" : "RELOAD PI"}</button>}
         </div>}
       </div>
+
+      {!globalChat && terminalMounted && <TerminalPanel chatId={chatId} cwd={cwd} hidden={!showTerminal} onClose={() => setShowTerminal(false)} />}
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
         <div ref={devDialogRef} className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title" tabIndex={-1}>

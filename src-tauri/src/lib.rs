@@ -11,6 +11,7 @@ mod pipeline;
 mod projects;
 mod rag;
 mod settings;
+mod terminal;
 mod worktree;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +52,10 @@ pub fn run() {
             deep_research::cancel_deep_research,
             deep_research::resume_deep_research,
             dev_runner::detect_dev_command,
+            terminal::terminal_open,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_close,
             dev_runner::get_dev_server,
             dev_runner::start_dev_server,
             dev_runner::stop_dev_server,

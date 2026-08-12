@@ -16,7 +16,7 @@ fn runners() -> &'static Mutex<HashMap<String, Child>> {
     RUNNERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn shell_path() -> String {
+pub fn shell_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_default();
     let nvm_bins = std::fs::read_dir(format!("{home}/.nvm/versions/node"))
