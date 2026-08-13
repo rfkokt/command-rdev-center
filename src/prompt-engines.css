@@ -64,6 +64,10 @@
 .prompt-fields .wide { grid-column: 1 / -1; }
 .prompt-fields input:not([type="checkbox"]), .prompt-fields textarea, .prompt-editor { width: 100%; min-height: 40px; padding: 9px 10px; border: 1px solid var(--colors-hairline-strong); outline: none; background: var(--colors-canvas); color: var(--colors-on-dark); }
 .prompt-fields input:focus, .prompt-fields textarea:focus, .prompt-editor:focus { border-color: var(--accent); }
+.prompt-model-trigger { width: 100%; min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--colors-hairline-strong); background: var(--colors-canvas); color: var(--colors-on-dark); text-align: left; }
+.prompt-model-trigger:hover, .prompt-model-trigger:focus-visible { border-color: var(--accent); outline: none; }
+.prompt-model-trigger span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--type-sm)/1.4 var(--font-mono); }
+.prompt-model-trigger b { color: var(--accent); font-size: var(--type-xs); letter-spacing: .08em; }
 .prompt-fields textarea { min-height: 94px; resize: vertical; }
 .prompt-fields .settings-toggle { min-height: 58px; padding: 10px 12px; border: 1px solid var(--colors-hairline); background: var(--colors-surface-card); }
 .prompt-fields .list-picker-field { width: 100%; }

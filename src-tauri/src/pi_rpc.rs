@@ -44,6 +44,28 @@ fn read_pi_config() -> Result<(String, serde_json::Value), String> {
     Ok((pi_path, v))
 }
 
+#[tauri::command]
+pub fn list_available_models() -> Result<Vec<String>, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    let raw = std::fs::read_to_string(PathBuf::from(home).join(".pi/agent/models.json")).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let mut models = Vec::new();
+    if let Some(providers) = value.get("providers").and_then(|item| item.as_object()) {
+        for (provider, config) in providers {
+            if let Some(entries) = config.get("models").and_then(|item| item.as_array()) {
+                for model in entries {
+                    if let Some(id) = model.get("id").and_then(|item| item.as_str()) {
+                        models.push(format!("{provider}/{id}"));
+                    }
+                }
+            }
+        }
+    }
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
 fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
     // legacy — keep for fallback, but new guard uses registered projects
     if let Some(r) = v.get("project_root").and_then(|r| r.as_str()) {

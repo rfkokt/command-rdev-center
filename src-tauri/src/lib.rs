@@ -111,6 +111,7 @@ pub fn run() {
             worktree::ensure_worktree,
             worktree::remove_worktree,
             pi_rpc::get_global_chat_cwd,
+            pi_rpc::list_available_models,
             pi_rpc::spawn_pi_rpc,
             pi_rpc::send_pi_command,
             pi_rpc::is_pi_session_running,

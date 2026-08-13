@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import ChatView from "./ChatView";
 import ListPicker from "./ListPicker";
+import ModelPicker from "./ModelPicker";
 import { confirm } from "./ConfirmDialog";
 import { deletePromptEngine, listPromptEngines, runtimePrompt, savePromptEngine, type PromptEngine, type PromptEngineInput } from "../lib/prompt-engines";
 
@@ -24,10 +25,13 @@ export default function PromptEnginesView({ onToast }: { onToast: (message: stri
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const selected = engines.find((engine) => engine.id === selectedId) ?? null;
   const activeRun = runs.find((run) => run.id === activeRunId) ?? null;
 
   useEffect(() => { listPromptEngines().then((items) => { setEngines(items); setSelectedId((id) => id ?? items[0]?.id ?? null); }).catch((e) => onToast(String(e))); }, [onToast]);
+  useEffect(() => { invoke<string[]>("list_available_models").then(setModels).catch((e) => onToast(`Models: ${String(e)}`)); }, [onToast]);
   useEffect(() => localStorage.setItem(RUNS_KEY, JSON.stringify(runs)), [runs]);
 
   function edit(engine?: PromptEngine) { setDraft(engine ? { ...engine } : blank()); setEditing(true); }
@@ -87,7 +91,7 @@ export default function PromptEnginesView({ onToast }: { onToast: (message: stri
       <section className="prompt-form-section">
         <header><strong>RUNTIME</strong><span>Optional overrides. Empty values use the app defaults.</span></header>
         <div className="prompt-fields two-column">
-          <label><span>MODEL<small>Provider and model ID</small></span><input placeholder="provider/model" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })} /></label>
+          <label><span>MODEL<small>Same provider and model catalog used by Chat</small></span><button type="button" className="prompt-model-trigger" onClick={() => setModelPickerOpen(true)}><span>{draft.model || "App default"}</span><b>CHOOSE</b></button></label>
           <ListPicker label="THINKING LEVEL" value={draft.thinking} options={["off", "minimal", "low", "medium", "high", "xhigh", "max"]} allLabel="App default" onChange={(thinking) => setDraft({ ...draft, thinking })} />
         </div>
       </section>
@@ -110,6 +114,7 @@ export default function PromptEnginesView({ onToast }: { onToast: (message: stri
       </section>
     </div>
     <footer className="prompt-engine-footer"><span>{busy ? "WORKING…" : "LOCAL ENGINE CONFIGURATION"}</span><div><button onClick={() => setEditing(false)}>CANCEL</button><button className="save-settings" onClick={() => void save()} disabled={busy || !draft.name.trim() || !draft.system_prompt.trim()}>{busy ? "SAVING…" : "SAVE ENGINE"}</button></div></footer>
+    {modelPickerOpen && <ModelPicker value={draft.model} models={models} onChange={(model) => setDraft({ ...draft, model })} onClose={() => setModelPickerOpen(false)} />}
   </section>;
 
   return <div className="prompt-engines-view">
