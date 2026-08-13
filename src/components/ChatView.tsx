@@ -48,6 +48,7 @@ type ChatFile = { name: string; path: string };
 type ChatAttachment = ChatFile & { content: string };
 
 const MAX_HISTORY = 600;
+const AGENT_INACTIVITY_TIMEOUT_MS = 120_000;
 type DiffSide = { number?: number; text: string; kind: "same" | "removed" | "added" | "empty" };
 type DiffRow = { before: DiffSide; after: DiffSide };
 function sideBySide(patch: string): DiffRow[] {
@@ -303,6 +304,7 @@ export default function ChatView({
   const pendingPipelineRetryRef = useRef<{ runId: string; step: string; attempt: number } | null>(null);
   const surfacedPipelineInputRef = useRef("");
   const taskStartedAtRef = useRef<number | null>(null);
+  const lastAgentActivityRef = useRef(Date.now());
   const devDialogRef = useModalFocus<HTMLDivElement>(() => setPendingDevCommand(null), Boolean(pendingDevCommand) && !devStarting);
   const modelDialogRef = useModalFocus<HTMLElement>(() => setModelPickerOpen(false), modelPickerOpen);
   const resumeDialogRef = useModalFocus<HTMLElement>(() => setResumePickerOpen(false), resumePickerOpen);
@@ -483,6 +485,7 @@ export default function ChatView({
   // Elapsed timer for agent running duration
   useEffect(() => {
     if (agentStatus !== "running") { setElapsedSeconds(0); return; }
+    lastAgentActivityRef.current = Date.now();
     const start = taskStartedAtRef.current ?? Date.now();
     setElapsedSeconds(Math.round((Date.now() - start) / 1000));
     const id = window.setInterval(() => setElapsedSeconds(Math.round((Date.now() - start) / 1000)), 1000);
@@ -506,6 +509,21 @@ export default function ChatView({
     },
     [sessionId, onToast]
   );
+
+  useEffect(() => {
+    if (agentStatus !== "running") return;
+    const id = window.setInterval(() => {
+      if (Date.now() - lastAgentActivityRef.current < AGENT_INACTIVITY_TIMEOUT_MS) return;
+      lastAgentActivityRef.current = Date.now();
+      void sendRaw({ type: "abort" });
+      setAgentStatus("stopped");
+      setIsStreaming(false);
+      onAgentRunning(chatId, false);
+      setMessages((messages) => settleWithError(messages, "Provider produced no activity for 2 minutes. Restart the session or choose another model, then retry."));
+      onToast("Provider stalled for 2 minutes — turn aborted");
+    }, 5_000);
+    return () => window.clearInterval(id);
+  }, [agentStatus, chatId, onAgentRunning, onToast, sendRaw]);
 
   // LISTENERS + SPAWN in one effect to avoid race: get_available_models lost if spawn before listen
   useEffect(() => {
@@ -556,6 +574,7 @@ export default function ChatView({
 
     async function handleRaw(raw: string) {
       if (!mounted) return;
+      lastAgentActivityRef.current = Date.now();
       try {
         const ev = JSON.parse(raw) as Record<string, unknown>;
         const t = ev.type as string | undefined;
