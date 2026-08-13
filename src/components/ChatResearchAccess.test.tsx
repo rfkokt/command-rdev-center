@@ -50,12 +50,27 @@ describe.each([["project", false], ["global", true]] as const)("Deep Research in
   });
 });
 
+it("waits for the Pi session before enabling the composer", async () => {
+  let finishSpawn: (() => void) | undefined;
+  mockBackend();
+  invoke.mockImplementation((command: string) => {
+    if (command === "get_deep_research_data") return Promise.resolve({ runs: [], warnings: [] });
+    if (command === "get_global_chat_cwd") return Promise.resolve("/tmp/global");
+    if (command === "spawn_pi_rpc") return new Promise<void>((resolve) => { finishSpawn = resolve; });
+    return Promise.resolve({});
+  });
+  render(<ChatView {...baseProps} globalChat />);
+  expect(await screen.findByRole("button", { name: "CONNECTING…" })).toBeDisabled();
+  finishSpawn?.();
+  await waitFor(() => expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled());
+});
+
 it("routes SEND only through the isolated research command", async () => {
   mockBackend();
   render(<ChatView {...baseProps} />);
   fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Investigate this" } });
-  fireEvent.click(screen.getByRole("button", { name: "SEND" }));
+  fireEvent.click(await screen.findByRole("button", { name: "SEND" }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_deep_research", { input: expect.objectContaining({ query: "Investigate this", originChatId: "chat-one", originSessionId: "chat-chat-one" }) }));
   expect(screen.getByRole("textbox")).toHaveValue("");
   expect(invoke).not.toHaveBeenCalledWith("send_pi_command", expect.objectContaining({ jsonLine: expect.stringContaining("Investigate this") }));
@@ -78,8 +93,9 @@ it("does not let a stale run from an older exact session block new research", as
   render(<ChatView {...baseProps} />);
   fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "New question" } });
-  expect(screen.getByRole("button", { name: "SEND" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "SEND" }));
+  const send = await screen.findByRole("button", { name: "SEND" });
+  expect(send).toBeEnabled();
+  fireEvent.click(send);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("start_deep_research", { input: expect.objectContaining({ query: "New question", originSessionId: "chat-chat-one" }) }));
   expect(screen.queryByText("Old search")).not.toBeInTheDocument();
 });

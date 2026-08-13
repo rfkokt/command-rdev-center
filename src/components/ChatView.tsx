@@ -1003,7 +1003,7 @@ export default function ChatView({
 
   async function handleSend() {
     const text = input.trim();
-    if ((!text && images.length === 0 && files.length === 0) || driveDetached || agentStatus === "stopped") return;
+    if (!chatReady || (!text && images.length === 0 && files.length === 0) || driveDetached || agentStatus === "stopped") return;
     let fileContext = "";
     try { fileContext = await readAttachments(); } catch (error) { onToast(`File attachment: ${String(error)}`); return; }
     const message = `${text}${fileContext}`;
@@ -1909,7 +1909,7 @@ export default function ChatView({
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
         {mode === "chat" && <button onClick={() => void attachFiles()} disabled={isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
-        <button onClick={() => submitInput()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || files.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0 && files.length === 0)} className="button-primary chat-action">{researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
+        <button onClick={() => submitInput()} disabled={!chatReady || driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || files.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0 && files.length === 0)} className="button-primary chat-action">{!chatReady ? "CONNECTING…" : researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
 
