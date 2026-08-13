@@ -285,6 +285,7 @@ pub fn spawn_pi_rpc(
     graph_report_path: Option<String>,
     tools: Option<Vec<String>>,
     global_chat: Option<bool>,
+    custom_system_prompt: Option<String>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
@@ -405,6 +406,26 @@ pub fn spawn_pi_rpc(
             args.push(report.to_string_lossy().to_string());
         }
     }
+    let custom_prompt_path = if let Some(prompt) = custom_system_prompt.filter(|value| !value.trim().is_empty()) {
+        if prompt.len() > 1_000_000 {
+            return Err("custom system prompt exceeds 1 MB".into());
+        }
+        let prompt_path = std::env::temp_dir().join(format!("crc-custom-prompt-{session_id}.md"));
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&prompt_path).map_err(|e| format!("custom system prompt: {e}"))?;
+        file.write_all(prompt.as_bytes()).map_err(|e| format!("custom system prompt: {e}"))?;
+        args.push("--append-system-prompt".into());
+        args.push(prompt_path.to_string_lossy().to_string());
+        Some(prompt_path)
+    } else {
+        None
+    };
     if !global_chat {
         if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
             let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
@@ -561,6 +582,9 @@ pub fn spawn_pi_rpc(
                     "cwd_exists": Path::new(&session_cwd).exists()
                 }),
             );
+        }
+        if let Some(path) = custom_prompt_path {
+            let _ = std::fs::remove_file(path);
         }
     });
 

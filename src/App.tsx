@@ -12,10 +12,12 @@ const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
+const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
+import "./prompt-engines.css";
 
 type Config = {
   pi_path: string;
@@ -61,7 +63,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<"pi" | "pipeline">("pi");
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
-  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | null>(null);
+  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | "engines" | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -239,6 +241,9 @@ export default function App() {
           <button title="Chat" className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`} aria-current={dashboard === null ? "page" : undefined} onClick={() => setDashboard(null)}>
             <span className="nav-glyph" aria-hidden="true">›_</span><span>Chat</span>
           </button>
+          <button title="Prompt Engines" className={`settings-button dashboard-button ${dashboard === "engines" ? "active" : ""}`} aria-current={dashboard === "engines" ? "page" : undefined} onClick={() => setDashboard("engines")}>
+            <span className="nav-glyph" aria-hidden="true">P/</span><span>Prompt Engines</span>
+          </button>
           <button title="Deep Research" className={`settings-button dashboard-button ${dashboard === "research" ? "active" : ""}`} aria-current={dashboard === "research" ? "page" : undefined} onClick={() => setDashboard("research")}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M11 8v6M8 11h6"/></svg><span>Deep Research</span>
           </button>
@@ -284,6 +289,7 @@ export default function App() {
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
+          {dashboard === "engines" && <Suspense fallback={<div className="session-loading" role="status">Loading prompt engines…</div>}><PromptEnginesView onToast={addToast} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
             <div key={tab.id} className="chat-session" hidden={dashboard !== null || tab.id !== activeTabId}>
               <ChatView

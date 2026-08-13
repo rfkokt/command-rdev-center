@@ -8,6 +8,7 @@ mod graph;
 mod kanban;
 mod pi_rpc;
 mod pipeline;
+mod prompt_engines;
 mod projects;
 mod rag;
 mod settings;
@@ -75,6 +76,9 @@ pub fn run() {
             pipeline::retry_pipeline_step,
             pipeline::skip_pipeline_step,
             pipeline::provide_pipeline_input,
+            prompt_engines::list_prompt_engines,
+            prompt_engines::save_prompt_engine,
+            prompt_engines::delete_prompt_engine,
             diff::get_worktree_diff,
             diff::get_workspace_diff,
             projects::list_projects,

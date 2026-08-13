@@ -199,6 +199,8 @@ export default function ChatView({
   onOpenResearch,
   isActive,
   globalChat = false,
+  customSystemPrompt,
+  inputPlaceholder,
 }: {
   projectPath: string;
   projectName: string;
@@ -222,6 +224,8 @@ export default function ChatView({
   onOpenResearch: (runId: string) => void;
   isActive: boolean;
   globalChat?: boolean;
+  customSystemPrompt?: string;
+  inputPlaceholder?: string;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [mode, setMode] = useState<"chat" | "research">("chat");
@@ -878,7 +882,7 @@ export default function ChatView({
           const globalCwd = await invoke<string>("get_global_chat_cwd");
           setCwd(globalCwd);
           const [provider, ...modelParts] = modelRef.current.split("/");
-          await invoke("spawn_pi_rpc", { sessionId, cwd: globalCwd, sessionFile: sessionFileRef.current, provider: modelParts.length ? provider : undefined, model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined, thinking: thinkingRef.current || undefined, globalChat: true });
+          await invoke("spawn_pi_rpc", { sessionId, cwd: globalCwd, sessionFile: sessionFileRef.current, provider: modelParts.length ? provider : undefined, model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined, thinking: thinkingRef.current || undefined, globalChat: true, customSystemPrompt });
         } else {
         let graph = await invoke<GraphStatus>("get_graph_status", { projectPath });
         if (!mounted) return;
@@ -956,7 +960,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, isWorkspace, globalChat, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
+  }, [projectPath, projectName, isGit, isWorkspace, globalChat, customSystemPrompt, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   useEffect(() => {
     if (globalChat || !devRunner) return;
@@ -1184,6 +1188,7 @@ export default function ChatView({
         thinking: thinkingRef.current || undefined,
         graphReportPath: globalChat ? undefined : graphReportRef.current,
         globalChat,
+        customSystemPrompt,
       });
       onToast(retry ? "Agent retrying" : "Pi agent reloaded");
       setTimeout(() => {
@@ -1896,7 +1901,7 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : mode === "research" ? "TYPE A RESEARCH QUESTION… SHIFT+ENTER NEWLINE." : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER."}
+          placeholder={driveDetached ? "DRIVE DETACHED" : mode === "research" ? "TYPE A RESEARCH QUESTION… SHIFT+ENTER NEWLINE." : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : inputPlaceholder || (globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER.")}
           disabled={isNewSessionLoading}
           aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
           rows={1}
