@@ -11,10 +11,6 @@ vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve(
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkUpdate }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve({})) }));
-vi.mock("@tauri-apps/plugin-notification", () => ({
-  registerActionTypes: vi.fn(() => Promise.resolve()),
-  onAction: vi.fn(() => Promise.resolve({ unregister: vi.fn(() => Promise.resolve()) })),
-}));
 vi.mock("./components/ProjectList", () => ({
   default: ({ tabs, onResume, onSelect, onNewSession }: { tabs: Array<{ id: string; project: { name: string } }>; onResume: (id: string, project: unknown) => void; onSelect: (project: unknown) => void; onNewSession: (project: unknown) => void }) => (
     <>{tabs.map((tab) => <span key={tab.id}><button onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button><button onClick={() => onSelect(tab.project)}>Select {tab.project.name}</button><button onClick={() => onNewSession(tab.project)}>New {tab.project.name}</button></span>)}</>

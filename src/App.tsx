@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { exit } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
-import { onAction, registerActionTypes } from "@tauri-apps/plugin-notification";
+
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
@@ -48,14 +48,6 @@ export default function App() {
     return tabs[tabs.length - 1]?.id ?? null;
   });
 
-  useEffect(() => {
-    registerActionTypes([{ id: "agent-finished", actions: [{ id: "open", title: "Buka", foreground: true }] }]);
-    const unlisten = onAction((notification) => {
-      const chatId = notification.extra?.chatId as string | undefined;
-      if (chatId) setActiveTabId(chatId);
-    });
-    return () => { void unlisten.then((listener) => listener.unregister()); };
-  }, []);
   const activeTabIdRef = useRef(activeTabId);
   activeTabIdRef.current = activeTabId;
   const [selectedProject, setSelectedProject] = useState<ProjectInfo | null>(null);
