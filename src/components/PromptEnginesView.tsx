@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import ChatView from "./ChatView";
@@ -10,6 +10,7 @@ import { deletePromptEngine, listPromptEngines, runtimePrompt, savePromptEngine,
 const blank = (): PromptEngineInput => ({ id: undefined, name: "New Engine", icon: "P", description: "", system_prompt: "", starter_message: "", model: "", thinking: "", research: { enabled: false, mode: "auto", instructions: "" } });
 type Run = { id: string; engineId: string; title: string; runtimePrompt: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean };
 const RUNS_KEY = "crc-prompt-engine-runs-v1";
+const noop = () => {};
 function savedRuns(): Run[] {
   try {
     const value = JSON.parse(localStorage.getItem(RUNS_KEY) ?? "[]") as unknown;
@@ -71,6 +72,11 @@ export default function PromptEnginesView({ onToast }: { onToast: (message: stri
     setActiveRunId(null);
     onToast("Prompt engine deleted");
   }
+  const saveRunSession = useCallback((id: string, sessionFile: string) => setRuns((items) => items.map((run) => run.id === id ? { ...run, sessionFile } : run)), []);
+  const saveRunTitle = useCallback((id: string, title: string) => setRuns((items) => items.map((run) => run.id === id ? { ...run, title } : run)), []);
+  const saveRunRuntime = useCallback((id: string, model: string, thinking: string) => setRuns((items) => items.map((run) => run.id === id ? { ...run, model, thinking } : run)), []);
+  const saveRunAgentState = useCallback((id: string, interrupted: boolean) => setRuns((items) => items.map((run) => run.id === id ? { ...run, interrupted } : run)), []);
+  const closeRun = useCallback(() => setActiveRunId(null), []);
 
   if (editing && draft) return <section className="prompt-engine-settings" aria-labelledby="prompt-engine-settings-title">
     <header className="prompt-engine-header">
@@ -130,7 +136,7 @@ export default function PromptEnginesView({ onToast }: { onToast: (message: stri
         <div className="prompt-engine-actions"><button className="save-settings" onClick={newRun}>NEW RUN</button><button className="prompt-secondary" onClick={() => edit(selected)}>SETTINGS</button><button className="prompt-secondary" onClick={() => edit({ ...selected, id: `engine-${Date.now()}`, name: `${selected.name} Copy` })}>DUPLICATE</button><button className="prompt-danger" onClick={() => void removeEngine()}>DELETE</button></div>
         <div className="prompt-run-heading"><strong>RUN HISTORY</strong><span>{runs.filter((run) => run.engineId === selected.id).length} local runs</span></div>
         <div className="prompt-run-list">{runs.filter((run) => run.engineId === selected.id).map((run) => <button key={run.id} onClick={() => setActiveRunId(run.id)}><span><strong>{run.title}</strong><small>{run.sessionFile ? "Saved Pi session" : "New session"}</small></span><b aria-hidden="true">›</b></button>)}{runs.every((run) => run.engineId !== selected.id) ? <div className="prompt-run-empty"><strong>NO RUNS YET</strong><span>Start a run to create isolated engine history.</span></div> : null}</div>
-      </div> : <ChatView projectPath="global" projectName={selected.name} isGit={false} repositories={[]} pipelineType="Personal" chatId={activeRun.id} sessionFile={activeRun.sessionFile} initialModel={activeRun.model} initialThinking={activeRun.thinking} initialInterrupted={activeRun.interrupted} resumableSessions={[]} globalChat customSystemPrompt={activeRun.runtimePrompt || runtimePrompt(selected)} inputPlaceholder={selected.starter_message || "TYPE MESSAGE…"} onSessionFile={(id, sessionFile) => setRuns((items) => items.map((run) => run.id === id ? { ...run, sessionFile } : run))} onFirstMessage={(id, title) => setRuns((items) => items.map((run) => run.id === id ? { ...run, title } : run))} onRuntimeSettings={(id, model, thinking) => setRuns((items) => items.map((run) => run.id === id ? { ...run, model, thinking } : run))} onAgentRunning={(id, interrupted) => setRuns((items) => items.map((run) => run.id === id ? { ...run, interrupted } : run))} onUnread={() => {}} onClose={() => setActiveRunId(null)} onToast={onToast} onOpenPipeline={() => {}} onOpenResearch={() => {}} isActive /> : <div className="prompt-engine-empty"><strong>NO PROMPT ENGINES</strong><span>Create a local engine from pasted text or an imported prompt file.</span><button className="save-settings" onClick={() => edit()}>CREATE ENGINE</button></div>}
+      </div> : <ChatView projectPath="global" projectName={selected.name} isGit={false} repositories={[]} pipelineType="Personal" chatId={activeRun.id} sessionFile={activeRun.sessionFile} initialModel={activeRun.model} initialThinking={activeRun.thinking} initialInterrupted={activeRun.interrupted} resumableSessions={[]} globalChat customSystemPrompt={activeRun.runtimePrompt || runtimePrompt(selected)} inputPlaceholder={selected.starter_message || "TYPE MESSAGE…"} onSessionFile={saveRunSession} onFirstMessage={saveRunTitle} onRuntimeSettings={saveRunRuntime} onAgentRunning={saveRunAgentState} onUnread={noop} onClose={closeRun} onToast={onToast} onOpenPipeline={noop} onOpenResearch={noop} isActive /> : <div className="prompt-engine-empty"><strong>NO PROMPT ENGINES</strong><span>Create a local engine from pasted text or an imported prompt file.</span><button className="save-settings" onClick={() => edit()}>CREATE ENGINE</button></div>}
     </section>
   </div>;
 }
