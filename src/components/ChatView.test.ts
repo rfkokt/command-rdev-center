@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -68,6 +68,20 @@ describe("filePickerKey", () => {
     expect(filePickerKey("Enter", 1, 3)).toEqual({ pick: 1 });
     expect(filePickerKey("Tab", 1, 3)).toEqual({ pick: 1 });
     expect(filePickerKey("Escape", 0, 0)).toEqual({ close: true });
+  });
+});
+
+describe("ensureAssistantTurn", () => {
+  test("reuses one streaming assistant across repeated tool rounds", () => {
+    const create = () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage);
+    const first = ensureAssistantTurn([], create);
+    expect(ensureAssistantTurn(first, create)).toBe(first);
+    expect(first).toHaveLength(1);
+  });
+
+  test("creates a new turn after the previous assistant settled", () => {
+    const settled = [{ id: "old", role: "assistant", text: "done", toolCalls: [], isStreaming: false } as ChatMessage];
+    expect(ensureAssistantTurn(settled, () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage))).toHaveLength(2);
   });
 });
 

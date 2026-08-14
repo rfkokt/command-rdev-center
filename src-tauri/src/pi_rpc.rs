@@ -457,8 +457,16 @@ pub fn spawn_pi_rpc(
         }
     }
 
-    // Graphs live in the durable owning checkout; disable automatic context until one exists.
-    let graph_json_path = owning_project.join("graphify-out/graph.json");
+    // Workspace graphs live centrally under the durable parent checkout.
+    let graph_workspace = crate::projects::registered_workspace(&owning_project)
+        .unwrap_or_else(|| owning_project.clone());
+    let graph_json_paths = crate::projects::graph_repositories(&graph_workspace)
+        .into_iter()
+        .map(|repository| crate::graph::graph_dir(&graph_workspace, &repository).join("graphify-out/graph.json"))
+        .filter(|path| path.exists())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("\n");
     let project_name = owning_project.file_name().unwrap_or_default();
     let task_dir = if global_chat {
         std::env::temp_dir()
@@ -477,8 +485,7 @@ pub fn spawn_pi_rpc(
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
             .env("CRC_TASK_DIR", task_dir.clone())
-            .env("CRC_GRAPH_JSON", &graph_json_path)
-            .env("GRAPHIFY_GRAPH", &graph_json_path);
+            .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
     let mut spawn_attempts = 0;
     let mut child = loop {
@@ -512,8 +519,7 @@ pub fn spawn_pi_rpc(
                                 .env("CRC_PROJECT_NAME", project_name.clone())
                                 .env("CRC_SESSION_ID", &session_id)
                                 .env("CRC_TASK_DIR", task_dir.clone())
-                                .env("CRC_GRAPH_JSON", &graph_json_path)
-                                .env("GRAPHIFY_GRAPH", &graph_json_path);
+                                .env("CRC_GRAPH_JSONS", &graph_json_paths);
                         }
                         spawn_attempts += 1;
                         continue;

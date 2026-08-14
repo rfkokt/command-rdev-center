@@ -31,8 +31,11 @@ export function ConfirmHost() {
   }, [open]);
 
   const close = useCallback((value: boolean) => {
-    setPending((current) => { current?.resolve(value); return null; });
-  }, []);
+    const resolve = pending?.resolve;
+    setPending(null);
+    // Let React remove the modal before the confirmed action starts heavy work.
+    window.setTimeout(() => resolve?.(value), 0);
+  }, [pending]);
 
   const dialogRef = useModalFocus<HTMLDivElement>(() => close(false), Boolean(pending));
   if (!pending) return null;

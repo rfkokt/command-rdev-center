@@ -79,7 +79,7 @@ fn detect_kinds(dir: &Path) -> (Vec<String>, bool) {
     (kinds, is_git)
 }
 
-fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
     let mut repositories = ignore::WalkBuilder::new(root)
         .hidden(false)
         .git_ignore(true)
@@ -674,6 +674,28 @@ pub fn ensure_registered_project_returning(child: &Path) -> Result<PathBuf, Stri
     ensure_path_allowed(child)
 }
 
+pub(crate) fn registered_workspace(child: &Path) -> Option<PathBuf> {
+    let child = canonicalize_or_original(child);
+    read_config().ok()?.projects.into_iter().find_map(|saved| {
+        let saved = canonicalize_or_original(Path::new(&saved));
+        child.starts_with(&saved).then_some(saved)
+    })
+}
+
+pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
+    let repositories = discover_git_repositories(project);
+    let nested = repositories
+        .iter()
+        .filter(|repository| *repository != project)
+        .cloned()
+        .collect::<Vec<_>>();
+    if nested.is_empty() && project.join(".git").exists() {
+        vec![project.to_path_buf()]
+    } else {
+        nested
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +724,25 @@ mod tests {
 
         assert_eq!(
             repositories,
+            vec![root.join("backend"), root.join("frontend")]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_graphs_nested_repositories_even_when_parent_is_git() {
+        let root = std::env::temp_dir().join(format!(
+            "crc-workspace-graphs-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("backend/.git")).unwrap();
+        std::fs::create_dir_all(root.join("frontend/.git")).unwrap();
+
+        assert_eq!(
+            graph_repositories(&root),
             vec![root.join("backend"), root.join("frontend")]
         );
         std::fs::remove_dir_all(root).unwrap();

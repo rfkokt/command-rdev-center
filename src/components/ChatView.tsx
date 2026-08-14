@@ -15,6 +15,7 @@ import {
   preserveStreamedContent,
   shouldSubmitCommand,
   insertSteerMessage,
+  ensureAssistantTurn,
   shouldToastPiStderr,
   appendAgentLog,
   settleAgentMessages,
@@ -38,6 +39,7 @@ type PiEventPayload = { session_id: string; raw: string };
 type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; slug: string; parent_ref: string };
 type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
+type GraphProgress = { repository: string; index: number; total: number; activity: string }; 
 type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
 type DevRunnerInfo = { command: string; url: string; running: boolean; error?: string };
 type SessionStats = {
@@ -274,6 +276,8 @@ export default function ChatView({
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
+  const [graphProgress, setGraphProgress] = useState<GraphProgress | null>(null);
+  const [graphElapsed, setGraphElapsed] = useState(0);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   const [terminalMounted, setTerminalMounted] = useState(false);
@@ -330,9 +334,11 @@ export default function ChatView({
     }
   }, [input, isActive]);
 
+  const createAssistantTurn = useCallback((): ChatMessage => ({ id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], createdAt: Date.now(), isStreaming: true }), []);
+
   const upsertToolCall = useCallback((callId: string, patch: Partial<ToolCall> & { name?: string; args?: Record<string, unknown> }) => {
     setMessages((prev) => {
-      const copy = [...prev];
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant") {
           const tcs = [...copy[i].toolCalls];
@@ -353,11 +359,11 @@ export default function ChatView({
       }
       return copy;
     });
-  }, []);
+  }, [createAssistantTurn]);
 
   const appendTextDelta = useCallback((textDelta: string) => {
     setMessages((prev) => {
-      const copy = [...prev];
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
           copy[i] = { ...copy[i], text: copy[i].text + textDelta };
@@ -367,11 +373,11 @@ export default function ChatView({
       }
       return copy;
     });
-  }, []);
+  }, [createAssistantTurn]);
 
   const appendThinkingDelta = useCallback((delta: string) => {
     setMessages((prev) => {
-      const copy = [...prev];
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
           copy[i] = { ...copy[i], thinking: appendBoundedText(copy[i].thinking ?? "", delta, 200_000) };
@@ -380,11 +386,26 @@ export default function ChatView({
       }
       return copy;
     });
-  }, []);
+  }, [createAssistantTurn]);
+
+  useEffect(() => {
+    if (globalChat) return;
+    const unlisten = listen<GraphProgress>("graphify-progress", (event) => setGraphProgress(event.payload));
+    return () => { void unlisten.then((stop) => stop()); };
+  }, [globalChat]);
+
+  useEffect(() => {
+    if (!graphBusy) return;
+    setGraphElapsed(0);
+    const started = Date.now();
+    const timer = window.setInterval(() => setGraphElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [graphBusy]);
 
   const refreshGraph = useCallback(async (full: boolean) => {
     setGraphBusy(true);
     setGraphError(null);
+    setGraphProgress({ repository: projectName, index: 1, total: Math.max(repositories.length, 1), activity: "Preparing Graphify…" });
     try {
       const next = await invoke<GraphStatus>("build_graph", { projectPath, full });
       graphReportRef.current = next.report_path;
@@ -403,8 +424,9 @@ export default function ChatView({
       return null;
     } finally {
       setGraphBusy(false);
+      setGraphProgress(null);
     }
-  }, [projectPath, onToast]);
+  }, [projectPath, projectName, repositories.length, onToast]);
 
   const syncKanbanTask = useCallback(async (status: "In Progress" | "Review", prompt?: string) => {
     try {
@@ -707,9 +729,7 @@ export default function ChatView({
           onAgentRunning(chatId, true);
           setIsStreaming(true);
           setMessages((prev) => {
-            const last = prev[prev.length - 1];
-            if (last?.role === "assistant" && last.isStreaming) return prev;
-            const next = [...prev, { id: uid(), role: "assistant", text: "", thinking: "", toolCalls: [], createdAt: Date.now(), isStreaming: true } as ChatMessage];
+            const next = ensureAssistantTurn(prev, createAssistantTurn);
             return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
           });
           return;
@@ -722,6 +742,11 @@ export default function ChatView({
           const generated = ev.messages as Array<Record<string, unknown>> | undefined;
           const assistants = generated?.filter((message) => message.role === "assistant") ?? [];
           finalizeAssistant(assistants[assistants.length - 1]);
+          setAgentStatus("idle");
+          setIsStreaming(false);
+          onAgentRunning(chatId, false);
+          setMessages((prev) => settleAgentMessages(prev));
+          sendRaw({ type: "get_session_stats" });
           return;
         }
         if (t === "auto_retry_end") {
@@ -1521,13 +1546,20 @@ export default function ChatView({
         {driveDetached && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>DRIVE DETACHED</span>}
         {agentStatus === "stopped" && <span className="category-tag" style={{ color: "var(--colors-muted-soft)" }}>AGENT STOPPED</span>}
         {mode === "chat" && approval && <output className="follow-up-badge">● INPUT REQUIRED</output>}
-        {mode === "chat" && !globalChat && graphStatus && <button
-          className="category-tag graph-status"
-          disabled={graphBusy}
-          title={graphStatus.tracked_warning ?? "Graphify status — click to rebuild"}
-          onClick={() => graphStatus.state !== "fresh" && refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
-        >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}GRAPH {graphBusy ? "UPDATING…" : graphStatus.state}</button>}
+        {mode === "chat" && !globalChat && graphStatus && <>
+          <span className="category-tag graph-status" title={graphStatus.tracked_warning ?? "Graphify status"}>GRAPH {graphStatus.state}</span>
+          <button
+            className="dev-control"
+            disabled={graphBusy}
+            onClick={() => refreshGraph(graphStatus.state === "none" || graphStatus.docs_stale)}
+          >{graphBusy && <span className="graph-spinner" aria-hidden="true" />}{graphBusy ? "GRAPHIFYING…" : graphStatus.state === "none" ? "BUILD GRAPH" : "UPDATE GRAPH"}</button>
+        </>}
         {mode === "chat" && graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
+        {mode === "chat" && graphBusy && graphProgress && <div className="graph-progress" role="status" aria-live="polite">
+          <span><b>{graphProgress.index}/{graphProgress.total}</b> {graphProgress.repository}</span>
+          <small>{graphProgress.activity} · {Math.floor(graphElapsed / 60)}:{String(graphElapsed % 60).padStart(2, "0")}</small>
+          <i style={{ width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%` }} />
+        </div>}
         
         {mode === "chat" && <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
           <button
