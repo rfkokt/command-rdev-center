@@ -48,7 +48,9 @@ function TerminalPane({ sessionKey, cwd, onKilled }: { sessionKey: string; cwd: 
       if (disposed) return;
       fit.fit();
       fit.observeResize();
-    })();
+    })().catch((error) => {
+      if (!disposed) host.textContent = `Terminal failed to initialize: ${String(error)}`;
+    });
 
     return () => {
       disposed = true;
