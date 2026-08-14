@@ -43,6 +43,11 @@ export function filePickerKey(key: string, selectedIdx: number, count: number) {
   return null;
 }
 
+export function ensureAssistantTurn(messages: ChatMessage[], create: () => ChatMessage): ChatMessage[] {
+  if (messages.some((message) => message.role === "assistant" && message.isStreaming)) return messages;
+  return [...messages, create()];
+}
+
 export function insertSteerMessage(messages: ChatMessage[], message: ChatMessage) {
   let streamingIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {

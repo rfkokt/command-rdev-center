@@ -16,6 +16,18 @@ describe("ConfirmHost", () => {
     expect(screen.queryByText("Are you sure?")).not.toBeInTheDocument();
   });
 
+  it("unmounts before resolving a confirmed action", async () => {
+    render(<ConfirmHost />);
+    let modalPresentWhenResolved = true;
+    const promise = confirm({ message: "Build graph?", confirmLabel: "Build" }).then(() => {
+      modalPresentWhenResolved = Boolean(screen.queryByText("Build graph?"));
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Build/ }));
+    expect(screen.queryByText("Build graph?")).not.toBeInTheDocument();
+    await promise;
+    expect(modalPresentWhenResolved).toBe(false);
+  });
+
   it("resolves false on cancel click", async () => {
     render(<ConfirmHost />);
     const promise = confirm({ message: "Discard?", cancelLabel: "Nope" });

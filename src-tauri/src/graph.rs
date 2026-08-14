@@ -1,13 +1,16 @@
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 #[cfg(test)]
 use std::time::SystemTime;
 use std::time::{Duration, Instant, UNIX_EPOCH};
+use tauri::Emitter;
 
-const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n.graphify_python\n.graphify_detect.json\n";
+const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n/.graphify\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
 const AGENTS_END: &str = "<!-- /command-rdev-center:graphify -->";
 const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify gate (blocking)\nFor every new coding task, before any file search/read (`rg`, `grep`, `find`, `ls`, `read`, or Codebase Memory):\n1. Check whether `graphify-out/graph.json` is fresh against `git HEAD`; run `graphify update .` if stale.\n2. Run `graphify query \"<the user's task>\"`.\n3. Only then inspect the returned files/symbols.\nDo not skip this gate for small tasks. Use `graphify path \"A\" \"B\"` or `graphify explain \"X\"` when needed.\n<!-- /command-rdev-center:graphify -->\n";
@@ -108,23 +111,36 @@ fn tracked_warning(project: &Path) -> Option<String> {
     }
 }
 
-fn status(project: &Path) -> GraphStatus {
-    let graph = project.join("graphify-out/graph.json");
-    let report = project.join("graphify-out/GRAPH_REPORT.md");
+pub(crate) fn graph_dir(workspace: &Path, repository: &Path) -> PathBuf {
+    if workspace == repository {
+        workspace.to_path_buf()
+    } else {
+        workspace.join(".graphify").join(
+            repository
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("repository"),
+        )
+    }
+}
+
+fn repository_status(repository: &Path, output: &Path) -> GraphStatus {
+    let graph = output.join("graphify-out/graph.json");
+    let report = output.join("graphify-out/GRAPH_REPORT.md");
     if !graph.exists() {
         return GraphStatus {
             state: GraphState::None,
             code_stale: false,
             docs_stale: false,
             report_path: None,
-            tracked_warning: tracked_warning(project),
+            tracked_warning: tracked_warning(output),
         };
     }
     let graph_ms = modified_ms(&graph);
     let mut newest = (0, 0);
-    newest_changes(project, graph_ms, &mut newest);
+    newest_changes(repository, graph_ms, &mut newest);
     let code_stale = newest.0 > 0;
-    let docs_stale = newest.1 > 0 || project.join("graphify-out/.crc-code-only").exists();
+    let docs_stale = newest.1 > 0 || output.join("graphify-out/.crc-code-only").exists();
     let state = if docs_stale {
         GraphState::StaleDocs
     } else if code_stale {
@@ -139,7 +155,40 @@ fn status(project: &Path) -> GraphStatus {
         report_path: report
             .exists()
             .then(|| report.to_string_lossy().to_string()),
-        tracked_warning: tracked_warning(project),
+        tracked_warning: tracked_warning(output),
+    }
+}
+
+fn status(project: &Path) -> GraphStatus {
+    let repositories = crate::projects::graph_repositories(project);
+    if repositories.is_empty() {
+        return repository_status(project, project);
+    }
+    let statuses = repositories
+        .iter()
+        .map(|repository| repository_status(repository, &graph_dir(project, repository)))
+        .collect::<Vec<_>>();
+    let docs_stale = statuses.iter().any(|status| status.docs_stale);
+    let code_stale = statuses.iter().any(|status| status.code_stale);
+    let state = if statuses.iter().any(|status| status.state == GraphState::None) {
+        GraphState::None
+    } else if docs_stale {
+        GraphState::StaleDocs
+    } else if code_stale {
+        GraphState::StaleCode
+    } else {
+        GraphState::Fresh
+    };
+    GraphStatus {
+        state,
+        code_stale,
+        docs_stale,
+        report_path: statuses
+            .iter()
+            .find_map(|status| status.report_path.clone()),
+        tracked_warning: statuses
+            .iter()
+            .find_map(|status| status.tracked_warning.clone()),
     }
 }
 
@@ -203,6 +252,12 @@ fn ensure_graphignore(path: &Path) -> Result<(), String> {
     if existing.lines().any(|line| line == "graphify-out/") {
         fs::write(path, existing.replace("graphify-out/", "/graphify-out"))
             .map_err(|e| e.to_string())
+    } else if existing.lines().any(|line| line == "/graphify-out") {
+        if existing.lines().any(|line| line == "/.graphify") {
+            Ok(())
+        } else {
+            append_once(path, "/.graphify", "/.graphify\n")
+        }
     } else {
         append_once(path, "/graphify-out", IGNORE_BLOCK)
     }
@@ -238,8 +293,32 @@ fn graphify_path() -> PathBuf {
     resolve_graphify(configured, std::env::var_os("HOME").map(PathBuf::from))
 }
 
-fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
-    ensure_project_files(project)?;
+fn graphify_error(detail: &str, repository: &Path, status: std::process::ExitStatus) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("billing_not_configured")
+        || lower.contains("billing verification failed")
+        || lower.contains("insufficient_quota")
+        || lower.contains("quota exceeded")
+        || lower.contains("credit balance")
+    {
+        return "Graphify LLM quota/billing is unavailable. Open Settings → Graphify and choose a provider with available credit, or disable the LLM configuration to build code-only.".into();
+    }
+    let detail = detail.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+    if detail.trim().is_empty() {
+        format!("Graphify failed for {} with status {status}", repository.display())
+    } else {
+        format!("Graphify failed for {}: {detail}", repository.display())
+    }
+}
+
+fn run_graphify(
+    app: &tauri::AppHandle,
+    repository: &Path,
+    output: &Path,
+    full: bool,
+    index: usize,
+    total: usize,
+) -> Result<(), String> {
     let mut command = Command::new(graphify_path());
     let configured = crate::settings::graphify_env();
     let inherited_key = [
@@ -264,58 +343,88 @@ fn run_graphify(project: &Path, full: bool) -> Result<(), String> {
                 "User-Agent: Mozilla/5.0\nAccept: application/json",
             );
     }
-    if full {
-        command.args([
-            "extract",
-            &project.to_string_lossy(),
-            "--out",
-            &project.to_string_lossy(),
-        ]);
-        if code_only {
-            command.arg("--code-only");
-        }
-    } else {
-        command.args(["update", &project.to_string_lossy()]);
+    // Keep the desktop responsive: Graphify otherwise defaults to all CPU cores and
+    // multiple simultaneous LLM requests, which can beachball the WebView on macOS.
+    command.args([
+        "extract",
+        &repository.to_string_lossy(),
+        "--out",
+        &output.to_string_lossy(),
+        "--max-workers",
+        "2",
+        "--max-concurrency",
+        "1",
+    ]);
+    if code_only {
+        command.arg("--code-only");
     }
     let mut child = command
-        .stdout(Stdio::piped())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to run graphify: {e}"))?;
-    let deadline = Instant::now() + Duration::from_secs(120);
-    while child
-        .try_wait()
-        .map_err(|e| format!("failed to poll graphify: {e}"))?
-        .is_none()
-    {
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr = child.stderr.take().ok_or("failed to capture Graphify errors")?;
+    let captured = Arc::clone(&errors);
+    let app = app.clone();
+    let repository_name = repository.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let stderr_reader = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("{line}");
+            let activity = line
+                .strip_prefix("[graphify extract] ")
+                .or_else(|| line.strip_prefix("[graphify] "))
+                .unwrap_or(&line)
+                .chars()
+                .take(180)
+                .collect::<String>();
+            let _ = app.emit("graphify-progress", serde_json::json!({
+                "repository": repository_name,
+                "index": index,
+                "total": total,
+                "activity": activity,
+            }));
+            if let Ok(mut lines) = captured.lock() {
+                lines.push(line);
+                if lines.len() > 100 {
+                    lines.remove(0);
+                }
+            }
+        }
+    });
+    let deadline = Instant::now() + Duration::from_secs(1_800);
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|e| format!("failed to poll graphify: {e}"))?
+        {
+            break status;
+        }
         if Instant::now() >= deadline {
             let _ = child.kill();
-            let output = child.wait_with_output().map_err(|e| e.to_string())?;
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let _ = child.wait();
+            let _ = stderr_reader.join();
             return Err(format!(
-                "Graphify timed out after 2 minutes.{}",
-                if stderr.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n{stderr}")
-                }
+                "Graphify timed out after 30 minutes while indexing {}",
+                repository.display()
             ));
         }
         std::thread::sleep(Duration::from_millis(100));
+    };
+    let _ = stderr_reader.join();
+    if !status.success() {
+        let detail = errors.lock().map(|lines| lines.join("\n")).unwrap_or_default();
+        return Err(graphify_error(&detail, repository, status));
     }
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    if output.status.success() {
-        let marker = project.join("graphify-out/.crc-code-only");
-        if code_only {
-            fs::write(marker, "LLM API key unavailable during full build\n")
-                .map_err(|e| e.to_string())?;
-        } else if full {
-            let _ = fs::remove_file(marker);
-        }
-        Ok(())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+
+    let marker = output.join("graphify-out/.crc-code-only");
+    if code_only {
+        fs::write(marker, "LLM API key unavailable during full build\n")
+            .map_err(|e| e.to_string())?;
+    } else if full {
+        let _ = fs::remove_file(marker);
     }
+    Ok(())
 }
 
 fn get_graph_status_blocking(project_path: String) -> Result<GraphStatus, String> {
@@ -363,20 +472,37 @@ pub async fn get_git_fingerprint(project_path: String) -> Result<Option<String>,
         .map_err(|e| format!("Git fingerprint worker failed: {e}"))?
 }
 
-fn build_graph_blocking(project_path: String, full: bool) -> Result<GraphStatus, String> {
+fn build_graph_blocking(
+    app: tauri::AppHandle,
+    project_path: String,
+    full: bool,
+) -> Result<GraphStatus, String> {
     let project = validate_project(Path::new(&project_path))?;
-    run_graphify(&project, full)?;
-    if !full {
-        let graph = project.join("graphify-out/graph.json");
-        let contents = fs::read(&graph).map_err(|e| e.to_string())?;
-        fs::write(graph, contents).map_err(|e| e.to_string())?;
+    ensure_project_files(&project)?;
+    let repositories = crate::projects::graph_repositories(&project);
+    let repositories = if repositories.is_empty() { vec![project.clone()] } else { repositories };
+    let total = repositories.len();
+    for (offset, repository) in repositories.into_iter().enumerate() {
+        let index = offset + 1;
+        let name = repository.file_name().unwrap_or_default().to_string_lossy();
+        let _ = app.emit("graphify-progress", serde_json::json!({
+            "repository": name,
+            "index": index,
+            "total": total,
+            "activity": "Starting repository scan…",
+        }));
+        run_graphify(&app, &repository, &graph_dir(&project, &repository), full, index, total)?;
     }
     Ok(status(&project))
 }
 
 #[tauri::command]
-pub async fn build_graph(project_path: String, full: bool) -> Result<GraphStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || build_graph_blocking(project_path, full))
+pub async fn build_graph(
+    app: tauri::AppHandle,
+    project_path: String,
+    full: bool,
+) -> Result<GraphStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || build_graph_blocking(app, project_path, full))
         .await
         .map_err(|e| format!("Graphify worker failed: {e}"))?
 }
@@ -414,19 +540,18 @@ pub fn enable_global_graphignore() -> Result<String, String> {
 }
 
 pub fn validate_report_path(path: &Path) -> Result<PathBuf, String> {
-    let project = path
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("invalid graph report path")?;
-    let project = validate_project(project)?;
-    let expected = project.join("graphify-out/GRAPH_REPORT.md");
-    if path == expected
+    let owner = crate::projects::registered_workspace(path)
+        .ok_or("graph report is not inside a registered project")?;
+    let valid = crate::projects::graph_repositories(&owner).into_iter().any(|repository| {
+        path == graph_dir(&owner, &repository).join("graphify-out/GRAPH_REPORT.md")
+    });
+    if valid
         && path.is_file()
         && !fs::symlink_metadata(path)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(true)
     {
-        Ok(expected)
+        Ok(path.to_path_buf())
     } else {
         Err("invalid graph report path".into())
     }
@@ -531,6 +656,26 @@ mod tests {
         ensure_agents_note(&path).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), before);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn graphify_billing_error_is_actionable() {
+        let status = Command::new("false").status().unwrap();
+        let error = graphify_error(
+            "402 billing_not_configured: Billing verification failed",
+            Path::new("/tmp/repo"),
+            status,
+        );
+        assert!(error.contains("quota/billing"));
+        assert!(error.contains("Settings → Graphify"));
+    }
+
+    #[test]
+    fn workspace_graphs_are_centralized_by_repository() {
+        let workspace = Path::new("/tmp/workspace");
+        let repository = workspace.join("frontend");
+        assert_eq!(graph_dir(workspace, &repository), workspace.join(".graphify/frontend"));
+        assert_eq!(graph_dir(&repository, &repository), repository);
     }
 
     #[test]
