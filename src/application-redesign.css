@@ -72,6 +72,11 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
 .pipeline-header p { max-width: 68ch; margin: 4px 0 0; color: var(--app-muted); }
 .kanban-board > header > span, .pipeline-view > header > span { color: var(--app-muted); font: 11px/1.4 var(--font-mono); }
 
+.project-workspace-nav { display: flex; align-items: center; padding: 3px; border: 1px solid var(--app-line-strong); background: var(--app-sidebar); }
+.project-workspace-nav button { min-height: 32px; padding: 0 13px; color: var(--app-muted); font-size: 13px; font-weight: 700; }
+.project-workspace-nav button:hover { color: var(--app-ink); background: var(--app-hover); }
+.project-workspace-nav button.active { background: var(--app-accent); color: var(--app-canvas); }
+
 /* Controls */
 .themed-select, .list-picker-trigger, .settings-form input:not([type="checkbox"]), .settings-form select, .pipeline-step-editor input:not([type="checkbox"]), .pipeline-step-editor select {
   min-height: 38px;
@@ -86,13 +91,14 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
 .save-settings:hover, .pipeline-actions button:hover, .pipeline-consult-button:hover, .ship-changes:hover { background: var(--app-accent); color: var(--app-canvas); }
 
 /* Tasks: board is a status workspace, cards are records */
-.kanban-columns { gap: 1px; border: 1px solid var(--app-line); background: var(--app-line); }
-.kanban-column { border: 0; background: var(--app-sidebar); }
-.kanban-column > header { min-height: 42px; padding: 0 12px; background: var(--app-panel); color: var(--app-body); }
-.kanban-column > header strong { font-size: 13px; letter-spacing: .02em; text-transform: none; }
-.kanban-column > header span { min-width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--app-line-strong); border-radius: 50%; font: 11px/1 var(--font-mono); }
-.kanban-column > div { padding: 8px; }
-.kanban-card { gap: 10px; margin-bottom: 8px; padding: 12px; border: 1px solid var(--app-line); background: var(--app-panel); }
+.kanban-columns { grid-auto-flow: column; grid-auto-columns: minmax(300px, 360px); grid-template-columns: none; grid-template-rows: minmax(0, 1fr); gap: 16px; overflow-x: auto; overflow-y: hidden; padding: 4px 4px 12px; border: 0; background: transparent; }
+.kanban-column { border: 1px solid color-mix(in srgb, var(--kanban-color) 35%, var(--app-line)); border-top: 3px solid var(--kanban-color); background: color-mix(in srgb, var(--kanban-color) 6%, var(--app-sidebar)); }
+.kanban-column > header { min-height: 58px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 16px; border-bottom-color: color-mix(in srgb, var(--kanban-color) 35%, var(--app-line)); background: color-mix(in srgb, var(--kanban-color) 10%, var(--app-panel)); color: var(--kanban-color); }
+.kanban-column > header strong { grid-column: 2; color: var(--kanban-color); font-size: 14px; letter-spacing: .02em; text-align: center; text-transform: none; }
+.kanban-column > header span { grid-column: 3; justify-self: end; }
+.kanban-column > header span { min-width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--kanban-color); border-radius: 50%; color: var(--kanban-color); font: 11px/1 var(--font-mono); }
+.kanban-column > div { padding: 12px; }
+.kanban-card { gap: 10px; margin-bottom: 12px; padding: 14px; border: 1px solid var(--app-line); background: var(--app-panel); }
 .kanban-card:hover { border-color: var(--app-line-strong); background: var(--app-panel-raised); }
 .kanban-card small { color: var(--app-muted); font: 11px/1.4 var(--font-mono); text-transform: none; }
 .kanban-card > strong { color: var(--app-ink); font-size: 14px; font-weight: 600; }

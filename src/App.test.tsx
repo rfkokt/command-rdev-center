@@ -72,10 +72,19 @@ test("exposes the Deep Research report library", () => {
   expect(screen.getByTitle("Deep Research")).toBeInTheDocument();
 });
 
+test("shows project operations in the workspace toolbar, not the sidebar", () => {
+  render(<App />);
+
+  const toolbar = screen.getByRole("navigation", { name: "demo views" });
+  expect(toolbar).toHaveTextContent("Tasks");
+  expect(toolbar).toHaveTextContent("Pipeline");
+  expect(screen.getByRole("complementary", { name: "Projects and sessions" })).not.toHaveTextContent("Project operations");
+});
+
 test("keeps the active chat mounted while Kanban is open", async () => {
   render(<App />);
 
-  fireEvent.click(screen.getByRole("button", { name: /Kanban/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Tasks" }));
 
   expect(await screen.findByText("Kanban view")).toBeInTheDocument();
   expect(screen.getByText("Chat view")).not.toBeVisible();

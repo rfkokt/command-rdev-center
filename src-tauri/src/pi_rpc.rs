@@ -308,6 +308,7 @@ pub fn spawn_pi_rpc(
     tools: Option<Vec<String>>,
     global_chat: Option<bool>,
     custom_system_prompt: Option<String>,
+    project_name: Option<String>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
@@ -467,7 +468,7 @@ pub fn spawn_pi_rpc(
         .map(|path| path.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    let project_name = owning_project.file_name().unwrap_or_default();
+    let project_name = project_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| owning_project.file_name().unwrap_or_default().to_string_lossy().into_owned());
     let task_dir = if global_chat {
         std::env::temp_dir()
     } else {

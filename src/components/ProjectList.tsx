@@ -16,6 +16,7 @@ export type ProjectInfo = {
 };
 
 type Tab = { id: string; project: ProjectInfo; title?: string; unread?: number; interrupted?: boolean };
+type TaskSource = { type: "local" | "google_sheets"; url: string; pics: string[] };
 
 export default function ProjectList({
   onOpen,
@@ -42,6 +43,9 @@ export default function ProjectList({
   const [baseBranch, setBaseBranch] = useState("");
   const [projectToDelete, setProjectToDelete] = useState<ProjectInfo | null>(null);
   const [projectToEdit, setProjectToEdit] = useState<ProjectInfo | null>(null);
+  const [taskSource, setTaskSource] = useState<TaskSource>({ type: "local", url: "", pics: [] });
+  const [availablePics, setAvailablePics] = useState<string[]>([]);
+  const [loadingPics, setLoadingPics] = useState(false);
   const registerDialogRef = useModalFocus<HTMLDivElement>(() => setPendingPath(null), Boolean(pendingPath));
   const settingsDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToEdit(null), Boolean(projectToEdit));
   const removeDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToDelete(null), Boolean(projectToDelete));
@@ -92,6 +96,9 @@ export default function ProjectList({
       const nextBranches = await invoke<string[]>("list_project_branches", { path: project.path });
       setBranches(nextBranches);
       setBaseBranch(project.base_branch ?? nextBranches[0] ?? "");
+      const source = await invoke<TaskSource>("get_project_task_source", { path: project.path });
+      setTaskSource(source);
+      setAvailablePics(source.pics);
       setProjectToEdit(project);
       setErr(null);
     } catch (e) {
@@ -107,6 +114,31 @@ export default function ProjectList({
       setProjectToEdit(null);
       setBranches([]);
       setBaseBranch("");
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function loadPics() {
+    if (!taskSource.url.trim()) return setErr("Google Sheets URL is required");
+    setLoadingPics(true);
+    try {
+      const pics = await invoke<string[]>("list_google_sheet_pics", { url: taskSource.url });
+      setAvailablePics(pics);
+      setTaskSource((source) => ({ ...source, pics: source.pics.filter((pic) => pics.includes(pic)) }));
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoadingPics(false);
+    }
+  }
+
+  async function saveTaskSource() {
+    if (!projectToEdit) return;
+    try {
+      setTaskSource(await invoke<TaskSource>("save_project_task_source", { path: projectToEdit.path, source: taskSource }));
       setErr(null);
     } catch (e) {
       setErr(String(e));
@@ -145,6 +177,7 @@ export default function ProjectList({
           <strong id="edit-base-branch-title">{projectToEdit.name}</strong>
           <span>{projectToEdit.path}</span>
           {projectToEdit.is_git && <section><h3>GENERAL</h3><ListPicker label="BASE BRANCH" value={baseBranch} options={branches} includeAll={false} onChange={setBaseBranch} /><p>New chats use this branch. Existing chat baselines stay unchanged.</p><button className="project-save-branch" onClick={saveBaseBranch}>SAVE BRANCH</button></section>}
+          <section className="project-task-source"><h3>TASK SOURCE</h3><ListPicker label="SOURCE" value={taskSource.type} options={["local", "google_sheets"]} includeAll={false} formatOption={(value) => value === "local" ? "Local JSON" : "Google Sheets · read-only"} onChange={(type) => setTaskSource({ ...taskSource, type: type as TaskSource["type"] })} />{taskSource.type === "google_sheets" && <><label><span>PUBLIC SHEET URL</span><input type="url" value={taskSource.url} onChange={(event) => setTaskSource({ ...taskSource, url: event.target.value })} placeholder="https://docs.google.com/spreadsheets/d/…/edit" /></label><button type="button" className="project-load-pics" disabled={loadingPics} onClick={loadPics}>{loadingPics ? "READING SHEET…" : "LOAD PIC"}</button>{availablePics.length > 0 && <fieldset className="project-pic-options"><legend>INCLUDE TASKS FOR</legend>{availablePics.map((pic) => <label key={pic}><input type="checkbox" checked={taskSource.pics.includes(pic)} onChange={(event) => setTaskSource((source) => ({ ...source, pics: event.target.checked ? [...source.pics, pic] : source.pics.filter((selected) => selected !== pic) }))} /><span>{pic}</span></label>)}</fieldset>}</>}<p>{taskSource.type === "local" ? "Use the existing local backlog file." : "Load the sheet, then select which PIC should appear in Kanban. No PIC selected means no tasks are imported."}</p><button className="project-save-task-source" onClick={saveTaskSource}>SAVE TASK SOURCE</button></section>
           <section><h3>PIPELINE</h3><p>Configure presets, commands, failure policies, and consult AI.</p><button className="project-open-pipeline" onClick={() => { const project = projectToEdit; setProjectToEdit(null); onPipelineSettings(project); }}>OPEN PIPELINE SETTINGS</button></section>
           <section className="project-danger-zone"><h3>DANGER ZONE</h3><p>Remove this registration only. Repository files remain untouched.</p><button onClick={() => { setProjectToDelete(projectToEdit); setProjectToEdit(null); }}>REMOVE PROJECT</button></section>
           <div className="project-dialog-actions"><button className="project-dialog-cancel" onClick={() => setProjectToEdit(null)}>CLOSE</button></div>

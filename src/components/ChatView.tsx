@@ -204,6 +204,8 @@ export default function ChatView({
   globalChat = false,
   customSystemPrompt,
   inputPlaceholder,
+  initialPrompt,
+  onInitialPromptConsumed,
 }: {
   projectPath: string;
   projectName: string;
@@ -229,6 +231,8 @@ export default function ChatView({
   globalChat?: boolean;
   customSystemPrompt?: string;
   inputPlaceholder?: string;
+  initialPrompt?: string;
+  onInitialPromptConsumed?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [mode, setMode] = useState<"chat" | "research">("chat");
@@ -951,6 +955,7 @@ export default function ChatView({
             model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
             thinking: thinkingRef.current || undefined,
             graphReportPath: graphReportRef.current,
+            projectName,
           });
         } else {
           const wt = await invoke<WorktreeInfo>("ensure_worktree", {
@@ -971,6 +976,7 @@ export default function ChatView({
             model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
             thinking: thinkingRef.current || undefined,
             graphReportPath: graphReportRef.current,
+            projectName,
           });
         }
         }
@@ -1045,6 +1051,16 @@ export default function ChatView({
     }
   }
 
+  async function sendPrompt(text: string) {
+    if (!chatReady || !text.trim() || driveDetached || agentStatus === "stopped") return false;
+    if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
+    taskStartedAtRef.current ??= Date.now();
+    setMessages((prev) => [...prev, { id: uid(), role: "user", text, images: [], thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage].slice(-MAX_HISTORY));
+    pendingTaskPromptRef.current = text;
+    await sendRaw({ type: "prompt", message: text, images: [] });
+    return true;
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!chatReady || (!text && images.length === 0 && files.length === 0) || driveDetached || agentStatus === "stopped") return;
@@ -1064,6 +1080,11 @@ export default function ChatView({
     const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : "";
     await sendRaw({ type: "prompt", message: `${context}${message}`, images });
   }
+
+  useEffect(() => {
+    if (!initialPrompt || !chatReady || messages.length > 0 || agentStatus !== "idle") return;
+    void sendPrompt(initialPrompt).then((sent) => { if (sent) onInitialPromptConsumed?.(); });
+  }, [initialPrompt, chatReady, agentStatus, messages.length]);
 
   async function attachFiles() {
     try {
@@ -1233,6 +1254,7 @@ export default function ChatView({
         graphReportPath: globalChat ? undefined : graphReportRef.current,
         globalChat,
         customSystemPrompt,
+        projectName,
       });
       onToast(retry ? "Agent retrying" : "Pi agent reloaded");
       setTimeout(() => {
