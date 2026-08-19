@@ -47,7 +47,8 @@ fn read_pi_config() -> Result<(String, serde_json::Value), String> {
 #[tauri::command]
 pub fn list_available_models() -> Result<Vec<String>, String> {
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-    let raw = std::fs::read_to_string(PathBuf::from(home).join(".pi/agent/models.json")).map_err(|e| e.to_string())?;
+    let raw = std::fs::read_to_string(PathBuf::from(home).join(".pi/agent/models.json"))
+        .map_err(|e| e.to_string())?;
     let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let mut models = Vec::new();
     if let Some(providers) = value.get("providers").and_then(|item| item.as_object()) {
@@ -168,7 +169,10 @@ fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
     })
 }
 
-fn ensure_pi_installed_with_repair(app: Option<&tauri::AppHandle>, configured: &str) -> Result<PathBuf, String> {
+fn ensure_pi_installed_with_repair(
+    app: Option<&tauri::AppHandle>,
+    configured: &str,
+) -> Result<PathBuf, String> {
     if let Some(path) = installed_pi(configured) {
         return Ok(path);
     }
@@ -333,7 +337,8 @@ pub fn spawn_pi_rpc(
     if !Path::new(&cwd).exists() {
         return Err(format!("cwd does not exist (drive detached?): {}", cwd));
     }
-    let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path).or_else(|_| ensure_pi_installed(&configured_pi_path))?;
+    let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
+        .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -359,8 +364,11 @@ pub fn spawn_pi_rpc(
         let config = serde_json::json!({
             "mcpServers": { "figma": { "url": figma.url, "auth": "oauth" } }
         });
-        std::fs::write(&config_path, serde_json::to_string(&config).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("Figma MCP config: {e}"))?;
+        std::fs::write(
+            &config_path,
+            serde_json::to_string(&config).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("Figma MCP config: {e}"))?;
         args.push("--mcp-config".into());
         args.push(config_path.to_string_lossy().into());
     }
@@ -396,7 +404,7 @@ pub fn spawn_pi_rpc(
     args.extend(session_args(no_session.unwrap_or(false), session_file));
     if !global_chat {
         args.push("--extension".into());
-        let extensions = crate::projects::extensions_path();
+        let extensions = crate::projects::ensure_extensions()?;
         args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
         args.push("--extension".into());
         args.push(
@@ -409,6 +417,13 @@ pub fn spawn_pi_rpc(
         args.push(
             extensions
                 .join("pipeline-runner.ts")
+                .to_string_lossy()
+                .into(),
+        );
+        args.push("--extension".into());
+        args.push(
+            extensions
+                .join("terminal-context.ts")
                 .to_string_lossy()
                 .into(),
         );
@@ -429,7 +444,9 @@ pub fn spawn_pi_rpc(
             args.push(report.to_string_lossy().to_string());
         }
     }
-    let custom_prompt_path = if let Some(prompt) = custom_system_prompt.filter(|value| !value.trim().is_empty()) {
+    let custom_prompt_path = if let Some(prompt) =
+        custom_system_prompt.filter(|value| !value.trim().is_empty())
+    {
         if prompt.len() > 1_000_000 {
             return Err("custom system prompt exceeds 1 MB".into());
         }
@@ -441,8 +458,11 @@ pub fn spawn_pi_rpc(
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&prompt_path).map_err(|e| format!("custom system prompt: {e}"))?;
-        file.write_all(prompt.as_bytes()).map_err(|e| format!("custom system prompt: {e}"))?;
+        let mut file = options
+            .open(&prompt_path)
+            .map_err(|e| format!("custom system prompt: {e}"))?;
+        file.write_all(prompt.as_bytes())
+            .map_err(|e| format!("custom system prompt: {e}"))?;
         args.push("--append-system-prompt".into());
         args.push(prompt_path.to_string_lossy().to_string());
         Some(prompt_path)
@@ -463,12 +483,22 @@ pub fn spawn_pi_rpc(
         .unwrap_or_else(|| owning_project.clone());
     let graph_json_paths = crate::projects::graph_repositories(&graph_workspace)
         .into_iter()
-        .map(|repository| crate::graph::graph_dir(&graph_workspace, &repository).join("graphify-out/graph.json"))
+        .map(|repository| {
+            crate::graph::graph_dir(&graph_workspace, &repository).join("graphify-out/graph.json")
+        })
         .filter(|path| path.exists())
         .map(|path| path.to_string_lossy().into_owned())
         .collect::<Vec<_>>()
         .join("\n");
-    let project_name = project_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| owning_project.file_name().unwrap_or_default().to_string_lossy().into_owned());
+    let project_name = project_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| {
+            owning_project
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
     let task_dir = if global_chat {
         std::env::temp_dir()
     } else {
@@ -485,6 +515,14 @@ pub fn spawn_pi_rpc(
             .env("CRC_PROJECT_CWD", &cwd)
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
+            .env(
+                "CRC_CHAT_ID",
+                session_id.strip_prefix("chat-").unwrap_or(&session_id),
+            )
+            .env(
+                "CRC_TERMINAL_DIR",
+                std::env::temp_dir().join("command-rdev-center-terminals"),
+            )
             .env("CRC_TASK_DIR", task_dir.clone())
             .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
@@ -519,6 +557,14 @@ pub fn spawn_pi_rpc(
                                 .env("CRC_PROJECT_CWD", &cwd)
                                 .env("CRC_PROJECT_NAME", project_name.clone())
                                 .env("CRC_SESSION_ID", &session_id)
+                                .env(
+                                    "CRC_CHAT_ID",
+                                    session_id.strip_prefix("chat-").unwrap_or(&session_id),
+                                )
+                                .env(
+                                    "CRC_TERMINAL_DIR",
+                                    std::env::temp_dir().join("command-rdev-center-terminals"),
+                                )
                                 .env("CRC_TASK_DIR", task_dir.clone())
                                 .env("CRC_GRAPH_JSONS", &graph_json_paths);
                         }
@@ -526,7 +572,9 @@ pub fn spawn_pi_rpc(
                         continue;
                     }
                     Err(repair_err) => {
-                        return Err(format!("failed to spawn pi after auto-repair: {repair_err} (original: {e})"));
+                        return Err(format!(
+                            "failed to spawn pi after auto-repair: {repair_err} (original: {e})"
+                        ));
                     }
                 }
             }
@@ -650,12 +698,29 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
     serde_json::from_str::<serde_json::Value>(&json_line)
         .map_err(|e| format!("invalid JSON: {}", e))?;
 
-    let map = sessions_map()
+    let h = sessions_map()
         .lock()
-        .map_err(|_| "poisoned sessions lock".to_string())?;
-    let h = map
+        .map_err(|_| "poisoned sessions lock".to_string())?
         .get(&session_id)
-        .ok_or_else(|| format!("unknown session {} — it may have crashed and been auto-reinstalled, try sending again", session_id))?;
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "unknown session {} — restart the chat session and send again",
+                session_id
+            )
+        })?;
+    if h.child
+        .lock()
+        .map_err(|_| "poisoned child".to_string())?
+        .as_mut()
+        .is_none_or(|child| child.try_wait().ok().flatten().is_some())
+    {
+        sessions_map()
+            .lock()
+            .map_err(|_| "poisoned sessions lock".to_string())?
+            .remove(&session_id);
+        return Err("Pi process exited before receiving the command. Restart the chat session and send again.".into());
+    }
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
     let stdin = guard.as_mut().ok_or_else(|| {
         "stdin closed — pi process crashed on macOS (common when binary disappears). The app has auto-reinstalled it; please resend your message / restart the session.".to_string()
@@ -664,10 +729,19 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
     // Append LF
     let mut payload = json_line.as_bytes().to_vec();
     payload.push(b'\n');
-    stdin
-        .write_all(&payload)
-        .map_err(|e| format!("write to pi stdin failed: {}", e))?;
-    stdin.flush().map_err(|e| e.to_string())?;
+    if let Err(error) = stdin.write_all(&payload).and_then(|_| stdin.flush()) {
+        *guard = None;
+        drop(guard);
+        sessions_map()
+            .lock()
+            .map_err(|_| "poisoned sessions lock".to_string())?
+            .remove(&session_id);
+        return Err(if error.kind() == std::io::ErrorKind::BrokenPipe {
+            "Pi process stopped unexpectedly. Restart the chat session and send again.".into()
+        } else {
+            format!("write to Pi failed: {error}")
+        });
+    }
     Ok(())
 }
 

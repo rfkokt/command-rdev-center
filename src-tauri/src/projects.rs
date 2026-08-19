@@ -11,6 +11,7 @@ const DEFAULT_CONFIG: &str = include_str!("../crc.config.json");
 const KANBAN_EXTENSION: &str = include_str!("../extensions/kanban-task.ts");
 const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts");
 const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts");
+const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -116,6 +117,25 @@ fn dir_mtime_ms(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+fn install_extensions(extensions: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(extensions).map_err(|e| e.to_string())?;
+    for (name, content) in [
+        ("kanban-task.ts", KANBAN_EXTENSION),
+        ("graphify-context.ts", GRAPHIFY_EXTENSION),
+        ("pipeline-runner.ts", PIPELINE_EXTENSION),
+        ("terminal-context.ts", TERMINAL_EXTENSION),
+    ] {
+        std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub fn ensure_extensions() -> Result<PathBuf, String> {
+    let extensions = extensions_path();
+    install_extensions(&extensions)?;
+    Ok(extensions)
+}
+
 pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -123,14 +143,7 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     if !path.exists() {
         std::fs::write(&path, DEFAULT_CONFIG).map_err(|e| e.to_string())?;
     }
-    let extensions = dir.join("extensions");
-    std::fs::create_dir_all(&extensions).map_err(|e| e.to_string())?;
-    std::fs::write(extensions.join("kanban-task.ts"), KANBAN_EXTENSION)
-        .map_err(|e| e.to_string())?;
-    std::fs::write(extensions.join("graphify-context.ts"), GRAPHIFY_EXTENSION)
-        .map_err(|e| e.to_string())?;
-    std::fs::write(extensions.join("pipeline-runner.ts"), PIPELINE_EXTENSION)
-        .map_err(|e| e.to_string())?;
+    install_extensions(&dir.join("extensions"))?;
     CONFIG_PATH
         .set(path)
         .map_err(|_| "config already initialized".to_string())?;
@@ -468,7 +481,11 @@ pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
         .get(&canonical)
         .or_else(|| config.task_sources.get(&path))
         .cloned()
-        .unwrap_or(TaskSource { kind: "local".into(), url: String::new(), pics: Vec::new() }))
+        .unwrap_or(TaskSource {
+            kind: "local".into(),
+            url: String::new(),
+            pics: Vec::new(),
+        }))
 }
 
 #[tauri::command]
@@ -477,7 +494,11 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
         .to_string_lossy()
         .to_string();
     let mut config = read_config()?;
-    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical) {
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical)
+    {
         return Err(format!("project is not registered: {canonical}"));
     }
     if source.kind != "local" && source.kind != "google_sheets" {
@@ -486,7 +507,12 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
     let source = TaskSource {
         kind: source.kind,
         url: source.url.trim().to_string(),
-        pics: source.pics.into_iter().map(|pic| pic.trim().to_string()).filter(|pic| !pic.is_empty()).collect(),
+        pics: source
+            .pics
+            .into_iter()
+            .map(|pic| pic.trim().to_string())
+            .filter(|pic| !pic.is_empty())
+            .collect(),
     };
     if source.kind == "google_sheets" {
         crate::kanban::google_sheet_csv_url(&source.url)?;

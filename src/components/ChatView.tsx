@@ -862,6 +862,13 @@ export default function ChatView({
               }
             }
           }
+          if (!ev.isError && name === "write_chat_terminal") {
+            const pane = typeof args.pane === "string" && /^\d+$/.test(args.pane) ? args.pane : "0";
+            const data = typeof args.data === "string" ? args.data : "";
+            if (data && await confirm({ title: "Send terminal input", message: `Allow the agent to send this exact input to terminal pane ${pane}?\n\n${JSON.stringify(data)}`, confirmLabel: "Send", cancelLabel: "Deny" })) {
+              void invoke("terminal_write", { chatId: `${chatId}__${pane}`, data }).catch((error) => onToast(`Terminal: ${String(error)}`));
+            }
+          }
           if (!ev.isError && name === "provide_pipeline_input") {
             const message = typeof args.message === "string" ? args.message : "";
             const paths = Array.isArray(args.paths) ? args.paths.filter((path): path is string => typeof path === "string") : [];
