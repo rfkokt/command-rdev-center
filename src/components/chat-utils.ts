@@ -49,7 +49,8 @@ export function filePickerKey(key: string, selectedIdx: number, count: number) {
 }
 
 export function ensureAssistantTurn(messages: ChatMessage[], create: () => ChatMessage): ChatMessage[] {
-  if (messages.some((message) => message.role === "assistant" && message.isStreaming)) return messages;
+  const last = messages[messages.length - 1];
+  if (last?.role === "assistant" && last.isStreaming) return messages;
   return [...messages, create()];
 }
 

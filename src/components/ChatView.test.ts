@@ -89,6 +89,13 @@ describe("ensureAssistantTurn", () => {
     const settled = [{ id: "old", role: "assistant", text: "done", toolCalls: [], isStreaming: false } as ChatMessage];
     expect(ensureAssistantTurn(settled, () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage))).toHaveLength(2);
   });
+
+  test("places the next assistant after a queued user message", () => {
+    const active = { id: "old", role: "assistant", text: "done", toolCalls: [], isStreaming: true } as ChatMessage;
+    const queued = { id: "queued", role: "user", text: "next", toolCalls: [] } as ChatMessage;
+
+    expect(ensureAssistantTurn([active, queued], () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage)).map((message) => message.id)).toEqual(["old", "queued", "new"]);
+  });
 });
 
 describe("insertSteerMessage", () => {

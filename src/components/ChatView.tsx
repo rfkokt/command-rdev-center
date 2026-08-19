@@ -1453,20 +1453,21 @@ export default function ChatView({
       return;
     }
     if (agentStatus === "running") {
-      if (!text && files.length === 0) return;
+      if (!text && images.length === 0 && files.length === 0) return;
       let fileContext = "";
       try { fileContext = await readAttachments(); } catch (error) { onToast(`File attachment: ${String(error)}`); return; }
       const messageText = `${text}${fileContext}`;
       const type = submitMode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
-        const message = { id: uid(), role: "user", text: messageText, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
+        const message = { id: uid(), role: "user", text: messageText, images, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage;
         const next = type === "steer" ? insertSteerMessage(prev, message) : [...prev, message];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
       setInput("");
+      setImages([]);
       setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
-      await sendRaw({ type, message: messageText });
+      await sendRaw({ type, message: messageText, images });
       onToast(type === "steer" ? "Steering current turn" : "Message queued for next turn");
       return;
     }
