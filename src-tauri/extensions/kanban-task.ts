@@ -1,5 +1,57 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+type Task = { no?: string | number; url?: string; deskripsi?: string; pic?: string; status?: string; notes?: string; [key: string]: unknown };
+
+function oneLine(value: unknown, max = 90) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim().replace(/\|/g, "\\|");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function taskMarkdown(task: Task) {
+  return [
+    `# Task #${task.no ?? "—"}`,
+    "",
+    String(task.deskripsi || "Untitled task"),
+    task.notes ? `\n## Notes\n\n${task.notes}` : "",
+    "",
+    "## Metadata",
+    `- PIC: ${task.pic || "Unassigned"}`,
+    `- Status: ${task.status || "Unknown"}`,
+    task.priority ? `- Priority: ${task.priority}` : "",
+    task.url ? `- Source: ${task.url}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+function kanbanMarkdown(items: Task[]) {
+  if (!items.length) return "_Tidak ada task yang cocok._";
+  const groups = new Map<string, Task[]>();
+  for (const task of items) {
+    const status = oneLine(task.status || "Tanpa status", 40);
+    groups.set(status, [...(groups.get(status) || []), task]);
+  }
+  const sections = [...groups.entries()].map(([status, group]) => [
+    `## ${status} · ${group.length}`,
+    "",
+    "| No | Task | Priority | PIC |",
+    "|---:|---|---|---|",
+    ...group.map((task) => `| ${oneLine(task.no, 20) || "—"} | ${oneLine(task.deskripsi) || "Untitled task"} | ${oneLine(task.priority, 20) || "—"} | ${oneLine(task.pic, 30) || "—"} |`),
+  ].join("\n"));
+  return [`# Task project · ${items.length}`, "", ...sections].join("\n\n");
+}
+
+async function tasks(): Promise<Task[]> {
+  const dir = process.env.CRC_TASK_DIR;
+  const project = process.env.CRC_PROJECT_NAME;
+  if (!dir || !project) throw new Error("Project task context is unavailable");
+  try {
+    return JSON.parse(await readFile(join(dir, ".cache", `${project}.json`), "utf8")) as Task[];
+  } catch {
+    return JSON.parse(await readFile(join(dir, `${project}.json`), "utf8")) as Task[];
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -14,6 +66,35 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, input) {
       return { content: [{ type: "text", text: "Error report draft submitted for final review." }], details: input };
+    },
+  });
+  pi.registerTool({
+    name: "list_project_tasks",
+    label: "List project tasks",
+    description: "List work-ready tasks for this project as Kanban Markdown. A generic request such as 'ada task apa?' means tasks that can be started now, so omit Done, Testing/Review, Pending/blocked, and In Progress unless the user explicitly asks for one of those statuses. Present the returned Markdown exactly once; do not regroup, summarize, duplicate, or invent tasks.",
+    parameters: Type.Object({
+      pic: Type.Optional(Type.String({ description: "Filter by exact PIC name" })),
+      status: Type.Optional(Type.String({ description: "Filter by exact status" })),
+    }),
+    async execute(_id, input) {
+      const requestedStatus = input.status?.trim().toLowerCase();
+      const ready = new Set(["to do", "todo", "backlog", "open", "ready"]);
+      const result = (await tasks()).filter((task) => {
+        const status = task.status?.trim().toLowerCase() || "backlog";
+        return (!input.pic || task.pic?.trim().toLowerCase() === input.pic.trim().toLowerCase()) && (requestedStatus ? status === requestedStatus : ready.has(status));
+      });
+      return { content: [{ type: "text", text: kanbanMarkdown(result) }], details: { count: result.length } };
+    },
+  });
+  pi.registerTool({
+    name: "get_project_task",
+    label: "Get project task",
+    description: "Get the complete, authoritative detail of one project task by number or ID. The returned Markdown includes the full task description and notes without list-preview truncation. Use it directly as the requirements; never claim it is clipped or ask the user to paste it again.",
+    parameters: Type.Object({ taskNo: Type.String({ description: "Task number or ID" }) }),
+    async execute(_id, input) {
+      const task = (await tasks()).find((item) => String(item.no) === input.taskNo);
+      if (!task) throw new Error(`Task ${input.taskNo} not found`);
+      return { content: [{ type: "text", text: taskMarkdown(task) }], details: { taskNo: input.taskNo } };
     },
   });
   pi.registerTool({

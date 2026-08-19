@@ -39,7 +39,19 @@ struct StoredConfig {
     #[serde(default)]
     pipeline_types: HashMap<String, String>,
     #[serde(default)]
+    task_sources: HashMap<String, TaskSource>,
+    #[serde(default)]
     backlog_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskSource {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub pics: Vec<String>,
 }
 
 fn sanitize_repo_name(name: &str) -> String {
@@ -445,6 +457,53 @@ pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
     Ok(branches)
 }
 
+#[tauri::command]
+pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .to_string();
+    let config = read_config()?;
+    Ok(config
+        .task_sources
+        .get(&canonical)
+        .or_else(|| config.task_sources.get(&path))
+        .cloned()
+        .unwrap_or(TaskSource { kind: "local".into(), url: String::new(), pics: Vec::new() }))
+}
+
+#[tauri::command]
+pub fn save_project_task_source(path: String, source: TaskSource) -> Result<TaskSource, String> {
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .to_string();
+    let mut config = read_config()?;
+    if !config.projects.iter().any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical) {
+        return Err(format!("project is not registered: {canonical}"));
+    }
+    if source.kind != "local" && source.kind != "google_sheets" {
+        return Err("task source must be local or google_sheets".into());
+    }
+    let source = TaskSource {
+        kind: source.kind,
+        url: source.url.trim().to_string(),
+        pics: source.pics.into_iter().map(|pic| pic.trim().to_string()).filter(|pic| !pic.is_empty()).collect(),
+    };
+    if source.kind == "google_sheets" {
+        crate::kanban::google_sheet_csv_url(&source.url)?;
+        config.task_sources.insert(canonical, source.clone());
+    } else {
+        config.task_sources.remove(&canonical);
+        config.task_sources.remove(&path);
+    }
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    Ok(source)
+}
+
+pub fn task_sources() -> Result<HashMap<String, TaskSource>, String> {
+    Ok(read_config()?.task_sources)
+}
+
 pub fn project_base_branch(path: &Path) -> Result<String, String> {
     let canonical = canonicalize_or_original(path).to_string_lossy().to_string();
     read_config()?
@@ -647,6 +706,8 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.base_branches.remove(&path);
     config.pipeline_types.remove(&canonical);
     config.pipeline_types.remove(&path);
+    config.task_sources.remove(&canonical);
+    config.task_sources.remove(&path);
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }

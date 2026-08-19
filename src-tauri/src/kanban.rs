@@ -44,6 +44,10 @@ impl KanbanTask {
 pub struct KanbanProject {
     project: String,
     tasks: Vec<KanbanTask>,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 pub(crate) fn task_dir() -> Result<PathBuf, String> {
@@ -108,6 +112,99 @@ fn write_tasks(path: &Path, tasks: &[KanbanTask]) -> Result<(), String> {
         let _ = std::fs::remove_file(temp);
     }
     result
+}
+
+pub(crate) fn google_sheet_csv_url(url: &str) -> Result<String, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("Google Sheets URL is required".into());
+    }
+    let marker = "/spreadsheets/d/";
+    let id = url.split(marker).nth(1).and_then(|rest| rest.split('/').next())
+        .filter(|id| !id.is_empty())
+        .ok_or("invalid Google Sheets URL")?;
+    let gid = url.split("gid=").nth(1).and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()).filter(|gid| !gid.is_empty());
+    Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{}", gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()))
+}
+
+fn normalized_header(value: &str) -> String {
+    value.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+fn field_index(headers: &[String], aliases: &[&str]) -> Option<usize> {
+    headers.iter().position(|header| aliases.contains(&normalized_header(header).as_str()))
+}
+
+fn csv_rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '"' if quoted && chars.peek() == Some(&'"') => { field.push('"'); chars.next(); }
+            '"' => quoted = !quoted,
+            ',' if !quoted => row.push(std::mem::take(&mut field)),
+            '\n' if !quoted => { row.push(std::mem::take(&mut field)); rows.push(std::mem::take(&mut row)); }
+            '\r' if !quoted => {}
+            _ => field.push(character),
+        }
+    }
+    if quoted { return Err("unterminated quoted CSV field".into()); }
+    if !field.is_empty() || !row.is_empty() { row.push(field); rows.push(row); }
+    Ok(rows)
+}
+
+fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
+    let mut rows = csv_rows(csv_bytes)?.into_iter();
+    let headers = rows.next().ok_or("sheet is empty")?;
+    let title = field_index(&headers, &["tugas", "task", "title", "deskripsi", "description"])
+        .ok_or("sheet needs a task/title column")?;
+    let no = field_index(&headers, &["no", "nomor", "id", "key"]);
+    let pic = field_index(&headers, &["pic", "assignee", "owner", "penanggungjawab"]);
+    let status = field_index(&headers, &["status", "state"]);
+    let notes = field_index(&headers, &["catatan", "notes", "note", "keterangan"]);
+    let url = field_index(&headers, &["url", "link"]);
+    let mut tasks = Vec::new();
+    for (index, record) in rows.enumerate() {
+        let description = record.get(title).map(String::as_str).unwrap_or_default().trim();
+        if description.is_empty() || description.eq_ignore_ascii_case("tugas") {
+            continue;
+        }
+        let status = status.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
+        let status = if status.is_empty() { "Backlog" } else { status };
+        let task_notes = notes.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string();
+        tasks.push(KanbanTask {
+            no: no.and_then(|column| record.get(column)).filter(|value| !value.trim().is_empty()).map(|value| json!(value)).unwrap_or_else(|| json!(index + 1)),
+            url: url.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string(),
+            deskripsi: description.to_string(),
+            pic: pic.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string(),
+            status: status.into(),
+            notes: task_notes,
+            session_id: None,
+            extra: serde_json::Map::new(),
+        });
+    }
+    Ok(tasks)
+}
+
+fn fetch_sheet_tasks(url: &str) -> Result<Vec<KanbanTask>, String> {
+    let csv_url = google_sheet_csv_url(url)?;
+    let output = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15", &csv_url]).output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    parse_sheet_tasks(&output.stdout)
+}
+
+#[tauri::command]
+pub fn list_google_sheet_pics(url: String) -> Result<Vec<String>, String> {
+    let mut pics = fetch_sheet_tasks(&url)?.into_iter().map(|task| task.pic).filter(|pic| !pic.is_empty()).collect::<Vec<_>>();
+    pics.sort_by_key(|pic| pic.to_lowercase());
+    pics.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+    Ok(pics)
 }
 
 fn valid_project(project: &str) -> bool {
@@ -261,14 +358,22 @@ pub fn update_kanban_task_status(
 }
 
 #[tauri::command]
+pub fn list_project_tasks(project: String, pic: Option<String>, status: Option<String>) -> Result<Vec<KanbanTask>, String> {
+    let tasks = list_kanban_tasks()?.into_iter().find(|entry| entry.project == project).map(|entry| entry.tasks).unwrap_or_default();
+    Ok(tasks.into_iter().filter(|task| pic.as_ref().is_none_or(|pic| task.pic.eq_ignore_ascii_case(pic.trim())) && status.as_ref().is_none_or(|status| task.status.eq_ignore_ascii_case(status.trim()))).collect())
+}
+
+#[tauri::command]
+pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
+    list_project_tasks(project, None, None)?.into_iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).ok_or("task not found".into())
+}
+
+#[tauri::command]
 pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
     let dir = task_dir()?;
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-
     let mut projects = Vec::new();
-    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
+    if dir.exists() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
@@ -285,15 +390,58 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("invalid filename: {}", path.display()))?
             .to_owned();
-        projects.push(KanbanProject { project, tasks });
+            projects.push(KanbanProject { project, tasks, read_only: false, error: None });
+        }
+    }
+    for (path, source) in crate::projects::task_sources()? {
+        if source.kind != "google_sheets" { continue; }
+        let project = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
+        let result = fetch_sheet_tasks(&source.url).map(|tasks| tasks.into_iter().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).collect());
+        let (tasks, error) = match result { Ok(tasks) => (tasks, None), Err(error) => (Vec::new(), Some(error)) };
+        if let Some(existing) = projects.iter_mut().find(|entry| entry.project == project) {
+            existing.tasks = tasks;
+            existing.read_only = true;
+            existing.error = error;
+        } else {
+            projects.push(KanbanProject { project, tasks, read_only: true, error });
+        }
     }
     projects.sort_by(|a, b| a.project.to_lowercase().cmp(&b.project.to_lowercase()));
+    if let Ok(dir) = task_dir() {
+        let cache = dir.join(".cache");
+        if std::fs::create_dir_all(&cache).is_ok() {
+            for project in &projects {
+                if let Ok(bytes) = serde_json::to_vec_pretty(&project.tasks) {
+                    let _ = std::fs::write(cache.join(format!("{}.json", project.project)), bytes);
+                }
+            }
+        }
+    }
     Ok(projects)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_sheet_columns_and_aliases_statuses() {
+        let tasks = parse_sheet_tasks(b"No,Tugas,PIC,Status,Catatan\n1,\"Build, UI\",Rifki,On Progress,Ready\n2,Unknown task,,Blocked,Waiting\n").unwrap();
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].status, "On Progress");
+        assert_eq!(tasks[0].deskripsi, "Build, UI");
+        assert_eq!(tasks[1].status, "Blocked");
+        assert_eq!(tasks[1].notes, "Waiting");
+    }
+
+    #[test]
+    fn converts_shared_sheet_url_to_csv_export() {
+        assert_eq!(
+            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42").unwrap(),
+            "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
+        );
+        assert!(google_sheet_csv_url("https://example.com/not-a-sheet").is_err());
+    }
 
     #[test]
     fn status_update_preserves_concurrently_added_tasks() {

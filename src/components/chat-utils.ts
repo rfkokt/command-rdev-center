@@ -27,6 +27,11 @@ export function recentItems<T>(items: T[], maxItems: number) {
 export function preserveStreamedContent(streamed: string, completed: string) {
   if (!completed || streamed.endsWith(completed)) return streamed;
   if (!streamed) return completed;
+  const words = (text: string) => new Set(text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter(Boolean));
+  const left = words(streamed);
+  const right = words(completed);
+  const overlap = [...left].filter((word) => right.has(word)).length;
+  if (overlap / Math.max(1, Math.min(left.size, right.size)) >= 0.8) return completed;
   return `${streamed}\n\n${completed}`;
 }
 

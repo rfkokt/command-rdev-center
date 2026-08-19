@@ -44,6 +44,12 @@ describe("preserveStreamedContent", () => {
   test("does not duplicate a completion already present in the stream", () => {
     expect(preserveStreamedContent("First answer\n\nSecond answer", "Second answer")).toBe("First answer\n\nSecond answer");
   });
+
+  test("replaces a semantically duplicated final snapshot", () => {
+    const streamed = "Task Task Yang Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
+    const completed = "Task Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
+    expect(preserveStreamedContent(streamed, completed)).toBe(completed);
+  });
 });
 
 describe("shouldShowChanges", () => {

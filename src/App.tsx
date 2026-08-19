@@ -27,7 +27,8 @@ type Config = {
   default_thinking: string;
 };
 
-type Tab = { id: string; project: ProjectInfo; global?: boolean; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: number };
+type Tab = { id: string; project: ProjectInfo; global?: boolean; title?: string; sessionFile?: string; model?: string; thinking?: string; interrupted?: boolean; unread?: number; initialPrompt?: string };
+type KanbanTaskContext = { no?: string | number; url?: string; deskripsi?: string; pic?: string; status?: string; notes?: string };
 const GLOBAL_PROJECT: ProjectInfo = { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
@@ -139,6 +140,23 @@ export default function App() {
     newGlobalChat();
   }
 
+  function newTaskConversation(task: KanbanTaskContext) {
+    if (!workspaceProject) return;
+    const prompt = [
+      "Kerjakan task project berikut. Gunakan detail task sebagai requirement utama dan periksa codebase sebelum mengubah file.",
+      "", "## Task", task.deskripsi || "Untitled task", "", "## Metadata",
+      `- Task: #${task.no ?? "—"}`, `- Project: ${workspaceProject.name}`,
+      `- PIC: ${task.pic || "Unassigned"}`, `- Status: ${task.status || "Unknown"}`,
+      "- Source: Google Sheets", task.url ? `- Source URL: ${task.url}` : "",
+      task.notes ? `\n## Notes\n${task.notes}` : "",
+    ].filter(Boolean).join("\n");
+    const id = `${workspaceProject.name}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setTabs((prev) => [...prev, { id, project: workspaceProject, title: `#${task.no ?? "Task"} ${task.deskripsi || "Task"}`.replace(/\s+/g, " ").slice(0, 60), initialPrompt: prompt }]);
+    setActiveTabId(id);
+    setSelectedProject(workspaceProject);
+    setDashboard(null);
+  }
+
   function newConversation(project = selectedProject) {
     if (!project) return;
     const id = `${project.name}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
@@ -156,6 +174,7 @@ export default function App() {
   }
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const workspaceProject = selectedProject ?? (activeTab && !activeTab.global ? activeTab.project : null);
 
   async function installUpdate() {
     setUpdating(true);
@@ -243,15 +262,6 @@ export default function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg>
             <span>Knowledge</span>
           </button>
-          <div className="sidebar-nav-label">Project operations</div>
-          <button title="Tasks" aria-label="Kanban tasks" className={`settings-button ${dashboard === "kanban" ? "active" : ""}`} aria-current={dashboard === "kanban" ? "page" : undefined} onClick={() => setDashboard("kanban")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><rect x="2.5" y="3" width="19" height="18" rx="2.5"/><rect x="6" y="7" width="3.5" height="10" rx="1"/><rect x="10.5" y="7" width="3.5" height="12" rx="1"/><rect x="15" y="7" width="3.5" height="7" rx="1"/></svg>
-            <span>Tasks</span>
-          </button>
-          <button title="Pipeline" className={`settings-button dashboard-button ${dashboard === "pipeline" ? "active" : ""}`} aria-current={dashboard === "pipeline" ? "page" : undefined} onClick={() => setDashboard("pipeline")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="5" cy="6" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="18" r="2"/><path d="M6.5 7.5 10.5 10.5M13.5 13.5l4 3"/></svg>
-            <span>Pipeline</span>
-          </button>
           <div className="sidebar-nav-label">System</div>
           <button title="Settings" className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
@@ -269,6 +279,7 @@ export default function App() {
             <div><strong>{dashboard ?? activeTab?.project.name ?? "No project selected"}</strong><small>{activeTab ? "Local workspace · Ready" : "Local workspace · Idle"}</small></div>
           </div>
           <div className="toolbar-actions">
+            {workspaceProject && <nav className="project-workspace-nav" aria-label={`${workspaceProject.name} views`}><button className={dashboard === "kanban" ? "active" : ""} onClick={() => setDashboard("kanban")} aria-current={dashboard === "kanban" ? "page" : undefined}>Tasks</button><button className={dashboard === "pipeline" ? "active" : ""} onClick={() => setDashboard("pipeline")} aria-current={dashboard === "pipeline" ? "page" : undefined}>Pipeline</button></nav>}
             <button className="toolbar-button toolbar-button-secondary" onClick={installUpdate} disabled={updating} aria-busy={updating} aria-label={updating ? "UPDATING" : availableVersion ? `UPDATE v${availableVersion}` : "CHECK UPDATE"}>
               <span>{updating ? "Updating…" : availableVersion ? `Update v${availableVersion}` : "Check update"}</span><b aria-hidden="true">↻</b>
             </button>
@@ -277,8 +288,8 @@ export default function App() {
         </header>
 
         <div className="workspace-body" id="workspace-content" tabIndex={-1}>
-          {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard /></Suspense>}
-          {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={selectedProject?.path ?? activeTab?.project.path} projectName={selectedProject?.name ?? activeTab?.project.name} /></Suspense>}
+          {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard projectName={workspaceProject?.name} onWorkTask={newTaskConversation} /></Suspense>}
+          {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={workspaceProject?.path} projectName={workspaceProject?.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
           {dashboard === "engines" && <Suspense fallback={<div className="session-loading" role="status">Loading prompt engines…</div>}><PromptEnginesView onToast={addToast} /></Suspense>}
@@ -304,6 +315,8 @@ export default function App() {
                 onUnread={markUnread}
                 onClose={() => closeTab(tab.id)}
                 onToast={addToast}
+                initialPrompt={tab.initialPrompt}
+                onInitialPromptConsumed={() => setTabs((prev) => prev.map((item) => item.id === tab.id ? { ...item, initialPrompt: undefined } : item))}
                 onOpenPipeline={() => { setSelectedProject(tab.project); setDashboard("pipeline"); }}
                 onOpenResearch={(runId) => { setResearchRunId(runId); setDashboard("research"); }}
                 isActive={tab.id === activeTabId}
