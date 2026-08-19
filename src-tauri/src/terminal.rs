@@ -1,7 +1,7 @@
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use tauri::{AppHandle, Emitter};
@@ -23,6 +23,39 @@ fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn snapshot_dir() -> PathBuf {
+    std::env::temp_dir().join("command-rdev-center-terminals")
+}
+
+fn snapshot_path(chat_id: &str) -> Result<PathBuf, String> {
+    if chat_id.is_empty()
+        || !chat_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("invalid terminal session id".into());
+    }
+    Ok(snapshot_dir().join(format!("{chat_id}.log")))
+}
+
+fn write_snapshot(chat_id: &str, bytes: &[u8]) {
+    let Ok(path) = snapshot_path(chat_id) else {
+        return;
+    };
+    if std::fs::create_dir_all(snapshot_dir()).is_ok() {
+        let temporary = path.with_extension("tmp");
+        if std::fs::write(&temporary, bytes).is_ok() {
+            let _ = std::fs::rename(temporary, path);
+        }
+    }
+}
+
+fn remove_snapshot(chat_id: &str) {
+    if let Ok(path) = snapshot_path(chat_id) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 // Returns retained scrollback so the frontend can replay it (empty for a fresh session).
 #[tauri::command]
 pub fn terminal_open(
@@ -42,7 +75,12 @@ pub fn terminal_open(
     }
 
     let pty = native_pty_system()
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())?;
 
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
@@ -63,7 +101,12 @@ pub fn terminal_open(
     let scrollback = Arc::new(Mutex::new(Vec::new()));
     sessions().lock().map_err(|e| e.to_string())?.insert(
         chat_id.clone(),
-        Session { writer, master: pty.master, child, scrollback: scrollback.clone() },
+        Session {
+            writer,
+            master: pty.master,
+            child,
+            scrollback: scrollback.clone(),
+        },
     );
 
     let event = format!("terminal://data/{chat_id}");
@@ -80,6 +123,7 @@ pub fn terminal_open(
                             let drop_to = sb.len() - SCROLLBACK_CAP;
                             sb.drain(..drop_to);
                         }
+                        write_snapshot(&chat_id, &sb);
                     }
                     let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
                     let _ = app.emit(&event, chunk);
@@ -88,6 +132,7 @@ pub fn terminal_open(
         }
         let _ = app.emit(&exit_event, ());
         let _ = sessions().lock().map(|mut m| m.remove(&chat_id));
+        remove_snapshot(&chat_id);
     });
     Ok(String::new())
 }
@@ -96,7 +141,9 @@ pub fn terminal_open(
 pub fn terminal_write(chat_id: String, data: String) -> Result<(), String> {
     let mut map = sessions().lock().map_err(|e| e.to_string())?;
     let s = map.get_mut(&chat_id).ok_or("no terminal session")?;
-    s.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+    s.writer
+        .write_all(data.as_bytes())
+        .map_err(|e| e.to_string())?;
     s.writer.flush().map_err(|e| e.to_string())
 }
 
@@ -105,15 +152,37 @@ pub fn terminal_resize(chat_id: String, cols: u16, rows: u16) -> Result<(), Stri
     let map = sessions().lock().map_err(|e| e.to_string())?;
     let s = map.get(&chat_id).ok_or("no terminal session")?;
     s.master
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())
 }
 
 // Kill the shell + child processes and drop the session.
 #[tauri::command]
 pub fn terminal_close(chat_id: String) -> Result<(), String> {
-    if let Some(mut s) = sessions().lock().map_err(|e| e.to_string())?.remove(&chat_id) {
+    if let Some(mut s) = sessions()
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&chat_id)
+    {
         let _ = s.child.kill();
     }
+    remove_snapshot(&chat_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snapshot_path;
+
+    #[test]
+    fn terminal_snapshot_ids_cannot_escape_the_snapshot_directory() {
+        assert!(snapshot_path("chat-123__0").is_ok());
+        assert!(snapshot_path("../other").is_err());
+        assert!(snapshot_path("chat/other").is_err());
+    }
 }
