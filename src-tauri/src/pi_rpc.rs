@@ -204,7 +204,7 @@ fn ensure_pi_installed_with_repair(
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
         format!(
-            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- When a requested build hits it, replace only the worktree node_modules symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
+            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
             cwd.display(),
             project.display()
         )
@@ -855,8 +855,11 @@ mod tests {
         let prompt =
             worktree_system_prompt(Path::new("/worktrees/chat"), Path::new("/projects/app"))
                 .unwrap();
+        assert!(prompt.contains("Always execute a requested build"));
+        assert!(prompt.contains("diagnose failures from the actual command output"));
         assert!(prompt.contains("points out of the filesystem root"));
         assert!(prompt.contains("local dependency install"));
+        assert!(prompt.contains("then rerun the build"));
         assert!(
             worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
                 .is_none()
