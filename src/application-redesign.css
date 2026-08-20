@@ -197,6 +197,8 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
 .file-preview-actions button { min-height: 34px; padding: 6px 12px; border: 1px solid var(--colors-hairline-strong); color: var(--colors-body); font-size: var(--type-sm); }
 .file-preview-actions .file-preview-close { border-color: var(--colors-danger); color: var(--colors-danger); }
 .file-preview-content { min-height: 0; flex: 1; overflow: auto; padding: 20px 30px; background: #0e0f0c; color: #dcded2; }
+.pfs-image-preview { display: grid; place-items: center; }
+.pfs-image-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 .file-preview-footer { padding: 8px 20px; border-top: 1px solid var(--colors-hairline); background: var(--app-panel); color: var(--colors-muted-soft); font-size: var(--type-sm); }
 
 /* One overlay vocabulary */

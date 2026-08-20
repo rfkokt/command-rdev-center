@@ -162,9 +162,7 @@ pub fn list_project_files(project_path: String) -> Result<Vec<ProjectFile>, Stri
     files.sort_by(|a, b| a.relative.to_lowercase().cmp(&b.relative.to_lowercase()));
     Ok(files)
 }
-#[tauri::command]
-pub fn get_project_file_content(project_path: String, file_name: String) -> Result<String, String> {
-    // file_name is relative path like src/App.tsx
+fn project_file_path(project_path: &str, file_name: &str) -> Result<PathBuf, String> {
     let file_rel = file_name.trim();
     if file_rel.is_empty() { return Err("File name required".into()); }
     if file_rel.contains(".." ) || file_rel.contains('\0') { return Err("Invalid file path".into()); }
@@ -172,16 +170,26 @@ pub fn get_project_file_content(project_path: String, file_name: String) -> Resu
     for comp in Path::new(file_rel).components() {
         if matches!(comp, std::path::Component::ParentDir) { return Err("Invalid file path".into()); }
     }
-    let canonical = crate::projects::ensure_registered_project_returning(Path::new(&project_path))?;
-    let target = canonical.join(file_rel);
-    let target_canon = target.canonicalize().map_err(|e| format!("File not found: {e}"))?;
-    if !target_canon.starts_with(&canonical) { return Err("Invalid file path".into()); }
-    let meta = fs::metadata(&target_canon).map_err(|e| e.to_string())?;
+    let canonical = crate::projects::ensure_registered_project_returning(Path::new(project_path))?;
+    let target = canonical.join(file_rel).canonicalize().map_err(|e| format!("File not found: {e}"))?;
+    if !target.starts_with(&canonical) { return Err("Invalid file path".into()); }
+    let meta = fs::metadata(&target).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > MAX_PROJECT_TEXT_BYTES { return Err("File too large or not a regular file".into()); }
-    let content = text_file(&target_canon).map_err(|_| {
-        "Binary or non-UTF8 file — preview not available".to_string()
-    })?;
+    Ok(target)
+}
+#[tauri::command]
+pub fn get_project_file_content(project_path: String, file_name: String) -> Result<String, String> {
+    let target = project_file_path(&project_path, &file_name)?;
+    let content = text_file(&target).map_err(|_| "Binary or non-UTF8 file — preview not available".to_string())?;
     Ok(content.chars().take(100_000).collect())
+}
+#[tauri::command]
+pub fn get_project_image_content(project_path: String, file_name: String) -> Result<Vec<u8>, String> {
+    const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"];
+    let target = project_file_path(&project_path, &file_name)?;
+    let ext = target.extension().and_then(|value| value.to_str()).map(str::to_ascii_lowercase).ok_or_else(|| "Unsupported image format".to_string())?;
+    if !IMAGE_EXTENSIONS.contains(&ext.as_str()) { return Err("Unsupported image format".into()); }
+    fs::read(target).map_err(|e| e.to_string())
 }
 
 #[tauri::command] pub fn get_rag_settings() -> Result<RagSettings, String> {

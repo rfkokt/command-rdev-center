@@ -106,6 +106,7 @@ pub fn run() {
             rag::get_rag_source,
             rag::list_project_files,
             rag::get_project_file_content,
+            rag::get_project_image_content,
             settings::get_pi_settings,
             settings::save_pi_settings,
             settings::get_figma_mcp_settings,
