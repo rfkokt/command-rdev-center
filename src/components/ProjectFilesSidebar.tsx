@@ -5,6 +5,17 @@ import { useModalFocus } from "./useModalFocus";
 
 type ProjectFile = { name: string; path: string; relative: string; chars: number; modified_ms: number };
 
+export function isPreviewableImage(name: string) {
+  return /\.(?:png|jpe?g|gif|webp|bmp|ico)$/i.test(name);
+}
+
+type Preview = { name: string; content: string; imageSrc?: string };
+
+function imageMime(name: string) {
+  const ext = name.split(".").pop()?.toLowerCase();
+  return ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+}
+
 type Folder = {
   name: string;
   rel: string; // relative folder path
@@ -49,7 +60,7 @@ export default function ProjectFilesSidebar({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("");
-  const [preview, setPreview] = useState<{ name: string; content: string } | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
@@ -63,6 +74,10 @@ export default function ProjectFilesSidebar({
       return [];
     }
   });
+
+  useEffect(() => () => {
+    if (preview?.imageSrc) URL.revokeObjectURL(preview.imageSrc);
+  }, [preview?.imageSrc]);
 
   const pushRecent = useCallback((path: string) => {
     setRecentPaths((prev) => {
@@ -102,6 +117,15 @@ export default function ProjectFilesSidebar({
     async (file: ProjectFile) => {
       setPreviewLoading(true);
       try {
+        if (isPreviewableImage(file.name)) {
+          const bytes = await invoke<number[]>("get_project_image_content", {
+            projectPath,
+            fileName: file.relative,
+          });
+          setPreview({ name: file.relative, content: "", imageSrc: URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: imageMime(file.name) })) });
+          pushRecent(file.relative);
+          return;
+        }
         const content = await invoke<string>("get_project_file_content", {
           projectPath,
           fileName: file.relative,
@@ -258,9 +282,9 @@ export default function ProjectFilesSidebar({
                 <strong>{preview?.name ?? "Loading…"}</strong>
               </div>
               <div className="file-preview-actions">
-                <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" onPointerDown={(e) => e.stopPropagation()}>
+                {!preview?.imageSrc && <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" onPointerDown={(e) => e.stopPropagation()}>
                   ⧉ COPY
-                </button>
+                </button>}
                 <button className="file-preview-close" onClick={closePreview} title="Close preview" onPointerDown={(e) => e.stopPropagation()}>
                   ✕ CLOSE
                 </button>
@@ -268,7 +292,11 @@ export default function ProjectFilesSidebar({
             </div>
             <style>{`.clickable-import:hover { color: var(--accent) !important; background: #2a2b27; border-radius: 2px; cursor: pointer; }`}</style>
             {previewLoading ? <div style={{ margin: "auto", color: "var(--colors-muted)" }}>LOADING FILE…</div> : preview && (
-              preview.name.endsWith(".md") || preview.name.endsWith(".mdx") ? (
+              preview.imageSrc ? (
+                <div className="file-preview-content pfs-image-preview">
+                  <img src={preview.imageSrc} alt={preview.name} />
+                </div>
+              ) : preview.name.endsWith(".md") || preview.name.endsWith(".mdx") ? (
                 <div className="file-preview-content markdown-preview">
                   <MarkdownMessage>{preview.content}</MarkdownMessage>
                 </div>
@@ -303,7 +331,7 @@ export default function ProjectFilesSidebar({
               )
             )}
             <footer className="file-preview-footer">
-              <span>{preview ? `${splitLines(preview.content).length.toLocaleString()} lines · ${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
+              <span>{preview ? preview.imageSrc ? "Image preview" : `${splitLines(preview.content).length.toLocaleString()} lines · ${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
             </footer>
           </div>
         </div>
@@ -402,6 +430,10 @@ function iconFor(name: string) {
     case "svg":
     case "png":
     case "jpg":
+    case "jpeg":
+    case "gif":
+    case "webp":
+    case "bmp":
     case "ico":
       return "◫";
     default:
