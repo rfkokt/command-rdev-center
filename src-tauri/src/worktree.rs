@@ -36,6 +36,59 @@ pub fn slugify(s: &str) -> String {
         .collect::<String>()
 }
 
+fn sync_env_files(repo_path: &Path, worktree_path: &Path) -> Result<(), String> {
+    let output = Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    for relative in output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let relative = Path::new(std::str::from_utf8(relative).map_err(|e| e.to_string())?);
+        let name = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if !(name == ".env" || name.starts_with(".env.")) {
+            continue;
+        }
+        let source = repo_path.join(relative);
+        if !source.is_file() {
+            continue;
+        }
+        let destination = worktree_path.join(relative);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        if destination.symlink_metadata().is_ok() {
+            if destination.is_dir() && !destination.is_symlink() {
+                std::fs::remove_dir_all(&destination).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::remove_file(&destination).map_err(|e| e.to_string())?;
+            }
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(source, destination).map_err(|e| e.to_string())?;
+        #[cfg(not(unix))]
+        std::fs::copy(source, destination).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
     let root = worktree_root(project_root);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -124,6 +177,7 @@ pub fn create_worktree(
                 }
             }
         }
+        sync_env_files(repo_path, &worktree_path)?;
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path)?;
         return Ok(WorktreeInfo {
@@ -203,6 +257,8 @@ pub fn create_worktree(
             }
         }
     }
+
+    sync_env_files(repo_path, &worktree_path)?;
 
     Ok(WorktreeInfo {
         worktree_path: worktree_path_str,
@@ -360,4 +416,47 @@ pub async fn remove_worktree(
     })
     .await
     .map_err(|e| format!("Worktree worker failed: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_env_files_overwrites_ignored_env_only() {
+        let root = std::env::temp_dir().join(format!("crc-env-test-{}", std::process::id()));
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::fs::write(repo.join(".gitignore"), ".env*\n").unwrap();
+        std::fs::write(repo.join(".env"), "authoritative").unwrap();
+        std::fs::write(repo.join(".env.example"), "example").unwrap();
+        std::fs::create_dir_all(repo.join("packages/app")).unwrap();
+        std::fs::write(repo.join("packages/app/.env.local"), "nested").unwrap();
+        std::fs::write(worktree.join(".env"), "old").unwrap();
+
+        sync_env_files(&repo, &worktree).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(worktree.join(".env")).unwrap(),
+            "authoritative"
+        );
+        assert_eq!(
+            std::fs::read_to_string(worktree.join(".env.example")).unwrap(),
+            "example"
+        );
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("packages/app/.env.local")).unwrap(),
+            "nested"
+        );
+        #[cfg(unix)]
+        assert!(worktree.join(".env").is_symlink());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
