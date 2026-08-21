@@ -1,0 +1,164 @@
+/* Minimal desktop workspace informed by Zed Threads, Linear's 2026 refresh, and Raycast. */
+@keyframes ui-fade-in { from { opacity: 0; } }
+@keyframes ui-rise-in { from { opacity: 0; transform: translateY(6px) scale(.99); } }
+@keyframes ui-slide-left { from { opacity: 0; transform: translateX(8px); } }
+
+.approval-backdrop, .settings-backdrop, .diff-backdrop, .model-picker-backdrop,
+.project-branch-backdrop, .kanban-detail-backdrop, .usage-backdrop,
+.file-preview-backdrop, .image-lightbox { animation: ui-fade-in 140ms ease-out both; }
+.approval-dialog, .settings-panel, .diff-panel, .model-picker, .project-branch-picker,
+.kanban-detail, .usage-dialog, .file-preview-dialog, .project-row-menu,
+.toast, .rag-upload-toast, .queue-status { animation: ui-rise-in 180ms cubic-bezier(.2, .8, .2, 1) both; }
+.code-sidebar-panel { animation: ui-slide-left 160ms ease-out both; }
+.chat-bubble-user, .chat-bubble-assistant, .chat-notice { animation: ui-rise-in 160ms ease-out both; }
+button, summary { transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, opacity 120ms ease; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+:root {
+  --minimal-edge: 8px;
+  --minimal-gap: 8px;
+  --minimal-sidebar: 244px;
+  --minimal-header: 48px;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width, var(--minimal-sidebar)) minmax(0, 1fr);
+  gap: var(--minimal-gap);
+  padding: var(--minimal-edge);
+  background: var(--canvas);
+  transition: grid-template-columns 220ms cubic-bezier(.2, .8, .2, 1), gap 220ms ease;
+}
+.app-shell.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); gap: 0; }
+
+.sidebar,
+.workspace {
+  height: calc(100vh - (var(--minimal-edge) * 2));
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  box-shadow: none;
+}
+.sidebar {
+  width: auto;
+  padding: 6px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--canvas));
+  transform-origin: left center;
+  transition: opacity 160ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1), padding 220ms ease, border-width 220ms ease;
+}
+.app-shell.sidebar-hidden .sidebar {
+  padding-inline: 0;
+  border-width: 0;
+  opacity: 0;
+  transform: translateX(-12px) scaleX(.98);
+  pointer-events: none;
+}
+.workspace { overflow: hidden; background: var(--surface-solid); }
+
+.sidebar-brand {
+  height: 40px;
+  margin: 0 2px 6px;
+  padding: 0 7px;
+  border: 0;
+}
+.brand-mark { width: 24px; height: 24px; }
+.sidebar-brand strong { font-size: 12px; }
+.sidebar-collapse { margin-left: auto; opacity: .55; }
+.sidebar-collapse:hover { opacity: 1; }
+.projects-panel { max-height: 48%; padding: 0; }
+.projects-heading { height: 28px; padding-inline: 8px; }
+.projects-heading span,
+.sidebar-nav-label { font-size: 10px; font-weight: 500; color: var(--text-secondary); }
+.project-row { height: 34px; padding-inline: 8px; font-size: 12px; }
+.conversation-row { height: 29px; padding: 0 8px 0 32px; font-size: 11px; }
+.project-settings-edit { width: 26px; height: 26px; }
+.project-row-actions { position: relative; flex: 0 0 auto; }
+.project-row-actions > summary { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 5px; color: var(--text-secondary); cursor: pointer; list-style: none; }
+.project-row-actions > summary::-webkit-details-marker { display: none; }
+.project-row-actions > summary:hover, .project-row-actions[open] > summary { background: var(--surface-selected); color: var(--text-primary); }
+.project-row-actions > summary svg { width: 15px; height: 15px; }
+.project-row-menu { position: fixed; z-index: 50; width: 164px; margin: 3px 0 0 -136px; padding: 4px; border: 1px solid var(--separator-strong); border-radius: 6px; background: var(--surface-raised); box-shadow: var(--shadow-soft); }
+.project-row-menu button { width: 100%; min-height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 4px; color: var(--text-primary); text-align: left; font-size: 11px; }
+.project-row-menu button:hover { background: var(--surface-selected); }
+.project-row-menu svg { width: 14px; height: 14px; color: var(--text-secondary); }
+.project-row,
+.conversation-row,
+.settings-button { border-radius: 5px; }
+.project-row:hover,
+.conversation-row:hover,
+.settings-button:hover { background: color-mix(in srgb, var(--surface-selected) 70%, transparent); color: var(--text-primary); }
+.conversation-row.active,
+.settings-button.active { background: var(--surface-selected); color: var(--text-primary); }
+.sidebar-nav { gap: 1px; margin: 3px 0 0; padding-top: 6px; }
+.sidebar-nav-label { padding: 9px 8px 4px; text-transform: none; letter-spacing: 0; }
+.settings-button { min-height: 32px; padding-inline: 8px; gap: 8px; color: var(--text-secondary); font-size: 12px; opacity: 1; }
+.settings-button:disabled { color: var(--text-secondary); opacity: .48; }
+.settings-button .settings-icon { width: 15px; height: 15px; }
+.appearance-control { margin: 3px 4px 6px; padding: 2px; }
+.appearance-control button { min-height: 23px; font-size: 10px; }
+.app-version { color: var(--text-secondary); opacity: .8; }
+.project-row .chevron, .pfs-folder-chevron { flex: 0 0 14px; width: 14px !important; height: 14px !important; min-width: 14px; transform: rotate(0); }
+.project-row[aria-expanded="true"] .chevron { transform: rotate(-90deg); }
+.project-settings-edit svg, .projects-heading svg, .pfs-folder-icon svg, .pfs-folder-chevron svg, .pfs-refresh svg, .pfs-file-icon svg { width: 15px; height: 15px; }
+.sidebar-resize-handle { z-index: 20; inset: 8px -7px 8px auto; width: 8px; cursor: col-resize; touch-action: none; }
+.sidebar-resize-handle::after { content: ""; position: absolute; top: 35%; bottom: 35%; left: 3px; width: 2px; border-radius: 2px; background: transparent; transition: background 120ms ease; }
+.sidebar:hover .sidebar-resize-handle::after, .sidebar-resize-handle:hover::after, .sidebar-resize-handle:focus-visible::after { background: var(--separator-strong); }
+
+.app-toolbar {
+  height: var(--minimal-header);
+  min-height: var(--minimal-header);
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: 7px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--separator);
+  border-radius: 10px 10px 0 0;
+  background: var(--surface-solid);
+}
+.sidebar-toggle { width: 28px; height: 28px; }
+.workspace-title { gap: 7px; }
+.workspace-title strong { font-size: 12px; font-weight: 500; }
+.workspace-title small,
+.live-dot { display: none; }
+.toolbar-actions { gap: 5px; }
+.project-workspace-nav { padding: 2px; background: var(--surface); }
+.project-workspace-nav button { min-height: 25px; padding-inline: 9px; font-size: 10px; }
+.toolbar-button { min-height: 27px; padding-inline: 8px; font-size: 10px; }
+.toolbar-button-primary { background: transparent; border-color: var(--separator-strong); color: var(--text-primary); }
+.toolbar-button-primary:hover { background: var(--surface-selected); color: var(--text-primary); }
+
+.workspace-body {
+  height: calc(100% - var(--minimal-header));
+  background: var(--surface-solid);
+}
+.chat-session,
+.chat-view { height: 100%; }
+.chat-header { min-height: 42px; padding-inline: 12px; }
+.chat-content { background: var(--surface-solid); }
+.chat-messages { width: min(100%, 900px); margin-inline: auto; padding-inline: clamp(16px, 4vw, 48px); }
+.chat-composer-wrap { width: min(100%, 900px); margin-inline: auto; padding: 8px clamp(12px, 4vw, 44px) 12px; }
+.chat-composer { border-radius: 9px; box-shadow: 0 4px 16px rgba(0, 0, 0, .12); }
+.text-input { border-color: var(--separator-strong) !important; background: var(--control-bg) !important; color: var(--text-primary) !important; }
+.text-input::placeholder { color: var(--text-secondary); opacity: .72; }
+
+.kanban-board,
+.pipeline-view,
+.rag-knowledge,
+.deep-research-view,
+.prompt-engines-view { height: 100%; padding: 18px 20px; }
+.kanban-board > header,
+.pipeline-view > header,
+.pipeline-header { min-height: 52px; margin-bottom: 12px; padding-bottom: 10px; }
+.empty-state { width: min(380px, calc(100% - 32px)); }
+
+@media (max-width: 900px) {
+  :root { --minimal-edge: 5px; --minimal-gap: 5px; }
+  .app-shell { grid-template-columns: min(224px, 36vw) minmax(0, 1fr); }
+  .app-shell.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+  .toolbar-actions .project-workspace-nav { display: none; }
+}
+@media (max-width: 640px) {
+  .app-shell { display: block; }
+  .workspace { height: calc(100vh - 10px); }
+  .app-shell:not(.sidebar-hidden) .sidebar { inset: 5px auto 5px 5px; width: min(280px, calc(100vw - 24px)); height: calc(100vh - 10px); border-radius: 10px; box-shadow: var(--shadow-soft); }
+}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ListPicker from "./ListPicker";
 import { useModalFocus } from "./useModalFocus";
+import { ChevronLeftIcon, MenuDotsIcon, PlusIcon, SettingsIcon } from "./Icons";
 
 export type ProjectInfo = {
   name: string;
@@ -159,7 +160,7 @@ export default function ProjectList({
 
   return (
     <div className="projects-panel">
-      <div className="projects-heading"><span>PROJECT INDEX</span><button onClick={addProject} title="Add project">＋</button></div>
+      <div className="projects-heading"><span>Projects</span><button onClick={addProject} title="Add project" aria-label="Add project"><PlusIcon /></button></div>
       {err && <div className="sidebar-error">{err}</div>}
       {pendingPath && <div className="project-branch-backdrop" role="presentation">
         <div ref={registerDialogRef} className="project-branch-picker" role="dialog" aria-modal="true" aria-labelledby="base-branch-title" tabIndex={-1}>
@@ -211,10 +212,15 @@ export default function ProjectList({
                   });
                 }}
               >
-                <span className="chevron">›</span><span className="folder">▱</span><span>{project.name}</span>
+                <ChevronLeftIcon className="chevron" /><span>{project.name}</span>
               </button>
-              <button className="project-settings-edit" onClick={() => onNewSession(project)} title={`New session for ${project.name}`} aria-label={`New session for ${project.name}`}>＋</button>
-              <button className="project-settings-edit" onClick={() => void editBaseBranch(project)} title={`Project settings for ${project.name}`} aria-label={`Project settings for ${project.name}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a7 7 0 0 0-1.7-1L14.5 3h-5L9 6.1a7 7 0 0 0-1.7 1l-2.4-1-2 3.4L5 11a7 7 0 0 0 0 2l-2.1 1.5 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.5 3.1h5l.5-3.1a7 7 0 0 0 1.7-1l2.4 1 2-3.4L19 13a7 7 0 0 0 .1-1Z"/></svg></button>
+              <details className="project-row-actions" onClick={(event) => event.stopPropagation()}>
+                <summary title={`Actions for ${project.name}`} aria-label={`Actions for ${project.name}`}><MenuDotsIcon /></summary>
+                <div className="project-row-menu">
+                  <button onClick={(event) => { onNewSession(project); event.currentTarget.closest("details")?.removeAttribute("open"); }}><PlusIcon /><span>New session</span></button>
+                  <button onClick={(event) => { void editBaseBranch(project); event.currentTarget.closest("details")?.removeAttribute("open"); }}><SettingsIcon /><span>Project settings</span></button>
+                </div>
+              </details>
             </div>
             <div className="project-sessions" data-collapsed={isCollapsed}>
               <div>
@@ -225,7 +231,7 @@ export default function ProjectList({
                     onClick={() => onResume(tab.id, project)}
                   >
                     <span>{tab.title ?? "UNTITLED SESSION"}</span>
-                    {tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge" style={{ background: "var(--accent)", color: "#111", padding: "1px 5px", borderRadius: "8px", fontSize: "9px", fontWeight: "bold" }}>{tab.unread}</span>}
+                    {tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge">{tab.unread}</span>}
                   </button>
                 ))}
               </div>

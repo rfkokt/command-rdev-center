@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -33,6 +33,18 @@ describe("inactive session memory bounds", () => {
 
   test("caps streamed thinking while preserving the newest content", () => {
     expect(appendBoundedText("1234", "567", 5)).toBe("34567");
+  });
+});
+
+describe("appendStreamingText", () => {
+  test("appends genuine deltas", () => {
+    expect(appendStreamingText("Test ", "received ✅")).toBe("Test received ✅");
+  });
+
+  test("deduplicates cumulative and repeated stream chunks", () => {
+    expect(appendStreamingText("Test", "Test received")).toBe("Test received");
+    expect(appendStreamingText("Test received", "received ✅")).toBe("Test received ✅");
+    expect(appendStreamingText("Test received ✅", "received ✅")).toBe("Test received ✅");
   });
 });
 

@@ -20,6 +20,15 @@ export function appendBoundedText(current: string, delta: string, maxLength: num
   return (current + delta).slice(-maxLength);
 }
 
+export function appendStreamingText(current: string, incoming: string, maxLength = 200_000) {
+  if (!incoming || current.endsWith(incoming)) return current;
+  if (!current || incoming.startsWith(current)) return incoming.slice(-maxLength);
+  const limit = Math.min(current.length, incoming.length);
+  let overlap = limit;
+  while (overlap > 0 && !current.endsWith(incoming.slice(0, overlap))) overlap--;
+  return (current + incoming.slice(overlap)).slice(-maxLength);
+}
+
 export function recentItems<T>(items: T[], maxItems: number) {
   return items.slice(-maxItems);
 }
