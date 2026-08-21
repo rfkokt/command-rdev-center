@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import MarkdownMessage from "./MarkdownMessage";
 import { useModalFocus } from "./useModalFocus";
+import { ChevronDownIcon, ChevronLeftIcon, CloseIcon, CopyIcon, FileIcon, FolderIcon, FolderOpenIcon, RefreshIcon, SettingsIcon } from "./Icons";
 
 type ProjectFile = { name: string; path: string; relative: string; chars: number; modified_ms: number };
 
@@ -171,7 +172,7 @@ export default function ProjectFilesSidebar({
         />
         <span className="pfs-count">{loading ? "…" : q ? `${filteredFiles?.length ?? 0}` : `${files.length}`}</span>
         <button onClick={reload} disabled={loading} className="pfs-refresh" title="Refresh files" aria-label="Refresh files">
-          ↻
+          <RefreshIcon />
         </button>
       </div>
 
@@ -282,11 +283,11 @@ export default function ProjectFilesSidebar({
                 <strong>{preview?.name ?? "Loading…"}</strong>
               </div>
               <div className="file-preview-actions">
-                {!preview?.imageSrc && <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" onPointerDown={(e) => e.stopPropagation()}>
-                  ⧉ COPY
+                {!preview?.imageSrc && <button onClick={() => navigator.clipboard.writeText(preview?.content ?? "")} title="Copy content" aria-label="Copy content" onPointerDown={(e) => e.stopPropagation()}>
+                  <CopyIcon /><span>Copy</span>
                 </button>}
-                <button className="file-preview-close" onClick={closePreview} title="Close preview" onPointerDown={(e) => e.stopPropagation()}>
-                  ✕ CLOSE
+                <button className="file-preview-close" onClick={closePreview} title="Close preview" aria-label="Close preview" onPointerDown={(e) => e.stopPropagation()}>
+                  <CloseIcon /><span>Close</span>
                 </button>
               </div>
             </div>
@@ -304,27 +305,26 @@ export default function ProjectFilesSidebar({
                 (() => {
                   const lines = splitLines(preview.content);
                   return (
-                    <div className="pfs-code-wrap">
-                      <div className="pfs-code-gutter" aria-hidden>{lines.map((_, i) => <span key={i}>{i + 1}</span>)}</div>
-                      <pre className="pfs-code-content rag-readonly-pre" style={{ margin: 0, padding: "10px 20px 10px 16px", flex: 1, overflow: "visible", background: "transparent", font: "12px/1.62 var(--font-mono)", color: "#dcded2", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} onClick={(e) => {
-                  if (e.metaKey || e.ctrlKey) {
-                    const target = e.target as HTMLElement;
-                    if (target.dataset.path && preview) {
+                    <div className="pfs-code-wrap" onClick={(e) => {
+                      if (!(e.metaKey || e.ctrlKey)) return;
+                      const target = e.target as HTMLElement;
+                      if (!target.dataset.path || !preview) return;
                       const currentPath = preview.name.split('/');
                       currentPath.pop();
-                      const targetParts = target.dataset.path.split('/');
-                      for (const p of targetParts) {
-                        if (p === '.') continue;
-                        if (p === '..') currentPath.pop();
-                        else currentPath.push(p);
+                      for (const part of target.dataset.path.split('/')) {
+                        if (part === '.') continue;
+                        if (part === '..') currentPath.pop();
+                        else currentPath.push(part);
                       }
                       const resolved = currentPath.join('/');
-                      const possible = [resolved, resolved + '.ts', resolved + '.tsx', resolved + '.js', resolved + '/index.ts', resolved + '/index.tsx', target.dataset.path, target.dataset.path.slice(1)];
-                          const found = files.find(f => possible.includes(f.relative));
+                      const possible = [resolved, `${resolved}.ts`, `${resolved}.tsx`, `${resolved}.js`, `${resolved}/index.ts`, `${resolved}/index.tsx`, target.dataset.path, target.dataset.path.slice(1)];
+                      const found = files.find((file) => possible.includes(file.relative));
                       if (found) void openFile(found);
-                    }
-                  }
-                    }} dangerouslySetInnerHTML={{ __html: highlightCode(preview.content) }} />
+                    }}>
+                      {lines.map((line, index) => <div className="pfs-code-line" key={index}>
+                        <span className="pfs-code-line-number" aria-hidden>{index + 1}</span>
+                        <code dangerouslySetInnerHTML={{ __html: highlightCode(line) || "&nbsp;" }} />
+                      </div>)}
                     </div>
                   );
                 })()
@@ -382,8 +382,8 @@ function TreeFolder({
   if (depth === 0) return children;
   return <li>
     <button className="pfs-folder" style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
-      <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? "⌄" : "›"}</span>
-      <span className="pfs-folder-icon" aria-hidden>{isExpanded ? "📂" : "📁"}</span>
+      <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? <ChevronDownIcon /> : <ChevronLeftIcon />}</span>
+      <span className="pfs-folder-icon" aria-hidden>{isExpanded ? <FolderOpenIcon /> : <FolderIcon />}</span>
       <span className="pfs-folder-name">{folder.name}</span>
       <small className="pfs-folder-count">{folder.folders.size + folder.files.length}</small>
     </button>
@@ -426,7 +426,7 @@ function iconFor(name: string) {
     case "toml":
     case "yaml":
     case "yml":
-      return "⚙";
+      return <SettingsIcon />;
     case "svg":
     case "png":
     case "jpg":
@@ -437,7 +437,7 @@ function iconFor(name: string) {
     case "ico":
       return "◫";
     default:
-      return "—";
+      return <FileIcon />;
   }
 }
 
@@ -445,13 +445,13 @@ function highlightCode(code: string) {
   let html = code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return html.replace(/(\/\/.*|\/\*[\s\S]*?\*\/)|(["'])(.*?)\2|\b(import|export|from|const|let|var|function|async|await|class|interface|type|if|else|return|for|while|switch|case|default|break|continue|try|catch|finally|true|false|null|undefined|string|number|boolean)\b/g, 
   (match, comment, quote, innerString, keyword) => {
-    if (comment) return `<span style="color: #67685f;">${comment}</span>`;
+    if (comment) return `<span class="syntax-comment">${comment}</span>`;
     if (quote) {
       const isPath = innerString.startsWith(".") || innerString.startsWith("/") || innerString.startsWith("@");
       const dataAttr = isPath ? ` class="clickable-import" data-path="${innerString}" style="text-decoration: underline;" title="Cmd+Click to go"` : "";
-      return `<span style="color: #a8d976;"${dataAttr}>${quote}${innerString}${quote}</span>`;
+      return `<span class="syntax-string"${dataAttr}>${quote}${innerString}${quote}</span>`;
     }
-    if (keyword) return `<span style="color: #e27b72;">${keyword}</span>`;
+    if (keyword) return `<span class="syntax-keyword">${keyword}</span>`;
     return match;
   });
 }

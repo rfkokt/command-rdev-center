@@ -4,7 +4,18 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <meta name="color-scheme" content="light dark" />
+    <title>Command RDEV Center</title>
+    <script>
+      (() => {
+        const preference = localStorage.getItem("crc-appearance");
+        const theme = preference === "light" || preference === "dark"
+          ? preference
+          : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
   </head>
 
   <body>

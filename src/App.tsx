@@ -1,5 +1,11 @@
+import "@fontsource/ibm-plex-sans/400.css";
+import "@fontsource/ibm-plex-sans/500.css";
+import "@fontsource/ibm-plex-sans/600.css";
+import "@fontsource/merriweather/400.css";
+import "@fontsource/merriweather/400-italic.css";
+import "@fontsource/merriweather/700.css";
 import "@fontsource/jetbrains-mono/400.css";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { exit } from "@tauri-apps/plugin-process";
@@ -14,10 +20,17 @@ const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
+import { BookIcon, ChatIcon, ExternalIcon, PanelIcon, PlusIcon, SearchIcon, SettingsIcon, SparkIcon } from "./components/Icons";
+import { APPEARANCE_KEY, applyAppearance, readAppearance, type Appearance } from "./theme";
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
 import "./prompt-engines.css";
+import "./quiet-native.css";
+import "./layout-overhaul.css";
+import "./zed-theme.css";
+import "./minimal-layout.css";
+import "./zed-project-panel.css";
 
 type Config = {
   pi_path: string;
@@ -63,6 +76,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [availableVersion, setAvailableVersion] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(250);
+  const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const addToast = useCallback((msg: string) => {
@@ -90,6 +104,20 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
   }, [tabs]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => applyAppearance(appearance, media.matches);
+    update();
+    if (appearance === "system") media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, [appearance]);
+
+  function chooseAppearance(value: Appearance) {
+    setAppearance(value);
+    if (value === "system") localStorage.removeItem(APPEARANCE_KEY);
+    else localStorage.setItem(APPEARANCE_KEY, value);
+  }
 
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
     setTabs((prev) => prev.map((item) => item.id === tabId ? { ...item, sessionFile } : item));
@@ -196,11 +224,15 @@ export default function App() {
   }
 
   return (
-    <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}>
+    <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <a className="skip-link" href="#workspace-content">Skip to workspace</a>
-      <aside className="sidebar" aria-label="Projects and sessions" style={{ width: sidebarWidth, position: "relative" }}>
+      <aside className="sidebar glass-surface" aria-label="Projects and sessions">
         <div
-          style={{ position: "absolute", top: 0, right: -4, bottom: 0, width: 8, cursor: "col-resize", zIndex: 100 }}
+          className="sidebar-resize-handle"
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          tabIndex={0}
           onPointerDown={(e) => {
             e.preventDefault();
             sidebarDragRef.current = { startX: e.clientX, startWidth: sidebarWidth };
@@ -209,7 +241,7 @@ export default function App() {
           onPointerMove={(e) => {
             if (!sidebarDragRef.current) return;
             const { startX, startWidth } = sidebarDragRef.current;
-            setSidebarWidth(Math.max(180, Math.min(600, startWidth + (e.clientX - startX))));
+            setSidebarWidth(Math.max(220, Math.min(360, startWidth + (e.clientX - startX))));
           }}
           onPointerUp={(e) => {
             sidebarDragRef.current = null;
@@ -219,10 +251,15 @@ export default function App() {
             sidebarDragRef.current = null;
             e.currentTarget.releasePointerCapture(e.pointerId);
           }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowLeft") setSidebarWidth((width) => Math.max(180, width - 10));
+            if (e.key === "ArrowRight") setSidebarWidth((width) => Math.min(600, width + 10));
+          }}
         />
         <div className="sidebar-brand">
-          <span className="brand-mark">R/</span>
-          <div><strong>COMMAND</strong><small>RDEV CENTER</small></div>
+          <span className="brand-mark">R</span>
+          <div><strong>Command</strong><small>RDEV Center</small></div>
+          <button className="sidebar-collapse" onClick={() => setSidebarOpen(false)} title="Hide sidebar" aria-label="Hide sidebar"><PanelIcon /></button>
         </div>
         <div className="sidebar-label"><span>Sessions</span><i /></div>
         {configErr && <div className="sidebar-error" role="alert">Config error: {configErr} <button onClick={fetchConfig}>Retry</button></div>}
@@ -241,30 +278,33 @@ export default function App() {
           }}
         />
         <div className="projects-panel">
-          <div className="projects-heading"><span>Global chat</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat">＋</button></div>
+          <div className="projects-heading"><span>Global chat</span><button onClick={newGlobalChat} title="New Global Chat" aria-label="New Global Chat"><PlusIcon /></button></div>
           <div className="project-sessions">
-            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge" style={{ background: "var(--accent)", color: "#111", padding: "1px 5px", borderRadius: "8px", fontSize: "11px", fontWeight: "bold" }}>{tab.unread}</span>}</button>)}</div>
+            <div>{tabs.filter((tab) => tab.global).map((tab) => <button key={tab.id} className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`} onClick={() => { setDashboard(null); setSelectedProject(null); activateTab(tab.id); }}><span>{tab.title ?? "UNTITLED SESSION"}</span>{tab.interrupted ? <span className="agent-working-mark" aria-label="Agent working"><i /><i /><i /></span> : !!tab.unread && <span className="unread-badge">{tab.unread}</span>}</button>)}</div>
           </div>
-          {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><span>◉</span><span>OPEN GLOBAL CHAT</span></button>}
+          {tabs.every((tab) => !tab.global) && <button className="settings-button" onClick={openGlobalChat}><ChatIcon className="settings-icon" /><span>Open global chat</span></button>}
         </div>
         <nav className="sidebar-nav" aria-label="Workspace views">
           <div className="sidebar-nav-label">Global</div>
           <button title="Chat" className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`} aria-current={dashboard === null ? "page" : undefined} onClick={() => setDashboard(null)}>
-            <span className="nav-glyph" aria-hidden="true">›_</span><span>Chat</span>
+            <ChatIcon className="settings-icon" /><span>Chat</span>
           </button>
           <button title="Prompt Engines" className={`settings-button dashboard-button ${dashboard === "engines" ? "active" : ""}`} aria-current={dashboard === "engines" ? "page" : undefined} onClick={() => setDashboard("engines")}>
-            <span className="nav-glyph" aria-hidden="true">P/</span><span>Prompt Engines</span>
+            <SparkIcon className="settings-icon" /><span>Prompt Engines</span>
           </button>
           <button title="Deep Research" className={`settings-button dashboard-button ${dashboard === "research" ? "active" : ""}`} aria-current={dashboard === "research" ? "page" : undefined} onClick={() => setDashboard("research")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4M11 8v6M8 11h6"/></svg><span>Deep Research</span>
+            <SearchIcon className="settings-icon" /><span>Deep Research</span>
           </button>
           <button title="Knowledge" className={`settings-button dashboard-button ${dashboard === "knowledge" ? "active" : ""}`}  aria-current={dashboard === "knowledge" ? "page" : undefined} onClick={() => setDashboard("knowledge")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M8 7h8M8 11h6"/></svg>
+            <BookIcon className="settings-icon" />
             <span>Knowledge</span>
           </button>
           <div className="sidebar-nav-label">System</div>
+          <div className="appearance-control" role="group" aria-label="Appearance">
+            {(["system", "light", "dark"] as const).map((value) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => chooseAppearance(value)}>{value}</button>)}
+          </div>
           <button title="Settings" className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="settings-icon" aria-hidden><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 5 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+            <SettingsIcon className="settings-icon" />
             <span>Settings</span>
           </button>
         </nav>
@@ -272,18 +312,18 @@ export default function App() {
       </aside>
 
       <section className="workspace">
-        <header className="app-toolbar">
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}>☰</button>
+        <header className="app-toolbar glass-surface">
+          <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}><PanelIcon /></button>
           <div className="workspace-title">
             <span className="live-dot" aria-hidden="true" />
             <div><strong>{dashboard ?? activeTab?.project.name ?? "No project selected"}</strong><small>{activeTab ? "Local workspace · Ready" : "Local workspace · Idle"}</small></div>
           </div>
           <div className="toolbar-actions">
             {workspaceProject && <nav className="project-workspace-nav" aria-label={`${workspaceProject.name} views`}><button className={dashboard === "kanban" ? "active" : ""} onClick={() => setDashboard("kanban")} aria-current={dashboard === "kanban" ? "page" : undefined}>Tasks</button><button className={dashboard === "pipeline" ? "active" : ""} onClick={() => setDashboard("pipeline")} aria-current={dashboard === "pipeline" ? "page" : undefined}>Pipeline</button></nav>}
-            <button className="toolbar-button toolbar-button-secondary" onClick={installUpdate} disabled={updating} aria-busy={updating} aria-label={updating ? "UPDATING" : availableVersion ? `UPDATE v${availableVersion}` : "CHECK UPDATE"}>
-              <span>{updating ? "Updating…" : availableVersion ? `Update v${availableVersion}` : "Check update"}</span><b aria-hidden="true">↻</b>
-            </button>
-            <button className="toolbar-button toolbar-button-primary"><span>Open IDE</span><b aria-hidden="true">↗</b></button>
+            {(availableVersion || updating) && <button className="toolbar-button toolbar-button-secondary" onClick={installUpdate} disabled={updating} aria-busy={updating} aria-label={updating ? "UPDATING" : `UPDATE v${availableVersion}`}>
+              <span>{updating ? "Updating…" : `Update v${availableVersion}`}</span>
+            </button>}
+            <button className="toolbar-button toolbar-button-primary"><span>Open IDE</span><ExternalIcon /></button>
           </div>
         </header>
 
@@ -331,9 +371,9 @@ export default function App() {
             </div>
           )}
         </div>
-        <div className="toast-container" style={{ position: "fixed", bottom: 18, right: 18, display: "flex", flexDirection: "column", gap: 8, zIndex: 120 }}>
+        <div className="toast-container">
           {toasts.map((toast, i) => (
-            <div key={i} className="toast" role="status" style={{ position: "relative", inset: "auto" }}>
+            <div key={i} className="toast glass-surface" role="status">
               <span>{toast}</span>
               <button
                 onClick={(e) => {

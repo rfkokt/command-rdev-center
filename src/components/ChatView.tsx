@@ -9,6 +9,7 @@ import { parseApprovalRequest } from "../lib/rpc";
 import {
   formatTokens,
   appendBoundedText,
+  appendStreamingText,
   recentItems,
   uid,
   shouldShowChanges,
@@ -27,6 +28,7 @@ import {
 import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
+import { ChangesIcon, ChevronDownIcon, ChevronLeftIcon, ExplorerIcon, PanelIcon, RefreshIcon } from "./Icons";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
@@ -270,7 +272,7 @@ export default function ChatView({
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [rightChangesCollapsed, setRightChangesCollapsed] = useState(false);
   const [rightExplorerCollapsed, setRightExplorerCollapsed] = useState(false);
-  const [rightPanelWidth, setRightPanelWidth] = useState(380);
+  const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const [explorerHeight, setExplorerHeight] = useState(400);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
@@ -370,8 +372,7 @@ export default function ChatView({
       const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
-          copy[i] = { ...copy[i], text: copy[i].text + textDelta };
-          if (copy[i].text.length > 200_000) copy[i] = { ...copy[i], text: copy[i].text.slice(-200_000) };
+          copy[i] = { ...copy[i], text: appendStreamingText(copy[i].text, textDelta) };
           break;
         }
       }
@@ -1607,7 +1608,7 @@ export default function ChatView({
               title={rightSidebarOpen ? "Hide explorer" : "Show explorer"}
               aria-label={rightSidebarOpen ? "Hide explorer" : "Show explorer"}
               aria-expanded={rightSidebarOpen}
-            >{rightSidebarOpen ? "◧ HIDE" : "◨ EXPLORER + CHANGES"}</button>
+            ><PanelIcon /><span>{rightSidebarOpen ? "Hide panel" : "Show panel"}</span></button>
           )}
           {!globalChat && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
           {!globalChat && <button onClick={handleOpenTerminal} className={`dev-control open${showTerminal ? " active" : ""}`}>⌘ TERMINAL</button>}
@@ -1707,7 +1708,7 @@ export default function ChatView({
         </div>
       )}
 
-      <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 52 } : undefined}>
+      <div className={!globalChat ? (rightSidebarOpen ? "chat-content has-code-rail-rail-open" : "chat-content has-code-rail") : "chat-content"} style={!globalChat && rightSidebarOpen ? { marginRight: rightPanelWidth + 38 } : undefined}>
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "flex", flexDirection: "column" }}>
           <div style={{ maxWidth: 880, width: "100%", margin: "0 auto", padding: "var(--spacing-xl) var(--spacing-md)", display: "flex", flexDirection: "column", gap: "var(--spacing-xl)" }}>
         {isNewSessionLoading && (
@@ -2009,7 +2010,7 @@ export default function ChatView({
               title={rightSidebarOpen && !rightExplorerCollapsed ? "Hide Explorer" : "Explorer · Project files"}
               aria-label="Explorer"
               aria-expanded={rightSidebarOpen && !rightExplorerCollapsed}
-            >≣</button>
+            ><ExplorerIcon /></button>
             {(worktree || isWorkspace) && (
               <button
                 className={rightSidebarOpen && !rightChangesCollapsed ? "active" : ""}
@@ -2020,10 +2021,10 @@ export default function ChatView({
                 title={rightSidebarOpen && !rightChangesCollapsed ? "Hide Changes" : "Source Control · Changes"}
                 aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
                 aria-expanded={rightSidebarOpen && !rightChangesCollapsed}
-              >⇄{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
+              ><ChangesIcon />{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
-            <button onClick={refreshDiff} disabled={diffLoading || (!worktree && !isWorkspace)} title="Refresh diff" aria-label="Refresh diff">↻</button>
-            {rightSidebarOpen && <button onClick={() => setRightSidebarOpen(false)} title="Hide sidebar" aria-label="Hide sidebar" style={{ marginTop: "auto" }}>✕</button>}
+            <button onClick={refreshDiff} disabled={diffLoading || (!worktree && !isWorkspace)} title="Refresh diff" aria-label="Refresh diff"><RefreshIcon /></button>
+            {rightSidebarOpen && <button onClick={() => setRightSidebarOpen(false)} title="Hide right panel" aria-label="Hide right panel" style={{ marginTop: "auto" }}><PanelIcon /></button>}
           </div>
           {rightSidebarOpen && (
             <div className="code-sidebar-panel" style={{ width: rightPanelWidth, position: "relative" }}>
@@ -2034,13 +2035,13 @@ export default function ChatView({
                   const startX = e.clientX;
                   const startWidth = rightPanelWidth;
                   const target = e.currentTarget;
-                  target.onpointermove = (ev) => setRightPanelWidth(Math.max(200, Math.min(800, startWidth + (startX - ev.clientX))));
+                  target.onpointermove = (ev) => setRightPanelWidth(Math.max(240, Math.min(480, startWidth + (startX - ev.clientX))));
                   target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
                 }}
               />
               <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`} style={{ flex: rightExplorerCollapsed ? "none" : `0 0 ${explorerHeight}px` }}>
                 <button className="code-section-toggle" onClick={() => setRightExplorerCollapsed((c) => !c)} aria-expanded={!rightExplorerCollapsed}>
-                  <span>{rightExplorerCollapsed ? "›" : "⌄"}</span><small>EXPLORER</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName.toUpperCase()}</strong>
+                  <span>{rightExplorerCollapsed ? <ChevronLeftIcon /> : <ChevronDownIcon />}</span><small>Explorer</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</strong>
                 </button>
                 {!rightExplorerCollapsed && (
                   <div className="code-section-body">
@@ -2069,7 +2070,7 @@ export default function ChatView({
               {(worktree || isWorkspace) && (
                 <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`} style={{ flex: 1, maxHeight: "none" }}>
                   <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
-                    <span>{rightChangesCollapsed ? "›" : "⌄"}</span><small>SOURCE CONTROL</small><strong>CHANGES{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
+                    <span>{rightChangesCollapsed ? <ChevronLeftIcon /> : <ChevronDownIcon />}</span><small>Source control</small><strong>Changes{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
                     {diffLoading && <small style={{ marginLeft: "auto" }}>LOADING…</small>}
                   </button>
                   {!rightChangesCollapsed && (

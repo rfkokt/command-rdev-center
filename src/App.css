@@ -14,9 +14,10 @@
   --colors-success: #8ecf76;
   --colors-info: #82d7ee;
   --accent: var(--colors-link);
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
-  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-serif: Merriweather, ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
   --font-body: var(--font-sans);
   --type-xs: 11px;
   --type-sm: 12px;

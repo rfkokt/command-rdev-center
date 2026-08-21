@@ -34,6 +34,7 @@ vi.mock("./components/ChatView", async () => {
 import App from "./App";
 
 beforeEach(() => {
+  Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
   unmounted.mockClear();
   checkUpdate.mockReset();
   checkUpdate.mockResolvedValue(null);
@@ -45,6 +46,18 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+test("persists explicit appearance and removes storage for system mode", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "dark" }));
+  expect(localStorage.getItem("crc-appearance")).toBe("dark");
+  expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+
+  fireEvent.click(screen.getByRole("button", { name: "system" }));
+  expect(localStorage.getItem("crc-appearance")).toBeNull();
+  expect(document.documentElement).toHaveAttribute("data-theme", "light");
+});
 
 test("shows the runtime app version at the bottom of the sidebar", async () => {
   render(<App />);
@@ -95,7 +108,7 @@ test("creates and lists multiple Global Chat sessions", () => {
   localStorage.setItem("crc-chat-tabs", "[]");
   render(<App />);
 
-  fireEvent.click(screen.getByRole("button", { name: /OPEN GLOBAL CHAT/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Open global chat" }));
   fireEvent.click(screen.getByRole("button", { name: "New Global Chat" }));
 
   expect(screen.getAllByText("UNTITLED SESSION")).toHaveLength(2);
