@@ -4,13 +4,13 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const unmounted = vi.fn();
-const { checkUpdate } = vi.hoisted(() => ({ checkUpdate: vi.fn() }));
+const { checkUpdate, invokeMock } = vi.hoisted(() => ({ checkUpdate: vi.fn(), invokeMock: vi.fn(() => Promise.resolve({})) }));
 const unreadCallbacks: Array<(chatId: string) => void> = [];
 
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve("1.2.3")) }));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkUpdate }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve({})) }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("./components/ProjectList", () => ({
   default: ({ tabs, onResume, onSelect, onNewSession }: { tabs: Array<{ id: string; project: { name: string } }>; onResume: (id: string, project: unknown) => void; onSelect: (project: unknown) => void; onNewSession: (project: unknown) => void }) => (
     <>{tabs.map((tab) => <span key={tab.id}><button onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button><button onClick={() => onSelect(tab.project)}>Select {tab.project.name}</button><button onClick={() => onNewSession(tab.project)}>New {tab.project.name}</button></span>)}</>
@@ -38,6 +38,7 @@ beforeEach(() => {
   unmounted.mockClear();
   checkUpdate.mockReset();
   checkUpdate.mockResolvedValue(null);
+  invokeMock.mockClear();
   unreadCallbacks.length = 0;
   localStorage.setItem("crc-chat-tabs", JSON.stringify([{
     id: "chat-1",
@@ -92,6 +93,14 @@ test("shows project operations in the workspace toolbar, not the sidebar", () =>
   expect(toolbar).toHaveTextContent("Tasks");
   expect(toolbar).toHaveTextContent("Pipeline");
   expect(screen.getByRole("complementary", { name: "Projects and sessions" })).not.toHaveTextContent("Project operations");
+});
+
+test("opens the active project in VS Code", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Open VS Code" }));
+
+  expect(invokeMock).toHaveBeenCalledWith("open_vscode", { path: "/tmp/demo" });
 });
 
 test("keeps the active chat mounted while Kanban is open", async () => {

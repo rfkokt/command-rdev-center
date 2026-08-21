@@ -85,6 +85,7 @@ pub fn run() {
             diff::get_worktree_diff,
             diff::get_workspace_diff,
             projects::list_projects,
+            projects::open_vscode,
             projects::list_project_branches,
             projects::discover_projects,
             projects::add_workspace,

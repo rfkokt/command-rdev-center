@@ -334,6 +334,19 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
+#[tauri::command]
+pub fn open_vscode(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let allowed = ensure_path_allowed(&path)?;
+    let status = if cfg!(target_os = "macos") {
+        Command::new("open").args(["-a", "Visual Studio Code"]).arg(&allowed).status()
+    } else {
+        Command::new("code").arg(&allowed).status()
+    }
+    .map_err(|error| format!("Could not open VS Code: {error}"))?;
+    status.success().then_some(()).ok_or_else(|| "VS Code could not open the project".into())
+}
+
 pub fn ensure_pipeline_cwd(project: &Path, cwd: &Path) -> Result<PathBuf, String> {
     let project = project
         .canonicalize()

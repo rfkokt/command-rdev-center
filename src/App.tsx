@@ -223,6 +223,28 @@ export default function App() {
     }
   }
 
+  async function openInVsCode() {
+    if (!workspaceProject) return;
+    try {
+      await invoke("open_vscode", { path: workspaceProject.path });
+    } catch (error) {
+      addToast(`Could not open VS Code: ${String(error)}`);
+    }
+  }
+
+  async function checkForUpdate() {
+    setUpdating(true);
+    try {
+      const update = await check();
+      setAvailableVersion(update?.version ?? "");
+      addToast(update ? `Update ${update.version} is available` : "App is up to date");
+    } catch (error) {
+      addToast(`Update check failed: ${String(error)}`);
+    } finally {
+      setUpdating(false);
+    }
+  }
+
   return (
     <main className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <a className="skip-link" href="#workspace-content">Skip to workspace</a>
@@ -299,21 +321,27 @@ export default function App() {
             <BookIcon className="settings-icon" />
             <span>Knowledge</span>
           </button>
-          <div className="sidebar-nav-label">System</div>
-          <div className="appearance-control" role="group" aria-label="Appearance">
-            {(["system", "light", "dark"] as const).map((value) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => chooseAppearance(value)}>{value}</button>)}
+          <div className="sidebar-system">
+            <div className="sidebar-nav-label">System</div>
+            <div className="appearance-control" role="group" aria-label="Appearance">
+              {(["system", "light", "dark"] as const).map((value) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => chooseAppearance(value)}>{value}</button>)}
+            </div>
+            <button title="Check Update" className="settings-button dashboard-button" disabled={updating} onClick={() => void checkForUpdate()}>
+              <span className="settings-icon" aria-hidden>↻</span>
+              <span>{updating ? "Checking update…" : availableVersion ? `Update ${availableVersion} available` : "Check Update"}</span>
+            </button>
+            <button title="Settings" className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
+              <SettingsIcon className="settings-icon" />
+              <span>Settings</span>
+            </button>
           </div>
-          <button title="Settings" className="settings-button dashboard-button" onClick={() => { setSettingsProject(selectedProject ?? activeTab?.project ?? null); setSettingsPage("pi"); setSettingsOpen(true); }}>
-            <SettingsIcon className="settings-icon" />
-            <span>Settings</span>
-          </button>
         </nav>
         {appVersion && <small className="app-version">v{appVersion}</small>}
       </aside>
 
       <section className="workspace">
         <header className="app-toolbar glass-surface">
-          <button className="sidebar-toggle" onClick={() => setSidebarOpen((open) => !open)} title={sidebarOpen ? "Hide sidebar" : "Show sidebar"} aria-label={sidebarOpen ? "Hide sidebar" : "Show sidebar"}><PanelIcon /></button>
+          {!sidebarOpen && <button className="sidebar-toggle" onClick={() => setSidebarOpen(true)} title="Show sidebar" aria-label="Show sidebar"><PanelIcon /></button>}
           <div className="workspace-title">
             <span className="live-dot" aria-hidden="true" />
             <div><strong>{dashboard ?? activeTab?.project.name ?? "No project selected"}</strong><small>{activeTab ? "Local workspace · Ready" : "Local workspace · Idle"}</small></div>
@@ -323,7 +351,7 @@ export default function App() {
             {(availableVersion || updating) && <button className="toolbar-button toolbar-button-secondary" onClick={installUpdate} disabled={updating} aria-busy={updating} aria-label={updating ? "UPDATING" : `UPDATE v${availableVersion}`}>
               <span>{updating ? "Updating…" : `Update v${availableVersion}`}</span>
             </button>}
-            <button className="toolbar-button toolbar-button-primary"><span>Open IDE</span><ExternalIcon /></button>
+            <button className="toolbar-button toolbar-button-primary" disabled={!workspaceProject} onClick={() => void openInVsCode()}><span>Open VS Code</span><ExternalIcon /></button>
           </div>
         </header>
 

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import ListPicker from "./ListPicker";
 import { useModalFocus } from "./useModalFocus";
-import { ChevronLeftIcon, MenuDotsIcon, PlusIcon, SettingsIcon } from "./Icons";
+import { ChevronRightIcon, MenuDotsIcon, PlusIcon, SettingsIcon } from "./Icons";
 
 export type ProjectInfo = {
   name: string;
@@ -212,7 +212,7 @@ export default function ProjectList({
                   });
                 }}
               >
-                <ChevronLeftIcon className="chevron" /><span>{project.name}</span>
+                <ChevronRightIcon className="chevron" /><span>{project.name}</span>
               </button>
               <details className="project-row-actions" onClick={(event) => event.stopPropagation()}>
                 <summary title={`Actions for ${project.name}`} aria-label={`Actions for ${project.name}`}><MenuDotsIcon /></summary>

@@ -7,7 +7,7 @@ export {
   IconSettingsMinimalisticLinear as SettingsIcon,
   IconLinkSquareLinear as ExternalIcon,
   IconAddCircleLinear as PlusIcon,
-  IconArrowLeftLinear as ChevronLeftIcon,
+  IconAltArrowRightLinear as ChevronRightIcon,
   IconMenuDotsLinear as MenuDotsIcon,
   IconRefreshLinear as RefreshIcon,
   IconCloseCircleLinear as CloseIcon,

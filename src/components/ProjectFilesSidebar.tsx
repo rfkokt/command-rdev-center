@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import MarkdownMessage from "./MarkdownMessage";
 import { useModalFocus } from "./useModalFocus";
-import { ChevronDownIcon, ChevronLeftIcon, CloseIcon, CopyIcon, FileIcon, FolderIcon, FolderOpenIcon, RefreshIcon, SettingsIcon } from "./Icons";
+import { ChevronDownIcon, ChevronRightIcon, CloseIcon, CopyIcon, FileIcon, FolderIcon, FolderOpenIcon, RefreshIcon, SettingsIcon } from "./Icons";
 
 type ProjectFile = { name: string; path: string; relative: string; chars: number; modified_ms: number };
 
@@ -240,7 +241,7 @@ export default function ProjectFilesSidebar({
         </ul>
       )}
 
-      {(previewLoading || preview) && (
+      {(previewLoading || preview) && createPortal(
         <div className="file-preview-backdrop">
           <div ref={previewRef} className="diff-panel file-preview-dialog" role="dialog" aria-modal="true" aria-label={preview ? `Preview ${preview.name}` : "Loading file preview"} tabIndex={-1} style={{ transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out" }}>
             <div 
@@ -334,7 +335,8 @@ export default function ProjectFilesSidebar({
               <span>{preview ? preview.imageSrc ? "Image preview" : `${splitLines(preview.content).length.toLocaleString()} lines · ${preview.content.length.toLocaleString()} chars` : ""} · Edit via chat to make changes.</span>
             </footer>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   );
@@ -382,7 +384,7 @@ function TreeFolder({
   if (depth === 0) return children;
   return <li>
     <button className="pfs-folder" style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
-      <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? <ChevronDownIcon /> : <ChevronLeftIcon />}</span>
+      <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
       <span className="pfs-folder-icon" aria-hidden>{isExpanded ? <FolderOpenIcon /> : <FolderIcon />}</span>
       <span className="pfs-folder-name">{folder.name}</span>
       <small className="pfs-folder-count">{folder.folders.size + folder.files.length}</small>

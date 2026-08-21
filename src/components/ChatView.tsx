@@ -28,7 +28,7 @@ import {
 import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
-import { ChangesIcon, ChevronDownIcon, ChevronLeftIcon, ExplorerIcon, PanelIcon, RefreshIcon } from "./Icons";
+import { ChangesIcon, ChevronDownIcon, ChevronRightIcon, ExplorerIcon } from "./Icons";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
@@ -268,7 +268,6 @@ export default function ChatView({
   const [filePickerQuery, setFilePickerQuery] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
-  const [editingFile, setEditingFile] = useState<string | null>(null);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [rightChangesCollapsed, setRightChangesCollapsed] = useState(false);
   const [rightExplorerCollapsed, setRightExplorerCollapsed] = useState(false);
@@ -818,10 +817,6 @@ export default function ChatView({
             const name = tc?.name ?? (delta.toolName as string) ?? "tool";
             const args = tc?.arguments ?? (delta.args as Record<string, unknown>) ?? {};
             if (callId) upsertToolCall(callId, { name, args, phase: "end", callId });
-            if (name === "edit" || name === "write") {
-              const path = args.path;
-              if (typeof path === "string") setEditingFile(path);
-            }
           }
           return;
         }
@@ -1592,7 +1587,7 @@ export default function ChatView({
           <i style={{ width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%` }} />
         </div>}
         
-        {mode === "chat" && <div style={{ marginLeft: "auto", display: "flex", gap: "var(--spacing-md)", alignItems: "center" }}>
+        {mode === "chat" && <div className="chat-header-actions">
           <button
             onClick={openModelPicker}
             className="dev-control"
@@ -1600,16 +1595,6 @@ export default function ChatView({
             title="Change model (Ctrl+L or /model) — works in Global and project chat"
             aria-label="Change model"
           >◍ {currentModel ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ?? "MODEL") : "MODEL"}</button>
-          {!globalChat && (
-            <button
-              onClick={() => setRightSidebarOpen((o) => !o)}
-              className="dev-control"
-              style={{ borderColor: rightSidebarOpen ? "var(--accent)" : undefined, color: rightSidebarOpen ? "var(--accent)" : undefined }}
-              title={rightSidebarOpen ? "Hide explorer" : "Show explorer"}
-              aria-label={rightSidebarOpen ? "Hide explorer" : "Show explorer"}
-              aria-expanded={rightSidebarOpen}
-            ><PanelIcon /><span>{rightSidebarOpen ? "Hide panel" : "Show panel"}</span></button>
-          )}
           {!globalChat && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
           {!globalChat && <button onClick={handleOpenTerminal} className={`dev-control open${showTerminal ? " active" : ""}`}>⌘ TERMINAL</button>}
           {!globalChat && devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
@@ -2023,11 +2008,8 @@ export default function ChatView({
                 aria-expanded={rightSidebarOpen && !rightChangesCollapsed}
               ><ChangesIcon />{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
-            <button onClick={refreshDiff} disabled={diffLoading || (!worktree && !isWorkspace)} title="Refresh diff" aria-label="Refresh diff"><RefreshIcon /></button>
-            {rightSidebarOpen && <button onClick={() => setRightSidebarOpen(false)} title="Hide right panel" aria-label="Hide right panel" style={{ marginTop: "auto" }}><PanelIcon /></button>}
           </div>
-          {rightSidebarOpen && (
-            <div className="code-sidebar-panel" style={{ width: rightPanelWidth, position: "relative" }}>
+          <div className="code-sidebar-panel" aria-hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
               <div 
                 style={{ position: "absolute", left: -4, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 10 }}
                 onPointerDown={(e) => {
@@ -2039,9 +2021,9 @@ export default function ChatView({
                   target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
                 }}
               />
-              <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`} style={{ flex: rightExplorerCollapsed ? "none" : `0 0 ${explorerHeight}px` }}>
+              <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`} style={{ flex: rightExplorerCollapsed ? "none" : worktree || isWorkspace ? `0 0 ${explorerHeight}px` : 1 }}>
                 <button className="code-section-toggle" onClick={() => setRightExplorerCollapsed((c) => !c)} aria-expanded={!rightExplorerCollapsed}>
-                  <span>{rightExplorerCollapsed ? <ChevronLeftIcon /> : <ChevronDownIcon />}</span><small>Explorer</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</strong>
+                  <span>{rightExplorerCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span><small>Explorer</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</strong>
                 </button>
                 {!rightExplorerCollapsed && (
                   <div className="code-section-body">
@@ -2049,7 +2031,7 @@ export default function ChatView({
                       projectPath={projectPath}
                       projectName={projectName}
                       refreshKey={worktreeDiff?.files.length ?? 0}
-                      onOpenAt={(name) => { setEditingFile(name); setExpandedDiff(name); }}
+                      onOpenAt={setExpandedDiff}
                     />
                   </div>
                 )}
@@ -2070,7 +2052,7 @@ export default function ChatView({
               {(worktree || isWorkspace) && (
                 <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`} style={{ flex: 1, maxHeight: "none" }}>
                   <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
-                    <span>{rightChangesCollapsed ? <ChevronLeftIcon /> : <ChevronDownIcon />}</span><small>Source control</small><strong>Changes{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
+                    <span>{rightChangesCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span><small>Source control</small><strong>Changes{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
                     {diffLoading && <small style={{ marginLeft: "auto" }}>LOADING…</small>}
                   </button>
                   {!rightChangesCollapsed && (
@@ -2079,13 +2061,16 @@ export default function ChatView({
                         <p className="code-empty">{diffLoading ? "LOADING…" : "WORKTREE CLEAN"}</p>
                       ) : (
                         <>
-                          <div className="code-diff-list">
-                            {worktreeDiff.files.map((file) => (
-                              <details key={`${file.path}-${editingFile === file.path}`} open={false}>
-                                <summary onClick={(e) => { e.preventDefault(); setExpandedDiff(file.path); }}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
-                              </details>
-                            ))}
-                          </div>
+                          <details className="code-diff-accordion" open>
+                            <summary><span>Changed files</span><small>{worktreeDiff.files.length}</small></summary>
+                            <div className="code-diff-list">
+                              {worktreeDiff.files.map((file) => (
+                                <button key={file.path} onClick={() => setExpandedDiff(file.path)}>
+                                  <span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b>
+                                </button>
+                              ))}
+                            </div>
+                          </details>
                           <button
                             className="ship-changes"
                             disabled={!worktreeDiff.files.length}
@@ -2102,7 +2087,6 @@ export default function ChatView({
                 </section>
               )}
             </div>
-          )}
         </div>
       )}
       <footer className="chat-status">

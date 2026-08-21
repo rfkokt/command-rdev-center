@@ -187,7 +187,7 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
 .pfs-file, .pfs-folder { min-height: 28px; border-left: 0; }
 .pfs-file.active { background: var(--app-panel-raised); box-shadow: inset 2px 0 0 var(--app-accent); }
 
-.file-preview-backdrop { position: fixed; z-index: 80; inset: 64px 432px 0 0; display: grid; place-items: center; padding: 20px; pointer-events: none; }
+.file-preview-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: #080906df; backdrop-filter: blur(6px); }
 .file-preview-dialog { width: min(900px, 100%); height: min(700px, calc(100vh - 104px)); pointer-events: auto; resize: both; }
 .file-preview-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--colors-hairline); background: var(--app-panel); cursor: grab; user-select: none; }
 .file-preview-title { min-width: 0; display: grid; gap: 4px; }
