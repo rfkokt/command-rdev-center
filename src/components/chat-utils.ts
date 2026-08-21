@@ -143,6 +143,10 @@ export function shouldOfferRestart(text: string) {
   return /agent error:.*unknown session|agent process stopped unexpectedly/i.test(text);
 }
 
+export function clearRestartErrors(messages: ChatMessage[]) {
+  return messages.filter((message) => message.role !== "system" || !shouldOfferRestart(message.text));
+}
+
 export function settleWithError(messages: ChatMessage[], error: string): ChatMessage[] {
   const text = `Agent error: ${formatAgentError(error)}`;
   let streamingIndex = -1;
@@ -152,7 +156,10 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
       break;
     }
   }
-  if (streamingIndex < 0) return [...messages, { id: uid(), role: "system", text, toolCalls: [] }];
+  if (streamingIndex < 0) {
+    if (messages.some((message) => message.role === "system" && message.text === text)) return messages;
+    return [...messages, { id: uid(), role: "system", text, toolCalls: [] }];
+  }
   const next = [...messages];
   const streamed = next[streamingIndex].text;
   next[streamingIndex] = { ...next[streamingIndex], text: streamed ? `${streamed}\n\n${text}` : text, isStreaming: false };

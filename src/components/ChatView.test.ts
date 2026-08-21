@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -154,6 +154,17 @@ describe("shouldOfferRestart", () => {
 });
 
 describe("settleWithError", () => {
+  test("does not append duplicate persistent errors", () => {
+    const once = settleWithError([], "Agent process stopped unexpectedly — use Restart.");
+    expect(settleWithError(once, "Agent process stopped unexpectedly — use Restart.")).toBe(once);
+  });
+
+  test("clears restart errors after recovery", () => {
+    const restart = { id: "r", role: "system", text: "Agent error: Agent process stopped unexpectedly — use Restart.", toolCalls: [] } as ChatMessage;
+    const useful = { id: "u", role: "user", text: "continue", toolCalls: [] } as ChatMessage;
+    expect(clearRestartErrors([restart, useful])).toEqual([useful]);
+  });
+
   test("replaces an empty streaming response with a persistent error", () => {
     const assistant = { id: "a", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage;
 

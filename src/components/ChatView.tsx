@@ -22,6 +22,7 @@ import {
   settleAgentMessages,
   settleWithError,
   shouldOfferRestart,
+  clearRestartErrors,
   agentNotification,
   tsvToMarkdown,
 } from "./chat-utils";
@@ -943,7 +944,8 @@ export default function ChatView({
         if (graph.state === "none" && await confirm({ title: "Build knowledge graph", message: `Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`, confirmLabel: "Build", cancelLabel: "Cancel" })) {
           graph = await refreshGraph(true) ?? graph;
         } else if (graph.code_stale) {
-          graph = await refreshGraph(false) ?? graph;
+          // Keep the existing graph available to Pi while the incremental refresh runs.
+          void refreshGraph(false);
         }
         graphReportRef.current = graph.report_path;
 
@@ -1243,9 +1245,9 @@ export default function ChatView({
   async function handleRestart(retry = false) {
     if (isRestarting) return;
     setIsRestarting(true);
-    setAgentStatus("idle");
     setDriveDetached(false);
     try {
+      await invoke("kill_pi_session", { sessionId }).catch(() => {});
       const [provider, ...modelParts] = modelRef.current.split("/");
       await invoke("spawn_pi_rpc", {
         sessionId,
@@ -1259,6 +1261,8 @@ export default function ChatView({
         customSystemPrompt,
         projectName,
       });
+      setAgentStatus("idle");
+      setMessages(clearRestartErrors);
       onToast(retry ? "Agent retrying" : "Pi agent reloaded");
       setTimeout(() => {
         sendRaw({ type: "get_available_models" });
@@ -1583,7 +1587,8 @@ export default function ChatView({
         {mode === "chat" && graphError && <span className="dev-error" title={graphError}>GRAPH ERROR: {graphError}</span>}
         {mode === "chat" && graphBusy && graphProgress && <div className="graph-progress" role="status" aria-live="polite">
           <span><b>{graphProgress.index}/{graphProgress.total}</b> {graphProgress.repository}</span>
-          <small>{graphProgress.activity} · {Math.floor(graphElapsed / 60)}:{String(graphElapsed % 60).padStart(2, "0")}</small>
+          <small title={graphProgress.activity}>{graphProgress.activity}</small>
+          <small>{graphProgress.index < graphProgress.total ? `${graphProgress.total - graphProgress.index} repositories remaining · ` : "Finalizing repository · "}{Math.floor(graphElapsed / 60)}:{String(graphElapsed % 60).padStart(2, "0")} elapsed · CHAT AVAILABLE</small>
           <i style={{ width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%` }} />
         </div>}
         
