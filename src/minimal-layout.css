@@ -120,12 +120,12 @@ button, summary { transition: color 120ms ease, background-color 120ms ease, bor
   border-radius: 10px 10px 0 0;
   background: var(--surface-solid);
 }
-.sidebar-toggle { width: 28px; height: 28px; }
-.workspace-title { gap: 7px; }
-.workspace-title strong { font-size: var(--type-sm); font-weight: 500; }
+.sidebar-toggle { width: 28px; height: 28px; grid-column: 1; }
+.workspace-title { grid-column: 2; gap: 7px; min-width: 0; }
+.workspace-title strong { display: block; overflow: hidden; font-size: var(--type-sm); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-title small,
 .live-dot { display: none; }
-.toolbar-actions { gap: 5px; }
+.toolbar-actions { grid-column: 3; min-width: 0; gap: 5px; }
 .project-workspace-nav { padding: 2px; background: var(--surface); }
 .project-workspace-nav button { min-height: 25px; padding-inline: 9px; font-size: var(--type-xs); }
 .toolbar-button { min-height: 27px; padding-inline: 8px; font-size: var(--type-xs); }
