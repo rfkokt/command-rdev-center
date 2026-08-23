@@ -54,6 +54,7 @@ type ChatAttachment = ChatFile & { content: string };
 
 const MAX_HISTORY = 600;
 const AGENT_INACTIVITY_TIMEOUT_MS = 120_000;
+const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
 type DiffSide = { number?: number; text: string; kind: "same" | "removed" | "added" | "empty" };
 type DiffRow = { before: DiffSide; after: DiffSide };
 function sideBySide(patch: string): DiffRow[] {
@@ -417,9 +418,13 @@ export default function ChatView({
       setGraphStatus(next);
       if (next.tracked_warning) onToast(next.tracked_warning);
       onToast(full ? "Graph built" : "Graph updated");
-      if (full && await confirm({ title: "Graphify safety net", message: "Add Graphify exclusions to ~/.gitignore_global as a safety net?", confirmLabel: "Add", cancelLabel: "Skip" })) {
-        const path = await invoke<string>("enable_global_graphignore");
-        onToast(`Global Graphify ignore enabled: ${path}`);
+      if (full && !localStorage.getItem(GRAPHIGNORE_PROMPTED_KEY)) {
+        const enable = await confirm({ title: "Graphify safety net", message: "Add Graphify exclusions to ~/.gitignore_global as a safety net?", confirmLabel: "Add", cancelLabel: "Skip" });
+        localStorage.setItem(GRAPHIGNORE_PROMPTED_KEY, "1");
+        if (enable) {
+          const path = await invoke<string>("enable_global_graphignore");
+          onToast(`Global Graphify ignore enabled: ${path}`);
+        }
       }
       return next;
     } catch (e) {
