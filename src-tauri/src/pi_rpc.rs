@@ -298,6 +298,21 @@ pub struct PiSessionStart {
     pub no_session: Option<bool>,
 }
 
+fn append_graph_report(args: &mut Vec<String>, report: Option<String>) {
+    let Some(report) = report.filter(|path| !path.trim().is_empty()) else {
+        return;
+    };
+    match crate::graph::validate_report_path(Path::new(&report)) {
+        Ok(report) => {
+            args.push("--append-system-prompt".into());
+            args.push(report.to_string_lossy().to_string());
+        }
+        // A graph refresh can replace the report between status lookup and Pi startup.
+        // Graph context is optional, so never make chat unavailable because of that race.
+        Err(error) => eprintln!("Skipping graph report context: {error}"),
+    }
+}
+
 #[tauri::command]
 pub fn spawn_pi_rpc(
     app: tauri::AppHandle,
@@ -438,11 +453,7 @@ pub fn spawn_pi_rpc(
         }
     }
     if !global_chat {
-        if let Some(report) = graph_report_path.filter(|path| !path.trim().is_empty()) {
-            let report = crate::graph::validate_report_path(Path::new(&report))?;
-            args.push("--append-system-prompt".into());
-            args.push(report.to_string_lossy().to_string());
-        }
+        append_graph_report(&mut args, graph_report_path);
     }
     let custom_prompt_path = if let Some(prompt) =
         custom_system_prompt.filter(|value| !value.trim().is_empty())
@@ -864,6 +875,13 @@ mod tests {
             worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn invalid_graph_report_does_not_block_pi_arguments() {
+        let mut args = Vec::new();
+        append_graph_report(&mut args, Some("/tmp/missing-graph-report.md".into()));
+        assert!(args.is_empty());
     }
 
     #[test]
