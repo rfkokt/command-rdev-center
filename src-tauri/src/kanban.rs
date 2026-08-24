@@ -114,7 +114,7 @@ fn write_tasks(path: &Path, tasks: &[KanbanTask]) -> Result<(), String> {
     result
 }
 
-pub(crate) fn google_sheet_csv_url(url: &str) -> Result<String, String> {
+pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("Google Sheets URL is required".into());
@@ -124,7 +124,12 @@ pub(crate) fn google_sheet_csv_url(url: &str) -> Result<String, String> {
         .filter(|id| !id.is_empty())
         .ok_or("invalid Google Sheets URL")?;
     let gid = url.split("gid=").nth(1).and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()).filter(|gid| !gid.is_empty());
-    Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{}", gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()))
+    let selection = if sheet.trim().is_empty() {
+        gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()
+    } else {
+        format!("&sheet={}", sheet.trim().replace(' ', "%20"))
+    };
+    Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{selection}"))
 }
 
 fn normalized_header(value: &str) -> String {
@@ -190,8 +195,8 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
     Ok(tasks)
 }
 
-fn fetch_sheet_tasks(url: &str) -> Result<Vec<KanbanTask>, String> {
-    let csv_url = google_sheet_csv_url(url)?;
+fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+    let csv_url = google_sheet_csv_url(url, sheet)?;
     let output = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15", &csv_url]).output().map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -200,8 +205,11 @@ fn fetch_sheet_tasks(url: &str) -> Result<Vec<KanbanTask>, String> {
 }
 
 #[tauri::command]
-pub fn list_google_sheet_pics(url: String) -> Result<Vec<String>, String> {
-    let mut pics = fetch_sheet_tasks(&url)?.into_iter().map(|task| task.pic).filter(|pic| !pic.is_empty()).collect::<Vec<_>>();
+pub fn list_google_sheet_pics(url: String, sheets: Vec<String>) -> Result<Vec<String>, String> {
+    let mut pics = sheets.iter().map(String::as_str).chain((sheets.is_empty()).then_some(""))
+        .map(|sheet| fetch_sheet_tasks(&url, sheet))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter().flatten().map(|task| task.pic).filter(|pic| !pic.is_empty()).collect::<Vec<_>>();
     pics.sort_by_key(|pic| pic.to_lowercase());
     pics.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     Ok(pics)
@@ -396,7 +404,9 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
     for (path, source) in crate::projects::task_sources()? {
         if source.kind != "google_sheets" { continue; }
         let project = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
-        let result = fetch_sheet_tasks(&source.url).map(|tasks| tasks.into_iter().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).collect());
+        let sheets = if source.sheets.is_empty() { vec![source.sheet.as_str()] } else { source.sheets.iter().map(String::as_str).collect() };
+        let result = sheets.into_iter().map(|sheet| fetch_sheet_tasks(&source.url, sheet)).collect::<Result<Vec<_>, _>>()
+            .map(|groups| groups.into_iter().flatten().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).collect());
         let (tasks, error) = match result { Ok(tasks) => (tasks, None), Err(error) => (Vec::new(), Some(error)) };
         if let Some(existing) = projects.iter_mut().find(|entry| entry.project == project) {
             existing.tasks = tasks;
@@ -437,10 +447,14 @@ mod tests {
     #[test]
     fn converts_shared_sheet_url_to_csv_export() {
         assert_eq!(
-            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42").unwrap(),
+            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42", "").unwrap(),
             "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
         );
-        assert!(google_sheet_csv_url("https://example.com/not-a-sheet").is_err());
+        assert_eq!(
+            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit", "Sprint 1").unwrap(),
+            "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&sheet=Sprint%201"
+        );
+        assert!(google_sheet_csv_url("https://example.com/not-a-sheet", "").is_err());
     }
 
     #[test]
