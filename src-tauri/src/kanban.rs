@@ -170,7 +170,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         .ok_or("sheet needs a task/title column")?;
     let no = field_index(&headers, &["no", "nomor", "id", "key"]);
     let pic = field_index(&headers, &["pic", "assignee", "owner", "penanggungjawab"]);
-    let status = field_index(&headers, &["status", "state"]);
+    let status_column = field_index(&headers, &["status", "state"]);
     let notes = field_index(&headers, &["catatan", "notes", "note", "keterangan"]);
     let url = field_index(&headers, &["url", "link"]);
     let mut tasks = Vec::new();
@@ -179,10 +179,10 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         if description.is_empty() || description.eq_ignore_ascii_case("tugas") {
             continue;
         }
-        let status = status.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
+        let status = status_column.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
         let status = if status.is_empty() { "Backlog" } else { status };
         let task_notes = notes.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string();
-        let core = [Some(title), no, pic, status, notes, url].into_iter().flatten().collect::<Vec<_>>();
+        let core = [Some(title), no, pic, status_column, notes, url].into_iter().flatten().collect::<Vec<_>>();
         let extra = headers.iter().enumerate().filter_map(|(column, header)| {
             let key = header.trim();
             let value = record.get(column)?.trim();
