@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, projectTaskIntent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("agentNotification", () => {
@@ -69,6 +69,19 @@ describe("shouldShowChanges", () => {
     expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 1)).toBe(true);
     expect(shouldShowChanges({ id: "older", role: "assistant" }, "latest", 1)).toBe(false);
     expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 0)).toBe(false);
+  });
+});
+
+describe("projectTaskIntent", () => {
+  test("routes task lists and numbered details", () => {
+    expect(projectTaskIntent("ada task di project ini ga?")).toEqual({ kind: "list" });
+    expect(projectTaskIntent("lu bisa lihat point nomor 4?")).toEqual({ kind: "detail", taskNo: "4" });
+    expect(projectTaskIntent("show task #6")).toEqual({ kind: "detail", taskNo: "6" });
+  });
+
+  test("does not hijack unrelated test or Sonar requests", () => {
+    expect(projectTaskIntent("test")).toBeNull();
+    expect(projectTaskIntent("jalankan task runner npm")).toBeNull();
   });
 });
 

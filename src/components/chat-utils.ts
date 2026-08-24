@@ -44,6 +44,17 @@ export function preserveStreamedContent(streamed: string, completed: string) {
   return `${streamed}\n\n${completed}`;
 }
 
+export type TaskIntent = { kind: "list" } | { kind: "detail"; taskNo: string };
+
+export function projectTaskIntent(input: string): TaskIntent | null {
+  const text = input.toLowerCase().replace(/[#?.,!]/g, " ").replace(/\s+/g, " ").trim();
+  if (!/\b(task|tugas|point|poin)\b/.test(text)) return null;
+  const number = text.match(/\b(?:task|tugas|point|poin)(?:\s+(?:nomor|no))?\s+(\d+)\b/)?.[1];
+  if (number && /\b(lihat|detail|cek|check|show|buka|apa|what|isi)\b/.test(text)) return { kind: "detail", taskNo: number };
+  if (/\b(ada|list|daftar|available|tersedia|punya|what|apa)\b/.test(text)) return { kind: "list" };
+  return null;
+}
+
 export function shouldSubmitCommand(input: string, command: { name: string }) {
   return input.trim() === `/${command.name}`;
 }

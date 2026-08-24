@@ -398,17 +398,20 @@ pub fn list_project_tasks(project: String, pic: Option<String>, status: Option<S
     Ok(tasks.into_iter().filter(|task| pic.as_ref().is_none_or(|pic| task.pic.eq_ignore_ascii_case(pic.trim())) && status.as_ref().is_none_or(|status| task.status.eq_ignore_ascii_case(status.trim()))).collect())
 }
 
+fn attach_references(tasks: &mut [KanbanTask], all_tasks: &[KanbanTask]) {
+    for task in tasks {
+        let lower = task.deskripsi.to_lowercase();
+        let numbers = ["poin nomor ", "point nomor ", "poin ", "point "].into_iter().flat_map(|marker| lower.match_indices(marker).filter_map(|(index, _)| lower[index + marker.len()..].split(|character: char| !character.is_ascii_digit()).next()?.parse::<i64>().ok())).collect::<Vec<_>>();
+        let referenced = all_tasks.iter().filter(|candidate| numbers.iter().any(|number| candidate.no.as_i64() == Some(*number) || candidate.no.as_str().is_some_and(|value| value == number.to_string()))).collect::<Vec<_>>();
+        if !referenced.is_empty() {
+            task.extra.insert("references".into(), serde_json::to_value(referenced).expect("tasks are serializable"));
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
-    let tasks = list_project_tasks(project, None, None)?;
-    let mut task = tasks.iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).cloned().ok_or("task not found")?;
-    let lower = task.deskripsi.to_lowercase();
-    let references = ["poin nomor ", "point nomor ", "poin ", "point "].into_iter().flat_map(|marker| lower.match_indices(marker).filter_map(|(index, _)| lower[index + marker.len()..].split(|character: char| !character.is_ascii_digit()).next()?.parse::<i64>().ok())).collect::<Vec<_>>();
-    let referenced = tasks.into_iter().filter(|candidate| references.iter().any(|number| candidate.no.as_i64() == Some(*number) || candidate.no.as_str().is_some_and(|value| value == number.to_string()))).collect::<Vec<_>>();
-    if !referenced.is_empty() {
-        task.extra.insert("references".into(), serde_json::to_value(referenced).map_err(|error| error.to_string())?);
-    }
-    Ok(task)
+    list_project_tasks(project, None, None)?.into_iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).ok_or("task not found".into())
 }
 
 #[tauri::command]
@@ -441,7 +444,12 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
         let project = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
         let sheets = if source.sheets.is_empty() { vec![source.sheet.as_str()] } else { source.sheets.iter().map(String::as_str).collect() };
         let result = sheets.into_iter().map(|sheet| fetch_sheet_tasks(&source.url, sheet)).collect::<Result<Vec<_>, _>>()
-            .map(|groups| groups.into_iter().flatten().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).collect());
+            .map(|groups| {
+                let all_tasks = groups.into_iter().flatten().collect::<Vec<_>>();
+                let mut tasks = all_tasks.iter().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).cloned().collect::<Vec<_>>();
+                attach_references(&mut tasks, &all_tasks);
+                tasks
+            });
         let (tasks, error) = match result { Ok(tasks) => (tasks, None), Err(error) => (Vec::new(), Some(error)) };
         if let Some(existing) = projects.iter_mut().find(|entry| entry.project == project) {
             existing.tasks = tasks;
@@ -480,6 +488,14 @@ mod tests {
         let tasks = parse_sheet_tasks(b"No,Tugas,Modul / Fitur,PIC,Priority,Status\n6,Revisi poin nomor 4,Master,Rifky,High,To Do\n").unwrap();
         assert_eq!(tasks[0].extra.get("Modul / Fitur"), Some(&json!("Master")));
         assert_eq!(tasks[0].extra.get("Priority"), Some(&json!("High")));
+    }
+
+    #[test]
+    fn preserves_references_to_tasks_owned_by_other_pics() {
+        let all = parse_sheet_tasks(b"No,Tugas,PIC,Status\n4,Detail UI,Rizal,To Do\n6,Revisi poin nomor 4,Rifky,To Do\n").unwrap();
+        let mut selected = vec![all[1].clone()];
+        attach_references(&mut selected, &all);
+        assert_eq!(selected[0].extra["references"][0]["deskripsi"], "Detail UI");
     }
 
     #[test]

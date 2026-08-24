@@ -124,6 +124,18 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
 .diff-line.removed { background: var(--removed); }.diff-line.removed code { color: var(--removed-text); }
 .diff-line.empty { background: var(--code); }
 .thinking-block, .tool-stack, .chat-changes, .web-search-card { background: var(--surface-solid); border-color: var(--separator); border-radius: var(--radius-control); box-shadow: none; }
+.thinking-block > summary { padding: 10px 12px; }
+.thinking-block pre {
+  max-height: 480px;
+  padding: 8px 18px 20px 28px;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.75;
+  letter-spacing: 0;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
 .tool-call { border-color: var(--separator); }
 .tool-call.running .tool-status, .agent-working-mark i, .graph-progress i { color: var(--running); background: var(--running); }
 .tool-call.error .tool-status, .dev-error, .settings-error, .kanban-error, .pfs-error, .file-picker-error { color: var(--danger); }

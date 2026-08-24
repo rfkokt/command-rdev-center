@@ -13,9 +13,10 @@ function oneLine(value: unknown, max = 90) {
 function taskMarkdown(task: Task, allTasks: Task[]) {
   const known = new Set(["no", "deskripsi", "notes", "pic", "status", "priority", "url", "session_id", "references"]);
   const extra = Object.entries(task).filter(([key, value]) => !known.has(key) && value != null && String(value).trim()).map(([key, value]) => `- ${key}: ${String(value)}`);
+  const embeddedReferences = Array.isArray(task.references) ? task.references as Task[] : [];
   const text = String(task.deskripsi || "").toLowerCase();
   const referenceNumbers = [...text.matchAll(/(?:poin|point)(?: nomor)?\s+(\d+)/g)].map((match) => match[1]);
-  const references = allTasks.filter((candidate) => referenceNumbers.includes(String(candidate.no)));
+  const references = embeddedReferences.length ? embeddedReferences : allTasks.filter((candidate) => referenceNumbers.includes(String(candidate.no)));
   return [
     `# Task #${task.no ?? "—"}`,
     "",

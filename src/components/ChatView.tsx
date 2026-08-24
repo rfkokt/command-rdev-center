@@ -24,6 +24,7 @@ import {
   shouldOfferRestart,
   clearRestartErrors,
   agentNotification,
+  projectTaskIntent,
   tsvToMarkdown,
 } from "./chat-utils";
 import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
@@ -1061,13 +1062,28 @@ export default function ChatView({
     }
   }
 
+  async function taskContext(text: string) {
+    if (globalChat) return "";
+    const intent = projectTaskIntent(text);
+    if (!intent) return "";
+    try {
+      const tasks = intent.kind === "detail"
+        ? [await invoke<Record<string, unknown>>("get_project_task", { project: projectName, taskNo: intent.taskNo })]
+        : await invoke<Array<Record<string, unknown>>>("list_project_tasks", { project: projectName, pic: null, status: null });
+      return `\n\n<authoritative_project_tasks>\n${JSON.stringify(tasks)}\n</authoritative_project_tasks>\nAnswer the user's task question only from this authoritative data. Do not infer tasks from Graphify, repository files, tests, or SonarQube. Do not discuss your reasoning.\n`;
+    } catch (error) {
+      onToast(`Task context: ${String(error)}`);
+      return "";
+    }
+  }
+
   async function sendPrompt(text: string) {
     if (!chatReady || !text.trim() || driveDetached || agentStatus === "stopped") return false;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => [...prev, { id: uid(), role: "user", text, images: [], thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage].slice(-MAX_HISTORY));
     pendingTaskPromptRef.current = text;
-    await sendRaw({ type: "prompt", message: text, images: [] });
+    await sendRaw({ type: "prompt", message: `${text}${await taskContext(text)}`, images: [] });
     return true;
   }
 
@@ -1087,8 +1103,8 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
-    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : "";
-    await sendRaw({ type: "prompt", message: `${context}${message}`, images });
+    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : await taskContext(text);
+    await sendRaw({ type: "prompt", message: `${message}${context}`, images });
   }
 
   useEffect(() => {
