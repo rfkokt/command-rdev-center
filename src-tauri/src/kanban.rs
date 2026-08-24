@@ -182,6 +182,12 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         let status = status.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
         let status = if status.is_empty() { "Backlog" } else { status };
         let task_notes = notes.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string();
+        let core = [Some(title), no, pic, status, notes, url].into_iter().flatten().collect::<Vec<_>>();
+        let extra = headers.iter().enumerate().filter_map(|(column, header)| {
+            let key = header.trim();
+            let value = record.get(column)?.trim();
+            (!key.is_empty() && !value.is_empty() && !core.contains(&column)).then(|| (key.to_string(), json!(value)))
+        }).collect();
         tasks.push(KanbanTask {
             no: no.and_then(|column| record.get(column)).filter(|value| !value.trim().is_empty()).map(|value| json!(value)).unwrap_or_else(|| json!(index + 1)),
             url: url.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string(),
@@ -190,7 +196,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
             status: status.into(),
             notes: task_notes,
             session_id: None,
-            extra: serde_json::Map::new(),
+            extra,
         });
     }
     Ok(tasks)
@@ -394,7 +400,15 @@ pub fn list_project_tasks(project: String, pic: Option<String>, status: Option<S
 
 #[tauri::command]
 pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
-    list_project_tasks(project, None, None)?.into_iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).ok_or("task not found".into())
+    let tasks = list_project_tasks(project, None, None)?;
+    let mut task = tasks.iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).cloned().ok_or("task not found")?;
+    let lower = task.deskripsi.to_lowercase();
+    let references = ["poin nomor ", "point nomor ", "poin ", "point "].into_iter().flat_map(|marker| lower.match_indices(marker).filter_map(|(index, _)| lower[index + marker.len()..].split(|character: char| !character.is_ascii_digit()).next()?.parse::<i64>().ok())).collect::<Vec<_>>();
+    let referenced = tasks.into_iter().filter(|candidate| references.iter().any(|number| candidate.no.as_i64() == Some(*number) || candidate.no.as_str().is_some_and(|value| value == number.to_string()))).collect::<Vec<_>>();
+    if !referenced.is_empty() {
+        task.extra.insert("references".into(), serde_json::to_value(referenced).map_err(|error| error.to_string())?);
+    }
+    Ok(task)
 }
 
 #[tauri::command]
@@ -463,6 +477,9 @@ mod tests {
         assert_eq!(tasks[0].deskripsi, "Build, UI");
         assert_eq!(tasks[1].status, "Blocked");
         assert_eq!(tasks[1].notes, "Waiting");
+        let tasks = parse_sheet_tasks(b"No,Tugas,Modul / Fitur,PIC,Priority,Status\n6,Revisi poin nomor 4,Master,Rifky,High,To Do\n").unwrap();
+        assert_eq!(tasks[0].extra.get("Modul / Fitur"), Some(&json!("Master")));
+        assert_eq!(tasks[0].extra.get("Priority"), Some(&json!("High")));
     }
 
     #[test]
