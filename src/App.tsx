@@ -13,8 +13,8 @@ import { check } from "@tauri-apps/plugin-updater";
 
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
+import KanbanBoard from "./components/KanbanBoard";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
-const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
@@ -292,6 +292,7 @@ export default function App() {
           activeTabId={activeTabId}
           onResume={(id, project) => { setDashboard(null); setSelectedProject(project); activateTab(id); }}
           onNewSession={newConversation}
+          onToast={addToast}
           onPipelineSettings={(project) => {
             setSelectedProject(project);
             setSettingsProject(project);
@@ -356,7 +357,7 @@ export default function App() {
         </header>
 
         <div className="workspace-body" id="workspace-content" tabIndex={-1}>
-          {dashboard === "kanban" && <Suspense fallback={<div className="session-loading" role="status">Loading tasks…</div>}><KanbanBoard projectName={workspaceProject?.name} onWorkTask={newTaskConversation} /></Suspense>}
+          {dashboard === "kanban" && <KanbanBoard projectName={workspaceProject?.name} onWorkTask={newTaskConversation} />}
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={workspaceProject?.path} projectName={workspaceProject?.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}

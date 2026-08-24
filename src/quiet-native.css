@@ -137,7 +137,7 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
   border: 1px solid var(--separator-strong); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow-soft); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
 }
 .diff-files, .split-diff, .kanban-detail-content, .rag-preview-panel main, .file-preview-content, .settings-content main, .pipeline-consult-chat { background: var(--surface-solid); backdrop-filter: none; }
-.toast-container { position: fixed; z-index: 120; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; }
+.toast-container { position: fixed; z-index: 1100; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; }
 .toast { position: relative; inset: auto; border-radius: var(--radius-control); color: var(--text-primary); }
 .file-picker { position: absolute; z-index: 20; bottom: 100%; left: 0; width: min(400px, 100%); max-height: 300px; overflow: auto; border: 1px solid var(--separator-strong); border-radius: var(--radius-panel); box-shadow: var(--shadow-soft); }
 .file-picker-header { display: flex; justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--separator); }

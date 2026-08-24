@@ -65,6 +65,7 @@ pub fn run() {
             graph::build_graph,
             graph::enable_global_graphignore,
             kanban::list_kanban_tasks,
+            kanban::list_google_sheet_names,
             kanban::list_google_sheet_pics,
             kanban::list_project_tasks,
             kanban::get_project_task,

@@ -114,22 +114,23 @@ fn write_tasks(path: &Path, tasks: &[KanbanTask]) -> Result<(), String> {
     result
 }
 
-pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
+fn google_sheet_id(url: &str) -> Result<&str, String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("Google Sheets URL is required".into());
     }
-    let marker = "/spreadsheets/d/";
-    let id = url.split(marker).nth(1).and_then(|rest| rest.split('/').next())
+    url.split("/spreadsheets/d/").nth(1).and_then(|rest| rest.split('/').next())
         .filter(|id| !id.is_empty())
-        .ok_or("invalid Google Sheets URL")?;
+        .ok_or_else(|| "invalid Google Sheets URL".into())
+}
+
+pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
+    let id = google_sheet_id(url)?;
     let gid = url.split("gid=").nth(1).and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()).filter(|gid| !gid.is_empty());
-    let selection = if sheet.trim().is_empty() {
-        gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()
-    } else {
-        format!("&sheet={}", sheet.trim().replace(' ', "%20"))
-    };
-    Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{selection}"))
+    if !sheet.trim().is_empty() {
+        return Ok(format!("https://docs.google.com/spreadsheets/d/{id}/gviz/tq?tqx=out:csv&sheet={}", sheet.trim().replace(' ', "%20")));
+    }
+    Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{}", gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()))
 }
 
 fn normalized_header(value: &str) -> String {
@@ -202,6 +203,26 @@ fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> 
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     parse_sheet_tasks(&output.stdout)
+}
+
+fn parse_google_sheet_names(html: &str) -> Vec<String> {
+    let marker = "<div class=\"goog-inline-block docs-sheet-tab-caption\">";
+    let mut sheets = html.split(marker).skip(1).filter_map(|rest| rest.split("</div>").next())
+        .map(|sheet| sheet.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'"))
+        .collect::<Vec<_>>();
+    sheets.dedup();
+    sheets
+}
+
+#[tauri::command]
+pub fn list_google_sheet_names(url: String) -> Result<Vec<String>, String> {
+    let page_url = format!("https://docs.google.com/spreadsheets/d/{}/edit", google_sheet_id(&url)?);
+    let output = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15", &page_url]).output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let sheets = parse_google_sheet_names(&String::from_utf8_lossy(&output.stdout));
+    if sheets.is_empty() { Err("No worksheets found. Make sure the spreadsheet is public.".into()) } else { Ok(sheets) }
 }
 
 #[tauri::command]
@@ -445,6 +466,11 @@ mod tests {
     }
 
     #[test]
+    fn parses_public_sheet_names() {
+        assert_eq!(parse_google_sheet_names(r#"<div class="goog-inline-block docs-sheet-tab-caption">Sprint-0</div><div class="goog-inline-block docs-sheet-tab-caption">API &amp; Docs</div>"#), vec!["Sprint-0", "API & Docs"]);
+    }
+
+    #[test]
     fn converts_shared_sheet_url_to_csv_export() {
         assert_eq!(
             google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42", "").unwrap(),
@@ -452,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit", "Sprint 1").unwrap(),
-            "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&sheet=Sprint%201"
+            "https://docs.google.com/spreadsheets/d/abc123/gviz/tq?tqx=out:csv&sheet=Sprint%201"
         );
         assert!(google_sheet_csv_url("https://example.com/not-a-sheet", "").is_err());
     }
