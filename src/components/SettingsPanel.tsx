@@ -7,6 +7,8 @@ import PipelineSettings from "./PipelineSettings";
 import RagSettings from "./RagSettings";
 import { useModalFocus } from "./useModalFocus";
 
+type PiRuntimeStatus = { health: "healthy" | "partial" | "missing"; path?: string; installed_version?: string; latest_version?: string };
+
 const GROUPS = [
   ["Model & Thinking", "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets", ["defaultProvider", "defaultModel", "defaultThinkingLevel", "thinkingBudgets"]],
   ["UI & Display", "theme, externalEditor, quietStartup, defaultProjectTrust, collapseChangelog, telemetry, doubleEscapeAction, treeFilterMode, padding, autocomplete, cursor", ["theme", "externalEditor", "quietStartup", "padding"]],
@@ -29,12 +31,16 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
   const [activeGroup, setActiveGroup] = useState("");
   const [mode, setMode] = useState<"form" | "json">("form");
   const [backlogDir, setBacklogDir] = useState("");
+  const [runtime, setRuntime] = useState<PiRuntimeStatus | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeLog, setRuntimeLog] = useState("");
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useModalFocus<HTMLElement>(onClose);
 
   useEffect(() => {
     void invoke<string>("get_backlog_dir").then(setBacklogDir).catch((e) => setError(String(e)));
+    void invoke<PiRuntimeStatus>("get_pi_runtime_status").then(setRuntime).catch((e) => setRuntimeLog(String(e)));
   }, []);
 
   useEffect(() => {
@@ -90,6 +96,22 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
     } catch (e) { setError(String(e)); }
   }
 
+  async function updateRuntime() {
+    setRuntimeBusy(true); setRuntimeLog("Installing the latest Pi runtime…");
+    try {
+      const next = await invoke<PiRuntimeStatus>("update_pi_runtime");
+      setRuntime(next); setRuntimeLog(`Pi ${next.installed_version || ""} is healthy. Reload active chats.`); onToast("Pi updated — reload active chats.");
+    } catch (e) { setRuntimeLog(String(e)); } finally { setRuntimeBusy(false); }
+  }
+
+  async function syncExtensions() {
+    setRuntimeBusy(true); setRuntimeLog("Syncing command-rdev-center extensions…");
+    try {
+      const path = await invoke<string>("sync_pi_extensions");
+      setRuntimeLog(`Extensions synced to ${path}. Reload active chats.`); onToast("Pi extensions synced — reload active chats.");
+    } catch (e) { setRuntimeLog(String(e)); } finally { setRuntimeBusy(false); }
+  }
+
   async function save() {
     try {
       const settings = JSON.parse(text) as unknown;
@@ -118,6 +140,11 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
         <main>
           <div className="settings-mode"><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>FORM</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>JSON · ADVANCED</button></div>
           <div className="settings-notice">Project values override global values. Unknown/custom keys are preserved. Most settings apply to newly started sessions.</div>
+          {scope === "global" && <section className="pi-runtime-card">
+            <div><small>PI RUNTIME</small><strong>{runtime?.health?.toUpperCase() || "CHECKING…"}</strong><span>{runtime?.installed_version || "Not installed"}{runtime?.latest_version ? ` · Latest ${runtime.latest_version}` : ""}</span><code>{runtime?.path || "Pi binary not found"}</code></div>
+            <div><button disabled={runtimeBusy} onClick={() => void invoke<PiRuntimeStatus>("get_pi_runtime_status").then(setRuntime).catch((e) => setRuntimeLog(String(e)))}>CHECK</button><button disabled={runtimeBusy} onClick={updateRuntime}>{runtime?.health === "healthy" ? "UPDATE / REPAIR PI" : "INSTALL / REPAIR PI"}</button><button disabled={runtimeBusy} onClick={syncExtensions}>SYNC EXTENSIONS</button></div>
+            {runtimeLog && <pre>{runtimeLog}</pre>}
+          </section>}
           {loading ? <div className="settings-loading">LOADING…</div> : mode === "json" ? <textarea ref={editorRef} value={text} onChange={(event) => setText(event.target.value)} spellCheck={false} aria-label="Pi settings JSON" /> : <div className="settings-form">
             {(() => { const settings = settingsObject(); return <>
               <label id="setting-defaultProvider"><span>DEFAULT PROVIDER<small>Provider used for new sessions</small></span><input value={String(settings.defaultProvider ?? "")} onChange={(e) => updateSetting("defaultProvider", e.target.value)} placeholder="e.g. anthropic" /></label>

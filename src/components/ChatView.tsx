@@ -1401,6 +1401,7 @@ export default function ChatView({
     { name: "model", description: "Choose the active model", source: "client" },
     { name: "thinking", description: "Set reasoning level", source: "client" },
     { name: "compact", description: "Compact session context", source: "client" },
+    { name: "sync", description: "Sync app-owned Pi extensions and reload this chat", source: "client" },
   ];
   const slashCommands = mode === "research" || slashQuery === null ? [] : [...clientCommands, ...commands]
     .filter((command, index, all) => command.name.toLowerCase().includes(slashQuery) && all.findIndex((item) => item.name === command.name) === index)
@@ -1456,6 +1457,15 @@ export default function ChatView({
     if (text === "/compact") {
       setInput("");
       await sendRaw({ type: "compact" });
+      return;
+    }
+    if (text === "/sync") {
+      setInput("");
+      try {
+        await invoke("sync_pi_extensions");
+        await handleRestart(false);
+        onToast("Pi extensions synced");
+      } catch (error) { onToast(`Pi sync: ${String(error)}`); }
       return;
     }
     if (text === "/model") {
