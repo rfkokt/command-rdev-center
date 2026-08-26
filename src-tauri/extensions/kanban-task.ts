@@ -63,6 +63,19 @@ async function tasks(): Promise<Task[]> {
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
+    name: "recommend_global_skills",
+    label: "Recommend global skills",
+    description: "Show an interactive skill recommendation card after deciding that one or more installed global skills are relevant to the user's request. Do not call merely because keywords overlap; use your judgment. Use exact installed skill names and recommend at most three.",
+    promptGuidelines: ["Call only after receiving the user's message and deciding a skill would materially help.", "Do not recommend skills for requests you can answer directly without procedural guidance."],
+    parameters: Type.Object({
+      skills: Type.Array(Type.String({ description: "Exact installed skill name" }), { minItems: 1, maxItems: 3 }),
+      reason: Type.String({ description: "Concise explanation of why these skills fit" }),
+    }),
+    async execute(_id, input) {
+      return { content: [{ type: "text", text: "Skill recommendations shown to the user." }], details: input };
+    },
+  });
+  pi.registerTool({
     name: "report_recurring_error",
     label: "Draft recurring error report",
     description: "After the user explicitly agrees, draft a backlog task for a verified application error so it can be prevented later. The host shows the draft for final approval before saving it.",

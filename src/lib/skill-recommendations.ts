@@ -1,0 +1,9 @@
+export type SkillManifest = { name: string; description: string; valid: boolean; disabled_model_invocation: boolean; allowed_tools: string[]; trigger_terms: string[]; capabilities: string[]; use_when: string; risk: "read-only" | "guidance" | "may-modify" | "unknown" };
+export type Recommendation = { skill: SkillManifest; score: number; confidence: "high" | "medium"; reason: string };
+const STOP = new Set(["yang", "dan", "untuk", "dengan", "this", "that", "from", "review", "skill", "app", "apps", "ini", "the", "and", "for", "with"]);
+const EXPANSIONS: Record<string, string[]> = { ui: ["interface", "frontend", "layout", "design"], tampilan: ["interface", "frontend", "layout", "design"], review: ["audit", "review"], aplikasi: ["app", "application", "frontend"] };
+const words = (text: string, keepTriggers = false) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2 && (keepTriggers || !STOP.has(word))));
+export function recommendSkills(request: string, manifests: SkillManifest[]): Recommendation[] {
+  const rawIntent = words(request, true); const intent = words(request); [...rawIntent].forEach((word) => EXPANSIONS[word]?.forEach((term) => intent.add(term))); if (!intent.size) return [];
+  return manifests.filter((skill) => skill.valid).map((skill) => { const terms = words([skill.name, skill.description, skill.use_when, ...skill.trigger_terms, ...skill.capabilities].join(" ")); const matched = [...intent].filter((word) => terms.has(word)); const score = matched.length / Math.max(2, Math.min(intent.size, 6)); return { skill, score, confidence: (score >= .5 ? "high" : "medium") as "high" | "medium", reason: `Matches ${matched.slice(0, 3).join(", ") || "the request intent"}.` } }).filter((item) => item.score >= .34).sort((a, b) => b.score - a.score).slice(0, 3);
+}

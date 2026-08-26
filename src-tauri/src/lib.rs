@@ -12,6 +12,7 @@ mod prompt_engines;
 mod projects;
 mod rag;
 mod settings;
+mod skills;
 mod terminal;
 mod worktree;
 
@@ -123,6 +124,11 @@ pub fn run() {
             worktree::remove_worktree,
             pi_rpc::get_global_chat_cwd,
             pi_rpc::list_available_models,
+            skills::list_pi_skills,
+            skills::list_skill_manifests,
+            skills::load_skill_instructions,
+            skills::preview_git_skills,
+            skills::install_git_skills,
             pi_rpc::spawn_pi_rpc,
             pi_rpc::send_pi_command,
             pi_rpc::is_pi_session_running,

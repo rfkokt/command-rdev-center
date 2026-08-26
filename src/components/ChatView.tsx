@@ -1087,6 +1087,11 @@ export default function ChatView({
     return true;
   }
 
+  async function sendWithSkill(text: string) {
+    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : await taskContext(text);
+    await sendRaw({ type: "prompt", message: `${text}${context}`, images });
+  }
+
   async function handleSend() {
     const text = input.trim();
     if (!chatReady || (!text && images.length === 0 && files.length === 0) || driveDetached || agentStatus === "stopped") return;
@@ -1103,8 +1108,7 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
-    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : await taskContext(text);
-    await sendRaw({ type: "prompt", message: `${message}${context}`, images });
+    await sendWithSkill(message);
   }
 
   useEffect(() => {
@@ -1766,9 +1770,13 @@ export default function ChatView({
             {m.role === "system" && <small>PI CONTEXT</small>}
             {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
             {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)} aria-label={`Preview attachment ${index + 1}`}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
+            {m.toolCalls.filter((tool) => tool.name === "recommend_global_skills").map((tool) => {
+              const skills = Array.isArray(tool.args.skills) ? tool.args.skills.filter((name): name is string => typeof name === "string") : [];
+              return skills.length ? <section className="skill-recommendation" key={tool.callId} role="status"><div><small>SKILL RECOMMENDATION</small><strong>{skills.join(" · ")}</strong><span>{typeof tool.args.reason === "string" ? tool.args.reason : "Recommended by the agent."}</span></div><div>{skills.map((name) => <button key={name} onClick={() => { setInput(`Use skill ${name} untuk request sebelumnya.`); inputRef.current?.focus(); }}>Use {name}</button>)}</div></section> : null;
+            })}
             {m.toolCalls.filter((tool) => isWebSearchTool(tool.name)).map((tool) => <ToolCallView key={tool.callId} tc={tool} />)}
-            {m.toolCalls.some((tool) => !isWebSearchTool(tool.name)) && (() => {
-              const tools = m.toolCalls.filter((tool) => !isWebSearchTool(tool.name));
+            {m.toolCalls.some((tool) => !isWebSearchTool(tool.name) && tool.name !== "recommend_global_skills") && (() => {
+              const tools = m.toolCalls.filter((tool) => !isWebSearchTool(tool.name) && tool.name !== "recommend_global_skills");
               return <details className="tool-stack">
                 <summary>
                   <span className="tool-stack-icon">{tools.some((tool) => tool.phase !== "end") ? "◌" : "✓"}</span>

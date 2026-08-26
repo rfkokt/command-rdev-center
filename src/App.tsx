@@ -17,6 +17,7 @@ import KanbanBoard from "./components/KanbanBoard";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
+const SkillsView = lazy(() => import("./components/SkillsView"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
@@ -67,7 +68,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<"pi" | "pipeline">("pi");
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(null);
-  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "research" | "engines" | null>(null);
+  const [dashboard, setDashboard] = useState<"kanban" | "pipeline" | "knowledge" | "skills" | "research" | "engines" | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -323,6 +324,9 @@ export default function App() {
             <BookIcon className="settings-icon" />
             <span>Knowledge</span>
           </button>
+          <button title="Skills" className={`settings-button dashboard-button ${dashboard === "skills" ? "active" : ""}`} aria-current={dashboard === "skills" ? "page" : undefined} onClick={() => setDashboard("skills")}>
+            <SparkIcon className="settings-icon" /><span>Skills</span>
+          </button>
           <div className="sidebar-system">
             <div className="sidebar-nav-label">System</div>
             <div className="appearance-control" role="group" aria-label="Appearance">
@@ -361,6 +365,7 @@ export default function App() {
           {dashboard === "kanban" && <KanbanBoard projectName={workspaceProject?.name} onWorkTask={newTaskConversation} />}
           {dashboard === "pipeline" && <Suspense fallback={<div className="session-loading" role="status">Loading pipeline…</div>}><PipelineView projectPath={workspaceProject?.path} projectName={workspaceProject?.name} /></Suspense>}
           {dashboard === "knowledge" && <Suspense fallback={<div className="session-loading" role="status">Loading knowledge…</div>}><RagKnowledge onToast={addToast} /></Suspense>}
+          {dashboard === "skills" && <Suspense fallback={<div className="session-loading" role="status">Loading skills…</div>}><SkillsView /></Suspense>}
           {dashboard === "research" && <Suspense fallback={<div className="session-loading" role="status">Loading reports…</div>}><DeepResearchView initialRunId={researchRunId} /></Suspense>}
           {dashboard === "engines" && <Suspense fallback={<div className="session-loading" role="status">Loading prompt engines…</div>}><PromptEnginesView onToast={addToast} /></Suspense>}
           {activeTab ? tabs.map((tab) => (
