@@ -186,6 +186,12 @@ pub fn sync_pi_extensions() -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+fn installer_failure(output: &std::process::Output) -> String {
+    let diagnostics = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let diagnostics = diagnostics.trim();
+    format!("Pi installer failed with {}{}", output.status, if diagnostics.is_empty() { String::new() } else { format!(":\n{diagnostics}") })
+}
+
 fn install_pi_via_curl() -> Result<(), String> {
     let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
     let download = Command::new("curl")
@@ -196,11 +202,12 @@ fn install_pi_via_curl() -> Result<(), String> {
     if !download.success() {
         return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
     }
-    let install = Command::new("sh").arg(&installer).status();
+    let pi_path = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".local/bin/pi");
+    let install = Command::new("sh").arg(&installer).env("PATH", path_for_pi(&pi_path.to_string_lossy())).output();
     let _ = std::fs::remove_file(&installer);
     let install = install.map_err(|error| format!("failed to run Pi installer: {error}"))?;
-    if !install.success() {
-        return Err(format!("Pi installer failed with {install}"));
+    if !install.status.success() {
+        return Err(installer_failure(&install));
     }
     Ok(())
 }
@@ -909,6 +916,21 @@ mod tests {
             std::env::split_paths(&path).next().unwrap(),
             Path::new("/opt/pi/bin")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installer_failure_includes_captured_diagnostics() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: b"installer output\n".to_vec(),
+            stderr: b"missing npm\n".to_vec(),
+        };
+        let error = installer_failure(&output);
+        assert!(error.contains("exit status: 1"));
+        assert!(error.contains("installer output"));
+        assert!(error.contains("missing npm"));
     }
 
     #[test]
