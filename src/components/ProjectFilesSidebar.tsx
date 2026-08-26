@@ -65,7 +65,7 @@ export default function ProjectFilesSidebar({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const closePreview = useCallback(() => { setPreview(null); setPreviewPos({ x: 0, y: 0 }); }, []);
   const previewRef = useModalFocus<HTMLDivElement>(closePreview, previewLoading || preview !== null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
@@ -243,30 +243,32 @@ export default function ProjectFilesSidebar({
 
       {(previewLoading || preview) && createPortal(
         <div className="file-preview-backdrop">
-          <div ref={previewRef} className="diff-panel file-preview-dialog" role="dialog" aria-modal="true" aria-label={preview ? `Preview ${preview.name}` : "Loading file preview"} tabIndex={-1} style={{ transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out" }}>
+          <div ref={previewRef} className="diff-panel file-preview-dialog" role="dialog" aria-modal="true" aria-label={preview ? `Preview ${preview.name}` : "Loading file preview"} tabIndex={-1} style={{ transform: `translate(${previewPos.x}px, ${previewPos.y}px)`, transition: dragRef.current ? "none" : "transform 160ms var(--ease-out)" }}>
             <div 
               className="file-preview-header"
               onPointerDown={(e) => {
                 e.preventDefault(); // Prevent text selection
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                dragRef.current = { 
-                  startX: e.clientX, 
-                  startY: e.clientY, 
-                  initX: previewPos.x, 
+                const rect = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();
+                dragRef.current = {
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  initX: previewPos.x,
                   initY: previewPos.y,
-                  headerTop: rect.top - previewPos.y
+                  minX: -rect.left + 24,
+                  maxX: window.innerWidth - rect.right - 24,
+                  minY: -rect.top + 62,
+                  maxY: window.innerHeight - rect.bottom - 24,
                 };
                 e.currentTarget.setPointerCapture(e.pointerId);
                 e.currentTarget.style.cursor = "grabbing";
               }}
               onPointerMove={(e) => {
                 if (!dragRef.current) return;
-                const { startX, startY, initX, initY, headerTop } = dragRef.current;
-                let newY = initY + e.clientY - startY;
-                if (headerTop + newY < 62) {
-                  newY = 62 - headerTop;
-                }
-                setPreviewPos({ x: initX + e.clientX - startX, y: newY });
+                const { startX, startY, initX, initY, minX, maxX, minY, maxY } = dragRef.current;
+                setPreviewPos({
+                  x: Math.max(minX, Math.min(maxX, initX + e.clientX - startX)),
+                  y: Math.max(minY, Math.min(maxY, initY + e.clientY - startY)),
+                });
               }}
               onPointerUp={(e) => {
                 dragRef.current = null;

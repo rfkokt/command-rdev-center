@@ -12,11 +12,9 @@
   --separator-strong: rgba(60, 60, 67, .3);
   --accent: #0066cc;
   --success: #1f7a35;
-  --warning: #8a4b00;
   --danger: #c90018;
   --info: #006b99;
   --running: #52720f;
-  --status-soft: color-mix(in srgb, currentColor 10%, var(--surface-solid));
   --control-bg: #ffffff;
   --control-disabled: #76767b;
   --overlay: rgba(24, 24, 27, .28);
@@ -64,7 +62,6 @@
   --separator-strong: rgba(235, 235, 245, .28);
   --accent: #0a84ff;
   --success: #30d158;
-  --warning: #ff9f0a;
   --danger: #ff453a;
   --info: #64d2ff;
   --running: #b6db55;
@@ -211,7 +208,4 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
   .glass-surface, .project-branch-picker, .diff-panel, .model-picker, .approval-dialog, .usage-dialog, .settings-panel, .kanban-detail, .rag-preview-panel, .file-preview-dialog, .list-picker-menu, .slash-menu, .toast, .rag-upload-toast, .pipeline-consult-drawer {
     background: var(--surface-solid); backdrop-filter: none; -webkit-backdrop-filter: none;
   }
-}
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

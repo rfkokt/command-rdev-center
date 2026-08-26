@@ -165,10 +165,3 @@
   .workspace-title small { display: none; }
   .app-toolbar { grid-template-columns: 44px minmax(0, 1fr) auto; padding-inline: var(--spacing-xs); }
 }
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebar,
-  .skip-link,
-  .sidebar-toggle,
-  .toolbar-button { transition: none; }
-}

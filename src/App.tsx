@@ -46,8 +46,15 @@ type KanbanTaskContext = { no?: string | number; url?: string; deskripsi?: strin
 const GLOBAL_PROJECT: ProjectInfo = { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
+const SIDEBAR_WIDTH_KEY = "crc-sidebar-width";
 const SIDEBAR_MIN_WIDTH = 220;
 const SIDEBAR_MAX_WIDTH = 360;
+
+function savedSidebarWidth() {
+  const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+  const width = saved === null ? NaN : Number(saved);
+  return Number.isFinite(width) ? Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, width)) : 250;
+}
 
 function savedTabs(): Tab[] {
   try {
@@ -78,7 +85,7 @@ export default function App() {
   const [updating, setUpdating] = useState(false);
   const [appVersion, setAppVersion] = useState("");
   const [availableVersion, setAvailableVersion] = useState("");
-  const [sidebarWidth, setSidebarWidth] = useState(250);
+  const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -107,6 +114,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(CHAT_TABS_KEY, JSON.stringify(tabs));
   }, [tabs]);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");

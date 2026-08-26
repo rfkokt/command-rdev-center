@@ -1,19 +1,29 @@
 /* Minimal desktop workspace informed by Zed Threads, Linear's 2026 refresh, and Raycast. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
 @keyframes ui-fade-in { from { opacity: 0; } }
 @keyframes ui-rise-in { from { opacity: 0; transform: translateY(6px) scale(.99); } }
 @keyframes ui-slide-left { from { opacity: 0; transform: translateX(8px); } }
 
 .approval-backdrop, .settings-backdrop, .diff-backdrop, .model-picker-backdrop,
 .project-branch-backdrop, .kanban-detail-backdrop, .usage-backdrop,
-.file-preview-backdrop, .image-lightbox { animation: ui-fade-in 140ms ease-out both; }
+.file-preview-backdrop, .image-lightbox { animation: ui-fade-in 140ms var(--ease-out) both; }
 .approval-dialog, .settings-panel, .diff-panel, .model-picker, .project-branch-picker,
 .kanban-detail, .usage-dialog, .file-preview-dialog, .project-row-menu,
-.toast, .rag-upload-toast, .queue-status { animation: ui-rise-in 180ms cubic-bezier(.2, .8, .2, 1) both; }
-.code-sidebar-panel { animation: ui-slide-left 160ms ease-out both; }
-.chat-bubble-user, .chat-bubble-assistant, .chat-notice { animation: ui-rise-in 160ms ease-out both; }
+.toast, .rag-upload-toast, .queue-status { animation: ui-rise-in 180ms var(--ease-out) both; }
+.code-sidebar-panel { animation: ui-slide-left 160ms var(--ease-out) both; }
 button, summary { transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, opacity 120ms ease; }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  *, *::before, *::after { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
+  .approval-backdrop, .settings-backdrop, .diff-backdrop, .model-picker-backdrop,
+  .project-branch-backdrop, .kanban-detail-backdrop, .usage-backdrop,
+  .file-preview-backdrop, .image-lightbox,
+  .approval-dialog, .settings-panel, .diff-panel, .model-picker, .project-branch-picker,
+  .kanban-detail, .usage-dialog, .file-preview-dialog, .project-row-menu,
+  .toast, .rag-upload-toast, .queue-status { animation: ui-fade-in 160ms ease !important; }
+  .sidebar { transform: none !important; transition: opacity 160ms ease !important; }
 }
 :root {
   --minimal-edge: 8px;
@@ -28,7 +38,7 @@ button, summary { transition: color 120ms ease, background-color 120ms ease, bor
   gap: var(--minimal-gap);
   padding: var(--minimal-edge);
   background: var(--canvas);
-  transition: grid-template-columns 220ms cubic-bezier(.2, .8, .2, 1), gap 220ms ease;
+  transition: grid-template-columns 220ms var(--ease-out), gap 220ms var(--ease-out);
 }
 .app-shell.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); gap: 0; }
 
@@ -44,7 +54,7 @@ button, summary { transition: color 120ms ease, background-color 120ms ease, bor
   padding: 6px;
   background: color-mix(in srgb, var(--surface) 94%, var(--canvas));
   transform-origin: left center;
-  transition: opacity 160ms ease, transform 220ms cubic-bezier(.2, .8, .2, 1), padding 220ms ease, border-width 220ms ease;
+  transition: opacity 160ms var(--ease-out), transform 220ms var(--ease-out);
 }
 .app-shell.sidebar-hidden .sidebar {
   padding-inline: 0;

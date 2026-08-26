@@ -278,7 +278,7 @@ export default function ChatView({
   const [explorerHeight, setExplorerHeight] = useState(400);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; headerTop: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
@@ -2181,23 +2181,33 @@ export default function ChatView({
       {previewImage && <div ref={imageDialogRef} className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" tabIndex={-1} onClick={() => setPreviewImage(null)}><button onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
       {expandedDiff && worktreeDiff?.files.find(f => f.path === expandedDiff) && (
         <div onPointerDown={() => setExpandedDiff(null)} style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto", padding: 20 }}>
-          <div onPointerDown={(e) => e.stopPropagation()} ref={expandedDiffRef} className="diff-panel" role="dialog" aria-modal="true" aria-label={`Diff preview for ${expandedDiff}`} tabIndex={-1} style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 0.1s ease-out", resize: "both", display: "flex", flexDirection: "column" }}>
+          <div onPointerDown={(e) => e.stopPropagation()} ref={expandedDiffRef} className="diff-panel" role="dialog" aria-modal="true" aria-label={`Diff preview for ${expandedDiff}`} tabIndex={-1} style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 160ms var(--ease-out)", resize: "both", display: "flex", flexDirection: "column" }}>
             <div 
               style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid var(--colors-hairline)", background: "#1a1b18", cursor: "grab", userSelect: "none", flexShrink: 0 }}
               onPointerDown={(e) => {
                 if ((e.target as HTMLElement).closest('button')) return;
                 e.preventDefault();
-                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                dragRef.current = { startX: e.clientX, startY: e.clientY, initX: diffPos.x, initY: diffPos.y, headerTop: rect.top - diffPos.y };
+                const rect = (e.currentTarget as HTMLElement).parentElement!.getBoundingClientRect();
+                dragRef.current = {
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  initX: diffPos.x,
+                  initY: diffPos.y,
+                  minX: -rect.left + 24,
+                  maxX: window.innerWidth - rect.right - 24,
+                  minY: -rect.top + 62,
+                  maxY: window.innerHeight - rect.bottom - 24,
+                };
                 e.currentTarget.setPointerCapture(e.pointerId);
                 e.currentTarget.style.cursor = "grabbing";
               }}
               onPointerMove={(e) => {
                 if (!dragRef.current) return;
-                const { startX, startY, initX, initY, headerTop } = dragRef.current;
-                let newY = initY + e.clientY - startY;
-                if (headerTop + newY < 62) newY = 62 - headerTop;
-                setDiffPos({ x: initX + e.clientX - startX, y: newY });
+                const { startX, startY, initX, initY, minX, maxX, minY, maxY } = dragRef.current;
+                setDiffPos({
+                  x: Math.max(minX, Math.min(maxX, initX + e.clientX - startX)),
+                  y: Math.max(minY, Math.min(maxY, initY + e.clientY - startY)),
+                });
               }}
               onPointerUp={(e) => {
                 dragRef.current = null;

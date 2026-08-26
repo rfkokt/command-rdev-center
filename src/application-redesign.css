@@ -17,7 +17,6 @@
   --app-info: var(--colors-info);
   --app-radius: 6px;
   --app-fast: 150ms;
-  --app-ease: cubic-bezier(.22, 1, .36, 1);
 }
 
 body { background: var(--app-canvas); color: var(--app-body); font-kerning: normal; }
@@ -306,8 +305,4 @@ body { background: var(--app-canvas); color: var(--app-body); font-kerning: norm
   .file-preview-header { align-items: stretch; flex-direction: column; padding: 10px 12px; }
   .file-preview-actions button { flex: 1; }
   .file-preview-content { padding: 14px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-shell *, .app-shell *::before, .app-shell *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

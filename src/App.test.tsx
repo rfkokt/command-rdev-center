@@ -40,6 +40,7 @@ beforeEach(() => {
   checkUpdate.mockResolvedValue(null);
   invokeMock.mockClear();
   unreadCallbacks.length = 0;
+  localStorage.clear();
   localStorage.setItem("crc-chat-tabs", JSON.stringify([{
     id: "chat-1",
     project: { name: "demo", path: "/tmp/demo", kinds: [], mtime_ms: 0, is_git: false },
@@ -73,6 +74,13 @@ test("uses one accessible range for pointer and keyboard sidebar resizing", () =
 
   fireEvent.keyDown(resizer, { key: "ArrowLeft" });
   expect(resizer).toHaveAttribute("aria-valuenow", "250");
+});
+
+test("restores a saved sidebar width within the allowed range", () => {
+  localStorage.setItem("crc-sidebar-width", "320");
+  render(<App />);
+
+  expect(screen.getByRole("separator", { name: "Resize sidebar" })).toHaveAttribute("aria-valuenow", "320");
 });
 
 test("shows the runtime app version at the bottom of the sidebar", async () => {
