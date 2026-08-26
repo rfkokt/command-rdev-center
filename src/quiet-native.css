@@ -102,7 +102,8 @@ body { color: var(--text-primary); }
 .appearance-control button { min-height: 30px; padding: 0 6px; border-radius: var(--radius-compact); color: var(--text-secondary); font-size: 11px; text-transform: capitalize; }
 .appearance-control button.active { background: var(--surface-selected); color: var(--accent); font-weight: 600; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--focus-ring) !important; outline-offset: 2px; }
-button:active:not(:disabled) { transform: none !important; }
+button:active:not(:disabled) { transform: scale(.97) !important; transition: transform 140ms cubic-bezier(.23, 1, .32, 1); }
+@media (prefers-reduced-motion: reduce) { button:active:not(:disabled) { transform: none !important; } }
 input, textarea, select, .themed-select, .list-picker-trigger { background: var(--control-bg); color: var(--text-primary); border-color: var(--separator-strong); }
 input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-trigger:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--separator-strong)); }
 .toolbar-button, .button-primary, .chat-action, .save-settings, .kanban-work-task { border-radius: var(--radius-control); }
@@ -145,6 +146,7 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
 .tool-call { border-color: var(--separator); }
 .tool-call.running .tool-status, .agent-working-mark i, .graph-progress i { color: var(--running); background: var(--running); }
 .tool-call.error .tool-status, .dev-error, .settings-error, .kanban-error, .pfs-error, .file-picker-error, .code-diff-list button b { color: var(--danger); }
+.clickable-import:hover { color: var(--accent) !important; background: var(--surface-selected); border-radius: 2px; cursor: pointer; }
 .settings-success, .tool-call.success .tool-status { color: var(--success); }
 .settings-notice, .rag-hint, .pipeline-guide { color: var(--text-secondary); }
 .kanban-source-errors, .research-error, .rag-error { border-color: color-mix(in srgb, var(--danger) 45%, var(--separator)); background: color-mix(in srgb, var(--danger) 8%, var(--surface-solid)); color: var(--danger); }
@@ -182,6 +184,10 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
 .pipeline-stage.running { color: var(--running); background: color-mix(in srgb, var(--running) 10%, var(--surface-solid)); animation: none; }
 .pipeline-stage.pending, .pipeline-stage.skip { color: var(--text-secondary); background: var(--surface-solid); }
 .pipeline-stage.pass, .pipeline-stage.fail, .pipeline-stage.running { border-color: currentColor; }
+.agent-working-mark i { animation: none; }
+.follow-up-badge { animation: none; box-shadow: none; }
+.live-dot { box-shadow: none; }
+.sonar-progress, .pipeline-stage.running { animation: none; }
 .kanban-card small, .pipeline-stage small, .research-detail small, .prompt-engine-meta, .chat-meta, .tool-call > summary span:last-child { color: var(--text-secondary); }
 .sonar-progress, .build-progress, .research-progress { background: var(--surface-solid); border-color: var(--separator-strong); box-shadow: none; }
 .sonar-radar { border-radius: 50%; background: none; border-color: var(--running); }
@@ -196,6 +202,10 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
 .prompt-danger:hover { background: color-mix(in srgb, var(--danger) 10%, var(--surface-solid)); color: var(--danger); }
 .settings-content nav { background: var(--surface-solid); }
 .settings-toggle input, input[type="checkbox"] { accent-color: var(--accent); }
+
+.code-sidebar-resize-handle { position: absolute; z-index: 10; inset: 0 auto 0 -4px; width: 8px; cursor: col-resize; }
+.code-sidebar-splitter { height: 8px; flex: none; margin: -4px 0; cursor: row-resize; z-index: 10; }
+.code-sidebar-resize-handle:focus-visible, .code-sidebar-splitter:focus-visible { background: var(--focus-ring); outline: 2px solid var(--accent); outline-offset: -2px; }
 
 @media (prefers-reduced-transparency: reduce) {
   .glass-surface, .project-branch-picker, .diff-panel, .model-picker, .approval-dialog, .usage-dialog, .settings-panel, .kanban-detail, .rag-preview-panel, .file-preview-dialog, .list-picker-menu, .slash-menu, .toast, .rag-upload-toast, .pipeline-consult-drawer {

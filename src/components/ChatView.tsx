@@ -329,7 +329,9 @@ export default function ChatView({
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
 
   useEffect(() => {
-    if (isActive) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!isActive) return;
+    const reduceMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
   }, [isActive, messages, researchResults]);
 
   useEffect(() => {
@@ -492,11 +494,11 @@ export default function ChatView({
   useEffect(() => { if (globalChat || !isActive || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, isActive, agentStatus, refreshDiff]);
 
   useEffect(() => {
-    if (globalChat || !isActive || agentStatus !== "running") return;
+    if (globalChat || !isActive || agentStatus !== "running" || !rightSidebarOpen || rightChangesCollapsed) return;
     void refreshDiff();
     const id = window.setInterval(refreshDiff, 2000);
     return () => window.clearInterval(id);
-  }, [globalChat, isActive, agentStatus, refreshDiff]);
+  }, [globalChat, isActive, agentStatus, refreshDiff, rightChangesCollapsed, rightSidebarOpen]);
 
   useEffect(() => {
     if (agentStatus !== "running") return;
@@ -2054,8 +2056,19 @@ export default function ChatView({
             )}
           </div>
           <div className="code-sidebar-panel" hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
-              <div 
-                style={{ position: "absolute", left: -4, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 10 }}
+              <div
+                className="code-sidebar-resize-handle"
+                role="separator"
+                aria-label="Resize code sidebar"
+                aria-orientation="vertical"
+                aria-valuemin={240}
+                aria-valuemax={480}
+                aria-valuenow={rightPanelWidth}
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowLeft") setRightPanelWidth((width) => Math.min(480, width + 10));
+                  if (e.key === "ArrowRight") setRightPanelWidth((width) => Math.max(240, width - 10));
+                }}
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
                   const startX = e.clientX;
@@ -2081,8 +2094,19 @@ export default function ChatView({
                 )}
               </section>
               {(worktree || isWorkspace) && !rightExplorerCollapsed && !rightChangesCollapsed && (
-                <div 
-                  style={{ height: 8, cursor: "row-resize", margin: "-4px 0", zIndex: 10, flexShrink: 0 }}
+                <div
+                  className="code-sidebar-splitter"
+                  role="separator"
+                  aria-label="Resize file explorer"
+                  aria-orientation="horizontal"
+                  aria-valuemin={100}
+                  aria-valuemax={Math.max(100, window.innerHeight - 150)}
+                  aria-valuenow={explorerHeight}
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowUp") setExplorerHeight((height) => Math.max(100, height - 20));
+                    if (e.key === "ArrowDown") setExplorerHeight((height) => Math.min(window.innerHeight - 150, height + 20));
+                  }}
                   onPointerDown={(e) => {
                     e.currentTarget.setPointerCapture(e.pointerId);
                     const startY = e.clientY;
