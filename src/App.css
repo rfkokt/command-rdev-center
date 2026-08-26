@@ -55,7 +55,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .projects-heading { height: 36px; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; color: var(--colors-muted); font-size: 14px; letter-spacing: .14em; font-weight: 700; }
 .projects-heading button { font-size: 20px; color: var(--colors-muted); }
 .project-group { margin: 2px 0 8px; }.project-row, .conversation-row { width: 100%; display: flex; align-items: center; min-width: 0; text-align: left; border-radius: 6px; }
-.project-row-wrap { display: flex; align-items: center; }
+.project-row-wrap { display: flex; align-items: center; min-width: 0; position: relative; }
+.project-row-actions { position: relative; flex: 0 0 28px; width: 28px; height: 28px; }
+.project-row-actions > summary { display: grid; width: 28px; height: 28px; place-items: center; overflow: hidden; list-style: none; cursor: pointer; }
+.project-row-actions > summary::-webkit-details-marker { display: none; }
+.project-row-actions > summary svg { display: block; width: 16px !important; height: 16px !important; }
+.project-row-menu { position: absolute !important; z-index: 50; top: 30px; right: 0; width: 164px !important; margin: 0 !important; padding: 4px; border: 1px solid var(--colors-hairline-strong); background: var(--colors-surface-elevated); box-shadow: 0 10px 24px #0008; }
+.project-row-menu button { display: flex !important; width: 100% !important; min-height: 30px; align-items: center; gap: 8px; padding: 0 8px !important; text-align: left; }
+.project-row-menu button svg { display: block; width: 14px !important; height: 14px !important; flex: 0 0 14px; }
 .project-row { height: 36px; gap: 7px; padding: 0 8px; font-weight: 700; }.project-row:hover, .project-row:focus-visible { background: #20211d; }
 .project-settings-edit { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; color: var(--colors-muted); border-radius: 4px; }.project-settings-edit:hover, .project-settings-edit:focus-visible { color: var(--accent); background: #292d1c; }.project-settings-edit svg { width: 17px; height: 17px; }
 .project-delete:hover, .project-delete:focus-visible { color: #ff8a8a; background: #3a2020; }

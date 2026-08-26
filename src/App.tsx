@@ -25,8 +25,12 @@ import { BookIcon, ChatIcon, ExternalIcon, PanelIcon, PlusIcon, SearchIcon, Sett
 import { APPEARANCE_KEY, applyAppearance, readAppearance, type Appearance } from "./theme";
 import "./App.css";
 import "./core-workspace.css";
+import "./application-redesign.css";
 import "./prompt-engines.css";
 import "./quiet-native.css";
+import "./layout-overhaul.css";
+import "./zed-theme.css";
+import "./minimal-layout.css";
 import "./zed-project-panel.css";
 
 type Config = {
