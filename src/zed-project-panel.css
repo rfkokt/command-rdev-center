@@ -7,7 +7,7 @@
 }
 .code-sidebar-rail .vscode-rail { width: 38px; }
 .code-sidebar-panel { width: 300px; opacity: 1; transition: width 180ms cubic-bezier(.2, .8, .2, 1), opacity 140ms ease; }
-.code-sidebar-panel[aria-hidden="true"] { min-width: 0; border-left-width: 0; opacity: 0; pointer-events: none; }
+.code-sidebar-panel[hidden] { display: none; }
 .chat-content.has-code-rail { margin-right: 38px; }
 .chat-content.has-code-rail-rail-open { margin-right: 338px; }
 .chat-content.has-code-rail,
@@ -126,7 +126,7 @@
 .code-diff-list button:hover { background: var(--surface-selected); }
 .code-diff-list button strong { overflow: hidden; color: var(--text-primary); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .code-diff-list button i { color: var(--colors-success); font-style: normal; }
-.code-diff-list button b { color: #e27b72; font-weight: 400; }
+.code-diff-list button b { color: var(--danger); font-weight: 400; }
 .pfs-preview { border-color: var(--separator); background: var(--surface-solid); }
 .file-preview-dialog { border: 1px solid var(--separator-strong); background: var(--surface-solid); color: var(--text-primary); }
 .file-preview-header { padding: 9px 12px; border-color: var(--separator); background: var(--surface); }
@@ -146,10 +146,8 @@
 .pfs-code-line-number { position: sticky; left: 0; padding-right: 10px; border-right: 1px solid var(--separator); background: var(--surface); color: var(--text-secondary); text-align: right; user-select: none; }
 .pfs-code-line code { display: block; min-height: 1.55em; padding: 0 14px; color: var(--code-text); white-space: pre; }
 .syntax-comment { color: color-mix(in srgb, var(--text-secondary) 84%, var(--code-text)); }
-.syntax-string { color: #50852f; }
-.syntax-keyword { color: #b33f46; }
-[data-theme="dark"] .syntax-string { color: #a1c181; }
-[data-theme="dark"] .syntax-keyword { color: #d07277; }
+.syntax-string { color: var(--success); }
+.syntax-keyword { color: var(--danger); }
 .pfs-code-gutter { background: var(--surface); border-color: var(--separator); color: var(--text-secondary); }
 
 @media (max-width: 1100px) {

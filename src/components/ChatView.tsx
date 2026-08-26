@@ -2004,20 +2004,20 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : mode === "research" ? "TYPE A RESEARCH QUESTION… SHIFT+ENTER NEWLINE." : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : inputPlaceholder || (globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER.")}
-          disabled={isNewSessionLoading}
-          aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+          placeholder={driveDetached ? "Reconnect the drive to continue" : agentStatus === "stopped" ? "Restart the session to continue" : mode === "research" ? "Ask a research question…" : agentStatus === "running" ? "Write a follow-up…" : inputPlaceholder || "Message the agent…"}
+          disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+          aria-describedby={!globalChat && !atHint && !driveDetached && agentStatus !== "stopped" && mode === "chat" ? "chat-composer-help" : undefined}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        {mode === "chat" && <button onClick={() => void attachFiles()} disabled={isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
+        {mode === "chat" && <button onClick={() => void attachFiles()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
         <button onClick={() => submitInput()} disabled={!chatReady || driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || files.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0 && files.length === 0)} className="button-primary chat-action">{!chatReady ? "CONNECTING…" : researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
 
       </div>
-      {!globalChat && atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
+      {!globalChat && (atHint ? <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div> : <p id="chat-composer-help" className="chat-composer-help">Type <kbd>@</kbd> to add a project file. Press Enter to send, Shift+Enter for a new line.</p>)}
       {/* VSCode right sidebar: activity rail + explorer + diff, now with proper hide toggle */}
       {!globalChat && (
         <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}`}>
@@ -2045,7 +2045,7 @@ export default function ChatView({
               ><ChangesIcon />{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
           </div>
-          <div className="code-sidebar-panel" aria-hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
+          <div className="code-sidebar-panel" hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
               <div 
                 style={{ position: "absolute", left: -4, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 10 }}
                 onPointerDown={(e) => {

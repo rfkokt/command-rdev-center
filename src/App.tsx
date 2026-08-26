@@ -24,12 +24,8 @@ import { BookIcon, ChatIcon, ExternalIcon, PanelIcon, PlusIcon, SearchIcon, Sett
 import { APPEARANCE_KEY, applyAppearance, readAppearance, type Appearance } from "./theme";
 import "./App.css";
 import "./core-workspace.css";
-import "./application-redesign.css";
 import "./prompt-engines.css";
 import "./quiet-native.css";
-import "./layout-overhaul.css";
-import "./zed-theme.css";
-import "./minimal-layout.css";
 import "./zed-project-panel.css";
 
 type Config = {
@@ -45,6 +41,8 @@ type KanbanTaskContext = { no?: string | number; url?: string; deskripsi?: strin
 const GLOBAL_PROJECT: ProjectInfo = { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 360;
 
 function savedTabs(): Tab[] {
   try {
@@ -254,6 +252,9 @@ export default function App() {
           role="separator"
           aria-label="Resize sidebar"
           aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
           tabIndex={0}
           onPointerDown={(e) => {
             e.preventDefault();
@@ -263,7 +264,7 @@ export default function App() {
           onPointerMove={(e) => {
             if (!sidebarDragRef.current) return;
             const { startX, startWidth } = sidebarDragRef.current;
-            setSidebarWidth(Math.max(220, Math.min(360, startWidth + (e.clientX - startX))));
+            setSidebarWidth(Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, startWidth + (e.clientX - startX))));
           }}
           onPointerUp={(e) => {
             sidebarDragRef.current = null;
@@ -274,8 +275,8 @@ export default function App() {
             e.currentTarget.releasePointerCapture(e.pointerId);
           }}
           onKeyDown={(e) => {
-            if (e.key === "ArrowLeft") setSidebarWidth((width) => Math.max(180, width - 10));
-            if (e.key === "ArrowRight") setSidebarWidth((width) => Math.min(600, width + 10));
+            if (e.key === "ArrowLeft") setSidebarWidth((width) => Math.max(SIDEBAR_MIN_WIDTH, width - 10));
+            if (e.key === "ArrowRight") setSidebarWidth((width) => Math.min(SIDEBAR_MAX_WIDTH, width + 10));
           }}
         />
         <div className="sidebar-brand">
