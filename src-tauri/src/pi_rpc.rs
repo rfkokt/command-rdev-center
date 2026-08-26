@@ -127,10 +127,15 @@ fn pi_runtime_complete(path: &Path) -> bool {
     api.join("openai-completions.js").is_file() && api.join("openai-completions.lazy.js").is_file()
 }
 
+fn pi_version_with_path(path: &Path, env_path: std::ffi::OsString) -> Option<String> {
+    let output = Command::new(path).arg("--version").env("PATH", env_path).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 fn installed_pi(configured: &str) -> Option<PathBuf> {
     for path in candidate_pi_paths(configured) {
         if path.is_file()
-            && Command::new(&path).arg("--version").output().is_ok_and(|output| output.status.success())
+            && pi_version_with_path(&path, path_for_pi(&path.to_string_lossy())).is_some()
             && pi_runtime_complete(&path)
         {
             return Some(path);
@@ -148,8 +153,7 @@ pub struct PiRuntimeStatus {
 }
 
 fn pi_version(path: &Path) -> Option<String> {
-    let output = Command::new(path).arg("--version").output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    pi_version_with_path(path, path_for_pi(&path.to_string_lossy()))
 }
 
 fn latest_pi_version() -> Option<String> {
@@ -931,6 +935,24 @@ mod tests {
         assert!(error.contains("exit status: 1"));
         assert!(error.contains("installer output"));
         assert!(error.contains("missing npm"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_command_uses_augmented_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("crc-pi-path-{}", std::process::id()));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let pi = root.join("pi");
+        std::fs::write(&pi, "#!/usr/bin/env fake-node\n").unwrap();
+        std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let node = bin.join("fake-node");
+        std::fs::write(&node, "#!/bin/sh\nprintf 'test-version\\n'\n").unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(pi_version_with_path(&pi, std::env::join_paths([bin]).unwrap()).as_deref(), Some("test-version"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -150,8 +150,7 @@ pub fn init_config(app: &tauri::AppHandle) -> Result<(), String> {
     install_extensions(&dir.join("extensions"))?;
     CONFIG_PATH
         .set(path)
-        .map_err(|_| "config already initialized".to_string())?;
-    migrate_base_branches()
+        .map_err(|_| "config already initialized".to_string())
 }
 
 pub fn backlog_dir() -> Result<PathBuf, String> {
@@ -218,7 +217,7 @@ fn current_branch(path: &str) -> Option<String> {
         .filter(|branch| !branch.is_empty())
 }
 
-fn migrate_base_branches() -> Result<(), String> {
+pub(crate) fn migrate_base_branches() -> Result<(), String> {
     let mut config = read_config()?;
     let missing = config
         .projects

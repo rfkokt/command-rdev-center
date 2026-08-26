@@ -41,7 +41,15 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             projects::init_config(app.handle())?;
-            deep_research::reconcile_startup().map_err(Into::into)
+            std::thread::spawn(|| {
+                if let Err(error) = projects::migrate_base_branches() {
+                    eprintln!("startup branch migration failed: {error}");
+                }
+                if let Err(error) = deep_research::reconcile_startup() {
+                    eprintln!("startup research reconciliation failed: {error}");
+                }
+            });
+            Ok(())
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
