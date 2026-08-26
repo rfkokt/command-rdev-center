@@ -10,7 +10,13 @@ function oneLine(value: unknown, max = 90) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function taskMarkdown(task: Task) {
+function taskMarkdown(task: Task, allTasks: Task[]) {
+  const known = new Set(["no", "deskripsi", "notes", "pic", "status", "priority", "url", "session_id", "references"]);
+  const extra = Object.entries(task).filter(([key, value]) => !known.has(key) && value != null && String(value).trim()).map(([key, value]) => `- ${key}: ${String(value)}`);
+  const embeddedReferences = Array.isArray(task.references) ? task.references as Task[] : [];
+  const text = String(task.deskripsi || "").toLowerCase();
+  const referenceNumbers = [...text.matchAll(/(?:poin|point)(?: nomor)?\s+(\d+)/g)].map((match) => match[1]);
+  const references = embeddedReferences.length ? embeddedReferences : allTasks.filter((candidate) => referenceNumbers.includes(String(candidate.no)));
   return [
     `# Task #${task.no ?? "—"}`,
     "",
@@ -22,6 +28,8 @@ function taskMarkdown(task: Task) {
     `- Status: ${task.status || "Unknown"}`,
     task.priority ? `- Priority: ${task.priority}` : "",
     task.url ? `- Source: ${task.url}` : "",
+    ...extra,
+    ...references.flatMap((reference) => ["", `## Referenced task #${reference.no ?? "—"}`, "", String(reference.deskripsi || "Untitled task"), reference.notes ? `\n### Notes\n\n${reference.notes}` : ""]),
   ].filter(Boolean).join("\n");
 }
 
@@ -92,9 +100,10 @@ export default function (pi: ExtensionAPI) {
     description: "Get the complete, authoritative detail of one project task by number or ID. The returned Markdown includes the full task description and notes without list-preview truncation. Use it directly as the requirements; never claim it is clipped or ask the user to paste it again.",
     parameters: Type.Object({ taskNo: Type.String({ description: "Task number or ID" }) }),
     async execute(_id, input) {
-      const task = (await tasks()).find((item) => String(item.no) === input.taskNo);
+      const allTasks = await tasks();
+      const task = allTasks.find((item) => String(item.no) === input.taskNo);
       if (!task) throw new Error(`Task ${input.taskNo} not found`);
-      return { content: [{ type: "text", text: taskMarkdown(task) }], details: { taskNo: input.taskNo } };
+      return { content: [{ type: "text", text: taskMarkdown(task, allTasks) }], details: { taskNo: input.taskNo } };
     },
   });
   pi.registerTool({

@@ -118,16 +118,72 @@ fn candidate_pi_paths(configured: &str) -> Vec<PathBuf> {
     candidates
 }
 
+fn pi_runtime_complete(path: &Path) -> bool {
+    let Ok(cli) = path.canonicalize() else { return false };
+    let Some(package) = cli.ancestors().find(|ancestor| ancestor.file_name().is_some_and(|name| name == "pi-coding-agent")) else {
+        return true;
+    };
+    let api = package.join("node_modules/@earendil-works/pi-ai/dist/api");
+    api.join("openai-completions.js").is_file() && api.join("openai-completions.lazy.js").is_file()
+}
+
 fn installed_pi(configured: &str) -> Option<PathBuf> {
     for path in candidate_pi_paths(configured) {
-        if path.is_file() {
-            // verify it actually runs
-            if Command::new(&path).arg("--version").output().is_ok() {
-                return Some(path);
-            }
+        if path.is_file()
+            && Command::new(&path).arg("--version").output().is_ok_and(|output| output.status.success())
+            && pi_runtime_complete(&path)
+        {
+            return Some(path);
         }
     }
     None
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PiRuntimeStatus {
+    pub health: String,
+    pub path: Option<String>,
+    pub installed_version: Option<String>,
+    pub latest_version: Option<String>,
+}
+
+fn pi_version(path: &Path) -> Option<String> {
+    let output = Command::new(path).arg("--version").output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn latest_pi_version() -> Option<String> {
+    let output = Command::new("curl").args(["-fsSL", "--max-time", "10", "https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest"]).output().ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    value.get("version")?.as_str().map(str::to_string)
+}
+
+#[tauri::command]
+pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
+    let (configured, _) = read_pi_config()?;
+    let candidate = candidate_pi_paths(&configured).into_iter().find(|path| path.is_file());
+    let healthy = installed_pi(&configured);
+    let path = healthy.as_ref().or(candidate.as_ref());
+    Ok(PiRuntimeStatus {
+        health: if healthy.is_some() { "healthy" } else if candidate.is_some() { "partial" } else { "missing" }.into(),
+        path: path.map(|path| path.to_string_lossy().into_owned()),
+        installed_version: path.and_then(|path| pi_version(path)),
+        latest_version: latest_pi_version(),
+    })
+}
+
+#[tauri::command]
+pub fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
+    install_pi_via_curl()?;
+    let status = get_pi_runtime_status()?;
+    if status.health != "healthy" { return Err("Pi installer finished but runtime health check still fails".into()); }
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn sync_pi_extensions() -> Result<String, String> {
+    let path = crate::projects::ensure_extensions()?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 fn install_pi_via_curl() -> Result<(), String> {
@@ -856,9 +912,28 @@ mod tests {
     }
 
     #[test]
-    fn installed_pi_accepts_existing_configured_binary() {
-        let path = std::env::current_exe().unwrap();
-        assert_eq!(installed_pi(path.to_str().unwrap()), Some(path));
+    fn runtime_check_accepts_non_packaged_binary() {
+        assert!(pi_runtime_complete(&std::env::current_exe().unwrap()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_runtime_check_rejects_partial_package() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("crc-pi-health-{}", std::process::id()));
+        let package = root.join("pi-coding-agent");
+        let cli = package.join("dist/bundle/cli.js");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "#!/bin/sh\n").unwrap();
+        let shim = root.join("pi");
+        symlink(&cli, &shim).unwrap();
+        assert!(!pi_runtime_complete(&shim));
+        let api = package.join("node_modules/@earendil-works/pi-ai/dist/api");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::write(api.join("openai-completions.js"), "").unwrap();
+        std::fs::write(api.join("openai-completions.lazy.js"), "").unwrap();
+        assert!(pi_runtime_complete(&shim));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

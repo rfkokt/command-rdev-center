@@ -52,6 +52,10 @@ pub struct TaskSource {
     #[serde(default)]
     pub url: String,
     #[serde(default)]
+    pub sheet: String,
+    #[serde(default)]
+    pub sheets: Vec<String>,
+    #[serde(default)]
     pub pics: Vec<String>,
 }
 
@@ -497,6 +501,8 @@ pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
         .unwrap_or(TaskSource {
             kind: "local".into(),
             url: String::new(),
+            sheet: String::new(),
+            sheets: Vec::new(),
             pics: Vec::new(),
         }))
 }
@@ -520,6 +526,12 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
     let source = TaskSource {
         kind: source.kind,
         url: source.url.trim().to_string(),
+        sheet: String::new(),
+        sheets: if source.sheets.is_empty() { vec![source.sheet] } else { source.sheets }
+            .into_iter()
+            .map(|sheet| sheet.trim().to_string())
+            .filter(|sheet| !sheet.is_empty())
+            .collect(),
         pics: source
             .pics
             .into_iter()
@@ -528,7 +540,7 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
             .collect(),
     };
     if source.kind == "google_sheets" {
-        crate::kanban::google_sheet_csv_url(&source.url)?;
+        crate::kanban::google_sheet_csv_url(&source.url, source.sheets.first().map(String::as_str).unwrap_or_default())?;
         config.task_sources.insert(canonical, source.clone());
     } else {
         config.task_sources.remove(&canonical);

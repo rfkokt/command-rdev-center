@@ -69,6 +69,18 @@ test("renders spreadsheet statuses as separate columns", async () => {
   expect(screen.getByText("Testing", { selector: ".kanban-column > header strong" })).toBeInTheDocument();
 });
 
+test("replaces displayed tasks when the saved worksheet selection changes", async () => {
+  invoke.mockResolvedValueOnce([{ project: "alpha", read_only: true, tasks: [{ no: 1, deskripsi: "Sprint 0 task", status: "Backlog" }] }])
+    .mockResolvedValueOnce([{ project: "alpha", read_only: true, tasks: [{ no: 2, deskripsi: "Sprint 1 task", status: "Backlog" }] }]);
+
+  render(<KanbanBoard projectName="alpha" />);
+  expect(await screen.findByText("Sprint 0 task")).toBeInTheDocument();
+  window.dispatchEvent(new CustomEvent("task-source-saved"));
+
+  expect(await screen.findByText("Sprint 1 task")).toBeInTheDocument();
+  expect(screen.queryByText("Sprint 0 task")).not.toBeInTheDocument();
+});
+
 test("groups local statuses case-insensitively, filters, and writes canonical status", async () => {
   invoke.mockResolvedValue([]).mockResolvedValueOnce([
     { project: "alpha", tasks: [{ no: 1, deskripsi: "Ship alpha", pic: "Rifki", status: "backlog" }] },

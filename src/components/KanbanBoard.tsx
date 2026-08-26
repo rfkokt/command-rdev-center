@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ListPicker from "./ListPicker";
 import MarkdownMessage from "./MarkdownMessage";
@@ -16,22 +16,40 @@ export default function KanbanBoard({ projectName, onWorkTask }: { projectName?:
   const [picFilter, setPicFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState("");
+  const manualRefreshRef = useRef(false);
   const [selectedTask, setSelectedTask] = useState<(Task & { project: string; readOnly?: boolean }) | null>(null);
   const detailRef = useModalFocus<HTMLElement>(() => setSelectedTask(null), Boolean(selectedTask));
 
   useEffect(() => {
     let loading = false;
-    const load = () => {
-      if (loading || document.hidden) return;
+    let reload = false;
+    const load = (force = false) => {
+      if (loading) { reload ||= force; return; }
+      if (document.hidden && !force) return;
       loading = true;
+      const started = Date.now();
+      if (force) setRefreshing(true);
       void invoke<KanbanProject[]>("list_kanban_tasks").then((tasks) => {
-        setProjects(tasks);
+        setProjects((current) => JSON.stringify(current) === JSON.stringify(tasks) ? current : tasks);
         setError(null);
-      }).catch((e) => setError(String(e))).finally(() => { loading = false; setLoaded(true); });
+      }).catch((e) => setError(String(e))).finally(() => {
+        const finish = () => {
+          loading = false;
+          setLoaded(true);
+          setRefreshing(false);
+          manualRefreshRef.current = false;
+          setLastRefreshed(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+          if (reload) { reload = false; load(true); }
+        };
+        if (force) setTimeout(finish, Math.max(0, 700 - (Date.now() - started))); else finish();
+      });
     };
     load();
-    const timer = setInterval(load, 3000);
-    return () => clearInterval(timer);
+    const refresh = () => load(true);
+    window.addEventListener("task-source-saved", refresh);
+    return () => window.removeEventListener("task-source-saved", refresh);
   }, []);
 
   async function moveTask(project: string, taskIndex: number, status: string) {
@@ -65,16 +83,22 @@ export default function KanbanBoard({ projectName, onWorkTask }: { projectName?:
       return (leftIndex < 0 ? 100 : leftIndex) - (rightIndex < 0 ? 100 : rightIndex) || left.localeCompare(right);
     });
 
-  return <section className="kanban-board">
+  return <section className={`kanban-board ${refreshing ? "is-refreshing" : ""}`}>
     <header>
-      <div><small>PROJECT OPERATIONS</small><strong>Tasks</strong></div>
-      <div className="kanban-filters">
-        {!projectName && <ListPicker label="Project" value={projectFilter} options={projects.map(({ project }) => project)} onChange={setProjectFilter} />}
-        <ListPicker label="PIC" value={picFilter} options={pics} onChange={setPicFilter} />
+      <div className="kanban-heading"><small>PROJECT OPERATIONS</small><strong>Tasks</strong><span>{tasks.length} of {allTasks.length} tasks{projects.length > 1 ? ` across ${projects.length} projects` : ""}</span></div>
+      <div className="kanban-toolbar">
+        <div className="kanban-filters">
+          {!projectName && <ListPicker label="Project" value={projectFilter} options={projects.map(({ project }) => project)} onChange={setProjectFilter} />}
+          <ListPicker label="PIC" value={picFilter} options={pics} onChange={setPicFilter} />
+        </div>
+        <div className="kanban-refresh-group">
+          <span aria-live="polite">{refreshing ? "Syncing task source…" : lastRefreshed ? `Updated ${lastRefreshed}` : "Not refreshed yet"}</span>
+          <button className="kanban-refresh" disabled={refreshing} aria-busy={refreshing} onClick={() => { if (manualRefreshRef.current) return; manualRefreshRef.current = true; setRefreshing(true); window.dispatchEvent(new CustomEvent("task-source-saved")); }}><span aria-hidden="true" className={refreshing ? "spinning" : ""}>↻</span>{refreshing ? "Refreshing" : "Refresh"}</button>
+        </div>
       </div>
-      <span>{tasks.length} / {allTasks.length} tasks · {projects.length} projects</span>
     </header>
-    {!loaded ? <div className="pipeline-project-empty" role="status"><strong>Loading tasks</strong><span>Reading configured project backlogs…</span></div> : error ? <p className="kanban-error" role="alert">{error}</p> : <>{sourceErrors.length > 0 && <div className="kanban-source-errors" role="status">{sourceErrors.map((project) => <span key={project.project}><strong>{project.project}</strong>: {project.error}</span>)}</div>}{allTasks.length === 0 ? <div className="pipeline-project-empty"><strong>No tasks yet</strong><span>Backlog items from configured projects will appear here.</span></div> : tasks.length === 0 ? <div className="pipeline-project-empty"><strong>No matching tasks</strong><span>Clear one or more filters to restore the board.</span></div> : <div className="kanban-columns">
+    {refreshing && <div className="kanban-refresh-progress" role="status" aria-live="polite"><i aria-hidden="true" /><span>Refreshing tasks from Google Sheets…</span></div>}
+    {!loaded ? <div className="pipeline-project-empty" role="status" aria-live="polite"><strong>Loading tasks…</strong><span>Fetching the selected worksheets and project backlogs.</span></div> : error ? <p className="kanban-error" role="alert">{error}</p> : <>{sourceErrors.length > 0 && <div className="kanban-source-errors" role="status">{sourceErrors.map((project) => <span key={project.project}><strong>{project.project}</strong>: {project.error}</span>)}</div>}{allTasks.length === 0 ? <div className="pipeline-project-empty"><strong>No tasks yet</strong><span>Backlog items from configured projects will appear here.</span></div> : tasks.length === 0 ? <div className="pipeline-project-empty"><strong>No matching tasks</strong><span>Clear one or more filters to restore the board.</span></div> : <div className="kanban-columns">
       {columns.map((column) => {
         const items = tasks.filter((task) => task.status?.trim().toLowerCase() === column.toLowerCase());
         const statusClass = column.toLowerCase().replace(/[^a-z0-9]+/g, "-");

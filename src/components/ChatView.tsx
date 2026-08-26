@@ -24,6 +24,7 @@ import {
   shouldOfferRestart,
   clearRestartErrors,
   agentNotification,
+  projectTaskIntent,
   tsvToMarkdown,
 } from "./chat-utils";
 import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
@@ -1061,13 +1062,28 @@ export default function ChatView({
     }
   }
 
+  async function taskContext(text: string) {
+    if (globalChat) return "";
+    const intent = projectTaskIntent(text);
+    if (!intent) return "";
+    try {
+      const tasks = intent.kind === "detail"
+        ? [await invoke<Record<string, unknown>>("get_project_task", { project: projectName, taskNo: intent.taskNo })]
+        : await invoke<Array<Record<string, unknown>>>("list_project_tasks", { project: projectName, pic: null, status: null });
+      return `\n\n<authoritative_project_tasks>\n${JSON.stringify(tasks)}\n</authoritative_project_tasks>\nAnswer the user's task question only from this authoritative data. Do not infer tasks from Graphify, repository files, tests, or SonarQube. Do not discuss your reasoning.\n`;
+    } catch (error) {
+      onToast(`Task context: ${String(error)}`);
+      return "";
+    }
+  }
+
   async function sendPrompt(text: string) {
     if (!chatReady || !text.trim() || driveDetached || agentStatus === "stopped") return false;
     if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => [...prev, { id: uid(), role: "user", text, images: [], thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage].slice(-MAX_HISTORY));
     pendingTaskPromptRef.current = text;
-    await sendRaw({ type: "prompt", message: text, images: [] });
+    await sendRaw({ type: "prompt", message: `${text}${await taskContext(text)}`, images: [] });
     return true;
   }
 
@@ -1087,8 +1103,8 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
-    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : "";
-    await sendRaw({ type: "prompt", message: `${context}${message}`, images });
+    const context = globalChat ? await invoke<string>("get_rag_context", { query: text }).catch((error) => { onToast(`RAG: ${String(error)}`); return ""; }) : await taskContext(text);
+    await sendRaw({ type: "prompt", message: `${message}${context}`, images });
   }
 
   useEffect(() => {
@@ -1385,6 +1401,7 @@ export default function ChatView({
     { name: "model", description: "Choose the active model", source: "client" },
     { name: "thinking", description: "Set reasoning level", source: "client" },
     { name: "compact", description: "Compact session context", source: "client" },
+    { name: "sync", description: "Sync app-owned Pi extensions and reload this chat", source: "client" },
   ];
   const slashCommands = mode === "research" || slashQuery === null ? [] : [...clientCommands, ...commands]
     .filter((command, index, all) => command.name.toLowerCase().includes(slashQuery) && all.findIndex((item) => item.name === command.name) === index)
@@ -1440,6 +1457,15 @@ export default function ChatView({
     if (text === "/compact") {
       setInput("");
       await sendRaw({ type: "compact" });
+      return;
+    }
+    if (text === "/sync") {
+      setInput("");
+      try {
+        await invoke("sync_pi_extensions");
+        await handleRestart(false);
+        onToast("Pi extensions synced");
+      } catch (error) { onToast(`Pi sync: ${String(error)}`); }
       return;
     }
     if (text === "/model") {
@@ -1978,20 +2004,20 @@ export default function ChatView({
               submitInput();
             }
           }}
-          placeholder={driveDetached ? "DRIVE DETACHED" : mode === "research" ? "TYPE A RESEARCH QUESTION… SHIFT+ENTER NEWLINE." : agentStatus === "running" ? "ENTER: QUEUE · OPTION/ALT+ENTER: STEER NOW" : inputPlaceholder || (globalChat ? "TYPE MESSAGE… SHIFT+ENTER NEWLINE." : "TYPE MESSAGE… PASTE IMAGE. SHIFT+ENTER NEWLINE. @ FILE PICKER.")}
-          disabled={isNewSessionLoading}
-          aria-disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+          placeholder={driveDetached ? "Reconnect the drive to continue" : agentStatus === "stopped" ? "Restart the session to continue" : mode === "research" ? "Ask a research question…" : agentStatus === "running" ? "Write a follow-up…" : inputPlaceholder || "Message the agent…"}
+          disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+          aria-describedby={!globalChat && !atHint && !driveDetached && agentStatus !== "stopped" && mode === "chat" ? "chat-composer-help" : undefined}
           rows={1}
           className="text-input body-md"
           style={{ flex: 1, maxHeight: 180, overflowY: "auto", padding: "var(--spacing-sm) 0", resize: "none" }}
         />
-        {mode === "chat" && <button onClick={() => void attachFiles()} disabled={isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
+        {mode === "chat" && <button onClick={() => void attachFiles()} disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading} className="small-icon-button" title="Attach files" aria-label="Attach files">📎</button>}
         <button onClick={() => submitInput()} disabled={!chatReady || driveDetached || agentStatus === "stopped" || isNewSessionLoading || researchBusy || (mode === "research" ? !input.trim() || images.length > 0 || files.length > 0 || researchResults.some(isActiveResearch) : !input.trim() && images.length === 0 && files.length === 0)} className="button-primary chat-action">{!chatReady ? "CONNECTING…" : researchBusy ? "STARTING…" : isNewSessionLoading ? "LOADING…" : mode === "research" ? "SEND" : agentStatus === "running" ? "QUEUE" : "SEND"}</button>
       </div>
       </div>
 
       </div>
-      {!globalChat && atHint && <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div>}
+      {!globalChat && (atHint ? <div className="caption-uppercase" style={{ maxWidth: 880, margin: "0 auto", padding: "0 var(--spacing-md) var(--spacing-md)" }}>{atHint.toUpperCase()}</div> : <p id="chat-composer-help" className="chat-composer-help">Type <kbd>@</kbd> to add a project file. Press Enter to send, Shift+Enter for a new line.</p>)}
       {/* VSCode right sidebar: activity rail + explorer + diff, now with proper hide toggle */}
       {!globalChat && (
         <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}`}>
@@ -2019,7 +2045,7 @@ export default function ChatView({
               ><ChangesIcon />{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
           </div>
-          <div className="code-sidebar-panel" aria-hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
+          <div className="code-sidebar-panel" hidden={!rightSidebarOpen} style={{ width: rightSidebarOpen ? rightPanelWidth : 0, position: "relative" }}>
               <div 
                 style={{ position: "absolute", left: -4, top: 0, bottom: 0, width: 8, cursor: "col-resize", zIndex: 10 }}
                 onPointerDown={(e) => {

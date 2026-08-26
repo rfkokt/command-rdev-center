@@ -114,16 +114,22 @@ fn write_tasks(path: &Path, tasks: &[KanbanTask]) -> Result<(), String> {
     result
 }
 
-pub(crate) fn google_sheet_csv_url(url: &str) -> Result<String, String> {
+fn google_sheet_id(url: &str) -> Result<&str, String> {
     let url = url.trim();
     if url.is_empty() {
         return Err("Google Sheets URL is required".into());
     }
-    let marker = "/spreadsheets/d/";
-    let id = url.split(marker).nth(1).and_then(|rest| rest.split('/').next())
+    url.split("/spreadsheets/d/").nth(1).and_then(|rest| rest.split('/').next())
         .filter(|id| !id.is_empty())
-        .ok_or("invalid Google Sheets URL")?;
+        .ok_or_else(|| "invalid Google Sheets URL".into())
+}
+
+pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
+    let id = google_sheet_id(url)?;
     let gid = url.split("gid=").nth(1).and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next()).filter(|gid| !gid.is_empty());
+    if !sheet.trim().is_empty() {
+        return Ok(format!("https://docs.google.com/spreadsheets/d/{id}/gviz/tq?tqx=out:csv&sheet={}", sheet.trim().replace(' ', "%20")));
+    }
     Ok(format!("https://docs.google.com/spreadsheets/d/{id}/export?format=csv{}", gid.map(|gid| format!("&gid={gid}")).unwrap_or_default()))
 }
 
@@ -164,7 +170,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         .ok_or("sheet needs a task/title column")?;
     let no = field_index(&headers, &["no", "nomor", "id", "key"]);
     let pic = field_index(&headers, &["pic", "assignee", "owner", "penanggungjawab"]);
-    let status = field_index(&headers, &["status", "state"]);
+    let status_column = field_index(&headers, &["status", "state"]);
     let notes = field_index(&headers, &["catatan", "notes", "note", "keterangan"]);
     let url = field_index(&headers, &["url", "link"]);
     let mut tasks = Vec::new();
@@ -173,9 +179,15 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         if description.is_empty() || description.eq_ignore_ascii_case("tugas") {
             continue;
         }
-        let status = status.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
+        let status = status_column.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim();
         let status = if status.is_empty() { "Backlog" } else { status };
         let task_notes = notes.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string();
+        let core = [Some(title), no, pic, status_column, notes, url].into_iter().flatten().collect::<Vec<_>>();
+        let extra = headers.iter().enumerate().filter_map(|(column, header)| {
+            let key = header.trim();
+            let value = record.get(column)?.trim();
+            (!key.is_empty() && !value.is_empty() && !core.contains(&column)).then(|| (key.to_string(), json!(value)))
+        }).collect();
         tasks.push(KanbanTask {
             no: no.and_then(|column| record.get(column)).filter(|value| !value.trim().is_empty()).map(|value| json!(value)).unwrap_or_else(|| json!(index + 1)),
             url: url.and_then(|column| record.get(column)).map(String::as_str).unwrap_or_default().trim().to_string(),
@@ -184,14 +196,14 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
             status: status.into(),
             notes: task_notes,
             session_id: None,
-            extra: serde_json::Map::new(),
+            extra,
         });
     }
     Ok(tasks)
 }
 
-fn fetch_sheet_tasks(url: &str) -> Result<Vec<KanbanTask>, String> {
-    let csv_url = google_sheet_csv_url(url)?;
+fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+    let csv_url = google_sheet_csv_url(url, sheet)?;
     let output = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15", &csv_url]).output().map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -199,9 +211,32 @@ fn fetch_sheet_tasks(url: &str) -> Result<Vec<KanbanTask>, String> {
     parse_sheet_tasks(&output.stdout)
 }
 
+fn parse_google_sheet_names(html: &str) -> Vec<String> {
+    let marker = "<div class=\"goog-inline-block docs-sheet-tab-caption\">";
+    let mut sheets = html.split(marker).skip(1).filter_map(|rest| rest.split("</div>").next())
+        .map(|sheet| sheet.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'"))
+        .collect::<Vec<_>>();
+    sheets.dedup();
+    sheets
+}
+
 #[tauri::command]
-pub fn list_google_sheet_pics(url: String) -> Result<Vec<String>, String> {
-    let mut pics = fetch_sheet_tasks(&url)?.into_iter().map(|task| task.pic).filter(|pic| !pic.is_empty()).collect::<Vec<_>>();
+pub fn list_google_sheet_names(url: String) -> Result<Vec<String>, String> {
+    let page_url = format!("https://docs.google.com/spreadsheets/d/{}/edit", google_sheet_id(&url)?);
+    let output = std::process::Command::new("curl").args(["--fail", "--silent", "--show-error", "--location", "--max-time", "15", &page_url]).output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let sheets = parse_google_sheet_names(&String::from_utf8_lossy(&output.stdout));
+    if sheets.is_empty() { Err("No worksheets found. Make sure the spreadsheet is public.".into()) } else { Ok(sheets) }
+}
+
+#[tauri::command]
+pub fn list_google_sheet_pics(url: String, sheets: Vec<String>) -> Result<Vec<String>, String> {
+    let mut pics = sheets.iter().map(String::as_str).chain((sheets.is_empty()).then_some(""))
+        .map(|sheet| fetch_sheet_tasks(&url, sheet))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter().flatten().map(|task| task.pic).filter(|pic| !pic.is_empty()).collect::<Vec<_>>();
     pics.sort_by_key(|pic| pic.to_lowercase());
     pics.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     Ok(pics)
@@ -363,6 +398,17 @@ pub fn list_project_tasks(project: String, pic: Option<String>, status: Option<S
     Ok(tasks.into_iter().filter(|task| pic.as_ref().is_none_or(|pic| task.pic.eq_ignore_ascii_case(pic.trim())) && status.as_ref().is_none_or(|status| task.status.eq_ignore_ascii_case(status.trim()))).collect())
 }
 
+fn attach_references(tasks: &mut [KanbanTask], all_tasks: &[KanbanTask]) {
+    for task in tasks {
+        let lower = task.deskripsi.to_lowercase();
+        let numbers = ["poin nomor ", "point nomor ", "poin ", "point "].into_iter().flat_map(|marker| lower.match_indices(marker).filter_map(|(index, _)| lower[index + marker.len()..].split(|character: char| !character.is_ascii_digit()).next()?.parse::<i64>().ok())).collect::<Vec<_>>();
+        let referenced = all_tasks.iter().filter(|candidate| numbers.iter().any(|number| candidate.no.as_i64() == Some(*number) || candidate.no.as_str().is_some_and(|value| value == number.to_string()))).collect::<Vec<_>>();
+        if !referenced.is_empty() {
+            task.extra.insert("references".into(), serde_json::to_value(referenced).expect("tasks are serializable"));
+        }
+    }
+}
+
 #[tauri::command]
 pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
     list_project_tasks(project, None, None)?.into_iter().find(|task| task.no.as_str().is_some_and(|value| value == task_no) || task.no.as_i64().is_some_and(|value| value.to_string() == task_no)).ok_or("task not found".into())
@@ -396,7 +442,14 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
     for (path, source) in crate::projects::task_sources()? {
         if source.kind != "google_sheets" { continue; }
         let project = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
-        let result = fetch_sheet_tasks(&source.url).map(|tasks| tasks.into_iter().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).collect());
+        let sheets = if source.sheets.is_empty() { vec![source.sheet.as_str()] } else { source.sheets.iter().map(String::as_str).collect() };
+        let result = sheets.into_iter().map(|sheet| fetch_sheet_tasks(&source.url, sheet)).collect::<Result<Vec<_>, _>>()
+            .map(|groups| {
+                let all_tasks = groups.into_iter().flatten().collect::<Vec<_>>();
+                let mut tasks = all_tasks.iter().filter(|task| source.pics.iter().any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))).cloned().collect::<Vec<_>>();
+                attach_references(&mut tasks, &all_tasks);
+                tasks
+            });
         let (tasks, error) = match result { Ok(tasks) => (tasks, None), Err(error) => (Vec::new(), Some(error)) };
         if let Some(existing) = projects.iter_mut().find(|entry| entry.project == project) {
             existing.tasks = tasks;
@@ -432,15 +485,35 @@ mod tests {
         assert_eq!(tasks[0].deskripsi, "Build, UI");
         assert_eq!(tasks[1].status, "Blocked");
         assert_eq!(tasks[1].notes, "Waiting");
+        let tasks = parse_sheet_tasks(b"No,Tugas,Modul / Fitur,PIC,Priority,Status\n6,Revisi poin nomor 4,Master,Rifky,High,To Do\n").unwrap();
+        assert_eq!(tasks[0].extra.get("Modul / Fitur"), Some(&json!("Master")));
+        assert_eq!(tasks[0].extra.get("Priority"), Some(&json!("High")));
+    }
+
+    #[test]
+    fn preserves_references_to_tasks_owned_by_other_pics() {
+        let all = parse_sheet_tasks(b"No,Tugas,PIC,Status\n4,Detail UI,Rizal,To Do\n6,Revisi poin nomor 4,Rifky,To Do\n").unwrap();
+        let mut selected = vec![all[1].clone()];
+        attach_references(&mut selected, &all);
+        assert_eq!(selected[0].extra["references"][0]["deskripsi"], "Detail UI");
+    }
+
+    #[test]
+    fn parses_public_sheet_names() {
+        assert_eq!(parse_google_sheet_names(r#"<div class="goog-inline-block docs-sheet-tab-caption">Sprint-0</div><div class="goog-inline-block docs-sheet-tab-caption">API &amp; Docs</div>"#), vec!["Sprint-0", "API & Docs"]);
     }
 
     #[test]
     fn converts_shared_sheet_url_to_csv_export() {
         assert_eq!(
-            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42").unwrap(),
+            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit?gid=42#gid=42", "").unwrap(),
             "https://docs.google.com/spreadsheets/d/abc123/export?format=csv&gid=42"
         );
-        assert!(google_sheet_csv_url("https://example.com/not-a-sheet").is_err());
+        assert_eq!(
+            google_sheet_csv_url("https://docs.google.com/spreadsheets/d/abc123/edit", "Sprint 1").unwrap(),
+            "https://docs.google.com/spreadsheets/d/abc123/gviz/tq?tqx=out:csv&sheet=Sprint%201"
+        );
+        assert!(google_sheet_csv_url("https://example.com/not-a-sheet", "").is_err());
     }
 
     #[test]
