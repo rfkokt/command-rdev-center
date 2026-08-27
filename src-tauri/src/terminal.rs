@@ -65,7 +65,14 @@ pub fn terminal_open(
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
-    crate::projects::ensure_path_allowed(Path::new(&cwd))?;
+    // The app-owned Global Chat directory is intentionally not an imported project.
+    // It is the only non-project cwd permitted to host a terminal.
+    if crate::pi_rpc::global_chat_cwd()
+        .map(|global| global != Path::new(&cwd))
+        .unwrap_or(true)
+    {
+        crate::projects::ensure_path_allowed(Path::new(&cwd))?;
+    }
     {
         let map = sessions().lock().map_err(|e| e.to_string())?;
         if let Some(s) = map.get(&chat_id) {

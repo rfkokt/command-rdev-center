@@ -59,6 +59,10 @@ export function shouldSubmitCommand(input: string, command: { name: string }) {
   return input.trim() === `/${command.name}`;
 }
 
+export function terminalCommandIsDestructive(command: string) {
+  return /\b(?:rm|rmdir|mkfs|dd|shutdown|reboot|poweroff|halt|kill|killall|pkill|chmod|chown|truncate|wipefs|userdel|deluser|drop\s+(?:database|table)|delete\s+from|truncate\s+table|git\s+reset\s+--hard|git\s+clean|docker\s+(?:rm|system\s+prune)|kubectl\s+delete|terraform\s+(?:destroy|apply)|systemctl\s+(?:stop|disable|restart)|launchctl\s+(?:unload|bootout))\b|\b(?:curl|wget)\b[^\n|;]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))\b/i.test(command);
+}
+
 export function filePickerKey(key: string, selectedIdx: number, count: number) {
   if (key === "Escape") return { close: true };
   if (!count) return null;

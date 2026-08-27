@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { init, Terminal, FitAddon } from "ghostty-web";
 
 // One PTY terminal, bound to a backend session key. Kill on unmount only when asked.
-function TerminalPane({ sessionKey, cwd, onKilled }: { sessionKey: string; cwd: string; onKilled: () => void }) {
+function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string; cwd: string; onKilled: () => void; onUrl?: (url: string) => void }) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -25,7 +25,10 @@ function TerminalPane({ sessionKey, cwd, onKilled }: { sessionKey: string; cwd: 
       cleanup.term = term;
 
       // register the output listener BEFORE spawning so the first shell prompt isn't lost
-      await listen<string>(`terminal://data/${sessionKey}`, (e) => term.write(e.payload)).then((u) => unlisten.push(u));
+      await listen<string>(`terminal://data/${sessionKey}`, (e) => {
+        term.write(e.payload);
+        for (const url of e.payload.match(/https?:\/\/[^\s<>"']+/g) || []) onUrl?.(url);
+      }).then((u) => unlisten.push(u));
       await listen(`terminal://exit/${sessionKey}`, () => term.write("\r\n[process exited]\r\n")).then((u) => unlisten.push(u));
 
       term.onResize(({ cols, rows }) => void invoke("terminal_resize", { chatId: sessionKey, cols, rows }).catch(() => {}));
@@ -58,7 +61,7 @@ function TerminalPane({ sessionKey, cwd, onKilled }: { sessionKey: string; cwd: 
       cleanup.term?.dispose();
       // backend session kept alive across remounts; killed explicitly via the pane ✕
     };
-  }, [sessionKey, cwd]);
+  }, [sessionKey, cwd, onUrl]);
 
   return (
     <div className="terminal-pane">
@@ -73,7 +76,7 @@ function TerminalPane({ sessionKey, cwd, onKilled }: { sessionKey: string; cwd: 
 }
 
 // Draggable floating modal hosting one or more split terminal panes for a chat's worktree.
-export default function TerminalPanel({ chatId, cwd, hidden, onClose }: { chatId: string; cwd: string; hidden?: boolean; onClose: () => void }) {
+export default function TerminalPanel({ chatId, cwd, hidden, onClose, onUrl }: { chatId: string; cwd: string; hidden?: boolean; onClose: () => void; onUrl?: (url: string) => void }) {
   const [pos, setPos] = useState(() => ({
     x: Math.max(12, Math.round((window.innerWidth - 760) / 2)),
     y: Math.max(12, Math.round((window.innerHeight - 460) / 2)),
@@ -127,7 +130,7 @@ export default function TerminalPanel({ chatId, cwd, hidden, onClose }: { chatId
       </div>
       <div className={`terminal-split ${vertical ? "vertical" : "horizontal"}`}>
         {panes.map((idx) => (
-          <TerminalPane key={idx} sessionKey={`${chatId}__${idx}`} cwd={cwd} onKilled={() => removePane(idx)} />
+          <TerminalPane key={idx} sessionKey={`${chatId}__${idx}`} cwd={cwd} onKilled={() => removePane(idx)} onUrl={onUrl} />
         ))}
       </div>
     </div>

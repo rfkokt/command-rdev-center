@@ -1,6 +1,17 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, projectTaskIntent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, tsvToMarkdown } from "./chat-utils";
+import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, projectTaskIntent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, terminalCommandIsDestructive, tsvToMarkdown } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
+
+describe("terminalCommandIsDestructive", () => {
+  test("allows read-only SSH inspection", () => {
+    expect(terminalCommandIsDestructive("ssh contabo-rdev 'hostname && uptime'")).toBe(false);
+  });
+
+  test("gates destructive remote commands", () => {
+    expect(terminalCommandIsDestructive("ssh contabo-rdev 'systemctl restart nginx'")).toBe(true);
+    expect(terminalCommandIsDestructive("rm -rf /tmp/example")).toBe(true);
+  });
+});
 
 describe("agentNotification", () => {
   test("uses a distinct sound for follow-up requests", () => {
