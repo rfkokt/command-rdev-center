@@ -22,6 +22,10 @@ describe("agentNotification", () => {
       sound: "Ping",
     });
   });
+
+  test("previews the completed response", () => {
+    expect(agentNotification("finished", "Global", "chat-1", "  Jawaban\nagent  ").body).toBe("Global: Jawaban agent");
+  });
 });
 
 describe("tsvToMarkdown", () => {

@@ -181,7 +181,6 @@ input:hover, textarea:hover, select:hover, .themed-select:hover, .list-picker-tr
 .pipeline-stage.running { color: var(--running); background: color-mix(in srgb, var(--running) 10%, var(--surface-solid)); animation: none; }
 .pipeline-stage.pending, .pipeline-stage.skip { color: var(--text-secondary); background: var(--surface-solid); }
 .pipeline-stage.pass, .pipeline-stage.fail, .pipeline-stage.running { border-color: currentColor; }
-.agent-working-mark i { animation: none; }
 .follow-up-badge { animation: none; box-shadow: none; }
 .live-dot { box-shadow: none; }
 .sonar-progress, .pipeline-stage.running { animation: none; }
