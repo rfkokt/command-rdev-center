@@ -177,10 +177,11 @@ export function settleWithError(messages: ChatMessage[], error: string): ChatMes
   return next;
 }
 
-export function agentNotification(kind: "finished" | "follow-up", projectName: string, chatId?: string) {
+export function agentNotification(kind: "finished" | "follow-up", projectName: string, chatId?: string, response?: string) {
+  const preview = response?.replace(/\s+/g, " ").trim().slice(0, 240);
   return {
     ...(kind === "finished"
-      ? { title: "Agent selesai", body: `${projectName} siap ditinjau.`, sound: "Glass" }
+      ? { title: "Agent selesai", body: preview ? `${projectName}: ${preview}` : `${projectName} siap ditinjau.`, sound: "Glass" }
       : { title: "Agent perlu jawaban", body: `${projectName} menunggu respons.`, sound: "Ping" }),
     ...(chatId ? { actionTypeId: "agent-finished", extra: { chatId } } : {}),
   };

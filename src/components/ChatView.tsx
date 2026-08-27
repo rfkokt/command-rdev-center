@@ -101,9 +101,9 @@ function formatMessageTime(timestamp: number) {
   return `${date.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" })} ${time}`;
 }
 
-async function notifyAgent(kind: "finished" | "follow-up", projectName: string, chatId: string) {
+async function notifyAgent(kind: "finished" | "follow-up", projectName: string, chatId: string, response?: string) {
   const granted = await isPermissionGranted() || await requestPermission() === "granted";
-  if (granted) sendNotification(agentNotification(kind, projectName, chatId));
+  if (granted) sendNotification(agentNotification(kind, projectName, chatId, response));
 }
 
 function extractMarkdownTables(text: string): { header: string[]; rows: string[][] }[] {
@@ -317,6 +317,7 @@ export default function ChatView({
   const surfacedPipelineInputRef = useRef("");
   const taskStartedAtRef = useRef<number | null>(null);
   const lastAgentActivityRef = useRef(Date.now());
+  const latestAssistantResponseRef = useRef("");
   const devDialogRef = useModalFocus<HTMLDivElement>(() => setPendingDevCommand(null), Boolean(pendingDevCommand) && !devStarting);
   const modelDialogRef = useModalFocus<HTMLElement>(() => setModelPickerOpen(false), modelPickerOpen);
   const resumeDialogRef = useModalFocus<HTMLElement>(() => setResumePickerOpen(false), resumePickerOpen);
@@ -376,7 +377,9 @@ export default function ChatView({
       const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
-          copy[i] = { ...copy[i], text: appendStreamingText(copy[i].text, textDelta) };
+          const text = appendStreamingText(copy[i].text, textDelta);
+          latestAssistantResponseRef.current = text;
+          copy[i] = { ...copy[i], text };
           break;
         }
       }
@@ -582,6 +585,7 @@ export default function ChatView({
       const content = messageContent(message);
       const blocks = Array.isArray(message.content) ? message.content as Array<{ type?: string }> : [];
       const usedTool = message.stopReason === "toolUse" || blocks.some((block) => block.type === "toolCall");
+      if (content.text) latestAssistantResponseRef.current = preserveStreamedContent(latestAssistantResponseRef.current, content.text);
       // Provider/connection failures land here: stopReason "error" + errorMessage, usually no text/thinking/tool.
       // Surface them — otherwise the error is silently dropped and the chat shows nothing.
       const errMsg = message.stopReason === "error" && typeof message.errorMessage === "string" ? message.errorMessage.trim() : "";
@@ -738,6 +742,7 @@ export default function ChatView({
         }
 
         if (t === "agent_start") {
+          latestAssistantResponseRef.current = "";
           setAgentStatus("running");
           onAgentRunning(chatId, true);
           setIsStreaming(true);
@@ -791,7 +796,7 @@ export default function ChatView({
           });
           taskStartedAtRef.current = null;
           surfacedErrorRef.current = null;
-          void notifyAgent("finished", projectName, chatId).catch((error) => onToast(`Notification: ${String(error)}`));
+          void notifyAgent("finished", projectName, chatId, latestAssistantResponseRef.current).catch((error) => onToast(`Notification: ${String(error)}`));
           void updateGraphIfCodeStale();
           if (trackedTaskRef.current) void syncKanbanTask("Review");
           return;
