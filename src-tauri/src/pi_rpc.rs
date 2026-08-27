@@ -455,8 +455,10 @@ pub fn spawn_pi_rpc(
         args.push(config_path.to_string_lossy().into());
     }
     if global_chat {
+        // Global chat may operate a user-visible terminal, but every write is explicitly
+        // confirmed in the UI before it reaches the shell.
         args.push("--tools".into());
-        args.push("web_search,source_check,fetch_content,get_search_content,mcp".into());
+        args.push("web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal".into());
     } else if let Some(tools) = tools {
         if tools.is_empty() {
             args.push("--no-tools".into());
@@ -509,6 +511,14 @@ pub fn spawn_pi_rpc(
                 .to_string_lossy()
                 .into(),
         );
+    } else {
+        args.push("--extension".into());
+        args.push(
+            crate::projects::ensure_extensions()?
+                .join("terminal-context.ts")
+                .to_string_lossy()
+                .into(),
+        );
     }
     if let Ok(settings) = crate::settings::get_pi_settings("global".into(), None) {
         if let Some(session_dir) = settings.get("sessionDir").and_then(|value| value.as_str()) {
@@ -547,13 +557,20 @@ pub fn spawn_pi_rpc(
     } else {
         None
     };
-    if !global_chat {
-        if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
-            let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
-            std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
-            args.push("--append-system-prompt".into());
-            args.push(prompt_path.to_string_lossy().to_string());
-        }
+    if global_chat {
+        let prompt_path = std::env::temp_dir().join(format!("crc-global-terminal-{session_id}.md"));
+        std::fs::write(
+            &prompt_path,
+            "## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. Never expose scratchpad, implementation planning, internal notes, or raw tool/provider errors as the final answer; summarize failures cleanly for the user. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n",
+        )
+        .map_err(|e| format!("global terminal prompt: {e}"))?;
+        args.push("--append-system-prompt".into());
+        args.push(prompt_path.to_string_lossy().to_string());
+    } else if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
+        let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
+        std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
+        args.push("--append-system-prompt".into());
+        args.push(prompt_path.to_string_lossy().to_string());
     }
 
     // Workspace graphs live centrally under the durable parent checkout.
@@ -587,20 +604,21 @@ pub fn spawn_pi_rpc(
         .args(&args)
         .current_dir(&cwd)
         .env("PATH", path_for_pi(&pi_path.to_string_lossy()));
+    command
+        .env(
+            "CRC_CHAT_ID",
+            session_id.strip_prefix("chat-").unwrap_or(&session_id),
+        )
+        .env(
+            "CRC_TERMINAL_DIR",
+            std::env::temp_dir().join("command-rdev-center-terminals"),
+        );
     if !global_chat {
         command
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_PROJECT_CWD", &cwd)
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
-            .env(
-                "CRC_CHAT_ID",
-                session_id.strip_prefix("chat-").unwrap_or(&session_id),
-            )
-            .env(
-                "CRC_TERMINAL_DIR",
-                std::env::temp_dir().join("command-rdev-center-terminals"),
-            )
             .env("CRC_TASK_DIR", task_dir.clone())
             .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
@@ -629,20 +647,21 @@ pub fn spawn_pi_rpc(
                             .args(&args)
                             .current_dir(&cwd)
                             .env("PATH", path_for_pi(&new_pi.to_string_lossy()));
+                        command
+                            .env(
+                                "CRC_CHAT_ID",
+                                session_id.strip_prefix("chat-").unwrap_or(&session_id),
+                            )
+                            .env(
+                                "CRC_TERMINAL_DIR",
+                                std::env::temp_dir().join("command-rdev-center-terminals"),
+                            );
                         if !global_chat {
                             command
                                 .env("CRC_PROJECT_ROOT", &owning_project)
                                 .env("CRC_PROJECT_CWD", &cwd)
                                 .env("CRC_PROJECT_NAME", project_name.clone())
                                 .env("CRC_SESSION_ID", &session_id)
-                                .env(
-                                    "CRC_CHAT_ID",
-                                    session_id.strip_prefix("chat-").unwrap_or(&session_id),
-                                )
-                                .env(
-                                    "CRC_TERMINAL_DIR",
-                                    std::env::temp_dir().join("command-rdev-center-terminals"),
-                                )
                                 .env("CRC_TASK_DIR", task_dir.clone())
                                 .env("CRC_GRAPH_JSONS", &graph_json_paths);
                         }
@@ -1005,8 +1024,16 @@ mod tests {
 
     #[test]
     fn global_chat_search_tools_exclude_project_tools() {
-        let tools = "web_search,source_check,fetch_content,get_search_content";
+        let tools = "web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal";
         assert!(tools.contains("web_search"));
+        for allowed in [
+            "execute_terminal_command",
+            "list_chat_terminals",
+            "read_chat_terminal",
+            "write_chat_terminal",
+        ] {
+            assert!(tools.split(',').any(|tool| tool == allowed));
+        }
         for denied in [
             "read",
             "bash",

@@ -15,6 +15,7 @@ import {
   shouldShowChanges,
   preserveStreamedContent,
   shouldSubmitCommand,
+  terminalCommandIsDestructive,
   insertSteerMessage,
   ensureAssistantTurn,
   shouldToastPiStderr,
@@ -240,6 +241,7 @@ export default function ChatView({
   onInitialPromptConsumed?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const toolArgsRef = useRef(new Map<string, Record<string, unknown>>());
   const [mode, setMode] = useState<"chat" | "research">("chat");
   const [researchResults, setResearchResults] = useState<ResearchRun[]>([]);
   const [researchBusy, setResearchBusy] = useState(false);
@@ -259,6 +261,9 @@ export default function ChatView({
   const [cwd, setCwd] = useState(projectPath);
   const cwdRef = useRef(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  const [terminalApproval, setTerminalApproval] = useState<{ pane: string; data: string } | null>(null);
+  const [terminalUrl, setTerminalUrl] = useState<string | null>(null);
+  const terminalUrlRef = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">(initialInterrupted ? "stopped" : "idle");
   const [driveDetached, setDriveDetached] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -288,7 +293,9 @@ export default function ChatView({
   const [graphElapsed, setGraphElapsed] = useState(0);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
-  const [terminalMounted, setTerminalMounted] = useState(false);
+  // Global chat provisions a hidden pane immediately so the agent can use SSH/device tools
+  // without asking the user to open the terminal first.
+  const [terminalMounted, setTerminalMounted] = useState(globalChat);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(null);
   const [devStarting, setDevStarting] = useState(false);
@@ -833,7 +840,9 @@ export default function ChatView({
         if (t === "tool_execution_start") {
           const callId = String(ev.toolCallId ?? uid());
           const name = String(ev.toolName ?? "tool");
-          upsertToolCall(callId, { name, args: (ev.args as Record<string, unknown>) ?? {}, phase: "start", callId });
+          const args = (ev.args as Record<string, unknown>) ?? {};
+          toolArgsRef.current.set(callId, args);
+          upsertToolCall(callId, { name, args, phase: "start", callId });
           return;
         }
         if (t === "tool_execution_update") {
@@ -847,7 +856,9 @@ export default function ChatView({
           if (!ev.toolCallId) return;
           const callId = String(ev.toolCallId);
           const name = String(ev.toolName ?? "");
-          const args = (ev.args as Record<string, unknown>) ?? {};
+          const endArgs = (ev.args as Record<string, unknown> | undefined);
+          const args = endArgs && Object.keys(endArgs).length ? endArgs : toolArgsRef.current.get(callId) ?? {};
+          toolArgsRef.current.delete(callId);
           upsertToolCall(callId, { phase: "end", callId, result: ev.result as unknown, isError: Boolean(ev.isError) });
           if (!ev.isError && name === "run_pipeline" && await confirm({ title: "Run pipeline", message: `Run saved pipeline for ${projectName}?`, confirmLabel: "Run", cancelLabel: "Cancel" })) {
             void invoke<string>("start_pipeline", { projectPath, executionCwd: cwdRef.current, initiatorSessionId: sessionId })
@@ -867,11 +878,17 @@ export default function ChatView({
               }
             }
           }
+          if (!ev.isError && name === "execute_terminal_command") {
+            const command = typeof args.command === "string" ? args.command : "";
+            if (command && terminalCommandIsDestructive(command)) setTerminalApproval({ pane: "0", data: `${command}\n` });
+          }
           if (!ev.isError && name === "write_chat_terminal") {
             const pane = typeof args.pane === "string" && /^\d+$/.test(args.pane) ? args.pane : "0";
             const data = typeof args.data === "string" ? args.data : "";
-            if (data && await confirm({ title: "Send terminal input", message: `Allow the agent to send this exact input to terminal pane ${pane}?\n\n${JSON.stringify(data)}`, confirmLabel: "Send", cancelLabel: "Deny" })) {
-              void invoke("terminal_write", { chatId: `${chatId}__${pane}`, data }).catch((error) => onToast(`Terminal: ${String(error)}`));
+            if (data && terminalCommandIsDestructive(data)) setTerminalApproval({ pane, data });
+            else if (data) {
+              void invoke("terminal_write", { chatId: `${chatId}__${pane}`, data })
+                .catch((error) => onToast(`Terminal: ${String(error)}`));
             }
           }
           if (!ev.isError && name === "provide_pipeline_input") {
@@ -1313,6 +1330,12 @@ export default function ChatView({
     setShowTerminal((v) => !v);
   }
 
+  const handleTerminalUrl = useCallback((url: string) => {
+    if (terminalUrlRef.current === url) return;
+    terminalUrlRef.current = url;
+    setTerminalUrl(url);
+  }, []);
+
   async function handleRunDev() {
     try {
       const key = `crc-dev-command:${projectPath}`;
@@ -1638,7 +1661,7 @@ export default function ChatView({
             aria-label="Change model"
           >◍ {currentModel ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ?? "MODEL") : "MODEL"}</button>
           {!globalChat && !devRunner && <button onClick={handleRunDev} className="dev-control run">▶ RUN DEV</button>}
-          {!globalChat && <button onClick={handleOpenTerminal} className={`dev-control open${showTerminal ? " active" : ""}`}>⌘ TERMINAL</button>}
+          <button onClick={handleOpenTerminal} className={`dev-control open${showTerminal ? " active" : ""}`}>⌘ TERMINAL</button>
           {!globalChat && devRunner && <><button onClick={handleStopDev} className="dev-control stop">■ STOP</button><button onClick={() => openUrl(devRunner.url)} className="dev-control open">↗ {devRunner.url}</button></>}
           {!globalChat && devError && <span className="dev-error" title={devError}>RUN DEV ERROR: {devError}</span>}
           {agentStatus === "running" && <button onClick={handleAbort} className="caption-uppercase">ABORT</button>}
@@ -1646,7 +1669,7 @@ export default function ChatView({
         </div>}
       </div>
 
-      {!globalChat && terminalMounted && <TerminalPanel chatId={chatId} cwd={cwd} hidden={!showTerminal} onClose={() => setShowTerminal(false)} />}
+      {terminalMounted && <TerminalPanel chatId={chatId} cwd={cwd} hidden={!showTerminal} onClose={() => setShowTerminal(false)} onUrl={handleTerminalUrl} />}
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
         <div ref={devDialogRef} className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title" tabIndex={-1}>
@@ -1818,6 +1841,34 @@ export default function ChatView({
                 ))}
               </div>
             )}
+            {m.id === lastAssistantId && terminalUrl && <section className="terminal-command-approval" role="alert">
+              <small>TERMINAL · AUTHENTICATION REQUIRED</small>
+              <a href={terminalUrl} target="_blank" rel="noreferrer">Open authentication link ↗</a>
+              <code>{terminalUrl}</code>
+              <div><button onClick={() => {
+                setTerminalUrl(null);
+                terminalUrlRef.current = null;
+                void sendRaw({ type: "follow_up", message: "The user finished the terminal authentication step. Read pane 0 now and continue the task." });
+              }}>✅ I’ve authenticated</button></div>
+            </section>}
+            {m.id === lastAssistantId && terminalApproval && <section className="terminal-command-approval" role="alert">
+              <small>AGENT REQUEST · TERMINAL COMMAND</small>
+              <pre>{terminalApproval.data}</pre>
+              <div>
+                <button className="approval-primary" onClick={() => {
+                  const request = terminalApproval;
+                  setTerminalApproval(null);
+                  void invoke("terminal_write", { chatId: `${chatId}__${request.pane}`, data: request.data })
+                    .then(() => sendRaw({ type: "follow_up", message: `The user approved and sent your destructive terminal command to pane ${request.pane}. Read its output and continue the task.` }))
+                    .catch((error) => onToast(`Terminal: ${String(error)}`));
+                }}>✅ Approve</button>
+                <button onClick={() => {
+                  setTerminalApproval(null);
+                  void sendRaw({ type: "follow_up", message: "Terminal command denied by the user. Do not execute it; explain alternatives if needed." });
+                  onToast("Terminal command denied");
+                }}>❌ Deny</button>
+              </div>
+            </section>}
           </div>
         ))}
         {agentStatus === "running" && (() => {
