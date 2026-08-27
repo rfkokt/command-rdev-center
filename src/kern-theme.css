@@ -1,0 +1,129 @@
+/* Kern Studio palette: the app icon translated into accessible UI tokens. */
+[data-color-theme="kern"] {
+  --brand-charcoal: #111411;
+  --brand-lime: #c7f04a;
+  --brand-ivory: #f2f0e8;
+}
+
+[data-color-theme="kern"]:not([data-theme="dark"]) {
+  --canvas: #e8e7df;
+  --surface: #f2f0e8;
+  --surface-solid: #fbfaf5;
+  --surface-raised: #f5f4ed;
+  --surface-selected: #dce8b8;
+  --text-primary: #171a15;
+  --text-secondary: #5e6458;
+  --separator: #d4d6ca;
+  --separator-strong: #b9bdad;
+  --accent: #607817;
+  --accent-contrast: #fbfaf5;
+  --success: #4f792d;
+  --danger: #b24d45;
+  --info: #3f7279;
+  --running: #607817;
+  --control-bg: #f2f0e8;
+  --code: #f0efe7;
+  --code-text: #24291f;
+  --terminal: #111411;
+  --terminal-text: #f2f0e8;
+  --overlay: rgba(17, 20, 17, .38);
+  --shadow-soft: 0 8px 24px rgba(17, 20, 17, .16);
+}
+
+[data-color-theme="kern"][data-theme="dark"] {
+  --canvas: #0b0d0b;
+  --surface: #151815;
+  --surface-solid: #111411;
+  --surface-raised: #1b1f1a;
+  --surface-selected: #29331d;
+  --text-primary: #f2f0e8;
+  --text-secondary: #aeb3a5;
+  --separator: #252a23;
+  --separator-strong: #3a4035;
+  --accent: #c7f04a;
+  --accent-contrast: #111411;
+  --success: #91c66d;
+  --danger: #e1786e;
+  --info: #78b8bd;
+  --running: #c7f04a;
+  --control-bg: #181b17;
+  --code: #0e110e;
+  --code-text: #e8e7df;
+  --terminal: #090b09;
+  --terminal-text: #f2f0e8;
+  --overlay: rgba(5, 7, 5, .76);
+  --shadow-soft: 0 8px 28px rgba(0, 0, 0, .42);
+}
+
+.color-theme-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  margin: 3px 4px 5px;
+}
+
+.color-theme-control button {
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid var(--separator);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: var(--type-xs);
+  text-transform: capitalize;
+}
+
+.color-theme-control button:hover {
+  border-color: var(--separator-strong);
+  background: color-mix(in srgb, var(--surface-selected) 60%, transparent);
+  color: var(--text-primary);
+}
+
+.color-theme-control button.active {
+  border-color: var(--separator-strong);
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.theme-swatch {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border: 1px solid var(--separator-strong);
+  border-radius: 50%;
+  background: #5c78e2;
+  box-shadow: inset 5px 0 0 #dcdcdd;
+}
+
+.theme-swatch.kern {
+  border-color: #424a39;
+  background: #c7f04a;
+  box-shadow: inset 5px 0 0 #111411;
+}
+
+[data-color-theme="kern"] .toolbar-button-primary,
+[data-color-theme="kern"] .button-primary,
+[data-color-theme="kern"] .chat-action,
+[data-color-theme="kern"] .save-settings,
+[data-color-theme="kern"] .kanban-work-task,
+[data-color-theme="kern"] .unread-badge,
+[data-color-theme="kern"] .activity-badge {
+  color: var(--accent-contrast);
+}
+
+[data-color-theme="kern"] .toolbar-button-primary:hover,
+[data-color-theme="kern"] .button-primary:hover,
+[data-color-theme="kern"] .chat-action:hover,
+[data-color-theme="kern"] .save-settings:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--brand-charcoal));
+  color: var(--accent-contrast);
+}
+
+[data-color-theme="kern"] .brand-mark {
+  background: var(--brand-charcoal);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand-lime) 24%, transparent);
+}

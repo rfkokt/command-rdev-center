@@ -2,17 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/kern-studio-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <title>Command RDEV Center</title>
+    <meta name="application-name" content="Kern Studio" />
+    <title>Kern Studio</title>
     <script>
       (() => {
         const preference = localStorage.getItem("crc-appearance");
         const theme = preference === "light" || preference === "dark"
           ? preference
           : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        const colorTheme = localStorage.getItem("crc-color-theme") === "kern" ? "kern" : "classic";
         document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.colorTheme = colorTheme;
         document.documentElement.style.colorScheme = theme;
       })();
     </script>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "command-rdev-center",
+  "productName": "Kern Studio",
   "version": "0.1.98",
   "identifier": "com.rifkioktapratama.command-rdev-center",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Command rdev Center",
+        "title": "Kern Studio",
         "width": 1200,
         "height": 800
       }

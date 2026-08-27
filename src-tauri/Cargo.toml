@@ -1,7 +1,7 @@
 [package]
 name = "command-rdev-center"
 version = "0.1.98"
-description = "Command rdev Center — pi coding agent launcher"
+description = "Kern Studio — local-first AI developer workspace"
 authors = ["garcia"]
 edition = "2021"
 
@@ -34,4 +34,3 @@ portable-pty = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
-
