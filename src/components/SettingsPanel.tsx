@@ -105,7 +105,7 @@ export default function SettingsPanel({ projectPath, projectName, initialPage = 
   }
 
   async function syncExtensions() {
-    setRuntimeBusy(true); setRuntimeLog("Syncing command-rdev-center extensions…");
+    setRuntimeBusy(true); setRuntimeLog("Syncing Kern Studio extensions…");
     try {
       const path = await invoke<string>("sync_pi_extensions");
       setRuntimeLog(`Extensions synced to ${path}. Reload active chats.`); onToast("Pi extensions synced — reload active chats.");

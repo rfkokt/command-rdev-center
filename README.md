@@ -1,8 +1,24 @@
-# Command RDev Center
+<p align="center">
+  <img src="public/kern-studio-icon.png" width="96" height="96" alt="Kern Studio logo" />
+</p>
 
-A local-first macOS desktop app for running the [`pi`](https://github.com/badlogic/pi-mono) coding agent across local projects.
+<h1 align="center">Kern Studio</h1>
 
-Command RDev Center combines project discovery, isolated task worktrees, native agent chat, local Deep Research, git diff review, Graphify context, Kanban tracking, and push-pipeline visibility in one Tauri app.
+<p align="center">
+  A local-first AI developer workspace for running the
+  <a href="https://github.com/badlogic/pi-mono">pi coding agent</a>
+  across local projects.
+</p>
+
+Kern Studio brings project discovery, isolated task worktrees, native agent chat, local Deep Research, code review, Graphify context, Kanban tracking, and delivery-pipeline visibility into one focused desktop application.
+
+## Workspace
+
+- **Agent sessions** — run project-aware and global conversations from one desktop workspace.
+- **Isolated work** — keep task changes separated in dedicated Git worktrees.
+- **Review and delivery** — inspect diffs, monitor pipelines, and follow work through Kanban.
+- **Local knowledge** — use Graphify and RAG context without duplicating project state in the cloud.
+- **Deep Research** — create source-backed reports in a restricted, project-independent session.
 
 ## Deep Research
 
@@ -59,3 +75,5 @@ pnpm build              # check:version + tsc + vite build
 ## Status
 
 Under active development for a single-user, local-first workflow.
+
+> The internal package name, bundle identifier, Application Support paths, and updater endpoint still use `command-rdev-center` for compatibility with existing installations.

@@ -22,7 +22,7 @@ const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
 import { BookIcon, ChatIcon, ExternalIcon, PanelIcon, PlusIcon, SearchIcon, SettingsIcon, SparkIcon } from "./components/Icons";
-import { APPEARANCE_KEY, applyAppearance, readAppearance, type Appearance } from "./theme";
+import { APPEARANCE_KEY, COLOR_THEME_KEY, applyAppearance, applyColorTheme, readAppearance, readColorTheme, type Appearance, type ColorTheme } from "./theme";
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
@@ -32,6 +32,7 @@ import "./layout-overhaul.css";
 import "./zed-theme.css";
 import "./minimal-layout.css";
 import "./zed-project-panel.css";
+import "./kern-theme.css";
 
 type Config = {
   pi_path: string;
@@ -87,6 +88,7 @@ export default function App() {
   const [availableVersion, setAvailableVersion] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme);
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const addToast = useCallback((msg: string) => {
@@ -127,10 +129,20 @@ export default function App() {
     return () => media.removeEventListener("change", update);
   }, [appearance]);
 
+  useEffect(() => {
+    applyColorTheme(colorTheme);
+  }, [colorTheme]);
+
   function chooseAppearance(value: Appearance) {
     setAppearance(value);
     if (value === "system") localStorage.removeItem(APPEARANCE_KEY);
     else localStorage.setItem(APPEARANCE_KEY, value);
+  }
+
+  function chooseColorTheme(value: ColorTheme) {
+    setColorTheme(value);
+    if (value === "classic") localStorage.removeItem(COLOR_THEME_KEY);
+    else localStorage.setItem(COLOR_THEME_KEY, value);
   }
 
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
@@ -296,8 +308,8 @@ export default function App() {
           }}
         />
         <div className="sidebar-brand">
-          <span className="brand-mark">R</span>
-          <div><strong>Command</strong><small>RDEV Center</small></div>
+          <img className="brand-mark" src="/kern-studio-icon.png" alt="" aria-hidden="true" />
+          <div><strong>Kern</strong><small>Studio</small></div>
           <button className="sidebar-collapse" onClick={() => setSidebarOpen(false)} title="Hide sidebar" aria-label="Hide sidebar"><PanelIcon /></button>
         </div>
         <div className="sidebar-label"><span>Sessions</span><i /></div>
@@ -344,6 +356,9 @@ export default function App() {
           </button>
           <div className="sidebar-system">
             <div className="sidebar-nav-label">System</div>
+            <div className="color-theme-control" role="group" aria-label="Color theme">
+              {(["classic", "kern"] as const).map((value) => <button key={value} className={colorTheme === value ? "active" : ""} aria-pressed={colorTheme === value} onClick={() => chooseColorTheme(value)}><i className={`theme-swatch ${value}`} aria-hidden="true" /><span>{value}</span></button>)}
+            </div>
             <div className="appearance-control" role="group" aria-label="Appearance">
               {(["system", "light", "dark"] as const).map((value) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => chooseAppearance(value)}>{value}</button>)}
             </div>

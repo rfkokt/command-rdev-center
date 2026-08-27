@@ -22,7 +22,7 @@ export default function McpSettings({ onToast }: { onToast: (message: string) =>
 
   const changed = !saved || saved.enabled !== settings.enabled || saved.url !== settings.url;
   return <main className="graphify-settings">
-    <div className="settings-notice">Uses Pi MCP Adapter. Figma authorizes in your browser; no token is stored by Command RDEV Center.</div>
+    <div className="settings-notice">Uses Pi MCP Adapter. Figma authorizes in your browser; no token is stored by Kern Studio.</div>
     <label className="settings-toggle"><span>FIGMA MCP<small>Enable the official Figma remote MCP server for new chats</small></span><input type="checkbox" checked={settings.enabled} onChange={(e) => setSettings({ ...settings, enabled: e.target.checked })} /></label>
     <label>SERVER URL<small>Remote Streamable HTTP endpoint</small><input type="url" value={settings.url} onChange={(e) => setSettings({ ...settings, url: e.target.value })} placeholder="https://mcp.figma.com/mcp" /></label>
     <div className="settings-notice">After saving, start a new chat and run <code>/mcp-auth figma</code>.</div>
