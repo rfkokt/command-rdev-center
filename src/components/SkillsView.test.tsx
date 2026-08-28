@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SkillsView from "./SkillsView";
@@ -11,7 +11,7 @@ const catalog = { sources: [{ id: "pi-global", label: "~/.pi/agent/skills", path
 ] };
 
 describe("SkillsView", () => {
-  beforeEach(() => { vi.mocked(invoke).mockResolvedValue(catalog); });
+  beforeEach(() => { cleanup(); vi.mocked(invoke).mockResolvedValue(catalog); });
   it("shows counts, filters, and skill details", async () => {
     render(<SkillsView />);
     expect(await screen.findByText(/1 valid · 1 invalid/)).toBeTruthy();
@@ -19,5 +19,15 @@ describe("SkillsView", () => {
     expect(screen.getByText("missing name")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "View" }));
     expect(screen.getByRole("dialog").textContent).toContain("/skill:Invalid skill");
+  });
+
+  it("starts a selected valid skill in chat", async () => {
+    const onUse = vi.fn();
+    window.addEventListener("crc-use-skill", onUse);
+    render(<SkillsView />);
+    fireEvent.click((await screen.findAllByRole("button", { name: "View" }))[0]);
+    fireEvent.click(screen.getByRole("button", { name: /Use in Chat/ }));
+    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ detail: "valid" }));
+    window.removeEventListener("crc-use-skill", onUse);
   });
 });
