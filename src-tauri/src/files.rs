@@ -143,9 +143,15 @@ pub async fn install_poppler() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn read_chat_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachment>, String> {
+pub async fn read_chat_attachments(project_path: Option<String>, paths: Vec<String>) -> Result<Vec<ChatAttachment>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if let Some(root) = project_path.as_deref() {
+            crate::projects::ensure_registered_project(Path::new(root))?;
+        }
         let attachments: Result<Vec<_>, String> = paths.into_iter().map(|path| {
+            if let Some(root) = project_path.as_deref() {
+                crate::projects::ensure_child_of_root(Path::new(root), Path::new(&path))?;
+            }
             let metadata = std::fs::metadata(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
             if !metadata.is_file() { return Err(format!("Not a file: {path}")); }
             let name = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();

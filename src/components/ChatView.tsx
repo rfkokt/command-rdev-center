@@ -1118,15 +1118,15 @@ export default function ChatView({
     if (!files.length) return "";
     const paths = files.map((file) => file.path);
     try {
-      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
-      return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { projectPath, paths });
+      return `\n\n<authoritative_project_files>\nThe @file mentions below resolve to these exact project-scoped paths. Use these files, not same-named global or user-level files.\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}\n</authoritative_project_files>`;
     } catch (error) {
       if (!String(error).includes("PDF support requires pdftotext") || !await confirm({ title: "Install Poppler", message: "PDF support needs Poppler. Install it with Homebrew now?", confirmLabel: "Install", cancelLabel: "Cancel" })) throw error;
       onToast("Installing Poppler…");
       await invoke("install_poppler");
-      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { paths });
+      const attachments = await invoke<ChatAttachment[]>("read_chat_attachments", { projectPath, paths });
       onToast("Poppler installed.");
-      return `\n\nAttached file contents:\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}`;
+      return `\n\n<authoritative_project_files>\nThe @file mentions below resolve to these exact project-scoped paths. Use these files, not same-named global or user-level files.\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}\n</authoritative_project_files>`;
     }
   }
 
@@ -2055,6 +2055,7 @@ export default function ChatView({
               const tokenEnd = after.search(/[\s\n]/);
               const rest = tokenEnd === -1 ? "" : after.slice(tokenEnd);
               setInput(`${before}@${f.relative} ${rest}`.trimStart() + " ");
+              setFiles((current) => current.some((file) => file.path === f.path) ? current : [...current, f]);
               setFilePickerQuery(null);
             }}
             onClose={() => setFilePickerQuery(null)}
