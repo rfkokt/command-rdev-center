@@ -122,6 +122,14 @@
 .code-diff-accordion:not([open]) { flex: none; }
 .code-diff-accordion > summary { min-height: 28px; display: flex; align-items: center; gap: 6px; padding: 5px 8px; color: var(--text-primary); font-size: var(--type-xs); font-weight: 600; cursor: pointer; }
 .code-diff-accordion > summary small { margin-left: auto; color: var(--text-secondary); font-size: inherit; font-weight: 400; }
+.workspace-repository-settings { display: grid; gap: 12px; }
+.workspace-repository-setting { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border-subtle); }
+.workspace-repository-setting > strong { font-size: 13px; }
+.repository-status-list { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.repository-status { flex: none; border-bottom: 1px solid var(--separator); }
+.repository-status-meta { display: grid; gap: 4px; padding: 4px 10px 8px 24px; color: var(--text-secondary); font-size: 10px; }
+.repository-status-meta span { display: flex; min-width: 0; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repository-status-meta b { width: 46px; flex: none; color: var(--text-muted); font-weight: 500; }
 .code-diff-list button { width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--separator); color: var(--text-secondary); font-size: var(--type-xs); text-align: left; }
 .code-diff-list button:hover { background: var(--surface-selected); }
 .code-diff-list button strong { overflow: hidden; color: var(--text-primary); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }

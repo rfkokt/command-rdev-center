@@ -5,6 +5,8 @@ use std::process::Command;
 
 #[derive(Debug, Serialize)]
 pub struct DiffFile {
+    #[serde(default)]
+    pub repository: String,
     pub path: String,
     pub status: String,
     pub added: u32,
@@ -147,6 +149,7 @@ fn get_worktree_diff_blocking(
         };
         let (added, removed) = count_lines(&patch);
         files.push(DiffFile {
+            repository: String::new(),
             path,
             status: if untracked { "A".into() } else { status },
             added,
@@ -167,7 +170,7 @@ pub async fn get_workspace_diff(
             crate::projects::ensure_path_allowed(Path::new(&path))?;
             let diff = get_worktree_diff_blocking(path, parent_ref)?;
             files.extend(diff.files.into_iter().map(|mut file| {
-                file.path = format!("{name}/{}", file.path);
+                file.repository = name.clone();
                 file
             }));
         }

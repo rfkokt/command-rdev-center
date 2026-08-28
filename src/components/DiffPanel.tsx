@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useModalFocus } from "./useModalFocus";
 
-type DiffFile = { path: string; status: string; added: number; removed: number; patch: string };
+type DiffFile = { repository?: string; path: string; status: string; added: number; removed: number; patch: string };
 type WorktreeDiff = { merge_base: string; files: DiffFile[] };
 type Side = { number?: number; text: string; kind: "same" | "removed" | "added" | "empty" };
 type Row = { before: Side; after: Side };
@@ -73,8 +73,8 @@ export default function DiffPanel({ worktreePath, parentRef, editingFile, open, 
     </header>
     <div className="diff-files">
       {!isLoading && currentDiff?.files.length === 0 && <p>WORKTREE CLEAN</p>}
-      {currentDiff?.files.map((file) => <details key={`${file.path}-${editingFile === file.path}`} open={editingFile === file.path || undefined}>
-        <summary><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
+      {currentDiff?.files.map((file) => <details key={`${file.repository ?? ""}-${file.path}-${editingFile === file.path}`} open={editingFile === file.path || undefined}>
+        <summary><span>{file.status}</span><strong>{file.repository && <small>{file.repository}</small>}{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></summary>
         {file.patch ? <div className="split-diff">
           <header><span>BEFORE</span><span>AFTER</span></header>
           {sideBySide(file.patch).map((row, index) => <div className="split-row" key={index}>

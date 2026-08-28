@@ -106,12 +106,21 @@ fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf
 /// Result of creating a worktree.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WorktreeInfo {
+    pub workspace_root: String,
+    pub repository_root: String,
+    pub repository_id: String,
+    pub remote: Option<String>,
     pub worktree_path: String,
     pub branch: String,
     pub repo_name: String,
     pub slug: String,
     /// Parent ref used as starting point (origin/HEAD or main or master)
     pub parent_ref: String,
+}
+
+fn worktree_info(repo_path: &Path, worktree_path: String, branch: String, repo_name: String, slug: String, parent_ref: String) -> WorktreeInfo {
+    let remote = Command::new("git").args(["-C", &repo_path.to_string_lossy(), "remote", "get-url", "origin"]).output().ok().filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|value| !value.is_empty());
+    WorktreeInfo { workspace_root: crate::projects::registered_workspace(repo_path).unwrap_or_else(|| repo_path.to_path_buf()).to_string_lossy().into(), repository_root: repo_path.to_string_lossy().into(), repository_id: repo_path.to_string_lossy().into(), remote, worktree_path, branch, repo_name, slug, parent_ref }
 }
 
 fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
@@ -180,13 +189,7 @@ pub fn create_worktree(
         sync_env_files(repo_path, &worktree_path)?;
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path)?;
-        return Ok(WorktreeInfo {
-            worktree_path: worktree_path_str,
-            branch,
-            repo_name: safe_repo,
-            slug: safe_slug,
-            parent_ref: parent,
-        });
+        return Ok(worktree_info(repo_path, worktree_path_str, branch, safe_repo, safe_slug, parent));
     }
 
     // ensure parent dir
@@ -260,13 +263,7 @@ pub fn create_worktree(
 
     sync_env_files(repo_path, &worktree_path)?;
 
-    Ok(WorktreeInfo {
-        worktree_path: worktree_path_str,
-        branch,
-        repo_name: safe_repo,
-        slug: safe_slug,
-        parent_ref,
-    })
+    Ok(worktree_info(repo_path, worktree_path_str, branch, safe_repo, safe_slug, parent_ref))
 }
 
 pub fn remove_worktree_if_empty(
@@ -356,9 +353,8 @@ fn ensure_worktree_blocking(
     slug: String,
 ) -> Result<WorktreeInfo, String> {
     let project_root = read_config_project_root()?;
-    let rp = PathBuf::from(&repo_path);
-    // Strict per-registered-project check — not just child of legacy root
-    let _owner = crate::projects::ensure_path_allowed(&rp)?;
+    let rp = crate::projects::ensure_verified_repository(Path::new(&repo_path))?;
+    // A worktree is always created from its canonical owning repository, never a workspace container.
     if slug.is_empty() {
         return Err("slug must not be empty".to_string());
     }
@@ -378,17 +374,40 @@ pub async fn ensure_worktree(
     .map_err(|e| format!("Worktree worker failed: {e}"))?
 }
 
+#[tauri::command]
+pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<String, String> {
+    let workspace = crate::projects::registered_workspace(Path::new(&workspace_path))
+        .filter(|root| root == &crate::projects::canonicalize_or_original(Path::new(&workspace_path)))
+        .ok_or("workspace is not registered")?;
+    let repositories = crate::projects::discover_git_repositories(&workspace);
+    if repositories.is_empty() { return Err("workspace has no independent Git repositories".into()); }
+    let session = crate::projects::global_worktree_root()?.join("workspace-sessions").join(sanitize_repo_name(&slug));
+    std::fs::create_dir_all(&session).map_err(|e| e.to_string())?;
+    std::fs::write(session.join(".crc-workspace-root"), workspace.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
+    for repository in repositories {
+        let name = repository.file_name().ok_or("invalid repository name")?;
+        let link = session.join(name);
+        if link.symlink_metadata().is_ok() { continue; }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&repository, &link).map_err(|e| e.to_string())?;
+        #[cfg(not(unix))]
+        return Err("multi-repository workspace sessions currently require symlink support".into());
+    }
+    Ok(session.to_string_lossy().into_owned())
+}
+
 fn remove_worktree_blocking(
     repo_path: String,
     worktree_path: String,
     parent_ref: String,
 ) -> Result<bool, String> {
     let project_root = read_config_project_root()?;
-    let rp = PathBuf::from(&repo_path);
-    let _owner = crate::projects::ensure_path_allowed(&rp)?;
+    let rp = crate::projects::ensure_verified_repository(Path::new(&repo_path))?;
     let wt = PathBuf::from(&worktree_path);
-    // also ensure worktree path belongs to same owning project
-    crate::projects::ensure_path_allowed(&wt)?;
+    let worktree_repository = crate::projects::verified_repository_root(&wt)?;
+    let common = Command::new("git").args(["-C", &rp.to_string_lossy(), "rev-parse", "--path-format=absolute", "--git-common-dir"]).output().map_err(|e| e.to_string())?;
+    let worktree_common = Command::new("git").args(["-C", &worktree_repository.to_string_lossy(), "rev-parse", "--path-format=absolute", "--git-common-dir"]).output().map_err(|e| e.to_string())?;
+    if !common.status.success() || !worktree_common.status.success() || common.stdout != worktree_common.stdout { return Err("worktree belongs to another repository".into()); }
     let expected_prefix = worktree_root(&project_root);
     let canon_prefix = expected_prefix
         .canonicalize()

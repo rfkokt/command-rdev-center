@@ -814,7 +814,7 @@ pub fn start_pipeline(
     execution_cwd: Option<String>,
     initiator_session_id: Option<String>,
 ) -> Result<String, String> {
-    let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let project = crate::projects::ensure_verified_repository(Path::new(&project_path))?;
     let execution = if let Some(cwd) = execution_cwd.filter(|cwd| !cwd.trim().is_empty()) {
         crate::projects::ensure_pipeline_cwd(&project, Path::new(&cwd))?
     } else {
@@ -881,7 +881,7 @@ pub fn start_pipeline(
 }
 
 fn control_pipeline(project_path: String, action: &str) -> Result<(), String> {
-    let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let project = crate::projects::ensure_verified_repository(Path::new(&project_path))?;
     let key = project.to_string_lossy().to_string();
     let state = active()
         .lock()
@@ -969,7 +969,7 @@ fn accept_pipeline_input(guard: &mut ActiveRun, input: PipelineInput) -> Result<
 
 #[tauri::command]
 pub fn provide_pipeline_input(project_path: String, input: PipelineInput) -> Result<(), String> {
-    let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let project = crate::projects::ensure_verified_repository(Path::new(&project_path))?;
     let state = active()
         .lock()
         .map_err(|_| "pipeline registry poisoned")?

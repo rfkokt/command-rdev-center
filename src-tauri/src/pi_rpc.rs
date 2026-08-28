@@ -511,6 +511,13 @@ pub fn spawn_pi_rpc(
                 .to_string_lossy()
                 .into(),
         );
+        args.push("--extension".into());
+        args.push(
+            extensions
+                .join("workspace-repositories.ts")
+                .to_string_lossy()
+                .into(),
+        );
     } else {
         args.push("--extension".into());
         args.push(
@@ -614,8 +621,16 @@ pub fn spawn_pi_rpc(
             std::env::temp_dir().join("command-rdev-center-terminals"),
         );
     if !global_chat {
+        let workspace_root = crate::projects::registered_workspace(&owning_project).unwrap_or_else(|| owning_project.clone());
+        let workspace_repositories = crate::projects::discover_git_repositories(&workspace_root).into_iter().map(|root| serde_json::json!({
+            "name": root.file_name().unwrap_or_default().to_string_lossy(),
+            "root": root,
+            "baseBranch": crate::projects::project_base_branch(&root).unwrap_or_else(|_| "main".into()),
+        })).collect::<Vec<_>>();
         command
             .env("CRC_PROJECT_ROOT", &owning_project)
+            .env("CRC_WORKSPACE_ROOT", &workspace_root)
+            .env("CRC_WORKSPACE_REPOSITORIES", serde_json::to_string(&workspace_repositories).map_err(|e| e.to_string())?)
             .env("CRC_PROJECT_CWD", &cwd)
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)

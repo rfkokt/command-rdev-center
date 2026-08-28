@@ -145,6 +145,22 @@ pub fn terminal_open(
 }
 
 #[tauri::command]
+pub async fn terminal_execute_approved(cwd: String, command: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::projects::ensure_path_allowed(Path::new(&cwd))?;
+        let output = std::process::Command::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()))
+            .args(["-lc", &command])
+            .current_dir(&cwd)
+            .output()
+            .map_err(|error| error.to_string())?;
+        let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        Ok(format!("exit code: {}\n{}", output.status.code().unwrap_or(-1), text.trim()))
+    })
+    .await
+    .map_err(|error| format!("Approved terminal worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub fn terminal_write(chat_id: String, data: String) -> Result<(), String> {
     let mut map = sessions().lock().map_err(|e| e.to_string())?;
     let s = map.get_mut(&chat_id).ok_or("no terminal session")?;

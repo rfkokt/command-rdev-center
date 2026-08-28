@@ -12,6 +12,7 @@ const KANBAN_EXTENSION: &str = include_str!("../extensions/kanban-task.ts");
 const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts");
 const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts");
 const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts");
+const WORKSPACE_EXTENSION: &str = include_str!("../extensions/workspace-repositories.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -22,6 +23,18 @@ pub struct ProjectInfo {
     pub is_git: bool,
     pub base_branch: Option<String>,
     pub pipeline_type: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub tracking_branch: Option<String>,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    #[serde(default)]
+    pub ahead: u32,
+    #[serde(default)]
+    pub behind: u32,
+    #[serde(default)]
+    pub dirty_files: Vec<String>,
     pub repositories: Vec<ProjectInfo>,
 }
 
@@ -71,12 +84,32 @@ fn sanitize_repo_name(name: &str) -> String {
         .collect()
 }
 
-fn canonicalize_or_original(p: &Path) -> PathBuf {
+pub(crate) fn canonicalize_or_original(p: &Path) -> PathBuf {
     p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
 }
 
+fn git_output(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git").arg("-C").arg(dir).args(args).output().map_err(|e| e.to_string())?;
+    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_string()) }
+    else { Err(String::from_utf8_lossy(&output.stderr).trim().to_string()) }
+}
+
+/// A repository is valid only when its own `.git` entry resolves to this exact canonical root.
+pub(crate) fn verified_repository_root(candidate: &Path) -> Result<PathBuf, String> {
+    if !candidate.join(".git").exists() {
+        return Err(format!("not a Git repository root: {}", candidate.display()));
+    }
+    let root = PathBuf::from(git_output(candidate, &["rev-parse", "--show-toplevel"])?);
+    let root = canonicalize_or_original(&root);
+    let candidate = canonicalize_or_original(candidate);
+    if root != candidate {
+        return Err(format!("Git root mismatch: {} resolves to {}", candidate.display(), root.display()));
+    }
+    Ok(root)
+}
+
 fn detect_kinds(dir: &Path) -> (Vec<String>, bool) {
-    let is_git = dir.join(".git").exists();
+    let is_git = verified_repository_root(dir).is_ok();
     let mut kinds = Vec::new();
     if is_git {
         kinds.push("git".into());
@@ -108,10 +141,23 @@ pub(crate) fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
         .map(|entry| entry.into_path())
-        .filter(|path| path.join(".git").exists())
+        .filter_map(|path| verified_repository_root(&path).ok())
         .collect::<Vec<_>>();
+    if let Ok(root_repository) = verified_repository_root(root) {
+        repositories.push(root_repository);
+    }
     repositories.sort();
+    repositories.dedup();
     repositories
+}
+
+fn repository_metadata(path: &Path) -> (Option<String>, Option<String>, Option<String>, u32, u32, Vec<String>) {
+    let branch = git_output(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().filter(|v| !v.is_empty());
+    let tracking_branch = git_output(path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).ok().filter(|v| !v.is_empty());
+    let remote_url = tracking_branch.as_deref().and_then(|upstream| upstream.split_once('/').map(|(remote, _)| remote)).and_then(|remote| git_output(path, &["remote", "get-url", remote]).ok());
+    let (ahead, behind) = tracking_branch.as_deref().and_then(|upstream| git_output(path, &["rev-list", "--left-right", "--count", &format!("HEAD...{upstream}")]).ok()).and_then(|value| { let mut n = value.split_whitespace(); Some((n.next()?.parse().ok()?, n.next()?.parse().ok()?)) }).unwrap_or((0, 0));
+    let dirty_files = git_output(path, &["status", "--porcelain", "--untracked-files=all"]).unwrap_or_default().lines().filter_map(|line| line.get(3..).map(str::to_string)).collect();
+    (branch, tracking_branch, remote_url, ahead, behind, dirty_files)
 }
 
 fn dir_mtime_ms(path: &Path) -> u64 {
@@ -128,6 +174,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("graphify-context.ts", GRAPHIFY_EXTENSION),
         ("pipeline-runner.ts", PIPELINE_EXTENSION),
         ("terminal-context.ts", TERMINAL_EXTENSION),
+        ("workspace-repositories.ts", WORKSPACE_EXTENSION),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }
@@ -274,14 +321,12 @@ pub fn find_owning_project(child: &Path) -> Option<PathBuf> {
     for saved in cfg.projects {
         let saved_canon = canonicalize_or_original(Path::new(&saved));
         if child_canon == saved_canon || child_canon.starts_with(&saved_canon) {
-            if let Some(repository) = child_canon
-                .ancestors()
-                .take_while(|ancestor| ancestor.starts_with(&saved_canon))
-                .find(|ancestor| ancestor.join(".git").exists())
-            {
-                return Some(repository.to_path_buf());
+            let repositories = discover_git_repositories(&saved_canon);
+            if let Ok(root) = git_output(&child_canon, &["rev-parse", "--show-toplevel"]).map(PathBuf::from) {
+                let root = canonicalize_or_original(&root);
+                if repositories.contains(&root) { return Some(root); }
             }
-            return Some(saved_canon);
+            return None;
         }
     }
     None
@@ -289,6 +334,11 @@ pub fn find_owning_project(child: &Path) -> Option<PathBuf> {
 
 fn find_owning_project_for_worktree(cwd: &Path) -> Option<PathBuf> {
     let wt_root = global_worktree_root().ok()?;
+    if let Some(session) = canonicalize_or_original(cwd).ancestors().find(|path| path.join(".crc-workspace-root").is_file()) {
+        let workspace = std::fs::read_to_string(session.join(".crc-workspace-root")).ok()?;
+        let workspace = canonicalize_or_original(Path::new(workspace.trim()));
+        if registered_workspace(&workspace).as_ref() == Some(&workspace) { return Some(workspace); }
+    }
     let wt_root_canon = canonicalize_or_original(&wt_root);
     let cwd_canon = canonicalize_or_original(cwd);
     let is_under_wt = cwd_canon.starts_with(&wt_root_canon)
@@ -331,10 +381,21 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     if let Some(owner) = find_owning_project_for_worktree(child) {
         return Ok(owner);
     }
+    if let Some(workspace) = registered_workspace(child) {
+        return Ok(workspace);
+    }
     Err(format!(
         "unregistered project path: {} (not inside any imported project and not a valid worktree)",
         child.display()
     ))
+}
+
+/// The sole backend boundary for mutations: a registered, independently verified repository.
+pub(crate) fn ensure_verified_repository(path: &Path) -> Result<PathBuf, String> {
+    let root = verified_repository_root(path)?;
+    let allowed = ensure_path_allowed(&root)?;
+    if root != allowed { return Err("repository target is not the registered canonical repository root".into()); }
+    Ok(root)
 }
 
 #[tauri::command]
@@ -361,29 +422,9 @@ pub fn ensure_pipeline_cwd(project: &Path, cwd: &Path) -> Result<PathBuf, String
         return Ok(cwd);
     }
     ensure_path_allowed(&cwd)?;
-    let output = Command::new("git")
-        .args([
-            "-C",
-            cwd.to_str().ok_or("invalid pipeline cwd")?,
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-        ])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err("pipeline cwd is not a Git worktree".into());
-    }
-    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    let expected = project
-        .join(".git")
-        .canonicalize()
-        .map_err(|e| e.to_string())?;
-    if common != expected {
-        return Err("pipeline cwd belongs to another project".into());
-    }
+    let expected = git_output(&project, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    let actual = git_output(&cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
+    if expected != actual { return Err("pipeline cwd belongs to another repository".into()); }
     Ok(cwd)
 }
 
@@ -402,6 +443,7 @@ fn project_info(
         .ok_or("invalid project name")?
         .to_string();
     let (kinds, is_git) = detect_kinds(&path);
+    let (branch, tracking_branch, remote_url, ahead, behind, dirty_files) = if is_git { repository_metadata(&path) } else { (None, None, None, 0, 0, Vec::new()) };
     Ok(ProjectInfo {
         name,
         path: path.to_string_lossy().to_string(),
@@ -410,12 +452,17 @@ fn project_info(
         is_git,
         base_branch,
         pipeline_type,
+        branch,
+        tracking_branch,
+        remote_url,
+        ahead,
+        behind,
+        dirty_files,
         repositories: Vec::new(),
     })
 }
 
-#[tauri::command]
-pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
+fn list_projects_blocking() -> Result<Vec<ProjectInfo>, String> {
     let config = read_config()?;
     config
         .projects
@@ -437,8 +484,9 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
                     .or_else(|| config.pipeline_types.get(&canonical))
                     .cloned(),
             )?;
-            if !project.is_git {
-                project.repositories = discover_git_repositories(Path::new(&project.path))
+            let repositories = discover_git_repositories(Path::new(&project.path));
+            if repositories.len() > 1 {
+                project.repositories = repositories
                     .into_iter()
                     .map(|repository| {
                         let canonical = canonicalize_or_original(&repository)
@@ -458,6 +506,30 @@ pub fn list_projects() -> Result<Vec<ProjectInfo>, String> {
 }
 
 #[tauri::command]
+pub async fn list_projects() -> Result<Vec<ProjectInfo>, String> {
+    tauri::async_runtime::spawn_blocking(list_projects_blocking)
+        .await
+        .map_err(|error| format!("Project discovery worker failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn fetch_project_branches(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repository = ensure_verified_repository(Path::new(&path))?;
+        let output = Command::new("git")
+            .args(["-C", &repository.to_string_lossy(), "fetch", "--all", "--prune"])
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        list_project_branches(repository.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|error| format!("Branch fetch worker failed: {error}"))?
+}
+
+#[tauri::command]
 pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
     let project = project_info(Path::new(&path), None, None)?;
     if !project.is_git {
@@ -470,6 +542,7 @@ pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
             "for-each-ref",
             "--format=%(refname:short)",
             "refs/heads",
+            "refs/remotes",
         ])
         .output()
         .map_err(|error| error.to_string())?;
@@ -479,7 +552,7 @@ pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
     let mut branches = String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
-        .filter(|branch| !branch.is_empty())
+        .filter(|branch| !branch.is_empty() && !branch.ends_with("/HEAD"))
         .map(str::to_string)
         .collect::<Vec<_>>();
     branches.sort();
@@ -595,11 +668,7 @@ pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
         return Err(format!("project directory not found: {}", root.display()));
     }
     let repositories = discover_git_repositories(&root);
-    if repositories.len() <= 1
-        && repositories
-            .first()
-            .is_none_or(|repository| repository == &root)
-    {
+    if repositories.len() == 1 && repositories.first() == Some(&root) {
         let branch = current_branch(root.to_string_lossy().as_ref());
         return add_project(root.to_string_lossy().into_owned(), branch);
     }
@@ -626,7 +695,7 @@ pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
     }
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
-    list_projects()?
+    list_projects_blocking()?
         .into_iter()
         .find(|project| project.path == root_string)
         .ok_or("workspace registration failed".into())
@@ -682,26 +751,26 @@ pub fn update_project_base_branch(
     if !project.is_git {
         return Err("base branch is only available for Git projects".into());
     }
+    let reference = if base_branch.contains('/') {
+        format!("refs/remotes/{base_branch}")
+    } else {
+        format!("refs/heads/{base_branch}")
+    };
     let exists = Command::new("git")
-        .args([
-            "-C",
-            &project.path,
-            "rev-parse",
-            "--verify",
-            &format!("refs/heads/{base_branch}"),
-        ])
+        .args(["-C", &project.path, "rev-parse", "--verify", &reference])
         .output()
         .map(|output| output.status.success())
         .unwrap_or(false);
     if !exists {
-        return Err(format!("local branch not found: {base_branch}"));
+        return Err(format!("branch not found: {base_branch}"));
     }
     let mut config = read_config()?;
-    if !config
-        .projects
-        .iter()
-        .any(|saved| canonicalize_or_original(Path::new(saved)) == PathBuf::from(&project.path))
-    {
+    let registered = config.projects.iter().any(|saved| {
+        let root = canonicalize_or_original(Path::new(saved));
+        root == PathBuf::from(&project.path)
+            || discover_git_repositories(&root).contains(&PathBuf::from(&project.path))
+    });
+    if !registered {
         return Err(format!("project is not registered: {}", project.path));
     }
     config
@@ -794,17 +863,7 @@ pub(crate) fn registered_workspace(child: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
-    let repositories = discover_git_repositories(project);
-    let nested = repositories
-        .iter()
-        .filter(|repository| *repository != project)
-        .cloned()
-        .collect::<Vec<_>>();
-    if nested.is_empty() && project.join(".git").exists() {
-        vec![project.to_path_buf()]
-    } else {
-        nested
-    }
+    discover_git_repositories(project)
 }
 
 #[cfg(test)]
@@ -822,40 +881,49 @@ mod tests {
         assert!(GRAPHIFY_EXTENSION.contains("before_agent_start"));
     }
 
+    fn init_repo(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        assert!(Command::new("git").args(["init", "-q", path.to_str().unwrap()]).status().unwrap().success());
+    }
+
     #[test]
-    fn discovers_nested_git_repositories() {
-        let root =
-            std::env::temp_dir().join(format!("crc-project-discovery-{}", std::process::id()));
+    fn discovers_only_independent_nested_git_repositories() {
+        let root = std::env::temp_dir().join(format!("crc-project-discovery-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("backend/.git")).unwrap();
-        std::fs::create_dir_all(root.join("frontend/.git")).unwrap();
-        std::fs::create_dir_all(root.join("docs")).unwrap();
+        init_repo(&root.join("backend"));
+        init_repo(&root.join("frontend"));
+        std::fs::create_dir_all(root.join("inherited")).unwrap();
 
-        let repositories = discover_git_repositories(&root);
-
-        assert_eq!(
-            repositories,
-            vec![root.join("backend"), root.join("frontend")]
-        );
+        assert_eq!(discover_git_repositories(&root), vec![canonicalize_or_original(&root.join("backend")), canonicalize_or_original(&root.join("frontend"))]);
+        assert!(verified_repository_root(&root.join("inherited")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn workspace_graphs_nested_repositories_even_when_parent_is_git() {
-        let root = std::env::temp_dir().join(format!(
-            "crc-workspace-graphs-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+    fn discovers_git_worktree_with_git_file() {
+        let root = std::env::temp_dir().join(format!("crc-worktree-discovery-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::create_dir_all(root.join("backend/.git")).unwrap();
-        std::fs::create_dir_all(root.join("frontend/.git")).unwrap();
+        let repo = root.join("repo");
+        init_repo(&repo);
+        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "config", "user.email", "test@example.com"]).status().unwrap().success());
+        std::fs::write(repo.join("file"), "x").unwrap();
+        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "add", "."]).status().unwrap().success());
+        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "commit", "-qm", "init"]).status().unwrap().success());
+        let worktree = root.join("worktree");
+        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "worktree", "add", "-q", "-b", "feature", worktree.to_str().unwrap()]).status().unwrap().success());
+        assert!(worktree.join(".git").is_file());
+        assert_eq!(verified_repository_root(&worktree).unwrap(), canonicalize_or_original(&worktree));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
-        assert_eq!(
-            graph_repositories(&root),
-            vec![root.join("backend"), root.join("frontend")]
-        );
+    #[test]
+    fn workspace_graphs_include_parent_and_independent_children() {
+        let root = std::env::temp_dir().join(format!("crc-workspace-graphs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        init_repo(&root);
+        init_repo(&root.join("backend"));
+        init_repo(&root.join("frontend"));
+        assert_eq!(graph_repositories(&root), vec![canonicalize_or_original(&root), canonicalize_or_original(&root.join("backend")), canonicalize_or_original(&root.join("frontend"))]);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

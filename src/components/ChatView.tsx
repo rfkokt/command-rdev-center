@@ -45,7 +45,7 @@ type WorktreeInfo = { worktree_path: string; branch: string; repo_name: string; 
 type SlashCommand = { name: string; description?: string; source: string };
 type GraphStatus = { state: "none" | "fresh" | "stale-code" | "stale-docs"; code_stale: boolean; docs_stale: boolean; report_path?: string; tracked_warning?: string };
 type GraphProgress = { repository: string; index: number; total: number; activity: string }; 
-type WorktreeDiff = { merge_base: string; files: Array<{ path: string; status: string; added: number; removed: number; patch: string }> };
+type WorktreeDiff = { merge_base: string; files: Array<{ repository?: string; path: string; status: string; added: number; removed: number; patch: string }> };
 type DevRunnerInfo = { command: string; url: string; running: boolean; error?: string };
 type SessionStats = {
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
@@ -216,7 +216,7 @@ export default function ChatView({
   projectPath: string;
   projectName: string;
   isGit: boolean;
-  repositories: Array<{ name: string; path: string; base_branch?: string }>;
+  repositories: Array<{ name: string; path: string; base_branch?: string; branch?: string; tracking_branch?: string; remote_url?: string; ahead?: number; behind?: number; dirty_files?: string[] }>;
   pipelineType: string;
   chatId: string;
   sessionFile?: string;
@@ -249,6 +249,7 @@ export default function ChatView({
   const [researchHandoffError, setResearchHandoffError] = useState<string | null>(null);
   const researchHandoffRef = useRef<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(Boolean(sessionFile));
+  const historyLoadedRef = useRef(!sessionFile);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
   const [images, setImages] = useState<ChatImage[]>([]);
@@ -257,11 +258,14 @@ export default function ChatView({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
-  const isWorkspace = repositories.length > 0;
+  const [repositoryStatuses, setRepositoryStatuses] = useState(repositories);
+  const [repositoryMapLoaded, setRepositoryMapLoaded] = useState(repositories.length > 0);
+  const isWorkspace = repositoryStatuses.length > 0;
   const [cwd, setCwd] = useState(projectPath);
   const cwdRef = useRef(projectPath);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-  const [terminalApproval, setTerminalApproval] = useState<{ pane: string; data: string } | null>(null);
+  const [terminalApproval, setTerminalApproval] = useState<{ pane?: string; data: string } | null>(null);
+  const [terminalApprovalStatus, setTerminalApprovalStatus] = useState<"executing" | "refreshing" | null>(null);
   const [terminalUrl, setTerminalUrl] = useState<string | null>(null);
   const terminalUrlRef = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">(initialInterrupted ? "stopped" : "idle");
@@ -333,6 +337,13 @@ export default function ChatView({
   const expandedDiffRef = useModalFocus<HTMLDivElement>(() => setExpandedDiff(null), Boolean(expandedDiff));
 
   cwdRef.current = cwd;
+  useEffect(() => {
+    if (globalChat) return;
+    void invoke<Array<{ path: string; repositories?: typeof repositories }>>("list_projects")
+      .then((projects) => setRepositoryStatuses(projects.find((project) => project.path === projectPath)?.repositories ?? repositories))
+      .catch((error) => onToast(`Repository map: ${String(error)}`))
+      .finally(() => setRepositoryMapLoaded(true));
+  }, [globalChat, projectPath, repositories, onToast]);
   const sessionId = useRef(`chat-${chatId}`).current;
   const slug = useRef(chatId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").slice(0, 32)).current;
 
@@ -493,13 +504,18 @@ export default function ChatView({
     if (!worktree && !isWorkspace) return;
     setDiffLoading(true);
     try {
-      setWorktreeDiff(isWorkspace
-        ? await invoke<WorktreeDiff>("get_workspace_diff", { repositories: repositories.map((repository) => [repository.name, repository.path, repository.base_branch ?? "main"]) })
-        : await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree!.worktree_path, parentRef: worktree!.parent_ref }));
+      if (isWorkspace) {
+        const projects = await invoke<Array<{ path: string; repositories?: typeof repositories }>>("list_projects");
+        const fresh = projects.find((project) => project.path === projectPath)?.repositories ?? repositories;
+        setRepositoryStatuses(fresh);
+        setWorktreeDiff(await invoke<WorktreeDiff>("get_workspace_diff", { repositories: fresh.map((repository) => [repository.name, repository.path, repository.base_branch ?? "main"]) }));
+      } else {
+        setWorktreeDiff(await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree!.worktree_path, parentRef: worktree!.parent_ref }));
+      }
     }
     catch (error) { onToast(String(error)); }
     finally { setDiffLoading(false); }
-  }, [worktree, isWorkspace, repositories, onToast]);
+  }, [worktree, isWorkspace, repositories, projectPath, onToast]);
 
   useEffect(() => { if (globalChat || !isActive || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, isActive, agentStatus, refreshDiff]);
 
@@ -572,6 +588,7 @@ export default function ChatView({
 
   // LISTENERS + SPAWN in one effect to avoid race: get_available_models lost if spawn before listen
   useEffect(() => {
+    if (!globalChat && !repositoryMapLoaded) return;
     let mounted = true;
     const unlisteners: Array<() => void> = [];
     const retryIds: number[] = [];
@@ -658,6 +675,7 @@ export default function ChatView({
             }
           } else if (cmd === "switch_session" && data.cancelled !== true) {
             setMessages([]);
+            historyLoadedRef.current = false;
             setIsHistoryLoading(true);
             setPendingMessageCount(0);
             trackedTaskRef.current = false;
@@ -700,6 +718,7 @@ export default function ChatView({
             }
             onRuntimeSettings(chatId, modelRef.current, thinkingRef.current);
           } else if (cmd === "get_messages") {
+            historyLoadedRef.current = true;
             setIsHistoryLoading(false);
             const hist = data.messages as Array<Record<string, unknown>> | undefined;
             if (hist && hist.length > 0) {
@@ -885,7 +904,7 @@ export default function ChatView({
           }
           if (!ev.isError && name === "execute_terminal_command") {
             const command = typeof args.command === "string" ? args.command : "";
-            if (command && terminalCommandIsDestructive(command)) setTerminalApproval({ pane: "0", data: `${command}\n` });
+            if (command && terminalCommandIsDestructive(command)) setTerminalApproval({ data: command });
           }
           if (!ev.isError && name === "write_chat_terminal") {
             const pane = typeof args.pane === "string" && /^\d+$/.test(args.pane) ? args.pane : "0";
@@ -934,6 +953,9 @@ export default function ChatView({
       }
       unlisteners.push(u1);
       const stopWithError = (error: string) => {
+        historyLoadedRef.current = true;
+        setIsHistoryLoading(false);
+        setIsNewSessionLoading(false);
         setAgentStatus("stopped");
         setIsStreaming(false);
         onAgentRunning(chatId, false);
@@ -972,14 +994,25 @@ export default function ChatView({
         graphReportRef.current = graph.report_path;
         if (graph.tracked_warning) onToast(graph.tracked_warning);
         if (graph.state === "none" && await confirm({ title: "Build knowledge graph", message: `Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`, confirmLabel: "Build", cancelLabel: "Cancel" })) {
-          graph = await refreshGraph(true) ?? graph;
+          // Full semantic extraction can take minutes; it must not block Pi startup or history restore.
+          void refreshGraph(true);
         } else if (graph.code_stale) {
           // Keep the existing graph available to Pi while the incremental refresh runs.
           void refreshGraph(false);
         }
         graphReportRef.current = graph.report_path;
 
-        if (!isGit || isWorkspace) {
+        if (isWorkspace) {
+          const workspaceCwd = await invoke<string>("ensure_workspace_session", { workspacePath: projectPath, slug });
+          setCwd(workspaceCwd);
+          const [provider, ...modelParts] = modelRef.current.split("/");
+          await invoke("spawn_pi_rpc", {
+            sessionId, cwd: workspaceCwd, sessionFile: sessionFileRef.current,
+            provider: modelParts.length ? provider : undefined,
+            model: modelParts.length ? modelParts.join("/") : modelRef.current || undefined,
+            thinking: thinkingRef.current || undefined, graphReportPath: graphReportRef.current, projectName,
+          });
+        } else if (!isGit) {
           setCwd(projectPath);
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
@@ -1023,14 +1056,25 @@ export default function ChatView({
           sendRaw({ type: "get_messages" });
           sendRaw({ type: "get_session_stats" });
         };
+        historyLoadedRef.current = !sessionFileRef.current;
         initial();
         setChatReady(true);
+        if (sessionFileRef.current) {
+          retryIds.push(window.setTimeout(() => mounted && !historyLoadedRef.current && sendRaw({ type: "get_messages" }), 3000));
+          retryIds.push(window.setTimeout(() => {
+            if (!mounted || historyLoadedRef.current) return;
+            historyLoadedRef.current = true;
+            setIsHistoryLoading(false);
+            onToast("Chat history restore timed out — the session is ready; retry by reopening it.");
+          }, 15000));
+        }
         // pi boot takes time for extensions, retry models
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 2000));
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 5000));
         retryIds.push(window.setTimeout(() => mounted && sendRaw({ type: "get_available_models" }), 9000));
       } catch (e) {
         const msg = String(e);
+        historyLoadedRef.current = true;
         setIsHistoryLoading(false);
         if (msg.includes("detached") || msg.includes("not found") || msg.includes("does not exist")) setDriveDetached(true);
         setMessages((prev) => settleWithError(prev, msg));
@@ -1045,7 +1089,7 @@ export default function ChatView({
       retryIds.forEach(clearTimeout);
       unlisteners.forEach((u) => u());
     };
-  }, [projectPath, projectName, isGit, isWorkspace, globalChat, customSystemPrompt, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
+  }, [projectPath, projectName, isGit, isWorkspace, repositoryMapLoaded, globalChat, customSystemPrompt, slug, chatId, sessionId, sendRaw, onToast, onSessionFile, onAgentRunning, onUnread, appendTextDelta, appendThinkingDelta, upsertToolCall, refreshGraph, updateGraphIfCodeStale, syncKanbanTask]);
 
   useEffect(() => {
     if (globalChat || !devRunner) return;
@@ -1851,8 +1895,8 @@ export default function ChatView({
               <div className="chat-changes">
                 <strong>FILES CHANGED</strong>
                 {worktreeDiff.files.map((file) => (
-                  <button key={file.path} onClick={() => setExpandedDiff(file.path)}>
-                    <span>{file.status}</span><b>{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
+                  <button key={`${file.repository ?? ""}:${file.path}`} onClick={() => setExpandedDiff(file.path)}>
+                    <span>{file.status}</span><b>{file.repository && <small>{file.repository}</small>}{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
                   </button>
                 ))}
               </div>
@@ -1873,12 +1917,25 @@ export default function ChatView({
               <div>
                 <button className="approval-primary" onClick={() => {
                   const request = terminalApproval;
-                  setTerminalApproval(null);
-                  void invoke("terminal_write", { chatId: `${chatId}__${request.pane}`, data: request.data })
-                    .then(() => sendRaw({ type: "follow_up", message: `The user approved and sent your destructive terminal command to pane ${request.pane}. Read its output and continue the task.` }))
-                    .catch((error) => onToast(`Terminal: ${String(error)}`));
-                }}>✅ Approve</button>
-                <button onClick={() => {
+                  setTerminalApprovalStatus("executing");
+                  const approved = request.pane
+                    ? invoke("terminal_write", { chatId: `${chatId}__${request.pane}`, data: request.data }).then(() => `Command sent to pane ${request.pane}. Read its output now.`)
+                    : invoke<string>("terminal_execute_approved", { cwd: cwdRef.current, command: request.data });
+                  void approved
+                    .then(async (output) => {
+                      setTerminalApprovalStatus("refreshing");
+                      await refreshDiff();
+                      setTerminalApproval(null);
+                      return sendRaw({ type: "follow_up", message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.` });
+                    })
+                    .catch((error) => {
+                      const message = `Approved terminal command failed: ${String(error)}`;
+                      onToast(message);
+                      void sendRaw({ type: "follow_up", message });
+                    })
+                    .finally(() => setTerminalApprovalStatus(null));
+                }} disabled={terminalApprovalStatus !== null}>{terminalApprovalStatus === "executing" ? "EXECUTING…" : terminalApprovalStatus === "refreshing" ? "REFRESHING CHANGES…" : "✅ Approve"}</button>
+                <button disabled={terminalApprovalStatus !== null} onClick={() => {
                   setTerminalApproval(null);
                   void sendRaw({ type: "follow_up", message: "Terminal command denied by the user. Do not execute it; explain alternatives if needed." });
                   onToast("Terminal command denied");
@@ -2192,31 +2249,31 @@ export default function ChatView({
                   </button>
                   {!rightChangesCollapsed && (
                     <div className="code-section-body diff-code-body">
-                      {!worktreeDiff || worktreeDiff.files.length === 0 ? (
-                        <p className="code-empty">{diffLoading ? "LOADING…" : "WORKTREE CLEAN"}</p>
-                      ) : (
-                        <>
-                          <details className="code-diff-accordion" open>
-                            <summary><span>Changed files</span><small>{worktreeDiff.files.length}</small></summary>
-                            <div className="code-diff-list">
-                              {worktreeDiff.files.map((file) => (
-                                <button key={file.path} onClick={() => setExpandedDiff(file.path)}>
-                                  <span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b>
-                                </button>
-                              ))}
-                            </div>
-                          </details>
-                          <button
-                            className="ship-changes"
-                            disabled={!worktreeDiff.files.length}
-                            onClick={() => {
-                              const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}. Follow its required pipeline logging and report any logging failure.`;
-                              setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
-                              void sendRaw({ type: "prompt", message });
-                            }}
-                          >SHIP CHANGES</button>
-                        </>
-                      )}
+                      {diffLoading && !worktreeDiff ? <p className="code-empty">LOADING…</p> : isWorkspace ? (
+                        <div className="repository-status-list">
+                          {repositoryStatuses.map((repository) => {
+                            const files = worktreeDiff?.files.filter((file) => file.repository === repository.name) ?? [];
+                            return <details className="code-diff-accordion repository-status" key={repository.path} open={files.length > 0}>
+                              <summary><span>{repository.name}</span><small>{files.length ? `${files.length} changed` : "Clean"}</small></summary>
+                              <div className="repository-status-meta">
+                                <span><b>Branch</b>{repository.branch ?? repository.base_branch ?? "detached"}{repository.tracking_branch ? ` → ${repository.tracking_branch}` : ""}</span>
+                                <span><b>Sync</b>↑{repository.ahead ?? 0} ↓{repository.behind ?? 0}</span>
+                                <span title={repository.remote_url}><b>Remote</b>{repository.remote_url ?? "Not configured"}</span>
+                                <span><b>Worktree</b>{files.length ? "Active in this chat" : "Not activated · source clean"}</span>
+                              </div>
+                              {files.length > 0 && <div className="code-diff-list">{files.map((file) => <button key={`${repository.name}:${file.path}`} onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></button>)}</div>}
+                            </details>;
+                          })}
+                          {!!worktreeDiff?.files.length && <button className="ship-changes" onClick={() => {
+                            const message = `Use the git-push-workflow skill to review and ship changes repository by repository. Never combine commits across repositories. Project pipeline type: ${pipelineType}.`;
+                            setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
+                            void sendRaw({ type: "prompt", message });
+                          }}>SHIP CHANGES · {new Set(worktreeDiff.files.map((file) => file.repository)).size} REPOSITORIES</button>}
+                        </div>
+                      ) : !worktreeDiff || worktreeDiff.files.length === 0 ? <p className="code-empty">{diffLoading ? "LOADING…" : "WORKTREE CLEAN"}</p> : <>
+                        <details className="code-diff-accordion" open><summary><span>Changed files</span><small>{worktreeDiff.files.length}</small></summary><div className="code-diff-list">{worktreeDiff.files.map((file) => <button key={file.path} onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></button>)}</div></details>
+                        <button className="ship-changes" onClick={() => { const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}.`; setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]); void sendRaw({ type: "prompt", message }); }}>SHIP CHANGES</button>
+                      </>}
                     </div>
                   )}
                 </section>

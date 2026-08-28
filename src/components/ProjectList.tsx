@@ -14,6 +14,12 @@ export type ProjectInfo = {
   is_git: boolean;
   base_branch?: string;
   pipeline_type?: string;
+  branch?: string;
+  tracking_branch?: string;
+  remote_url?: string;
+  ahead?: number;
+  behind?: number;
+  dirty_files?: string[];
   repositories?: ProjectInfo[];
 };
 
@@ -45,6 +51,8 @@ export default function ProjectList({
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
   const [baseBranch, setBaseBranch] = useState("");
+  const [repositoryBranches, setRepositoryBranches] = useState<Record<string, string[]>>({});
+  const [repositoryBases, setRepositoryBases] = useState<Record<string, string>>({});
   const [projectToDelete, setProjectToDelete] = useState<ProjectInfo | null>(null);
   const [projectToEdit, setProjectToEdit] = useState<ProjectInfo | null>(null);
   const [taskSource, setTaskSource] = useState<TaskSource>({ type: "local", url: "", sheets: [], pics: [] });
@@ -52,6 +60,7 @@ export default function ProjectList({
   const [availablePics, setAvailablePics] = useState<string[]>([]);
   const [loadingSheets, setLoadingSheets] = useState(false);
   const [loadingPics, setLoadingPics] = useState(false);
+  const [fetchingBranches, setFetchingBranches] = useState(false);
   const registerDialogRef = useModalFocus<HTMLDivElement>(() => setPendingPath(null), Boolean(pendingPath));
   const settingsDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToEdit(null), Boolean(projectToEdit));
   const removeDialogRef = useModalFocus<HTMLDivElement>(() => setProjectToDelete(null), Boolean(projectToDelete));
@@ -99,9 +108,15 @@ export default function ProjectList({
 
   async function editBaseBranch(project: ProjectInfo) {
     try {
-      const nextBranches = await invoke<string[]>("list_project_branches", { path: project.path });
+      const nextBranches = project.is_git ? await invoke<string[]>("list_project_branches", { path: project.path }) : [];
       setBranches(nextBranches);
       setBaseBranch(project.base_branch ?? nextBranches[0] ?? "");
+      const repositoryEntries = await Promise.all((project.repositories ?? []).map(async (repository) => {
+        const options = await invoke<string[]>("list_project_branches", { path: repository.path });
+        return [repository.path, options, repository.base_branch ?? options[0] ?? ""] as const;
+      }));
+      setRepositoryBranches(Object.fromEntries(repositoryEntries.map(([path, options]) => [path, options])));
+      setRepositoryBases(Object.fromEntries(repositoryEntries.map(([path, , selected]) => [path, selected])));
       const source = await invoke<TaskSource>("get_project_task_source", { path: project.path });
       const selectedSheets = source.sheets?.length ? source.sheets : source.sheet ? [source.sheet] : [];
       setTaskSource({ ...source, sheets: selectedSheets });
@@ -118,10 +133,39 @@ export default function ProjectList({
     if (!projectToEdit || !baseBranch) return;
     try {
       const project = await invoke<ProjectInfo>("update_project_base_branch", { path: projectToEdit.path, baseBranch });
-      setProjects((prev) => prev.map((item) => item.path === project.path ? project : item));
+      setProjects((prev) => prev.map((item) => item.path === project.path ? project : { ...item, repositories: item.repositories?.map((repository) => repository.path === project.path ? project : repository) }));
       setProjectToEdit(null);
       setBranches([]);
       setBaseBranch("");
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  async function fetchAllRepositoryBranches() {
+    if (!projectToEdit?.repositories?.length) return;
+    setFetchingBranches(true);
+    try {
+      const fetched = await Promise.all(projectToEdit.repositories.map(async (repository) => [repository.path, await invoke<string[]>("fetch_project_branches", { path: repository.path })] as const));
+      setRepositoryBranches(Object.fromEntries(fetched));
+      onToast("Fetched and pruned branches for all workspace repositories.");
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setFetchingBranches(false);
+    }
+  }
+
+  async function saveRepositoryBaseBranch(repository: ProjectInfo) {
+    const selected = repositoryBases[repository.path];
+    if (!selected) return;
+    try {
+      const updated = await invoke<ProjectInfo>("update_project_base_branch", { path: repository.path, baseBranch: selected });
+      setProjects((prev) => prev.map((project) => ({ ...project, repositories: project.repositories?.map((item) => item.path === updated.path ? updated : item) })));
+      setProjectToEdit((project) => project ? { ...project, repositories: project.repositories?.map((item) => item.path === updated.path ? updated : item) } : project);
+      onToast(`${repository.name} base branch saved: ${selected}`);
       setErr(null);
     } catch (e) {
       setErr(String(e));
@@ -206,6 +250,7 @@ export default function ProjectList({
           <strong id="edit-base-branch-title">{projectToEdit.name}</strong>
           <span>{projectToEdit.path}</span>
           {projectToEdit.is_git && <section><h3>GENERAL</h3><ListPicker label="BASE BRANCH" value={baseBranch} options={branches} includeAll={false} onChange={setBaseBranch} /><p>New chats use this branch. Existing chat baselines stay unchanged.</p><button className="project-save-branch" onClick={saveBaseBranch}>SAVE BRANCH</button></section>}
+          {!projectToEdit.is_git && !!projectToEdit.repositories?.length && <section className="workspace-repository-settings"><h3>REPOSITORIES</h3><p>Each repository uses its own base branch for new chat worktrees and diff baselines.</p><button type="button" className="project-load-pics" disabled={fetchingBranches} onClick={() => void fetchAllRepositoryBranches()}>{fetchingBranches ? "FETCHING BRANCHES…" : "FETCH ALL BRANCHES"}</button>{projectToEdit.repositories.map((repository) => <div className="workspace-repository-setting" key={repository.path}><strong>{repository.name}</strong><ListPicker label="BASE BRANCH" value={repositoryBases[repository.path] ?? ""} options={repositoryBranches[repository.path] ?? []} includeAll={false} onChange={(value) => setRepositoryBases((current) => ({ ...current, [repository.path]: value }))} /><button className="project-save-branch" onClick={() => void saveRepositoryBaseBranch(repository)}>SAVE BRANCH</button></div>)}</section>}
           <section className="project-task-source"><h3>TASK SOURCE</h3><ListPicker label="SOURCE" value={taskSource.type} options={["local", "google_sheets"]} includeAll={false} formatOption={(value) => value === "local" ? "Local JSON" : "Google Sheets · read-only"} onChange={(type) => setTaskSource({ ...taskSource, type: type as TaskSource["type"] })} />{taskSource.type === "google_sheets" && <><label><span>PUBLIC SHEET URL</span><input type="url" value={taskSource.url} onChange={(event) => { setTaskSource({ ...taskSource, url: event.target.value, sheets: [] }); setAvailableSheets([]); setAvailablePics([]); }} placeholder="https://docs.google.com/spreadsheets/d/…/edit" /></label><button type="button" className="project-load-pics" disabled={loadingSheets} onClick={loadSheets}>{loadingSheets ? "READING WORKSHEETS…" : "LOAD WORKSHEETS"}</button>{availableSheets.length > 0 && <fieldset className="project-pic-options"><legend>INCLUDE WORKSHEETS</legend>{availableSheets.map((sheet) => <label key={sheet}><input type="checkbox" checked={taskSource.sheets.includes(sheet)} onChange={(event) => setTaskSource((source) => ({ ...source, sheets: event.target.checked ? [...source.sheets, sheet] : source.sheets.filter((selected) => selected !== sheet) }))} /><span>{sheet}</span></label>)}</fieldset>}<button type="button" className="project-load-pics" disabled={loadingPics || taskSource.sheets.length === 0} onClick={loadPics}>{loadingPics ? "READING SHEET…" : "LOAD PIC"}</button>{availablePics.length > 0 && <fieldset className="project-pic-options"><legend>INCLUDE TASKS FOR</legend>{availablePics.map((pic) => <label key={pic}><input type="checkbox" checked={taskSource.pics.includes(pic)} onChange={(event) => setTaskSource((source) => ({ ...source, pics: event.target.checked ? [...source.pics, pic] : source.pics.filter((selected) => selected !== pic) }))} /><span>{pic}</span></label>)}</fieldset>}</>}<p>{taskSource.type === "local" ? "Use the existing local backlog file." : "Load the sheet, then select which PIC should appear in Kanban. No PIC selected means no tasks are imported."}</p><button className="project-save-task-source" onClick={saveTaskSource}>SAVE TASK SOURCE</button></section>
           <section><h3>PIPELINE</h3><p>Configure presets, commands, failure policies, and consult AI.</p><button className="project-open-pipeline" onClick={() => { const project = projectToEdit; setProjectToEdit(null); onPipelineSettings(project); }}>OPEN PIPELINE SETTINGS</button></section>
           <section className="project-danger-zone"><h3>DANGER ZONE</h3><p>Remove this registration only. Repository files remain untouched.</p><button onClick={() => { setProjectToDelete(projectToEdit); setProjectToEdit(null); }}>REMOVE PROJECT</button></section>
@@ -246,7 +291,7 @@ export default function ProjectList({
                 <summary title={`Actions for ${project.name}`} aria-label={`Actions for ${project.name}`}><MenuDotsIcon /></summary>
                 <div className="project-row-menu">
                   <button onClick={(event) => { onNewSession(project); event.currentTarget.closest("details")?.removeAttribute("open"); }}><PlusIcon /><span>New session</span></button>
-                  <button onClick={(event) => { void editBaseBranch(project); event.currentTarget.closest("details")?.removeAttribute("open"); }}><SettingsIcon /><span>Project settings</span></button>
+                  <button onClick={(event) => { void editBaseBranch(project); event.currentTarget.closest("details")?.removeAttribute("open"); }}><SettingsIcon /><span>{project.is_git ? "Project settings" : "Workspace settings"}</span></button>
                 </div>
               </details>
             </div>
