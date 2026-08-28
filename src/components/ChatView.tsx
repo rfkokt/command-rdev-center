@@ -1140,6 +1140,17 @@ export default function ChatView({
     void sendPrompt(initialPrompt).then((sent) => { if (sent) onInitialPromptConsumed?.(); });
   }, [initialPrompt, chatReady, agentStatus, messages.length]);
 
+  useEffect(() => {
+    const useSkill = (event: Event) => {
+      const name = (event as CustomEvent<string>).detail;
+      if (!name || !chatReady) return;
+      setInput(`/skill:${name}`);
+      inputRef.current?.focus();
+    };
+    window.addEventListener("crc-skill-ready", useSkill);
+    return () => window.removeEventListener("crc-skill-ready", useSkill);
+  }, [chatReady]);
+
   async function attachFiles() {
     try {
       const paths = await open({ multiple: true, title: "Attach files to chat" });
@@ -1802,7 +1813,7 @@ export default function ChatView({
             {m.images && m.images.length > 0 && <div className="chat-images">{m.images.map((image, index) => <button key={index} onClick={() => setPreviewImage(image)} aria-label={`Preview attachment ${index + 1}`}><img src={`data:${image.mimeType};base64,${image.data}`} alt="Pasted attachment" /></button>)}</div>}
             {m.toolCalls.filter((tool) => tool.name === "recommend_global_skills").map((tool) => {
               const skills = Array.isArray(tool.args.skills) ? tool.args.skills.filter((name): name is string => typeof name === "string") : [];
-              return skills.length ? <section className="skill-recommendation" key={tool.callId} role="status"><div><small>SKILL RECOMMENDATION</small><strong>{skills.join(" · ")}</strong><span>{typeof tool.args.reason === "string" ? tool.args.reason : "Recommended by the agent."}</span></div><div>{skills.map((name) => <button key={name} onClick={() => { setInput(`Use skill ${name} untuk request sebelumnya.`); inputRef.current?.focus(); }}>Use {name}</button>)}</div></section> : null;
+              return skills.length ? <section className="skill-recommendation" key={tool.callId} role="status"><div><small>SKILL RECOMMENDATION</small><strong>{skills.join(" · ")}</strong><span>{typeof tool.args.reason === "string" ? tool.args.reason : "Recommended by the agent."}</span></div><div>{skills.map((name) => <button key={name} onClick={() => { setInput(`/skill:${name}`); inputRef.current?.focus(); }}>Use {name}</button>)}</div></section> : null;
             })}
             {m.toolCalls.filter((tool) => isWebSearchTool(tool.name)).map((tool) => <ToolCallView key={tool.callId} tc={tool} />)}
             {m.toolCalls.some((tool) => !isWebSearchTool(tool.name) && tool.name !== "recommend_global_skills") && (() => {

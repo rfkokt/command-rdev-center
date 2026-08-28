@@ -194,6 +194,26 @@ export default function App() {
     newGlobalChat();
   }
 
+  useEffect(() => {
+    const useSkill = (event: Event) => {
+      const name = (event as CustomEvent<string>).detail;
+      if (!name) return;
+      setDashboard(null);
+      const tab = tabs.find((item) => item.id === activeTabIdRef.current) ?? tabs[tabs.length - 1];
+      if (tab) {
+        activateTab(tab.id);
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent("crc-skill-ready", { detail: name })), 50);
+      } else {
+        const id = `global-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        setSelectedProject(null);
+        setTabs((prev) => [...prev, { id, project: GLOBAL_PROJECT, global: true, initialPrompt: `/skill:${name}` }]);
+        setActiveTabId(id);
+      }
+    };
+    window.addEventListener("crc-use-skill", useSkill);
+    return () => window.removeEventListener("crc-use-skill", useSkill);
+  }, [tabs]);
+
   function newTaskConversation(task: KanbanTaskContext) {
     if (!workspaceProject) return;
     const prompt = [
