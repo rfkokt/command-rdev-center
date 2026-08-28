@@ -7,9 +7,15 @@ describe("terminalCommandIsDestructive", () => {
     expect(terminalCommandIsDestructive("ssh contabo-rdev 'hostname && uptime'")).toBe(false);
   });
 
-  test("gates destructive remote commands", () => {
+  test("allows routine file and git maintenance", () => {
+    expect(terminalCommandIsDestructive("rm /tmp/stale.index.lock && git add src && git commit -m fix")).toBe(false);
+    expect(terminalCommandIsDestructive("chmod 644 config.json && git push origin main")).toBe(false);
+  });
+
+  test("gates high-impact destructive commands", () => {
     expect(terminalCommandIsDestructive("ssh contabo-rdev 'systemctl restart nginx'")).toBe(true);
     expect(terminalCommandIsDestructive("rm -rf /tmp/example")).toBe(true);
+    expect(terminalCommandIsDestructive("git clean -fd")).toBe(true);
   });
 });
 
