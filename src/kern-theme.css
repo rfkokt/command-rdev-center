@@ -105,7 +105,6 @@
   box-shadow: inset 5px 0 0 #111411;
 }
 
-[data-color-theme="kern"] .toolbar-button-primary,
 [data-color-theme="kern"] .button-primary,
 [data-color-theme="kern"] .chat-action,
 [data-color-theme="kern"] .save-settings,
@@ -115,7 +114,15 @@
   color: var(--accent-contrast);
 }
 
+[data-color-theme="kern"] .toolbar-button-primary,
+[data-color-theme="kern"] .toolbar-button-primary span,
+[data-color-theme="kern"] .toolbar-button-primary svg {
+  color: var(--text-primary);
+}
+
 [data-color-theme="kern"] .toolbar-button-primary:hover,
+[data-color-theme="kern"] .toolbar-button-primary:hover span,
+[data-color-theme="kern"] .toolbar-button-primary:hover svg,
 [data-color-theme="kern"] .button-primary:hover,
 [data-color-theme="kern"] .chat-action:hover,
 [data-color-theme="kern"] .save-settings:hover {

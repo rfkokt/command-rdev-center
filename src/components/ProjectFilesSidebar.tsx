@@ -96,16 +96,7 @@ export default function ProjectFilesSidebar({
     invoke<ProjectFile[]>("list_project_files", { projectPath })
       .then((list) => {
         setFiles(list);
-        // auto-expand first level folders
-        setExpanded((prev) => {
-          const next = new Set(prev);
-          next.add("");
-          for (const f of list) {
-            const dir = f.relative.includes("/") ? f.relative.split("/").slice(0, -1).join("/") : "";
-            if (dir && dir.split("/").length === 1) next.add(dir);
-          }
-          return next;
-        });
+        setExpanded((prev) => new Set(["", ...[...prev].filter((path) => path && list.some((file) => file.relative.startsWith(`${path}/`)))]));
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
@@ -164,23 +155,27 @@ export default function ProjectFilesSidebar({
   return (
     <section className="project-files-sidebar" aria-label={`Files in ${projectName}`}>
       <div className="pfs-toolbar">
-        <input
-          aria-label="Filter project files"
-          placeholder="FILTER FILES…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="pfs-filter"
-        />
-        <span className="pfs-count">{loading ? "…" : q ? `${filteredFiles?.length ?? 0}` : `${files.length}`}</span>
+        <label className="pfs-search">
+          <span aria-hidden>⌕</span>
+          <input
+            aria-label="Filter project files"
+            placeholder="Search files"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="pfs-filter"
+          />
+          {q && <small>{filteredFiles?.length ?? 0}</small>}
+        </label>
+        <button onClick={() => setExpanded(new Set([""]))} className="pfs-refresh" title="Collapse folders" aria-label="Collapse all folders">−</button>
         <button onClick={reload} disabled={loading} className="pfs-refresh" title="Refresh files" aria-label="Refresh files">
           <RefreshIcon />
         </button>
       </div>
 
       {recentPaths.length > 0 && !q && (
-        <div className="pfs-recent">
-          <small>RECENT</small>
-          {recentPaths.map((p) => (
+        <details className="pfs-recent">
+          <summary><span>Recent</span><small>{Math.min(recentPaths.length, 5)}</small></summary>
+          {recentPaths.slice(0, 5).map((p) => (
             <button
               key={p}
               className="pfs-recent-item"
@@ -190,10 +185,10 @@ export default function ProjectFilesSidebar({
               }}
               title={p}
             >
-              {p}
+              <span>{p.split("/").pop()}</span><small>{p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "workspace"}</small>
             </button>
           ))}
-        </div>
+        </details>
       )}
 
       {error && (
@@ -218,7 +213,7 @@ export default function ProjectFilesSidebar({
                   onClick={() => void openFile(f)}
                   title={`${f.relative} · ${f.chars} chars`}
                 >
-                  <span className="pfs-file-icon" aria-hidden>
+                  <span className={`pfs-file-icon file-${fileKind(f.name)}`} aria-hidden>
                     {iconFor(f.name)}
                   </span>
                   <span className="pfs-file-name" style={{ whiteSpace: "normal", wordBreak: "break-all" }}>
@@ -370,12 +365,12 @@ function TreeFolder({
     {sortedFiles.map((f) => (
       <li key={f.path}>
         <button
-          className={`pfs-file${previewName === f.relative ? " active" : ""}`}
+          className={`pfs-file${previewName === f.relative ? " active" : ""}${depth === 0 ? " root-file" : ""}`}
           style={{ paddingLeft: 8 + depth * 12 + (depth > 0 ? 16 : 0) }}
           onClick={() => openFile(f)}
           title={`${f.relative} · ${f.chars} chars`}
         >
-          <span className="pfs-file-icon" aria-hidden>{iconFor(f.name)}</span>
+          <span className={`pfs-file-icon file-${fileKind(f.name)}`} aria-hidden>{iconFor(f.name)}</span>
           <span className="pfs-file-name">{f.name}</span>
           <small className="pfs-file-meta">{f.chars ? shortChars(f.chars) : "bin"}</small>
         </button>
@@ -385,7 +380,7 @@ function TreeFolder({
 
   if (depth === 0) return children;
   return <li>
-    <button className="pfs-folder" style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
+    <button className={`pfs-folder${depth === 1 ? " repository-root" : ""}`} style={{ paddingLeft: 8 + (depth - 1) * 12 }} onClick={() => toggleFolder(folder.rel)} aria-expanded={isExpanded}>
       <span className="pfs-folder-chevron" aria-hidden>{isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}</span>
       <span className="pfs-folder-icon" aria-hidden>{isExpanded ? <FolderOpenIcon /> : <FolderIcon />}</span>
       <span className="pfs-folder-name">{folder.name}</span>
@@ -402,46 +397,31 @@ function shortChars(n: number) {
   return `${Math.round(n / 1000)}k`;
 }
 
+function fileKind(name: string) {
+  const lower = name.toLowerCase();
+  if (lower === "package.json" || lower.endsWith("lock.json")) return "package";
+  if (lower.startsWith(".env")) return "env";
+  return lower.split(".").pop()?.replace(/[^a-z0-9]/g, "") || "file";
+}
+
 function iconFor(name: string) {
-  const ext = name.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "md":
-    case "mdx":
-      return "◫";
-    case "json":
-      return "{}";
-    case "csv":
-      return "▤";
-    case "txt":
-      return "≡";
-    case "ts":
-    case "tsx":
-      return "TS";
-    case "js":
-    case "jsx":
-      return "JS";
-    case "rs":
-      return "RS";
-    case "css":
-    case "scss":
-      return "#";
-    case "html":
-      return "<>";
-    case "toml":
-    case "yaml":
-    case "yml":
-      return <SettingsIcon />;
-    case "svg":
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "gif":
-    case "webp":
-    case "bmp":
-    case "ico":
-      return "◫";
-    default:
-      return <FileIcon />;
+  const kind = fileKind(name);
+  switch (kind) {
+    case "md": case "mdx": return "M↓";
+    case "json": case "package": return "{}";
+    case "csv": return "▤";
+    case "txt": return "≡";
+    case "ts": return "TS";
+    case "tsx": return "TX";
+    case "js": return "JS";
+    case "jsx": return "JX";
+    case "rs": return "RS";
+    case "css": case "scss": case "sass": return "#";
+    case "html": return "<>";
+    case "toml": case "yaml": case "yml": case "env": return <SettingsIcon />;
+    case "svg": case "png": case "jpg": case "jpeg": case "gif": case "webp": case "bmp": case "ico": return "▧";
+    case "sh": case "bash": case "zsh": return ">_";
+    default: return <FileIcon />;
   }
 }
 

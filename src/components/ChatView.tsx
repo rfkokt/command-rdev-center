@@ -31,11 +31,12 @@ import {
 import ToolCallView, { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
-import { ChangesIcon, ChevronDownIcon, ChevronRightIcon, ExplorerIcon } from "./Icons";
+import { ChangesIcon, ExplorerIcon } from "./Icons";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
+import SourceControlPanel from "./SourceControlPanel";
 import TerminalPanel from "./TerminalPanel";
 import { isActiveResearch, type ResearchRun } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
@@ -190,7 +191,7 @@ export default function ChatView({
   projectName,
   isGit,
   repositories,
-  pipelineType,
+  pipelineType: _pipelineType,
   chatId,
   sessionFile,
   initialModel,
@@ -266,8 +267,6 @@ export default function ChatView({
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [terminalApproval, setTerminalApproval] = useState<{ pane?: string; data: string } | null>(null);
   const [terminalApprovalStatus, setTerminalApprovalStatus] = useState<"executing" | "refreshing" | null>(null);
-  const [terminalUrl, setTerminalUrl] = useState<string | null>(null);
-  const terminalUrlRef = useRef<string | null>(null);
   const [agentStatus, setAgentStatus] = useState<"idle" | "running" | "stopped">(initialInterrupted ? "stopped" : "idle");
   const [driveDetached, setDriveDetached] = useState(false);
   const [models, setModels] = useState<string[]>([]);
@@ -281,15 +280,12 @@ export default function ChatView({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [rightChangesCollapsed, setRightChangesCollapsed] = useState(false);
-  const [rightExplorerCollapsed, setRightExplorerCollapsed] = useState(false);
+  const [rightActivity, setRightActivity] = useState<"explorer" | "scm">("explorer");
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
-  const [explorerHeight, setExplorerHeight] = useState(400);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number; minX: number; maxX: number; minY: number; maxY: number } | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
   const [graphError, setGraphError] = useState<string | null>(null);
@@ -502,29 +498,26 @@ export default function ChatView({
 
   const refreshDiff = useCallback(async () => {
     if (!worktree && !isWorkspace) return;
-    setDiffLoading(true);
     try {
       if (isWorkspace) {
         const projects = await invoke<Array<{ path: string; repositories?: typeof repositories }>>("list_projects");
         const fresh = projects.find((project) => project.path === projectPath)?.repositories ?? repositories;
         setRepositoryStatuses(fresh);
-        setWorktreeDiff(await invoke<WorktreeDiff>("get_workspace_diff", { repositories: fresh.map((repository) => [repository.name, repository.path, repository.base_branch ?? "main"]) }));
+        setWorktreeDiff(await invoke<WorktreeDiff>("get_workspace_diff", { repositories: fresh.map((repository) => [repository.name, `${cwdRef.current}/${repository.name}`, repository.base_branch ?? "main"]) }));
       } else {
         setWorktreeDiff(await invoke<WorktreeDiff>("get_worktree_diff", { worktreePath: worktree!.worktree_path, parentRef: worktree!.parent_ref }));
       }
-    }
-    catch (error) { onToast(String(error)); }
-    finally { setDiffLoading(false); }
+    } catch (error) { onToast(String(error)); }
   }, [worktree, isWorkspace, repositories, projectPath, onToast]);
 
   useEffect(() => { if (globalChat || !isActive || agentStatus !== "idle") return; void refreshDiff(); }, [globalChat, isActive, agentStatus, refreshDiff]);
 
   useEffect(() => {
-    if (globalChat || !isActive || agentStatus !== "running" || !rightSidebarOpen || rightChangesCollapsed) return;
+    if (globalChat || !isActive || agentStatus !== "running" || !rightSidebarOpen || rightActivity !== "scm") return;
     void refreshDiff();
     const id = window.setInterval(refreshDiff, 2000);
     return () => window.clearInterval(id);
-  }, [globalChat, isActive, agentStatus, refreshDiff, rightChangesCollapsed, rightSidebarOpen]);
+  }, [globalChat, isActive, agentStatus, refreshDiff, rightActivity, rightSidebarOpen]);
 
   useEffect(() => {
     if (agentStatus !== "running") return;
@@ -993,10 +986,7 @@ export default function ChatView({
         setGraphStatus(graph);
         graphReportRef.current = graph.report_path;
         if (graph.tracked_warning) onToast(graph.tracked_warning);
-        if (graph.state === "none" && await confirm({ title: "Build knowledge graph", message: `Build Graphify knowledge graph for ${projectName}? This full build may use an LLM for docs.`, confirmLabel: "Build", cancelLabel: "Cancel" })) {
-          // Full semantic extraction can take minutes; it must not block Pi startup or history restore.
-          void refreshGraph(true);
-        } else if (graph.code_stale) {
+        if (graph.code_stale) {
           // Keep the existing graph available to Pi while the incremental refresh runs.
           void refreshGraph(false);
         }
@@ -1390,12 +1380,6 @@ export default function ChatView({
     setShowTerminal((v) => !v);
   }
 
-  const handleTerminalUrl = useCallback((url: string) => {
-    if (terminalUrlRef.current === url) return;
-    terminalUrlRef.current = url;
-    setTerminalUrl(url);
-  }, []);
-
   async function handleRunDev() {
     try {
       const key = `crc-dev-command:${projectPath}`;
@@ -1729,7 +1713,7 @@ export default function ChatView({
         </div>}
       </div>
 
-      {terminalMounted && <TerminalPanel chatId={chatId} cwd={cwd} hidden={!showTerminal} onClose={() => setShowTerminal(false)} onUrl={handleTerminalUrl} />}
+      {terminalMounted && <TerminalPanel chatId={chatId} cwd={cwd} hidden={!showTerminal} onClose={() => setShowTerminal(false)} />}
 
       {pendingDevCommand && <div className="project-branch-backdrop" role="presentation">
         <div ref={devDialogRef} className="project-branch-picker dev-command-dialog" role="dialog" aria-modal="true" aria-labelledby="dev-command-title" tabIndex={-1}>
@@ -1901,16 +1885,6 @@ export default function ChatView({
                 ))}
               </div>
             )}
-            {m.id === lastAssistantId && terminalUrl && <section className="terminal-command-approval" role="alert">
-              <small>TERMINAL · AUTHENTICATION REQUIRED</small>
-              <a href={terminalUrl} target="_blank" rel="noreferrer">Open authentication link ↗</a>
-              <code>{terminalUrl}</code>
-              <div><button onClick={() => {
-                setTerminalUrl(null);
-                terminalUrlRef.current = null;
-                void sendRaw({ type: "follow_up", message: "The user finished the terminal authentication step. Read pane 0 now and continue the task." });
-              }}>✅ I’ve authenticated</button></div>
-            </section>}
             {m.id === lastAssistantId && terminalApproval && <section className="terminal-command-approval" role="alert">
               <small>AGENT REQUEST · TERMINAL COMMAND</small>
               <pre>{terminalApproval.data}</pre>
@@ -2158,25 +2132,25 @@ export default function ChatView({
         <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}`}>
           <div className="activity-rail vscode-rail">
             <button
-              className={rightSidebarOpen && !rightExplorerCollapsed ? "active" : ""}
+              className={rightSidebarOpen && rightActivity === "explorer" ? "active" : ""}
               onClick={() => {
-                if (rightSidebarOpen && !rightExplorerCollapsed) setRightSidebarOpen(false);
-                else { setRightSidebarOpen(true); setRightExplorerCollapsed(false); }
+                if (rightSidebarOpen && rightActivity === "explorer") setRightSidebarOpen(false);
+                else { setRightSidebarOpen(true); setRightActivity("explorer"); }
               }}
-              title={rightSidebarOpen && !rightExplorerCollapsed ? "Hide Explorer" : "Explorer · Project files"}
+              title={rightSidebarOpen && rightActivity === "explorer" ? "Hide Explorer" : "Explorer · Project files"}
               aria-label="Explorer"
-              aria-expanded={rightSidebarOpen && !rightExplorerCollapsed}
+              aria-expanded={rightSidebarOpen && rightActivity === "explorer"}
             ><ExplorerIcon /></button>
             {(worktree || isWorkspace) && (
               <button
-                className={rightSidebarOpen && !rightChangesCollapsed ? "active" : ""}
+                className={rightSidebarOpen && rightActivity === "scm" ? "active" : ""}
                 onClick={() => {
-                  if (rightSidebarOpen && !rightChangesCollapsed) setRightSidebarOpen(false);
-                  else { setRightSidebarOpen(true); setRightChangesCollapsed(false); }
+                  if (rightSidebarOpen && rightActivity === "scm") setRightSidebarOpen(false);
+                  else { setRightSidebarOpen(true); setRightActivity("scm"); }
                 }}
-                title={rightSidebarOpen && !rightChangesCollapsed ? "Hide Changes" : "Source Control · Changes"}
+                title={rightSidebarOpen && rightActivity === "scm" ? "Hide Changes" : "Source Control · Changes"}
                 aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
-                aria-expanded={rightSidebarOpen && !rightChangesCollapsed}
+                aria-expanded={rightSidebarOpen && rightActivity === "scm"}
               ><ChangesIcon />{Boolean(worktreeDiff?.files.length) && <span className="activity-badge">{worktreeDiff?.files.length}</span>}</button>
             )}
           </div>
@@ -2203,80 +2177,25 @@ export default function ChatView({
                   target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
                 }}
               />
-              <section className={`code-sidebar-section${rightExplorerCollapsed ? " collapsed" : ""}`} style={{ flex: rightExplorerCollapsed ? "none" : worktree || isWorkspace ? `0 0 ${explorerHeight}px` : 1 }}>
-                <button className="code-section-toggle" onClick={() => setRightExplorerCollapsed((c) => !c)} aria-expanded={!rightExplorerCollapsed}>
-                  <span>{rightExplorerCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span><small>Explorer</small><strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{projectName}</strong>
-                </button>
-                {!rightExplorerCollapsed && (
-                  <div className="code-section-body">
-                    <ProjectFilesSidebar
-                      projectPath={projectPath}
-                      projectName={projectName}
-                      refreshKey={worktreeDiff?.files.length ?? 0}
-                      onOpenAt={setExpandedDiff}
-                    />
-                  </div>
-                )}
-              </section>
-              {(worktree || isWorkspace) && !rightExplorerCollapsed && !rightChangesCollapsed && (
-                <div
-                  className="code-sidebar-splitter"
-                  role="separator"
-                  aria-label="Resize file explorer"
-                  aria-orientation="horizontal"
-                  aria-valuemin={100}
-                  aria-valuemax={Math.max(100, window.innerHeight - 150)}
-                  aria-valuenow={explorerHeight}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "ArrowUp") setExplorerHeight((height) => Math.max(100, height - 20));
-                    if (e.key === "ArrowDown") setExplorerHeight((height) => Math.min(window.innerHeight - 150, height + 20));
-                  }}
-                  onPointerDown={(e) => {
-                    e.currentTarget.setPointerCapture(e.pointerId);
-                    const startY = e.clientY;
-                    const startHeight = explorerHeight;
-                    const target = e.currentTarget;
-                    target.onpointermove = (ev) => setExplorerHeight(Math.max(100, Math.min(window.innerHeight - 150, startHeight + (ev.clientY - startY))));
-                    target.onpointerup = () => { target.onpointermove = null; target.onpointerup = null; target.releasePointerCapture(e.pointerId); };
-                  }}
-                />
-              )}
-              {(worktree || isWorkspace) && (
-                <section className={`code-sidebar-section${rightChangesCollapsed ? " collapsed" : ""}`} style={{ flex: 1, maxHeight: "none" }}>
-                  <button className="code-section-toggle" onClick={() => setRightChangesCollapsed((c) => !c)} aria-expanded={!rightChangesCollapsed}>
-                    <span>{rightChangesCollapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}</span><small>Source control</small><strong>Changes{(worktreeDiff?.files.length ?? 0) > 0 ? ` · ${worktreeDiff?.files.length}` : ""}</strong>
-                    {diffLoading && <small style={{ marginLeft: "auto" }}>LOADING…</small>}
-                  </button>
-                  {!rightChangesCollapsed && (
-                    <div className="code-section-body diff-code-body">
-                      {diffLoading && !worktreeDiff ? <p className="code-empty">LOADING…</p> : isWorkspace ? (
-                        <div className="repository-status-list">
-                          {repositoryStatuses.map((repository) => {
-                            const files = worktreeDiff?.files.filter((file) => file.repository === repository.name) ?? [];
-                            return <details className="code-diff-accordion repository-status" key={repository.path} open={files.length > 0}>
-                              <summary><span>{repository.name}</span><small>{files.length ? `${files.length} changed` : "Clean"}</small></summary>
-                              <div className="repository-status-meta">
-                                <span><b>Branch</b>{repository.branch ?? repository.base_branch ?? "detached"}{repository.tracking_branch ? ` → ${repository.tracking_branch}` : ""}</span>
-                                <span><b>Sync</b>↑{repository.ahead ?? 0} ↓{repository.behind ?? 0}</span>
-                                <span title={repository.remote_url}><b>Remote</b>{repository.remote_url ?? "Not configured"}</span>
-                                <span><b>Worktree</b>{files.length ? "Active in this chat" : "Not activated · source clean"}</span>
-                              </div>
-                              {files.length > 0 && <div className="code-diff-list">{files.map((file) => <button key={`${repository.name}:${file.path}`} onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></button>)}</div>}
-                            </details>;
-                          })}
-                          {!!worktreeDiff?.files.length && <button className="ship-changes" onClick={() => {
-                            const message = `Use the git-push-workflow skill to review and ship changes repository by repository. Never combine commits across repositories. Project pipeline type: ${pipelineType}.`;
-                            setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]);
-                            void sendRaw({ type: "prompt", message });
-                          }}>SHIP CHANGES · {new Set(worktreeDiff.files.map((file) => file.repository)).size} REPOSITORIES</button>}
-                        </div>
-                      ) : !worktreeDiff || worktreeDiff.files.length === 0 ? <p className="code-empty">{diffLoading ? "LOADING…" : "WORKTREE CLEAN"}</p> : <>
-                        <details className="code-diff-accordion" open><summary><span>Changed files</span><small>{worktreeDiff.files.length}</small></summary><div className="code-diff-list">{worktreeDiff.files.map((file) => <button key={file.path} onClick={() => setExpandedDiff(file.path)}><span>{file.status}</span><strong>{file.path}</strong><i>+{file.added}</i><b>-{file.removed}</b></button>)}</div></details>
-                        <button className="ship-changes" onClick={() => { const message = `Use the git-push-workflow skill to review, commit, push, and ship the current worktree changes. Project pipeline type: ${pipelineType}.`; setMessages((prev) => [...prev, { id: uid(), role: "user", text: message, thinking: "", toolCalls: [], createdAt: Date.now() } as ChatMessage]); void sendRaw({ type: "prompt", message }); }}>SHIP CHANGES</button>
-                      </>}
-                    </div>
-                  )}
+              {rightActivity === "explorer" ? (
+                <section className="code-sidebar-section">
+                  <div className="code-section-toggle"><small>Explorer</small><strong>{projectName}</strong></div>
+                  <div className="code-section-body"><ProjectFilesSidebar projectPath={cwd} projectName={projectName} refreshKey={worktreeDiff?.files.length ?? 0} onOpenAt={setExpandedDiff} /></div>
+                </section>
+              ) : (
+                <section className="code-sidebar-section">
+                  <SourceControlPanel
+                    cwd={isWorkspace ? cwd : worktree?.worktree_path ?? cwd}
+                    repositories={isWorkspace ? repositoryStatuses : []}
+                    onDiff={(repository, path) => setExpandedDiff(isWorkspace ? `${repository}:${path}` : path)}
+                    onCommitDiff={(repository, file) => {
+                      const key = isWorkspace ? `${repository}:${file.path}` : file.path;
+                      setWorktreeDiff({ merge_base: "", files: [{ ...file, repository }] });
+                      setExpandedDiff(key);
+                    }}
+                    confirm={confirm}
+                    toast={onToast}
+                  />
                 </section>
               )}
             </div>
@@ -2304,7 +2223,7 @@ export default function ChatView({
         </section>
       </div>}
       {previewImage && <div ref={imageDialogRef} className="image-lightbox" role="dialog" aria-modal="true" aria-label="Image preview" tabIndex={-1} onClick={() => setPreviewImage(null)}><button onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={`data:${previewImage.mimeType};base64,${previewImage.data}`} alt="Attachment preview" onClick={(event) => event.stopPropagation()} /></div>}
-      {expandedDiff && worktreeDiff?.files.find(f => f.path === expandedDiff) && (
+      {expandedDiff && worktreeDiff?.files.find(f => `${f.repository ? `${f.repository}:` : ""}${f.path}` === expandedDiff || f.path === expandedDiff) && (
         <div onPointerDown={() => setExpandedDiff(null)} style={{ position: "fixed", top: 62, left: 0, bottom: 0, right: 432, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "auto", padding: 20 }}>
           <div onPointerDown={(e) => e.stopPropagation()} ref={expandedDiffRef} className="diff-panel" role="dialog" aria-modal="true" aria-label={`Diff preview for ${expandedDiff}`} tabIndex={-1} style={{ maxWidth: "calc(100vw - 480px)", maxHeight: "85vh", pointerEvents: "auto", boxShadow: "0 24px 60px #000c", border: "1px solid var(--accent)", transform: `translate(${diffPos.x}px, ${diffPos.y}px)`, transition: dragRef.current ? "none" : "transform 160ms var(--ease-out)", resize: "both", display: "flex", flexDirection: "column" }}>
             <div 
@@ -2356,7 +2275,7 @@ export default function ChatView({
             
             <div style={{ flex: 1, overflow: "auto", background: "#0e0f0c" }}>
               {(() => {
-                const file = worktreeDiff.files.find(f => f.path === expandedDiff);
+                const file = worktreeDiff.files.find(f => `${f.repository ? `${f.repository}:` : ""}${f.path}` === expandedDiff || f.path === expandedDiff);
                 if (!file || !file.patch) return <p className="code-empty" style={{ padding: 20 }}>Binary or untracked — no textual diff.</p>;
                 return <div className="split-diff vscode-split" style={{ maxHeight: "none" }}><header><span>BEFORE</span><span>AFTER</span></header>{splitPatch(file.patch)}</div>;
               })()}

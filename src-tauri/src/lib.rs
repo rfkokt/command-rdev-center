@@ -13,6 +13,7 @@ mod projects;
 mod rag;
 mod settings;
 mod skills;
+mod scm;
 mod terminal;
 mod worktree;
 
@@ -95,6 +96,16 @@ pub fn run() {
             prompt_engines::delete_prompt_engine,
             diff::get_worktree_diff,
             diff::get_workspace_diff,
+            scm::scm_status,
+            scm::scm_paths,
+            scm::scm_all,
+            scm::scm_commit,
+            scm::scm_remote,
+            scm::scm_branches,
+            scm::scm_checkout,
+            scm::scm_graph,
+            scm::scm_commit_details,
+            scm::scm_commit_files,
             projects::list_projects,
             projects::open_vscode,
             projects::list_project_branches,

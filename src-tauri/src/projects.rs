@@ -136,7 +136,7 @@ pub(crate) fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
         .git_exclude(true)
         .parents(true)
         .require_git(false)
-        .filter_entry(|entry| entry.file_name() != ".git")
+        .filter_entry(|entry| entry.file_name() != ".git" && entry.file_name() != ".crc-worktrees")
         .build()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
@@ -892,6 +892,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         init_repo(&root.join("backend"));
         init_repo(&root.join("frontend"));
+        init_repo(&root.join(".crc-worktrees/backend/chat"));
         std::fs::create_dir_all(root.join("inherited")).unwrap();
 
         assert_eq!(discover_git_repositories(&root), vec![canonicalize_or_original(&root.join("backend")), canonicalize_or_original(&root.join("frontend"))]);

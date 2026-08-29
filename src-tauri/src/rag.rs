@@ -110,9 +110,15 @@ pub fn get_rag_source(id: String) -> Result<RagSourceDetail, String> {
     let modified_ms = fs::metadata(&path).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis()).unwrap_or(0);
     Ok(RagSourceDetail { id: source.id.clone(), name: source.name, kind: source.kind, chars: source.text.chars().count(), modified_ms, text: source.text.chars().take(100_000).collect() })
 }
+fn allowed_project_path(project_path: &str) -> Result<PathBuf, String> {
+    let requested = Path::new(project_path).canonicalize().map_err(|e| e.to_string())?;
+    crate::projects::ensure_registered_project_returning(&requested)?;
+    Ok(requested)
+}
+
 #[tauri::command]
 pub fn list_project_files(project_path: String) -> Result<Vec<ProjectFile>, String> {
-    let canonical = crate::projects::ensure_registered_project_returning(Path::new(&project_path))?;
+    let canonical = allowed_project_path(&project_path)?;
     let mut files: Vec<ProjectFile> = Vec::new();
     let mut stack: Vec<PathBuf> = vec![canonical.clone()];
     let mut visited_dirs = 0usize;
@@ -170,9 +176,11 @@ fn project_file_path(project_path: &str, file_name: &str) -> Result<PathBuf, Str
     for comp in Path::new(file_rel).components() {
         if matches!(comp, std::path::Component::ParentDir) { return Err("Invalid file path".into()); }
     }
-    let canonical = crate::projects::ensure_registered_project_returning(Path::new(project_path))?;
-    let target = canonical.join(file_rel).canonicalize().map_err(|e| format!("File not found: {e}"))?;
-    if !target.starts_with(&canonical) { return Err("Invalid file path".into()); }
+    let canonical = allowed_project_path(project_path)?;
+    let requested = canonical.join(file_rel);
+    if !requested.starts_with(&canonical) { return Err("Invalid file path".into()); }
+    let target = requested.canonicalize().map_err(|e| format!("File not found: {e}"))?;
+    crate::projects::ensure_registered_project_returning(&target)?;
     let meta = fs::metadata(&target).map_err(|e| e.to_string())?;
     if !meta.is_file() || meta.len() > MAX_PROJECT_TEXT_BYTES { return Err("File too large or not a regular file".into()); }
     Ok(target)

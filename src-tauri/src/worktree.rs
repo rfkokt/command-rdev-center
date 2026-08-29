@@ -384,12 +384,33 @@ pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<
     let session = crate::projects::global_worktree_root()?.join("workspace-sessions").join(sanitize_repo_name(&slug));
     std::fs::create_dir_all(&session).map_err(|e| e.to_string())?;
     std::fs::write(session.join(".crc-workspace-root"), workspace.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
-    for repository in repositories {
-        let name = repository.file_name().ok_or("invalid repository name")?;
-        let link = session.join(name);
-        if link.symlink_metadata().is_ok() { continue; }
+    let repository_paths = repositories.iter().map(|path| crate::projects::canonicalize_or_original(path)).collect::<Vec<_>>();
+    for entry in std::fs::read_dir(&workspace).map_err(|e| e.to_string())?.filter_map(Result::ok) {
+        let source = entry.path();
+        let name = entry.file_name();
+        if name == ".crc-worktrees" || repository_paths.contains(&crate::projects::canonicalize_or_original(&source)) { continue; }
+        let link = session.join(&name);
+        if link.symlink_metadata().is_ok() {
+            if link.read_link().ok().as_ref() == Some(&source) { continue; }
+            if link.is_dir() && !link.is_symlink() { std::fs::remove_dir_all(&link).map_err(|e| e.to_string())?; }
+            else { std::fs::remove_file(&link).map_err(|e| e.to_string())?; }
+        }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&repository, &link).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(source, link).map_err(|e| e.to_string())?;
+        #[cfg(not(unix))]
+        return Err("multi-repository workspace sessions currently require symlink support".into());
+    }
+    for repository in repositories {
+        let name = repository.file_name().and_then(|name| name.to_str()).ok_or("invalid repository name")?;
+        let worktree = create_worktree(&workspace, &repository, name, &slug)?;
+        let target = PathBuf::from(worktree.worktree_path);
+        let link = session.join(name);
+        if link.symlink_metadata().is_ok() {
+            if link.read_link().ok().as_ref() == Some(&target) { continue; }
+            std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).map_err(|e| e.to_string())?;
         #[cfg(not(unix))]
         return Err("multi-repository workspace sessions currently require symlink support".into());
     }
