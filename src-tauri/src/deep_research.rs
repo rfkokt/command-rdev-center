@@ -850,7 +850,10 @@ pub fn delete_deep_research(app: tauri::AppHandle, run_id: String) -> Result<(),
     std::fs::remove_file(path(&dir, &run_id)).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(path(&dir, &run_id).with_extension("json.bak"));
     clear_active(&run_id);
-    let _ = app.emit("deep-research-changed", serde_json::json!({"run_id":run_id,"state":"deleted"}));
+    let _ = app.emit(
+        "deep-research-changed",
+        serde_json::json!({"run_id":run_id,"state":"deleted"}),
+    );
     Ok(())
 }
 

@@ -10,10 +10,16 @@
     <script>
       (() => {
         const preference = localStorage.getItem("crc-appearance");
-        const theme = preference === "light" || preference === "dark"
-          ? preference
-          : matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-        const colorTheme = localStorage.getItem("crc-color-theme") === "kern" ? "kern" : "classic";
+        const theme =
+          preference === "light" || preference === "dark"
+            ? preference
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        const colorTheme =
+          localStorage.getItem("crc-color-theme") === "kern"
+            ? "kern"
+            : "classic";
         document.documentElement.dataset.theme = theme;
         document.documentElement.dataset.colorTheme = colorTheme;
         document.documentElement.style.colorScheme = theme;

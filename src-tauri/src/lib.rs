@@ -8,12 +8,12 @@ mod graph;
 mod kanban;
 mod pi_rpc;
 mod pipeline;
-mod prompt_engines;
 mod projects;
+mod prompt_engines;
 mod rag;
+mod scm;
 mod settings;
 mod skills;
-mod scm;
 mod terminal;
 mod worktree;
 

@@ -26,8 +26,8 @@
   --code-text: #24291f;
   --terminal: #111411;
   --terminal-text: #f2f0e8;
-  --overlay: rgba(17, 20, 17, .38);
-  --shadow-soft: 0 8px 24px rgba(17, 20, 17, .16);
+  --overlay: rgba(17, 20, 17, 0.38);
+  --shadow-soft: 0 8px 24px rgba(17, 20, 17, 0.16);
 }
 
 [data-color-theme="kern"][data-theme="dark"] {
@@ -51,8 +51,8 @@
   --code-text: #e8e7df;
   --terminal: #090b09;
   --terminal-text: #f2f0e8;
-  --overlay: rgba(5, 7, 5, .76);
-  --shadow-soft: 0 8px 28px rgba(0, 0, 0, .42);
+  --overlay: rgba(5, 7, 5, 0.76);
+  --shadow-soft: 0 8px 28px rgba(0, 0, 0, 0.42);
 }
 
 .color-theme-control {

@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::{fs::OpenOptions, io::Write, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const VERSION: u32 = 1;
 const MAX_PROMPT: usize = 1_000_000;
@@ -7,7 +12,10 @@ const MAX_FIELD: usize = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum ResearchMode { Auto, Review }
+pub enum ResearchMode {
+    Auto,
+    Review,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResearchSettings {
@@ -51,23 +59,43 @@ pub struct SavePromptEngineInput {
     pub research: ResearchSettings,
 }
 
-fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() }
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
 fn dir() -> Result<PathBuf, String> {
-    let path = crate::projects::config_path().parent().ok_or("config has no parent")?.join("prompt-engines");
+    let path = crate::projects::config_path()
+        .parent()
+        .ok_or("config has no parent")?
+        .join("prompt-engines");
     std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
-fn valid_id(id: &str) -> bool { !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') }
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
 fn path(id: &str) -> Result<PathBuf, String> {
-    if !valid_id(id) { return Err("invalid engine id".into()); }
+    if !valid_id(id) {
+        return Err("invalid engine id".into());
+    }
     Ok(dir()?.join(format!("{id}.json")))
 }
 fn write_engine(engine: &PromptEngine) -> Result<(), String> {
     let target = path(&engine.id)?;
     let temp = target.with_extension(format!("json.tmp.{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(engine).map_err(|e| e.to_string())?;
-    let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(&temp).map_err(|e| e.to_string())?;
-    file.write_all(&bytes).and_then(|_| file.write_all(b"\n")).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&temp)
+        .map_err(|e| e.to_string())?;
+    file.write_all(&bytes)
+        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|_| file.sync_all())
+        .map_err(|e| e.to_string())?;
     std::fs::rename(&temp, &target).map_err(|e| e.to_string())
 }
 fn documentary() -> PromptEngine {
@@ -88,15 +116,48 @@ Keep recurring subjects visually identical. Never depict a child's face. Represe
         created_at: timestamp, updated_at: timestamp,
     }
 }
-fn ensure_default() -> Result<(), String> { let engine = documentary(); if !path(&engine.id)?.exists() { write_engine(&engine)?; } Ok(()) }
-fn validate(input: &SavePromptEngineInput) -> Result<(), String> {
-    if input.name.trim().is_empty() { return Err("name required".into()); }
-    if input.system_prompt.trim().is_empty() { return Err("system prompt required".into()); }
-    if input.system_prompt.len() > MAX_PROMPT { return Err("system prompt exceeds 1 MB".into()); }
-    if [&input.name, &input.icon, &input.description, &input.starter_message, &input.model, &input.thinking, &input.research.instructions].iter().any(|v| v.len() > MAX_FIELD) { return Err("engine field is too long".into()); }
+fn ensure_default() -> Result<(), String> {
+    let engine = documentary();
+    if !path(&engine.id)?.exists() {
+        write_engine(&engine)?;
+    }
     Ok(())
 }
-fn generate_id() -> String { format!("engine-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()) }
+fn validate(input: &SavePromptEngineInput) -> Result<(), String> {
+    if input.name.trim().is_empty() {
+        return Err("name required".into());
+    }
+    if input.system_prompt.trim().is_empty() {
+        return Err("system prompt required".into());
+    }
+    if input.system_prompt.len() > MAX_PROMPT {
+        return Err("system prompt exceeds 1 MB".into());
+    }
+    if [
+        &input.name,
+        &input.icon,
+        &input.description,
+        &input.starter_message,
+        &input.model,
+        &input.thinking,
+        &input.research.instructions,
+    ]
+    .iter()
+    .any(|v| v.len() > MAX_FIELD)
+    {
+        return Err("engine field is too long".into());
+    }
+    Ok(())
+}
+fn generate_id() -> String {
+    format!(
+        "engine-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    )
+}
 
 #[tauri::command]
 pub fn list_prompt_engines() -> Result<Vec<PromptEngine>, String> {
@@ -104,9 +165,13 @@ pub fn list_prompt_engines() -> Result<Vec<PromptEngine>, String> {
     let mut engines = Vec::new();
     for entry in std::fs::read_dir(dir()?).map_err(|e| e.to_string())? {
         let path = entry.map_err(|e| e.to_string())?.path();
-        if path.extension().and_then(|v| v.to_str()) != Some("json") { continue; }
-        let raw = std::fs::read_to_string(&path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
-        let engine = serde_json::from_str(&raw).map_err(|e| format!("Invalid prompt engine {}: {e}", path.display()))?;
+        if path.extension().and_then(|v| v.to_str()) != Some("json") {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
+        let engine = serde_json::from_str(&raw)
+            .map_err(|e| format!("Invalid prompt engine {}: {e}", path.display()))?;
         engines.push(engine);
     }
     engines.sort_by(|a: &PromptEngine, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -118,8 +183,29 @@ pub fn save_prompt_engine(input: SavePromptEngineInput) -> Result<PromptEngine, 
     validate(&input)?;
     let timestamp = now();
     let id = input.id.unwrap_or_else(generate_id);
-    let created_at = if path(&id)?.exists() { std::fs::read_to_string(path(&id)?).ok().and_then(|v| serde_json::from_str::<PromptEngine>(&v).ok()).map(|v| v.created_at).unwrap_or(timestamp) } else { timestamp };
-    let engine = PromptEngine { version: VERSION, id, name: input.name.trim().into(), icon: input.icon.trim().into(), description: input.description.trim().into(), system_prompt: input.system_prompt, starter_message: input.starter_message.trim().into(), model: input.model.trim().into(), thinking: input.thinking.trim().into(), research: input.research, created_at, updated_at: timestamp };
+    let created_at = if path(&id)?.exists() {
+        std::fs::read_to_string(path(&id)?)
+            .ok()
+            .and_then(|v| serde_json::from_str::<PromptEngine>(&v).ok())
+            .map(|v| v.created_at)
+            .unwrap_or(timestamp)
+    } else {
+        timestamp
+    };
+    let engine = PromptEngine {
+        version: VERSION,
+        id,
+        name: input.name.trim().into(),
+        icon: input.icon.trim().into(),
+        description: input.description.trim().into(),
+        system_prompt: input.system_prompt,
+        starter_message: input.starter_message.trim().into(),
+        model: input.model.trim().into(),
+        thinking: input.thinking.trim().into(),
+        research: input.research,
+        created_at,
+        updated_at: timestamp,
+    };
     write_engine(&engine)?;
     Ok(engine)
 }
@@ -127,17 +213,40 @@ pub fn save_prompt_engine(input: SavePromptEngineInput) -> Result<PromptEngine, 
 #[tauri::command]
 pub fn delete_prompt_engine(id: String) -> Result<(), String> {
     let target = path(&id)?;
-    if target.exists() { std::fs::remove_file(target).map_err(|e| e.to_string())?; }
+    if target.exists() {
+        std::fs::remove_file(target).map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn rejects_empty_prompt() {
-        let input = SavePromptEngineInput { id: None, name: "x".into(), icon: "".into(), description: "".into(), system_prompt: "".into(), starter_message: "".into(), model: "".into(), thinking: "".into(), research: ResearchSettings { enabled: false, mode: ResearchMode::Auto, instructions: "".into() } };
+    #[test]
+    fn rejects_empty_prompt() {
+        let input = SavePromptEngineInput {
+            id: None,
+            name: "x".into(),
+            icon: "".into(),
+            description: "".into(),
+            system_prompt: "".into(),
+            starter_message: "".into(),
+            model: "".into(),
+            thinking: "".into(),
+            research: ResearchSettings {
+                enabled: false,
+                mode: ResearchMode::Auto,
+                instructions: "".into(),
+            },
+        };
         assert_eq!(validate(&input), Err("system prompt required".into()));
     }
-    #[test] fn default_documentary_is_research_enabled() { assert!(documentary().research.enabled); }
-    #[test] fn ids_reject_path_traversal() { assert!(!valid_id("../bad")); }
+    #[test]
+    fn default_documentary_is_research_enabled() {
+        assert!(documentary().research.enabled);
+    }
+    #[test]
+    fn ids_reject_path_traversal() {
+        assert!(!valid_id("../bad"));
+    }
 }

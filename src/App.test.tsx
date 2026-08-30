@@ -4,22 +4,57 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const unmounted = vi.fn();
-const { checkUpdate, invokeMock } = vi.hoisted(() => ({ checkUpdate: vi.fn(), invokeMock: vi.fn(() => Promise.resolve({})) }));
+const { checkUpdate, invokeMock } = vi.hoisted(() => ({
+  checkUpdate: vi.fn(),
+  invokeMock: vi.fn(() => Promise.resolve({})),
+}));
 const unreadCallbacks: Array<(chatId: string) => void> = [];
 
-vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(() => Promise.resolve("1.2.3")) }));
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: vi.fn(() => Promise.resolve("1.2.3")),
+}));
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: checkUpdate }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("./components/ProjectList", () => ({
-  default: ({ tabs, onResume, onSelect, onNewSession }: { tabs: Array<{ id: string; project: { name: string } }>; onResume: (id: string, project: unknown) => void; onSelect: (project: unknown) => void; onNewSession: (project: unknown) => void }) => (
-    <>{tabs.map((tab) => <span key={tab.id}><button onClick={() => onResume(tab.id, tab.project)}>Open {tab.id}</button><button onClick={() => onSelect(tab.project)}>Select {tab.project.name}</button><button onClick={() => onNewSession(tab.project)}>New {tab.project.name}</button></span>)}</>
+  default: ({
+    tabs,
+    onResume,
+    onSelect,
+    onNewSession,
+  }: {
+    tabs: Array<{ id: string; project: { name: string } }>;
+    onResume: (id: string, project: unknown) => void;
+    onSelect: (project: unknown) => void;
+    onNewSession: (project: unknown) => void;
+  }) => (
+    <>
+      {tabs.map((tab) => (
+        <span key={tab.id}>
+          <button onClick={() => onResume(tab.id, tab.project)}>
+            Open {tab.id}
+          </button>
+          <button onClick={() => onSelect(tab.project)}>
+            Select {tab.project.name}
+          </button>
+          <button onClick={() => onNewSession(tab.project)}>
+            New {tab.project.name}
+          </button>
+        </span>
+      ))}
+    </>
   ),
 }));
 vi.mock("./components/SettingsPanel", () => ({ default: () => null }));
-vi.mock("./components/PipelineView", () => ({ default: () => <div>Pipeline view</div> }));
-vi.mock("./components/KanbanBoard", () => ({ default: () => <div>Kanban view</div> }));
-vi.mock("./components/RagKnowledge", () => ({ default: () => <div>Knowledge view</div> }));
+vi.mock("./components/PipelineView", () => ({
+  default: () => <div>Pipeline view</div>,
+}));
+vi.mock("./components/KanbanBoard", () => ({
+  default: () => <div>Kanban view</div>,
+}));
+vi.mock("./components/RagKnowledge", () => ({
+  default: () => <div>Knowledge view</div>,
+}));
 vi.mock("./components/ChatView", async () => {
   const { useEffect } = await import("react");
   return {
@@ -34,17 +69,35 @@ vi.mock("./components/ChatView", async () => {
 import App from "./App";
 
 beforeEach(() => {
-  Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })) });
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn(() => ({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  });
   unmounted.mockClear();
   checkUpdate.mockReset();
   checkUpdate.mockResolvedValue(null);
   invokeMock.mockClear();
   unreadCallbacks.length = 0;
   localStorage.clear();
-  localStorage.setItem("crc-chat-tabs", JSON.stringify([{
-    id: "chat-1",
-    project: { name: "demo", path: "/tmp/demo", kinds: [], mtime_ms: 0, is_git: false },
-  }]));
+  localStorage.setItem(
+    "crc-chat-tabs",
+    JSON.stringify([
+      {
+        id: "chat-1",
+        project: {
+          name: "demo",
+          path: "/tmp/demo",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+    ]),
+  );
 });
 
 afterEach(cleanup);
@@ -80,7 +133,9 @@ test("restores a saved sidebar width within the allowed range", () => {
   localStorage.setItem("crc-sidebar-width", "320");
   render(<App />);
 
-  expect(screen.getByRole("separator", { name: "Resize sidebar" })).toHaveAttribute("aria-valuenow", "320");
+  expect(
+    screen.getByRole("separator", { name: "Resize sidebar" }),
+  ).toHaveAttribute("aria-valuenow", "320");
 });
 
 test("shows the runtime app version at the bottom of the sidebar", async () => {
@@ -90,12 +145,19 @@ test("shows the runtime app version at the bottom of the sidebar", async () => {
 });
 
 test("notifies when an update is available", async () => {
-  checkUpdate.mockResolvedValue({ version: "1.3.0", downloadAndInstall: vi.fn() });
+  checkUpdate.mockResolvedValue({
+    version: "1.3.0",
+    downloadAndInstall: vi.fn(),
+  });
 
   render(<App />);
 
-  expect(await screen.findByRole("status")).toHaveTextContent("Update 1.3.0 is available");
-  expect(screen.getByRole("button", { name: /UPDATE v1.3.0/ })).toBeInTheDocument();
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Update 1.3.0 is available",
+  );
+  expect(
+    screen.getByRole("button", { name: /UPDATE v1.3.0/ }),
+  ).toBeInTheDocument();
 });
 
 test("opens the dedicated knowledge workspace", async () => {
@@ -115,7 +177,9 @@ test("shows project operations in the workspace toolbar, not the sidebar", () =>
   const toolbar = screen.getByRole("navigation", { name: "demo views" });
   expect(toolbar).toHaveTextContent("Tasks");
   expect(toolbar).toHaveTextContent("Pipeline");
-  expect(screen.getByRole("complementary", { name: "Projects and sessions" })).not.toHaveTextContent("Project operations");
+  expect(
+    screen.getByRole("complementary", { name: "Projects and sessions" }),
+  ).not.toHaveTextContent("Project operations");
 });
 
 test("opens the active project in VS Code", () => {
@@ -147,25 +211,72 @@ test("creates and lists multiple Global Chat sessions", () => {
 });
 
 test("creates a project session after switching from Global Chat to a project", () => {
-  localStorage.setItem("crc-chat-tabs", JSON.stringify([
-    { id: "global-1", global: true, project: { name: "GLOBAL CHAT", path: "global", kinds: [], mtime_ms: 0, is_git: false } },
-    { id: "chat-1", project: { name: "demo", path: "/tmp/demo", kinds: [], mtime_ms: 0, is_git: false } },
-  ]));
+  localStorage.setItem(
+    "crc-chat-tabs",
+    JSON.stringify([
+      {
+        id: "global-1",
+        global: true,
+        project: {
+          name: "GLOBAL CHAT",
+          path: "global",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+      {
+        id: "chat-1",
+        project: {
+          name: "demo",
+          path: "/tmp/demo",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+    ]),
+  );
   render(<App />);
 
   fireEvent.click(screen.getByRole("button", { name: "Select demo" }));
   fireEvent.click(screen.getByRole("button", { name: "New demo" }));
 
-  const saved = JSON.parse(localStorage.getItem("crc-chat-tabs") ?? "[]") as Array<{ global?: boolean; project: { path: string } }>;
-  expect(saved.filter((tab) => tab.project.path === "/tmp/demo")).toHaveLength(2);
+  const saved = JSON.parse(
+    localStorage.getItem("crc-chat-tabs") ?? "[]",
+  ) as Array<{ global?: boolean; project: { path: string } }>;
+  expect(saved.filter((tab) => tab.project.path === "/tmp/demo")).toHaveLength(
+    2,
+  );
   expect(saved.filter((tab) => tab.global)).toHaveLength(1);
 });
 
 test("keeps chat callbacks stable when the active tab changes", () => {
-  localStorage.setItem("crc-chat-tabs", JSON.stringify([
-    { id: "chat-1", project: { name: "one", path: "/tmp/one", kinds: [], mtime_ms: 0, is_git: false } },
-    { id: "chat-2", project: { name: "two", path: "/tmp/two", kinds: [], mtime_ms: 0, is_git: false } },
-  ]));
+  localStorage.setItem(
+    "crc-chat-tabs",
+    JSON.stringify([
+      {
+        id: "chat-1",
+        project: {
+          name: "one",
+          path: "/tmp/one",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+      {
+        id: "chat-2",
+        project: {
+          name: "two",
+          path: "/tmp/two",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+    ]),
+  );
   render(<App />);
   const initialUnread = unreadCallbacks[0];
 

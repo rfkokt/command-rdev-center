@@ -1,16 +1,26 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { confirm, ConfirmHost } from "./ConfirmDialog";
 
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+});
 
 describe("ConfirmHost", () => {
   it("resolves true on confirm click and unmounts", async () => {
     render(<ConfirmHost />);
     const promise = confirm({ message: "Are you sure?", confirmLabel: "Yes" });
-    await waitFor(() => expect(screen.getByText("Are you sure?")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Are you sure?")).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole("button", { name: /Yes/ }));
     expect(await promise).toBe(true);
     expect(screen.queryByText("Are you sure?")).not.toBeInTheDocument();
@@ -19,7 +29,10 @@ describe("ConfirmHost", () => {
   it("unmounts before resolving a confirmed action", async () => {
     render(<ConfirmHost />);
     let modalPresentWhenResolved = true;
-    const promise = confirm({ message: "Build graph?", confirmLabel: "Build" }).then(() => {
+    const promise = confirm({
+      message: "Build graph?",
+      confirmLabel: "Build",
+    }).then(() => {
       modalPresentWhenResolved = Boolean(screen.queryByText("Build graph?"));
     });
     fireEvent.click(await screen.findByRole("button", { name: /Build/ }));

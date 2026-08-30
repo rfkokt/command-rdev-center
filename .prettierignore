@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+docs/
+AGENTS.md
+CONTEXT.md
+src-tauri/target/
+src-tauri/gen/
+graphify-out/
+.pi-subagents/
+.impeccable/
+*.min.*
+src/assets/react.svg
+src-tauri/icons/
+src-tauri/skills/
+pnpm-lock.yaml
+src-tauri/Cargo.lock

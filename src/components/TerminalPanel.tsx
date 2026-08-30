@@ -4,7 +4,17 @@ import { listen } from "@tauri-apps/api/event";
 import { init, Terminal, FitAddon } from "ghostty-web";
 
 // One PTY terminal, bound to a backend session key. Kill on unmount only when asked.
-function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string; cwd: string; onKilled: () => void; onUrl?: (url: string) => void }) {
+function TerminalPane({
+  sessionKey,
+  cwd,
+  onKilled,
+  onUrl,
+}: {
+  sessionKey: string;
+  cwd: string;
+  onKilled: () => void;
+  onUrl?: (url: string) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -17,8 +27,14 @@ function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string
     (async () => {
       await init();
       if (disposed) return;
-      const fontFamily = "'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, monospace";
-      const term = new Terminal({ fontSize: 13, fontFamily, cursorBlink: true, theme: { background: "#0b0e14" } });
+      const fontFamily =
+        "'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, monospace";
+      const term = new Terminal({
+        fontSize: 13,
+        fontFamily,
+        cursorBlink: true,
+        theme: { background: "#0b0e14" },
+      });
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(host);
@@ -27,32 +43,62 @@ function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string
       // register the output listener BEFORE spawning so the first shell prompt isn't lost
       await listen<string>(`terminal://data/${sessionKey}`, (e) => {
         term.write(e.payload);
-        for (const url of e.payload.match(/https?:\/\/[^\s<>"']+/g) || []) onUrl?.(url);
+        for (const url of e.payload.match(/https?:\/\/[^\s<>"']+/g) || [])
+          onUrl?.(url);
       }).then((u) => unlisten.push(u));
-      await listen(`terminal://exit/${sessionKey}`, () => term.write("\r\n[process exited]\r\n")).then((u) => unlisten.push(u));
+      await listen(`terminal://exit/${sessionKey}`, () =>
+        term.write("\r\n[process exited]\r\n"),
+      ).then((u) => unlisten.push(u));
 
-      term.onResize(({ cols, rows }) => void invoke("terminal_resize", { chatId: sessionKey, cols, rows }).catch(() => {}));
+      term.onResize(
+        ({ cols, rows }) =>
+          void invoke("terminal_resize", {
+            chatId: sessionKey,
+            cols,
+            rows,
+          }).catch(() => {}),
+      );
 
       // spawn the shell first so the prompt is never blocked on font/layout work
-      const snapshot = await invoke<string>("terminal_open", { chatId: sessionKey, cwd, cols: term.cols, rows: term.rows }).catch((err) => { term.write(`\r\nterminal error: ${String(err)}\r\n`); return ""; });
+      const snapshot = await invoke<string>("terminal_open", {
+        chatId: sessionKey,
+        cwd,
+        cols: term.cols,
+        rows: term.rows,
+      }).catch((err) => {
+        term.write(`\r\nterminal error: ${String(err)}\r\n`);
+        return "";
+      });
       if (disposed) return;
       if (snapshot) term.write(snapshot);
-      term.onData((data) => void invoke("terminal_write", { chatId: sessionKey, data }).catch(() => {}));
+      term.onData(
+        (data) =>
+          void invoke("terminal_write", { chatId: sessionKey, data }).catch(
+            () => {},
+          ),
+      );
 
       // fit once the font+layout settle; guarded with a timeout so a stuck fonts.ready never blocks the shell
       const settle = Promise.all([
-        document.fonts?.load("13px 'JetBrainsMono Nerd Font'").catch(() => {}) ?? Promise.resolve(),
+        document.fonts
+          ?.load("13px 'JetBrainsMono Nerd Font'")
+          .catch(() => {}) ?? Promise.resolve(),
         document.fonts?.ready ?? Promise.resolve(),
       ]);
       await Promise.race([settle, new Promise((r) => setTimeout(r, 400))]);
       if (disposed) return;
-      (term as unknown as { renderer?: { remeasureFont(): void } }).renderer?.remeasureFont();
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      (
+        term as unknown as { renderer?: { remeasureFont(): void } }
+      ).renderer?.remeasureFont();
+      await new Promise((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(r)),
+      );
       if (disposed) return;
       fit.fit();
       fit.observeResize();
     })().catch((error) => {
-      if (!disposed) host.textContent = `Terminal failed to initialize: ${String(error)}`;
+      if (!disposed)
+        host.textContent = `Terminal failed to initialize: ${String(error)}`;
     });
 
     return () => {
@@ -66,8 +112,37 @@ function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string
   return (
     <div className="terminal-pane">
       <div className="terminal-pane-bar">
-        <button className="term-icon-btn danger" title="Kill this terminal" aria-label="Kill terminal" onClick={() => { void invoke("terminal_close", { chatId: sessionKey }).catch(() => {}); onKilled(); }}>
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+        <button
+          className="term-icon-btn danger"
+          title="Kill this terminal"
+          aria-label="Kill terminal"
+          onClick={() => {
+            void invoke("terminal_close", { chatId: sessionKey }).catch(
+              () => {},
+            );
+            onKilled();
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <line
+              x1="4"
+              y1="4"
+              x2="12"
+              y2="12"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+            <line
+              x1="12"
+              y1="4"
+              x2="4"
+              y2="12"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+            />
+          </svg>
         </button>
       </div>
       <div ref={hostRef} className="terminal-panel-host" />
@@ -76,7 +151,19 @@ function TerminalPane({ sessionKey, cwd, onKilled, onUrl }: { sessionKey: string
 }
 
 // Draggable floating modal hosting one or more split terminal panes for a chat's worktree.
-export default function TerminalPanel({ chatId, cwd, hidden, onClose, onUrl }: { chatId: string; cwd: string; hidden?: boolean; onClose: () => void; onUrl?: (url: string) => void }) {
+export default function TerminalPanel({
+  chatId,
+  cwd,
+  hidden,
+  onClose,
+  onUrl,
+}: {
+  chatId: string;
+  cwd: string;
+  hidden?: boolean;
+  onClose: () => void;
+  onUrl?: (url: string) => void;
+}) {
   const [pos, setPos] = useState(() => ({
     x: Math.max(12, Math.round((window.innerWidth - 760) / 2)),
     y: Math.max(12, Math.round((window.innerHeight - 460) / 2)),
@@ -111,26 +198,118 @@ export default function TerminalPanel({ chatId, cwd, hidden, onClose, onUrl }: {
   }
 
   return (
-    <div className="terminal-modal" style={{ left: pos.x, top: pos.y, display: hidden ? "none" : "flex" }} role="dialog" aria-label="Terminal">
-      <div className="terminal-panel-bar" onPointerDown={onBarPointerDown} onPointerMove={onBarPointerMove} onPointerUp={onBarPointerUp}>
-        <span className="terminal-title">{cwd.split("/").pop() || "TERMINAL"}</span>
+    <div
+      className="terminal-modal"
+      style={{ left: pos.x, top: pos.y, display: hidden ? "none" : "flex" }}
+      role="dialog"
+      aria-label="Terminal"
+    >
+      <div
+        className="terminal-panel-bar"
+        onPointerDown={onBarPointerDown}
+        onPointerMove={onBarPointerMove}
+        onPointerUp={onBarPointerUp}
+      >
+        <span className="terminal-title">
+          {cwd.split("/").pop() || "TERMINAL"}
+        </span>
         <div className="terminal-bar-actions">
-          <button className="term-icon-btn" title="New split" onClick={addPane} aria-label="Split terminal">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" stroke="currentColor"/><line x1="8" y1="5" x2="8" y2="11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><line x1="5" y1="8" x2="11" y2="8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+          <button
+            className="term-icon-btn"
+            title="New split"
+            onClick={addPane}
+            aria-label="Split terminal"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+              <rect
+                x="1.5"
+                y="1.5"
+                width="13"
+                height="13"
+                rx="1.5"
+                stroke="currentColor"
+              />
+              <line
+                x1="8"
+                y1="5"
+                x2="8"
+                y2="11"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
+              <line
+                x1="5"
+                y1="8"
+                x2="11"
+                y2="8"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
-          <button className="term-icon-btn" title={vertical ? "Stack vertically" : "Side by side"} onClick={() => setVertical((v) => !v)} aria-label="Toggle split orientation">
-            {vertical
-              ? <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" stroke="currentColor"/><line x1="8" y1="2" x2="8" y2="14" stroke="currentColor"/></svg>
-              : <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5" stroke="currentColor"/><line x1="2" y1="8" x2="14" y2="8" stroke="currentColor"/></svg>}
+          <button
+            className="term-icon-btn"
+            title={vertical ? "Stack vertically" : "Side by side"}
+            onClick={() => setVertical((v) => !v)}
+            aria-label="Toggle split orientation"
+          >
+            {vertical ? (
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <rect
+                  x="1.5"
+                  y="1.5"
+                  width="13"
+                  height="13"
+                  rx="1.5"
+                  stroke="currentColor"
+                />
+                <line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" />
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <rect
+                  x="1.5"
+                  y="1.5"
+                  width="13"
+                  height="13"
+                  rx="1.5"
+                  stroke="currentColor"
+                />
+                <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" />
+              </svg>
+            )}
           </button>
-          <button className="term-icon-btn" title="Hide (keep running)" onClick={onClose} aria-label="Hide terminal">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+          <button
+            className="term-icon-btn"
+            title="Hide (keep running)"
+            onClick={onClose}
+            aria-label="Hide terminal"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+              <line
+                x1="3"
+                y1="8"
+                x2="13"
+                y2="8"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              />
+            </svg>
           </button>
         </div>
       </div>
       <div className={`terminal-split ${vertical ? "vertical" : "horizontal"}`}>
         {panes.map((idx) => (
-          <TerminalPane key={idx} sessionKey={`${chatId}__${idx}`} cwd={cwd} onKilled={() => removePane(idx)} onUrl={onUrl} />
+          <TerminalPane
+            key={idx}
+            sessionKey={`${chatId}__${idx}`}
+            cwd={cwd}
+            onKilled={() => removePane(idx)}
+            onUrl={onUrl}
+          />
         ))}
       </div>
     </div>

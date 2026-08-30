@@ -191,7 +191,9 @@ fn dependency_fingerprint(cwd: &Path) -> Result<String, String> {
         let path = cwd.join(name);
         if path.is_file() {
             name.hash(&mut hasher);
-            std::fs::read(path).map_err(|e| e.to_string())?.hash(&mut hasher);
+            std::fs::read(path)
+                .map_err(|e| e.to_string())?
+                .hash(&mut hasher);
         }
     }
     Ok(format!("{:x}", hasher.finish()))
@@ -257,7 +259,10 @@ fn ensure_dependencies(cwd: &Path, project: &Path, needs_vendor: bool) -> Result
     if needs_vendor && !cwd.join("vendor").exists() {
         let source = project.join("vendor");
         if !source.exists() {
-            return Err(format!("vendor missing: run install once in {}", project.display()));
+            return Err(format!(
+                "vendor missing: run install once in {}",
+                project.display()
+            ));
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(source, cwd.join("vendor")).map_err(|e| e.to_string())?;

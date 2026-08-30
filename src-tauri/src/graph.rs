@@ -170,7 +170,10 @@ fn status(project: &Path) -> GraphStatus {
         .collect::<Vec<_>>();
     let docs_stale = statuses.iter().any(|status| status.docs_stale);
     let code_stale = statuses.iter().any(|status| status.code_stale);
-    let state = if statuses.iter().any(|status| status.state == GraphState::None) {
+    let state = if statuses
+        .iter()
+        .any(|status| status.state == GraphState::None)
+    {
         GraphState::None
     } else if docs_stale {
         GraphState::StaleDocs
@@ -303,9 +306,20 @@ fn graphify_error(detail: &str, repository: &Path, status: std::process::ExitSta
     {
         return "Graphify LLM quota/billing is unavailable. Open Settings → Graphify and choose a provider with available credit, or disable the LLM configuration to build code-only.".into();
     }
-    let detail = detail.lines().rev().take(12).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+    let detail = detail
+        .lines()
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
     if detail.trim().is_empty() {
-        format!("Graphify failed for {} with status {status}", repository.display())
+        format!(
+            "Graphify failed for {} with status {status}",
+            repository.display()
+        )
     } else {
         format!("Graphify failed for {}: {detail}", repository.display())
     }
@@ -364,10 +378,17 @@ fn run_graphify(
         .spawn()
         .map_err(|e| format!("failed to run graphify: {e}"))?;
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
-    let stderr = child.stderr.take().ok_or("failed to capture Graphify errors")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("failed to capture Graphify errors")?;
     let captured = Arc::clone(&errors);
     let app = app.clone();
-    let repository_name = repository.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let repository_name = repository
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
     let stderr_reader = thread::spawn(move || {
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             eprintln!("{line}");
@@ -378,12 +399,15 @@ fn run_graphify(
                 .chars()
                 .take(180)
                 .collect::<String>();
-            let _ = app.emit("graphify-progress", serde_json::json!({
-                "repository": repository_name,
-                "index": index,
-                "total": total,
-                "activity": activity,
-            }));
+            let _ = app.emit(
+                "graphify-progress",
+                serde_json::json!({
+                    "repository": repository_name,
+                    "index": index,
+                    "total": total,
+                    "activity": activity,
+                }),
+            );
             if let Ok(mut lines) = captured.lock() {
                 lines.push(line);
                 if lines.len() > 100 {
@@ -413,7 +437,10 @@ fn run_graphify(
     };
     let _ = stderr_reader.join();
     if !status.success() {
-        let detail = errors.lock().map(|lines| lines.join("\n")).unwrap_or_default();
+        let detail = errors
+            .lock()
+            .map(|lines| lines.join("\n"))
+            .unwrap_or_default();
         return Err(graphify_error(&detail, repository, status));
     }
 
@@ -480,18 +507,32 @@ fn build_graph_blocking(
     let project = validate_project(Path::new(&project_path))?;
     ensure_project_files(&project)?;
     let repositories = crate::projects::graph_repositories(&project);
-    let repositories = if repositories.is_empty() { vec![project.clone()] } else { repositories };
+    let repositories = if repositories.is_empty() {
+        vec![project.clone()]
+    } else {
+        repositories
+    };
     let total = repositories.len();
     for (offset, repository) in repositories.into_iter().enumerate() {
         let index = offset + 1;
         let name = repository.file_name().unwrap_or_default().to_string_lossy();
-        let _ = app.emit("graphify-progress", serde_json::json!({
-            "repository": name,
-            "index": index,
-            "total": total,
-            "activity": "Starting repository scan…",
-        }));
-        run_graphify(&app, &repository, &graph_dir(&project, &repository), full, index, total)?;
+        let _ = app.emit(
+            "graphify-progress",
+            serde_json::json!({
+                "repository": name,
+                "index": index,
+                "total": total,
+                "activity": "Starting repository scan…",
+            }),
+        );
+        run_graphify(
+            &app,
+            &repository,
+            &graph_dir(&project, &repository),
+            full,
+            index,
+            total,
+        )?;
     }
     Ok(status(&project))
 }
@@ -542,9 +583,11 @@ pub fn enable_global_graphignore() -> Result<String, String> {
 pub fn validate_report_path(path: &Path) -> Result<PathBuf, String> {
     let owner = crate::projects::registered_workspace(path)
         .ok_or("graph report is not inside a registered project")?;
-    let valid = crate::projects::graph_repositories(&owner).into_iter().any(|repository| {
-        path == graph_dir(&owner, &repository).join("graphify-out/GRAPH_REPORT.md")
-    });
+    let valid = crate::projects::graph_repositories(&owner)
+        .into_iter()
+        .any(|repository| {
+            path == graph_dir(&owner, &repository).join("graphify-out/GRAPH_REPORT.md")
+        });
     if valid
         && path.is_file()
         && !fs::symlink_metadata(path)
@@ -674,7 +717,10 @@ mod tests {
     fn workspace_graphs_are_centralized_by_repository() {
         let workspace = Path::new("/tmp/workspace");
         let repository = workspace.join("frontend");
-        assert_eq!(graph_dir(workspace, &repository), workspace.join(".graphify/frontend"));
+        assert_eq!(
+            graph_dir(workspace, &repository),
+            workspace.join(".graphify/frontend")
+        );
         assert_eq!(graph_dir(&repository, &repository), repository);
     }
 

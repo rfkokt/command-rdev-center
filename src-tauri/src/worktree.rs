@@ -118,9 +118,41 @@ pub struct WorktreeInfo {
     pub parent_ref: String,
 }
 
-fn worktree_info(repo_path: &Path, worktree_path: String, branch: String, repo_name: String, slug: String, parent_ref: String) -> WorktreeInfo {
-    let remote = Command::new("git").args(["-C", &repo_path.to_string_lossy(), "remote", "get-url", "origin"]).output().ok().filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string()).filter(|value| !value.is_empty());
-    WorktreeInfo { workspace_root: crate::projects::registered_workspace(repo_path).unwrap_or_else(|| repo_path.to_path_buf()).to_string_lossy().into(), repository_root: repo_path.to_string_lossy().into(), repository_id: repo_path.to_string_lossy().into(), remote, worktree_path, branch, repo_name, slug, parent_ref }
+fn worktree_info(
+    repo_path: &Path,
+    worktree_path: String,
+    branch: String,
+    repo_name: String,
+    slug: String,
+    parent_ref: String,
+) -> WorktreeInfo {
+    let remote = Command::new("git")
+        .args([
+            "-C",
+            &repo_path.to_string_lossy(),
+            "remote",
+            "get-url",
+            "origin",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty());
+    WorktreeInfo {
+        workspace_root: crate::projects::registered_workspace(repo_path)
+            .unwrap_or_else(|| repo_path.to_path_buf())
+            .to_string_lossy()
+            .into(),
+        repository_root: repo_path.to_string_lossy().into(),
+        repository_id: repo_path.to_string_lossy().into(),
+        remote,
+        worktree_path,
+        branch,
+        repo_name,
+        slug,
+        parent_ref,
+    }
 }
 
 fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
@@ -189,7 +221,14 @@ pub fn create_worktree(
         sync_env_files(repo_path, &worktree_path)?;
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path)?;
-        return Ok(worktree_info(repo_path, worktree_path_str, branch, safe_repo, safe_slug, parent));
+        return Ok(worktree_info(
+            repo_path,
+            worktree_path_str,
+            branch,
+            safe_repo,
+            safe_slug,
+            parent,
+        ));
     }
 
     // ensure parent dir
@@ -263,7 +302,14 @@ pub fn create_worktree(
 
     sync_env_files(repo_path, &worktree_path)?;
 
-    Ok(worktree_info(repo_path, worktree_path_str, branch, safe_repo, safe_slug, parent_ref))
+    Ok(worktree_info(
+        repo_path,
+        worktree_path_str,
+        branch,
+        safe_repo,
+        safe_slug,
+        parent_ref,
+    ))
 }
 
 pub fn remove_worktree_if_empty(
@@ -377,23 +423,48 @@ pub async fn ensure_worktree(
 #[tauri::command]
 pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<String, String> {
     let workspace = crate::projects::registered_workspace(Path::new(&workspace_path))
-        .filter(|root| root == &crate::projects::canonicalize_or_original(Path::new(&workspace_path)))
+        .filter(|root| {
+            root == &crate::projects::canonicalize_or_original(Path::new(&workspace_path))
+        })
         .ok_or("workspace is not registered")?;
     let repositories = crate::projects::discover_git_repositories(&workspace);
-    if repositories.is_empty() { return Err("workspace has no independent Git repositories".into()); }
-    let session = crate::projects::global_worktree_root()?.join("workspace-sessions").join(sanitize_repo_name(&slug));
+    if repositories.is_empty() {
+        return Err("workspace has no independent Git repositories".into());
+    }
+    let session = crate::projects::global_worktree_root()?
+        .join("workspace-sessions")
+        .join(sanitize_repo_name(&slug));
     std::fs::create_dir_all(&session).map_err(|e| e.to_string())?;
-    std::fs::write(session.join(".crc-workspace-root"), workspace.to_string_lossy().as_bytes()).map_err(|e| e.to_string())?;
-    let repository_paths = repositories.iter().map(|path| crate::projects::canonicalize_or_original(path)).collect::<Vec<_>>();
-    for entry in std::fs::read_dir(&workspace).map_err(|e| e.to_string())?.filter_map(Result::ok) {
+    std::fs::write(
+        session.join(".crc-workspace-root"),
+        workspace.to_string_lossy().as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+    let repository_paths = repositories
+        .iter()
+        .map(|path| crate::projects::canonicalize_or_original(path))
+        .collect::<Vec<_>>();
+    for entry in std::fs::read_dir(&workspace)
+        .map_err(|e| e.to_string())?
+        .filter_map(Result::ok)
+    {
         let source = entry.path();
         let name = entry.file_name();
-        if name == ".crc-worktrees" || repository_paths.contains(&crate::projects::canonicalize_or_original(&source)) { continue; }
+        if name == ".crc-worktrees"
+            || repository_paths.contains(&crate::projects::canonicalize_or_original(&source))
+        {
+            continue;
+        }
         let link = session.join(&name);
         if link.symlink_metadata().is_ok() {
-            if link.read_link().ok().as_ref() == Some(&source) { continue; }
-            if link.is_dir() && !link.is_symlink() { std::fs::remove_dir_all(&link).map_err(|e| e.to_string())?; }
-            else { std::fs::remove_file(&link).map_err(|e| e.to_string())?; }
+            if link.read_link().ok().as_ref() == Some(&source) {
+                continue;
+            }
+            if link.is_dir() && !link.is_symlink() {
+                std::fs::remove_dir_all(&link).map_err(|e| e.to_string())?;
+            } else {
+                std::fs::remove_file(&link).map_err(|e| e.to_string())?;
+            }
         }
         #[cfg(unix)]
         std::os::unix::fs::symlink(source, link).map_err(|e| e.to_string())?;
@@ -401,12 +472,17 @@ pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<
         return Err("multi-repository workspace sessions currently require symlink support".into());
     }
     for repository in repositories {
-        let name = repository.file_name().and_then(|name| name.to_str()).ok_or("invalid repository name")?;
+        let name = repository
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("invalid repository name")?;
         let worktree = create_worktree(&workspace, &repository, name, &slug)?;
         let target = PathBuf::from(worktree.worktree_path);
         let link = session.join(name);
         if link.symlink_metadata().is_ok() {
-            if link.read_link().ok().as_ref() == Some(&target) { continue; }
+            if link.read_link().ok().as_ref() == Some(&target) {
+                continue;
+            }
             std::fs::remove_file(&link).map_err(|e| e.to_string())?;
         }
         #[cfg(unix)]
@@ -426,9 +502,32 @@ fn remove_worktree_blocking(
     let rp = crate::projects::ensure_verified_repository(Path::new(&repo_path))?;
     let wt = PathBuf::from(&worktree_path);
     let worktree_repository = crate::projects::verified_repository_root(&wt)?;
-    let common = Command::new("git").args(["-C", &rp.to_string_lossy(), "rev-parse", "--path-format=absolute", "--git-common-dir"]).output().map_err(|e| e.to_string())?;
-    let worktree_common = Command::new("git").args(["-C", &worktree_repository.to_string_lossy(), "rev-parse", "--path-format=absolute", "--git-common-dir"]).output().map_err(|e| e.to_string())?;
-    if !common.status.success() || !worktree_common.status.success() || common.stdout != worktree_common.stdout { return Err("worktree belongs to another repository".into()); }
+    let common = Command::new("git")
+        .args([
+            "-C",
+            &rp.to_string_lossy(),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let worktree_common = Command::new("git")
+        .args([
+            "-C",
+            &worktree_repository.to_string_lossy(),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !common.status.success()
+        || !worktree_common.status.success()
+        || common.stdout != worktree_common.stdout
+    {
+        return Err("worktree belongs to another repository".into());
+    }
     let expected_prefix = worktree_root(&project_root);
     let canon_prefix = expected_prefix
         .canonicalize()

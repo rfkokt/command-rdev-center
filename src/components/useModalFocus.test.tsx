@@ -3,9 +3,26 @@ import { fireEvent, render } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { useModalFocus } from "./useModalFocus";
 
-function Modal({ onClose, active = true, empty = false }: { onClose: () => void; active?: boolean; empty?: boolean }) {
+function Modal({
+  onClose,
+  active = true,
+  empty = false,
+}: {
+  onClose: () => void;
+  active?: boolean;
+  empty?: boolean;
+}) {
   const ref = useModalFocus<HTMLDivElement>(onClose, active);
-  return <div ref={ref} tabIndex={-1}>{!empty && <><button>First</button><button>Last</button></>}</div>;
+  return (
+    <div ref={ref} tabIndex={-1}>
+      {!empty && (
+        <>
+          <button>First</button>
+          <button>Last</button>
+        </>
+      )}
+    </div>
+  );
 }
 
 test("traps focus, closes with Escape, and restores trigger focus", () => {
@@ -13,7 +30,13 @@ test("traps focus, closes with Escape, and restores trigger focus", () => {
   document.body.append(trigger);
   trigger.focus();
   let closed = false;
-  const view = render(<Modal onClose={() => { closed = true; }} />);
+  const view = render(
+    <Modal
+      onClose={() => {
+        closed = true;
+      }}
+    />,
+  );
   const [first, last] = Array.from(view.container.querySelectorAll("button"));
 
   expect(document.activeElement).toBe(first);
@@ -73,7 +96,12 @@ test("does nothing while inactive and activates after rerender", () => {
 test("only the topmost modal handles Escape", () => {
   const closeOuter = vi.fn();
   const closeInner = vi.fn();
-  const view = render(<><Modal onClose={closeOuter} /><Modal onClose={closeInner} /></>);
+  const view = render(
+    <>
+      <Modal onClose={closeOuter} />
+      <Modal onClose={closeInner} />
+    </>,
+  );
 
   fireEvent.keyDown(document, { key: "Escape" });
 

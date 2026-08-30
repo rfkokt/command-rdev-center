@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { activityKind, getSubagentMeta, isSubagentTool, isWebSearchTool } from "./ToolCall";
+import {
+  activityKind,
+  getSubagentMeta,
+  isSubagentTool,
+  isWebSearchTool,
+} from "./ToolCall";
 
 describe("isWebSearchTool", () => {
   test("distinguishes web research from ordinary tools", () => {

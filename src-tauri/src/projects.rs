@@ -13,6 +13,7 @@ const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts
 const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts");
 const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts");
 const WORKSPACE_EXTENSION: &str = include_str!("../extensions/workspace-repositories.ts");
+const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -89,21 +90,36 @@ pub(crate) fn canonicalize_or_original(p: &Path) -> PathBuf {
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git").arg("-C").arg(dir).args(args).output().map_err(|e| e.to_string())?;
-    if output.status.success() { Ok(String::from_utf8_lossy(&output.stdout).trim().to_string()) }
-    else { Err(String::from_utf8_lossy(&output.stderr).trim().to_string()) }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
 }
 
 /// A repository is valid only when its own `.git` entry resolves to this exact canonical root.
 pub(crate) fn verified_repository_root(candidate: &Path) -> Result<PathBuf, String> {
     if !candidate.join(".git").exists() {
-        return Err(format!("not a Git repository root: {}", candidate.display()));
+        return Err(format!(
+            "not a Git repository root: {}",
+            candidate.display()
+        ));
     }
     let root = PathBuf::from(git_output(candidate, &["rev-parse", "--show-toplevel"])?);
     let root = canonicalize_or_original(&root);
     let candidate = canonicalize_or_original(candidate);
     if root != candidate {
-        return Err(format!("Git root mismatch: {} resolves to {}", candidate.display(), root.display()));
+        return Err(format!(
+            "Git root mismatch: {} resolves to {}",
+            candidate.display(),
+            root.display()
+        ));
     }
     Ok(root)
 }
@@ -151,13 +167,66 @@ pub(crate) fn discover_git_repositories(root: &Path) -> Vec<PathBuf> {
     repositories
 }
 
-fn repository_metadata(path: &Path) -> (Option<String>, Option<String>, Option<String>, u32, u32, Vec<String>) {
-    let branch = git_output(path, &["symbolic-ref", "--quiet", "--short", "HEAD"]).ok().filter(|v| !v.is_empty());
-    let tracking_branch = git_output(path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]).ok().filter(|v| !v.is_empty());
-    let remote_url = tracking_branch.as_deref().and_then(|upstream| upstream.split_once('/').map(|(remote, _)| remote)).and_then(|remote| git_output(path, &["remote", "get-url", remote]).ok());
-    let (ahead, behind) = tracking_branch.as_deref().and_then(|upstream| git_output(path, &["rev-list", "--left-right", "--count", &format!("HEAD...{upstream}")]).ok()).and_then(|value| { let mut n = value.split_whitespace(); Some((n.next()?.parse().ok()?, n.next()?.parse().ok()?)) }).unwrap_or((0, 0));
-    let dirty_files = git_output(path, &["status", "--porcelain", "--untracked-files=all"]).unwrap_or_default().lines().filter_map(|line| line.get(3..).map(str::to_string)).collect();
-    (branch, tracking_branch, remote_url, ahead, behind, dirty_files)
+fn repository_metadata(
+    path: &Path,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    u32,
+    u32,
+    Vec<String>,
+) {
+    let branch = git_output(path, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+        .ok()
+        .filter(|v| !v.is_empty());
+    let tracking_branch = git_output(
+        path,
+        &[
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{upstream}",
+        ],
+    )
+    .ok()
+    .filter(|v| !v.is_empty());
+    let remote_url = tracking_branch
+        .as_deref()
+        .and_then(|upstream| upstream.split_once('/').map(|(remote, _)| remote))
+        .and_then(|remote| git_output(path, &["remote", "get-url", remote]).ok());
+    let (ahead, behind) = tracking_branch
+        .as_deref()
+        .and_then(|upstream| {
+            git_output(
+                path,
+                &[
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("HEAD...{upstream}"),
+                ],
+            )
+            .ok()
+        })
+        .and_then(|value| {
+            let mut n = value.split_whitespace();
+            Some((n.next()?.parse().ok()?, n.next()?.parse().ok()?))
+        })
+        .unwrap_or((0, 0));
+    let dirty_files = git_output(path, &["status", "--porcelain", "--untracked-files=all"])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.get(3..).map(str::to_string))
+        .collect();
+    (
+        branch,
+        tracking_branch,
+        remote_url,
+        ahead,
+        behind,
+        dirty_files,
+    )
 }
 
 fn dir_mtime_ms(path: &Path) -> u64 {
@@ -175,6 +244,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("pipeline-runner.ts", PIPELINE_EXTENSION),
         ("terminal-context.ts", TERMINAL_EXTENSION),
         ("workspace-repositories.ts", WORKSPACE_EXTENSION),
+        ("auto-format.ts", AUTO_FORMAT_EXTENSION),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }
@@ -322,9 +392,13 @@ pub fn find_owning_project(child: &Path) -> Option<PathBuf> {
         let saved_canon = canonicalize_or_original(Path::new(&saved));
         if child_canon == saved_canon || child_canon.starts_with(&saved_canon) {
             let repositories = discover_git_repositories(&saved_canon);
-            if let Ok(root) = git_output(&child_canon, &["rev-parse", "--show-toplevel"]).map(PathBuf::from) {
+            if let Ok(root) =
+                git_output(&child_canon, &["rev-parse", "--show-toplevel"]).map(PathBuf::from)
+            {
                 let root = canonicalize_or_original(&root);
-                if repositories.contains(&root) { return Some(root); }
+                if repositories.contains(&root) {
+                    return Some(root);
+                }
             }
             return None;
         }
@@ -334,10 +408,15 @@ pub fn find_owning_project(child: &Path) -> Option<PathBuf> {
 
 fn find_owning_project_for_worktree(cwd: &Path) -> Option<PathBuf> {
     let wt_root = global_worktree_root().ok()?;
-    if let Some(session) = canonicalize_or_original(cwd).ancestors().find(|path| path.join(".crc-workspace-root").is_file()) {
+    if let Some(session) = canonicalize_or_original(cwd)
+        .ancestors()
+        .find(|path| path.join(".crc-workspace-root").is_file())
+    {
         let workspace = std::fs::read_to_string(session.join(".crc-workspace-root")).ok()?;
         let workspace = canonicalize_or_original(Path::new(workspace.trim()));
-        if registered_workspace(&workspace).as_ref() == Some(&workspace) { return Some(workspace); }
+        if registered_workspace(&workspace).as_ref() == Some(&workspace) {
+            return Some(workspace);
+        }
     }
     let wt_root_canon = canonicalize_or_original(&wt_root);
     let cwd_canon = canonicalize_or_original(cwd);
@@ -394,7 +473,9 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
 pub(crate) fn ensure_verified_repository(path: &Path) -> Result<PathBuf, String> {
     let root = verified_repository_root(path)?;
     let allowed = ensure_path_allowed(&root)?;
-    if root != allowed { return Err("repository target is not the registered canonical repository root".into()); }
+    if root != allowed {
+        return Err("repository target is not the registered canonical repository root".into());
+    }
     Ok(root)
 }
 
@@ -403,12 +484,18 @@ pub fn open_vscode(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     let allowed = ensure_path_allowed(&path)?;
     let status = if cfg!(target_os = "macos") {
-        Command::new("open").args(["-a", "Visual Studio Code"]).arg(&allowed).status()
+        Command::new("open")
+            .args(["-a", "Visual Studio Code"])
+            .arg(&allowed)
+            .status()
     } else {
         Command::new("code").arg(&allowed).status()
     }
     .map_err(|error| format!("Could not open VS Code: {error}"))?;
-    status.success().then_some(()).ok_or_else(|| "VS Code could not open the project".into())
+    status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "VS Code could not open the project".into())
 }
 
 pub fn ensure_pipeline_cwd(project: &Path, cwd: &Path) -> Result<PathBuf, String> {
@@ -422,9 +509,17 @@ pub fn ensure_pipeline_cwd(project: &Path, cwd: &Path) -> Result<PathBuf, String
         return Ok(cwd);
     }
     ensure_path_allowed(&cwd)?;
-    let expected = git_output(&project, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    let actual = git_output(&cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    if expected != actual { return Err("pipeline cwd belongs to another repository".into()); }
+    let expected = git_output(
+        &project,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    let actual = git_output(
+        &cwd,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+    if expected != actual {
+        return Err("pipeline cwd belongs to another repository".into());
+    }
     Ok(cwd)
 }
 
@@ -443,7 +538,11 @@ fn project_info(
         .ok_or("invalid project name")?
         .to_string();
     let (kinds, is_git) = detect_kinds(&path);
-    let (branch, tracking_branch, remote_url, ahead, behind, dirty_files) = if is_git { repository_metadata(&path) } else { (None, None, None, 0, 0, Vec::new()) };
+    let (branch, tracking_branch, remote_url, ahead, behind, dirty_files) = if is_git {
+        repository_metadata(&path)
+    } else {
+        (None, None, None, 0, 0, Vec::new())
+    };
     Ok(ProjectInfo {
         name,
         path: path.to_string_lossy().to_string(),
@@ -517,7 +616,13 @@ pub async fn fetch_project_branches(path: String) -> Result<Vec<String>, String>
     tauri::async_runtime::spawn_blocking(move || {
         let repository = ensure_verified_repository(Path::new(&path))?;
         let output = Command::new("git")
-            .args(["-C", &repository.to_string_lossy(), "fetch", "--all", "--prune"])
+            .args([
+                "-C",
+                &repository.to_string_lossy(),
+                "fetch",
+                "--all",
+                "--prune",
+            ])
             .output()
             .map_err(|error| error.to_string())?;
         if !output.status.success() {
@@ -599,11 +704,15 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
         kind: source.kind,
         url: source.url.trim().to_string(),
         sheet: String::new(),
-        sheets: if source.sheets.is_empty() { vec![source.sheet] } else { source.sheets }
-            .into_iter()
-            .map(|sheet| sheet.trim().to_string())
-            .filter(|sheet| !sheet.is_empty())
-            .collect(),
+        sheets: if source.sheets.is_empty() {
+            vec![source.sheet]
+        } else {
+            source.sheets
+        }
+        .into_iter()
+        .map(|sheet| sheet.trim().to_string())
+        .filter(|sheet| !sheet.is_empty())
+        .collect(),
         pics: source
             .pics
             .into_iter()
@@ -612,7 +721,14 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
             .collect(),
     };
     if source.kind == "google_sheets" {
-        crate::kanban::google_sheet_csv_url(&source.url, source.sheets.first().map(String::as_str).unwrap_or_default())?;
+        crate::kanban::google_sheet_csv_url(
+            &source.url,
+            source
+                .sheets
+                .first()
+                .map(String::as_str)
+                .unwrap_or_default(),
+        )?;
         config.task_sources.insert(canonical, source.clone());
     } else {
         config.task_sources.remove(&canonical);
@@ -883,48 +999,102 @@ mod tests {
 
     fn init_repo(path: &Path) {
         std::fs::create_dir_all(path).unwrap();
-        assert!(Command::new("git").args(["init", "-q", path.to_str().unwrap()]).status().unwrap().success());
+        assert!(Command::new("git")
+            .args(["init", "-q", path.to_str().unwrap()])
+            .status()
+            .unwrap()
+            .success());
     }
 
     #[test]
     fn discovers_only_independent_nested_git_repositories() {
-        let root = std::env::temp_dir().join(format!("crc-project-discovery-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("crc-project-discovery-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         init_repo(&root.join("backend"));
         init_repo(&root.join("frontend"));
         init_repo(&root.join(".crc-worktrees/backend/chat"));
         std::fs::create_dir_all(root.join("inherited")).unwrap();
 
-        assert_eq!(discover_git_repositories(&root), vec![canonicalize_or_original(&root.join("backend")), canonicalize_or_original(&root.join("frontend"))]);
+        assert_eq!(
+            discover_git_repositories(&root),
+            vec![
+                canonicalize_or_original(&root.join("backend")),
+                canonicalize_or_original(&root.join("frontend"))
+            ]
+        );
         assert!(verified_repository_root(&root.join("inherited")).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn discovers_git_worktree_with_git_file() {
-        let root = std::env::temp_dir().join(format!("crc-worktree-discovery-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("crc-worktree-discovery-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let repo = root.join("repo");
         init_repo(&repo);
-        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "config", "user.email", "test@example.com"]).status().unwrap().success());
+        assert!(Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com"
+            ])
+            .status()
+            .unwrap()
+            .success());
         std::fs::write(repo.join("file"), "x").unwrap();
-        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "add", "."]).status().unwrap().success());
-        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "commit", "-qm", "init"]).status().unwrap().success());
+        assert!(Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "."])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "commit", "-qm", "init"])
+            .status()
+            .unwrap()
+            .success());
         let worktree = root.join("worktree");
-        assert!(Command::new("git").args(["-C", repo.to_str().unwrap(), "worktree", "add", "-q", "-b", "feature", worktree.to_str().unwrap()]).status().unwrap().success());
+        assert!(Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                worktree.to_str().unwrap()
+            ])
+            .status()
+            .unwrap()
+            .success());
         assert!(worktree.join(".git").is_file());
-        assert_eq!(verified_repository_root(&worktree).unwrap(), canonicalize_or_original(&worktree));
+        assert_eq!(
+            verified_repository_root(&worktree).unwrap(),
+            canonicalize_or_original(&worktree)
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn workspace_graphs_include_parent_and_independent_children() {
-        let root = std::env::temp_dir().join(format!("crc-workspace-graphs-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("crc-workspace-graphs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         init_repo(&root);
         init_repo(&root.join("backend"));
         init_repo(&root.join("frontend"));
-        assert_eq!(graph_repositories(&root), vec![canonicalize_or_original(&root), canonicalize_or_original(&root.join("backend")), canonicalize_or_original(&root.join("frontend"))]);
+        assert_eq!(
+            graph_repositories(&root),
+            vec![
+                canonicalize_or_original(&root),
+                canonicalize_or_original(&root.join("backend")),
+                canonicalize_or_original(&root.join("frontend"))
+            ]
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

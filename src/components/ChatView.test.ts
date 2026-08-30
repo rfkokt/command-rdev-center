@@ -1,19 +1,55 @@
 import { describe, expect, test } from "vitest";
-import { agentNotification, appendAgentLog, appendBoundedText, appendStreamingText, clearRestartErrors, ensureAssistantTurn, filePickerKey, formatAgentError, formatTokens, insertSteerMessage, preserveStreamedContent, projectTaskIntent, recentItems, settleAgentMessages, settleWithError, shouldOfferRestart, shouldShowChanges, shouldSubmitCommand, shouldToastPiStderr, terminalCommandIsDestructive, tsvToMarkdown } from "./chat-utils";
+import {
+  agentNotification,
+  appendAgentLog,
+  appendBoundedText,
+  appendStreamingText,
+  clearRestartErrors,
+  ensureAssistantTurn,
+  filePickerKey,
+  formatAgentError,
+  formatTokens,
+  insertSteerMessage,
+  preserveStreamedContent,
+  projectTaskIntent,
+  recentItems,
+  settleAgentMessages,
+  settleWithError,
+  shouldOfferRestart,
+  shouldShowChanges,
+  shouldSubmitCommand,
+  shouldToastPiStderr,
+  terminalCommandIsDestructive,
+  tsvToMarkdown,
+} from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("terminalCommandIsDestructive", () => {
   test("allows read-only SSH inspection", () => {
-    expect(terminalCommandIsDestructive("ssh contabo-rdev 'hostname && uptime'")).toBe(false);
+    expect(
+      terminalCommandIsDestructive("ssh contabo-rdev 'hostname && uptime'"),
+    ).toBe(false);
   });
 
   test("allows routine file and git maintenance", () => {
-    expect(terminalCommandIsDestructive("rm /tmp/stale.index.lock && git add src && git commit -m fix")).toBe(false);
-    expect(terminalCommandIsDestructive("chmod 644 config.json && git push origin main")).toBe(false);
+    expect(
+      terminalCommandIsDestructive(
+        "rm /tmp/stale.index.lock && git add src && git commit -m fix",
+      ),
+    ).toBe(false);
+    expect(
+      terminalCommandIsDestructive(
+        "chmod 644 config.json && git push origin main",
+      ),
+    ).toBe(false);
   });
 
   test("gates high-impact destructive commands", () => {
-    expect(terminalCommandIsDestructive("ssh contabo-rdev 'systemctl restart nginx'")).toBe(true);
+    expect(
+      terminalCommandIsDestructive(
+        "ssh contabo-rdev 'systemctl restart nginx'",
+      ),
+    ).toBe(true);
     expect(terminalCommandIsDestructive("rm -rf /tmp/example")).toBe(true);
     expect(terminalCommandIsDestructive("git clean -fd")).toBe(true);
   });
@@ -30,13 +66,18 @@ describe("agentNotification", () => {
   });
 
   test("previews the completed response", () => {
-    expect(agentNotification("finished", "Global", "chat-1", "  Jawaban\nagent  ").body).toBe("Global: Jawaban agent");
+    expect(
+      agentNotification("finished", "Global", "chat-1", "  Jawaban\nagent  ")
+        .body,
+    ).toBe("Global: Jawaban agent");
   });
 });
 
 describe("tsvToMarkdown", () => {
   test("preserves quoted spreadsheet cell newlines", () => {
-    expect(tsvToMarkdown('No\tDeskripsi\n997\t"Baris satu\nBaris dua"')).toContain("Baris satu\u2028Baris dua");
+    expect(
+      tsvToMarkdown('No\tDeskripsi\n997\t"Baris satu\nBaris dua"'),
+    ).toContain("Baris satu\u2028Baris dua");
   });
 });
 
@@ -59,45 +100,71 @@ describe("inactive session memory bounds", () => {
 
 describe("appendStreamingText", () => {
   test("appends genuine deltas", () => {
-    expect(appendStreamingText("Test ", "received ✅")).toBe("Test received ✅");
+    expect(appendStreamingText("Test ", "received ✅")).toBe(
+      "Test received ✅",
+    );
   });
 
   test("deduplicates cumulative and repeated stream chunks", () => {
     expect(appendStreamingText("Test", "Test received")).toBe("Test received");
-    expect(appendStreamingText("Test received", "received ✅")).toBe("Test received ✅");
-    expect(appendStreamingText("Test received ✅", "received ✅")).toBe("Test received ✅");
+    expect(appendStreamingText("Test received", "received ✅")).toBe(
+      "Test received ✅",
+    );
+    expect(appendStreamingText("Test received ✅", "received ✅")).toBe(
+      "Test received ✅",
+    );
   });
 });
 
 describe("preserveStreamedContent", () => {
   test("keeps earlier streamed assistant messages when completion only contains the last message", () => {
-    expect(preserveStreamedContent("First answer", "Second answer")).toBe("First answer\n\nSecond answer");
+    expect(preserveStreamedContent("First answer", "Second answer")).toBe(
+      "First answer\n\nSecond answer",
+    );
   });
 
   test("does not duplicate a completion already present in the stream", () => {
-    expect(preserveStreamedContent("First answer\n\nSecond answer", "Second answer")).toBe("First answer\n\nSecond answer");
+    expect(
+      preserveStreamedContent("First answer\n\nSecond answer", "Second answer"),
+    ).toBe("First answer\n\nSecond answer");
   });
 
   test("replaces a semantically duplicated final snapshot", () => {
-    const streamed = "Task Task Yang Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
-    const completed = "Task Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
+    const streamed =
+      "Task Task Yang Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
+    const completed =
+      "Task Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
     expect(preserveStreamedContent(streamed, completed)).toBe(completed);
   });
 });
 
 describe("shouldShowChanges", () => {
   test("keeps changes attached to the latest assistant message after streaming ends", () => {
-    expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 1)).toBe(true);
-    expect(shouldShowChanges({ id: "older", role: "assistant" }, "latest", 1)).toBe(false);
-    expect(shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 0)).toBe(false);
+    expect(
+      shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 1),
+    ).toBe(true);
+    expect(
+      shouldShowChanges({ id: "older", role: "assistant" }, "latest", 1),
+    ).toBe(false);
+    expect(
+      shouldShowChanges({ id: "latest", role: "assistant" }, "latest", 0),
+    ).toBe(false);
   });
 });
 
 describe("projectTaskIntent", () => {
   test("routes task lists and numbered details", () => {
-    expect(projectTaskIntent("ada task di project ini ga?")).toEqual({ kind: "list" });
-    expect(projectTaskIntent("lu bisa lihat point nomor 4?")).toEqual({ kind: "detail", taskNo: "4" });
-    expect(projectTaskIntent("show task #6")).toEqual({ kind: "detail", taskNo: "6" });
+    expect(projectTaskIntent("ada task di project ini ga?")).toEqual({
+      kind: "list",
+    });
+    expect(projectTaskIntent("lu bisa lihat point nomor 4?")).toEqual({
+      kind: "detail",
+      taskNo: "4",
+    });
+    expect(projectTaskIntent("show task #6")).toEqual({
+      kind: "detail",
+      taskNo: "6",
+    });
   });
 
   test("does not hijack unrelated test or Sonar requests", () => {
@@ -125,31 +192,94 @@ describe("filePickerKey", () => {
 
 describe("ensureAssistantTurn", () => {
   test("reuses one streaming assistant across repeated tool rounds", () => {
-    const create = () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage);
+    const create = () =>
+      ({
+        id: "new",
+        role: "assistant",
+        text: "",
+        toolCalls: [],
+        isStreaming: true,
+      }) as ChatMessage;
     const first = ensureAssistantTurn([], create);
     expect(ensureAssistantTurn(first, create)).toBe(first);
     expect(first).toHaveLength(1);
   });
 
   test("creates a new turn after the previous assistant settled", () => {
-    const settled = [{ id: "old", role: "assistant", text: "done", toolCalls: [], isStreaming: false } as ChatMessage];
-    expect(ensureAssistantTurn(settled, () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage))).toHaveLength(2);
+    const settled = [
+      {
+        id: "old",
+        role: "assistant",
+        text: "done",
+        toolCalls: [],
+        isStreaming: false,
+      } as ChatMessage,
+    ];
+    expect(
+      ensureAssistantTurn(
+        settled,
+        () =>
+          ({
+            id: "new",
+            role: "assistant",
+            text: "",
+            toolCalls: [],
+            isStreaming: true,
+          }) as ChatMessage,
+      ),
+    ).toHaveLength(2);
   });
 
   test("places the next assistant after a queued user message", () => {
-    const active = { id: "old", role: "assistant", text: "done", toolCalls: [], isStreaming: true } as ChatMessage;
-    const queued = { id: "queued", role: "user", text: "next", toolCalls: [] } as ChatMessage;
+    const active = {
+      id: "old",
+      role: "assistant",
+      text: "done",
+      toolCalls: [],
+      isStreaming: true,
+    } as ChatMessage;
+    const queued = {
+      id: "queued",
+      role: "user",
+      text: "next",
+      toolCalls: [],
+    } as ChatMessage;
 
-    expect(ensureAssistantTurn([active, queued], () => ({ id: "new", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage)).map((message) => message.id)).toEqual(["old", "queued", "new"]);
+    expect(
+      ensureAssistantTurn(
+        [active, queued],
+        () =>
+          ({
+            id: "new",
+            role: "assistant",
+            text: "",
+            toolCalls: [],
+            isStreaming: true,
+          }) as ChatMessage,
+      ).map((message) => message.id),
+    ).toEqual(["old", "queued", "new"]);
   });
 });
 
 describe("insertSteerMessage", () => {
   test("places a steer before the active assistant response", () => {
-    const assistant = { id: "a", role: "assistant", text: "Working", toolCalls: [], isStreaming: true } as ChatMessage;
-    const steer = { id: "u", role: "user", text: "Skip sonar", toolCalls: [] } as ChatMessage;
+    const assistant = {
+      id: "a",
+      role: "assistant",
+      text: "Working",
+      toolCalls: [],
+      isStreaming: true,
+    } as ChatMessage;
+    const steer = {
+      id: "u",
+      role: "user",
+      text: "Skip sonar",
+      toolCalls: [],
+    } as ChatMessage;
 
-    expect(insertSteerMessage([assistant], steer).map((message) => message.id)).toEqual(["u", "a"]);
+    expect(
+      insertSteerMessage([assistant], steer).map((message) => message.id),
+    ).toEqual(["u", "a"]);
   });
 });
 
@@ -163,7 +293,9 @@ describe("shouldToastPiStderr", () => {
 
 describe("appendAgentLog", () => {
   test("keeps pi stderr visible in chat", () => {
-    expect(appendAgentLog([], "provider authentication failed")[0]).toMatchObject({
+    expect(
+      appendAgentLog([], "provider authentication failed")[0],
+    ).toMatchObject({
       role: "system",
       text: "pi stderr: provider authentication failed",
     });
@@ -172,8 +304,20 @@ describe("appendAgentLog", () => {
 
 describe("settleAgentMessages", () => {
   test("removes an empty assistant placeholder without inventing an error", () => {
-    const user = { id: "u", role: "user", text: "test", toolCalls: [] } as ChatMessage;
-    const assistant = { id: "a", role: "assistant", text: "", thinking: "", toolCalls: [], isStreaming: true } as ChatMessage;
+    const user = {
+      id: "u",
+      role: "user",
+      text: "test",
+      toolCalls: [],
+    } as ChatMessage;
+    const assistant = {
+      id: "a",
+      role: "assistant",
+      text: "",
+      thinking: "",
+      toolCalls: [],
+      isStreaming: true,
+    } as ChatMessage;
 
     expect(settleAgentMessages([user, assistant])).toEqual([user]);
   });
@@ -181,34 +325,74 @@ describe("settleAgentMessages", () => {
 
 describe("shouldOfferRestart", () => {
   test("offers chat restart for a missing Pi session", () => {
-    expect(shouldOfferRestart("Agent error: unknown session chat-acms-fe")).toBe(true);
-    expect(shouldOfferRestart("Agent process stopped unexpectedly — use Restart.")).toBe(true);
-    expect(shouldOfferRestart("Agent error: provider authentication failed")).toBe(false);
+    expect(
+      shouldOfferRestart("Agent error: unknown session chat-acms-fe"),
+    ).toBe(true);
+    expect(
+      shouldOfferRestart("Agent process stopped unexpectedly — use Restart."),
+    ).toBe(true);
+    expect(
+      shouldOfferRestart("Agent error: provider authentication failed"),
+    ).toBe(false);
   });
 });
 
 describe("settleWithError", () => {
   test("does not append duplicate persistent errors", () => {
-    const once = settleWithError([], "Agent process stopped unexpectedly — use Restart.");
-    expect(settleWithError(once, "Agent process stopped unexpectedly — use Restart.")).toBe(once);
+    const once = settleWithError(
+      [],
+      "Agent process stopped unexpectedly — use Restart.",
+    );
+    expect(
+      settleWithError(
+        once,
+        "Agent process stopped unexpectedly — use Restart.",
+      ),
+    ).toBe(once);
   });
 
   test("clears restart errors after recovery", () => {
-    const restart = { id: "r", role: "system", text: "Agent error: Agent process stopped unexpectedly — use Restart.", toolCalls: [] } as ChatMessage;
-    const useful = { id: "u", role: "user", text: "continue", toolCalls: [] } as ChatMessage;
+    const restart = {
+      id: "r",
+      role: "system",
+      text: "Agent error: Agent process stopped unexpectedly — use Restart.",
+      toolCalls: [],
+    } as ChatMessage;
+    const useful = {
+      id: "u",
+      role: "user",
+      text: "continue",
+      toolCalls: [],
+    } as ChatMessage;
     expect(clearRestartErrors([restart, useful])).toEqual([useful]);
   });
 
   test("replaces an empty streaming response with a persistent error", () => {
-    const assistant = { id: "a", role: "assistant", text: "", toolCalls: [], isStreaming: true } as ChatMessage;
+    const assistant = {
+      id: "a",
+      role: "assistant",
+      text: "",
+      toolCalls: [],
+      isStreaming: true,
+    } as ChatMessage;
 
     expect(settleWithError([assistant], "provider failed")).toEqual([
-      { ...assistant, text: "Agent error: provider failed", isStreaming: false },
+      {
+        ...assistant,
+        text: "Agent error: provider failed",
+        isStreaming: false,
+      },
     ]);
   });
 
   test("keeps partial output and appends the error", () => {
-    const assistant = { id: "a", role: "assistant", text: "Partial answer", toolCalls: [], isStreaming: true } as ChatMessage;
+    const assistant = {
+      id: "a",
+      role: "assistant",
+      text: "Partial answer",
+      toolCalls: [],
+      isStreaming: true,
+    } as ChatMessage;
 
     expect(settleWithError([assistant], "connection lost")[0].text).toBe(
       "Partial answer\n\nAgent error: connection lost",
@@ -223,12 +407,14 @@ describe("formatAgentError", () => {
     const raw =
       '402: {"message": "[openai-compatible-chat-5475b8dc-a07c-4129-8ca9-56b60f090486/muse-spark-1.1] [402]: {"error":{"code":"billing_not_configured", "message":"Billing verification failed. Please check your payment method.", "param":null, "type":"billing_error"}} (reset after 1m 40s)"}';
     const out = formatAgentError(raw);
-    expect(out).toContain("Billing verification failed. Please check your payment method.");
+    expect(out).toContain(
+      "Billing verification failed. Please check your payment method.",
+    );
     expect(out).toContain("HTTP 402");
     expect(out).toContain("billing_not_configured");
     expect(out).toContain("muse-spark-1.1");
     expect(out).toContain("Retry available in 1m 40s.");
-    expect(out).not.toContain("{\"");
+    expect(out).not.toContain('{"');
   });
 
   test("returns plain text unchanged when there is no JSON to unwrap", () => {

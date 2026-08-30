@@ -4,16 +4,30 @@ import { listen } from "@tauri-apps/api/event";
 import MarkdownMessage from "./MarkdownMessage";
 import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
-import { canResumeResearch, elapsedResearch, extractToc, isActiveResearch, sortResearchRuns, type ResearchData, type ResearchRun, type TocEntry } from "../lib/deep-research";
+import {
+  canResumeResearch,
+  elapsedResearch,
+  extractToc,
+  isActiveResearch,
+  sortResearchRuns,
+  type ResearchData,
+  type ResearchRun,
+  type TocEntry,
+} from "../lib/deep-research";
 
 function TocBlock({ entries }: { entries: TocEntry[] }) {
   if (!entries.length) return null;
   return (
     <nav className="research-toc" aria-labelledby="research-toc-title">
-      <strong id="research-toc-title" className="research-toc-title">Table of Contents</strong>
+      <strong id="research-toc-title" className="research-toc-title">
+        Table of Contents
+      </strong>
       <ol>
         {entries.map((entry) => (
-          <li key={entry.id} className={entry.level === 3 ? "toc-h3" : "toc-h2"}>
+          <li
+            key={entry.id}
+            className={entry.level === 3 ? "toc-h3" : "toc-h2"}
+          >
             <a href={`#${entry.id}`}>{entry.text}</a>
           </li>
         ))}
@@ -26,36 +40,462 @@ function reportPresentation(run: ResearchRun) {
   const report = run.final_report || run.partial_report;
   const lines = report.split("\n");
   const headingIndex = lines.findIndex((line) => /^#\s+/.test(line.trim()));
-  const heading = headingIndex >= 0 ? lines[headingIndex].trim().replace(/^#\s+/, "") : run.query;
-  const body = headingIndex >= 0 ? [...lines.slice(0, headingIndex), ...lines.slice(headingIndex + 1)].join("\n").trim() : report;
-  const excerpt = body.split(/\n\s*\n/).map((part) => part.replace(/^#+\s+/, "").trim()).find((part) => part && !/^(executive summary|summary)$/i.test(part));
+  const heading =
+    headingIndex >= 0
+      ? lines[headingIndex].trim().replace(/^#\s+/, "")
+      : run.query;
+  const body =
+    headingIndex >= 0
+      ? [...lines.slice(0, headingIndex), ...lines.slice(headingIndex + 1)]
+          .join("\n")
+          .trim()
+      : report;
+  const excerpt = body
+    .split(/\n\s*\n/)
+    .map((part) => part.replace(/^#+\s+/, "").trim())
+    .find((part) => part && !/^(executive summary|summary)$/i.test(part));
   const words = body.trim().split(/\s+/).filter(Boolean).length;
-  return { body, heading, excerpt: excerpt?.slice(0, 280), minutes: Math.max(1, Math.ceil(words / 220)) };
+  return {
+    body,
+    heading,
+    excerpt: excerpt?.slice(0, 280),
+    minutes: Math.max(1, Math.ceil(words / 220)),
+  };
 }
 
-function CancelDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => void }) {
+function CancelDialog({
+  onClose,
+  onConfirm,
+}: {
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
   const ref = useModalFocus<HTMLDivElement>(onClose);
-  return <div className="approval-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}><div ref={ref} className="approval-dialog" role="alertdialog" aria-modal="true" aria-labelledby="research-cancel-title" tabIndex={-1}><header><small>Deep Research</small><h2 id="research-cancel-title">Cancel this research run?</h2></header><p className="approval-message">The Pi process will stop. The latest partial report and source list remain available for resume.</p><footer><button className="approval-cancel" onClick={onClose}>Keep running</button><button className="approval-submit" onClick={onConfirm}>Cancel and retain partial</button></footer></div></div>;
+  return (
+    <div
+      className="approval-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        ref={ref}
+        className="approval-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="research-cancel-title"
+        tabIndex={-1}
+      >
+        <header>
+          <small>Deep Research</small>
+          <h2 id="research-cancel-title">Cancel this research run?</h2>
+        </header>
+        <p className="approval-message">
+          The Pi process will stop. The latest partial report and source list
+          remain available for resume.
+        </p>
+        <footer>
+          <button className="approval-cancel" onClick={onClose}>
+            Keep running
+          </button>
+          <button className="approval-submit" onClick={onConfirm}>
+            Cancel and retain partial
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
 }
 
-export default function DeepResearchView({ initialRunId, embedded = false, originChatId, originSessionId, onCompleted }: { initialRunId?: string | null; embedded?: boolean; originChatId?: string; originSessionId?: string; onCompleted?: (run: ResearchRun) => void }) {
+export default function DeepResearchView({
+  initialRunId,
+  embedded = false,
+  originChatId,
+  originSessionId,
+  onCompleted,
+}: {
+  initialRunId?: string | null;
+  embedded?: boolean;
+  originChatId?: string;
+  originSessionId?: string;
+  onCompleted?: (run: ResearchRun) => void;
+}) {
   const [data, setData] = useState<ResearchData>({ runs: [], warnings: [] });
   const [selected, setSelected] = useState<string | null>(initialRunId ?? null);
-  const [query, setQuery] = useState(""); const [error, setError] = useState<string | null>(null); const [busy, setBusy] = useState(false); const [cancel, setCancel] = useState<ResearchRun | null>(null);
-  const load = useCallback(async () => { try { const next = await invoke<ResearchData>("get_deep_research_data"); setData(next); setError(null); setSelected((id) => id && next.runs.some((r) => r.id === id) ? id : next.runs[0]?.id ?? null); } catch (e) { setError(String(e)); } }, []);
-  useEffect(() => { void load(); const onVisible = () => { if (!document.hidden) void load(); }; document.addEventListener("visibilitychange", onVisible); window.addEventListener("focus", onVisible); const unlisten = listen("deep-research-changed", () => void load()); return () => { document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); void unlisten.then((fn) => fn()); }; }, [load]);
-  useEffect(() => { if (initialRunId) setSelected(initialRunId); }, [initialRunId]);
-  const runs = sortResearchRuns(data.runs); const current = runs.find((run) => run.id === selected) ?? runs[0]; const hasActive = runs.some(isActiveResearch);
-  async function start(e: React.FormEvent) { e.preventDefault(); if (!query.trim()) return setError("Enter a research question."); setBusy(true); try { const run = await invoke<ResearchRun>("start_deep_research", { input: { query, model: null, provider: null, thinking: null, originChatId: originChatId ?? null, originSessionId: originSessionId ?? null } }); setQuery(""); setSelected(run.id); await load(); } catch (x) { setError(String(x)); } finally { setBusy(false); } }
-  useEffect(() => { const completed = data.runs.find((run) => run.id === selected && run.state === "completed" && run.origin_chat_id === originChatId && run.origin_session_id === originSessionId && !run.handoff_delivered && run.handoff_state !== "delivering"); if (completed) onCompleted?.(completed); }, [data.runs, onCompleted, originChatId, originSessionId, selected]);
-  async function action(command: string, run: ResearchRun) { setBusy(true); try { const next = await invoke<ResearchRun>(command, { runId: run.id }); setSelected(next.id); setCancel(null); await load(); } catch (x) { setError(String(x)); } finally { setBusy(false); } }
-  async function remove(run: ResearchRun) { if (!await confirm({ title: "Delete research", message: `Delete research "${run.query}"? This cannot be undone.`, confirmLabel: "Delete", cancelLabel: "Keep", danger: true })) return; setBusy(true); try { await invoke("delete_deep_research", { runId: run.id }); setSelected(null); await load(); } catch (x) { setError(String(x)); } finally { setBusy(false); } }
-  return <section className={`deep-research-view${embedded ? " embedded" : ""}`}><header className="deep-research-header"><div><small>Global · Web only</small><h1>Deep Research</h1><p>Dedicated cited research. Local history. No project or file access.</p></div><span>{runs.length} reports</span></header>
-    <form className="research-composer" onSubmit={start}><label htmlFor="research-question">Research question</label><textarea id="research-question" value={query} onChange={(e) => setQuery(e.target.value)} maxLength={10000} placeholder="What should Pi investigate across the web?" disabled={hasActive || busy} /><div><span>{hasActive ? "One run is already active." : "Only approved web tools are available."}</span><button disabled={hasActive || busy}>{busy ? "Starting…" : "Start research"}</button></div></form>
-    {error && <p className="kanban-error" role="alert">{error}</p>}{data.warnings.map((warning) => <p className="research-warning" role="status" key={warning}>{warning}</p>)}
-    {!runs.length ? <div className="research-empty"><strong>No research reports yet</strong><span>Ask a focused question to create the first local report.</span></div> : <div className="research-layout"><nav id="research-library" aria-label="Research runs">{runs.map((run) => <button key={run.id} className={run.id === current?.id ? "active" : ""} onClick={() => setSelected(run.id)}><strong>{run.query}</strong><span>{run.state} · {new Date(run.updated_at * 1000).toLocaleString()}</span></button>)}</nav>{current && <div className="research-detail"><header><div><span className={`research-state ${current.state}`}>{current.state}</span><h2>{current.query}</h2><small>{elapsedResearch(current.created_at)} elapsed · generation {current.generation}{current.recovery_mode ? ` · ${current.recovery_mode}` : ""}</small></div><div>{isActiveResearch(current) && current.state !== "cancelling" && <button className="research-danger" onClick={() => setCancel(current)}>Cancel</button>}{canResumeResearch(current) && !hasActive && <button onClick={() => void action("resume_deep_research", current)} disabled={busy}>Resume</button>}{!isActiveResearch(current) && <button className="research-danger" onClick={() => void remove(current)} disabled={busy}>Delete</button>}</div></header>
-      <section className="research-progress" aria-live="polite" aria-atomic="true"><strong>{current.progress.phase || current.state}</strong><span>{current.progress.activity || current.error || "No current activity"}</span><dl><div><dt>Searches</dt><dd>{current.progress.searches}</dd></div><div><dt>Reads</dt><dd>{current.progress.reads}</dd></div><div><dt>Checks</dt><dd>{current.progress.checks}</dd></div><div><dt>Sources</dt><dd>{current.sources.length}</dd></div></dl></section>{current.error && <p className="research-run-error" role="status">{current.error}</p>}
-      {(current.final_report || current.partial_report) ? (() => { const report = reportPresentation(current); const toc = extractToc(report.body); return <article className={`research-report${embedded ? "" : " research-article"}`} aria-labelledby={embedded ? undefined : "research-article-title"}>{embedded ? <header><strong>{current.final_report ? "Report" : "Partial report"}</strong><span>{(current.final_report || current.partial_report).length.toLocaleString()} characters</span></header> : <header className="research-article-header"><a className="research-publication" href="#research-library">Command RDev · Deep Research</a><p className="research-kicker">{current.final_report ? "Research report" : "Working draft"}</p><h1 id="research-article-title">{report.heading}</h1>{report.excerpt && <p className="research-deck">{report.excerpt}{report.excerpt.length === 280 ? "…" : ""}</p>}<dl className="research-byline"><div><dt>Status</dt><dd>{current.state}</dd></div><div><dt>Published</dt><dd><time dateTime={new Date(current.updated_at * 1000).toISOString()}>{new Date(current.updated_at * 1000).toLocaleDateString(undefined, { dateStyle: "long" })}</time></dd></div><div><dt>Reading time</dt><dd>{report.minutes} min</dd></div><div><dt>Sources</dt><dd>{current.sources.length}</dd></div><div><dt>Length</dt><dd>{(current.final_report || current.partial_report).length.toLocaleString()} characters</dd></div></dl></header>}<TocBlock entries={toc} /><MarkdownMessage>{report.body}</MarkdownMessage></article>; })() : <div className="research-waiting">Report output appears here while Pi works.</div>}
-      {!!current.sources.length && <section className={`research-sources${embedded ? "" : " research-article-sources"}`} aria-labelledby="research-sources-title"><h2 id="research-sources-title">Sources</h2><ol>{current.sources.map((source) => <li key={source.canonical_url}><a href={source.url} target="_blank" rel="noreferrer">{source.title || source.url}</a>{source.cited && <span>cited</span>}</li>)}</ol></section>}</div>}</div>}{cancel && <CancelDialog onClose={() => setCancel(null)} onConfirm={() => void action("cancel_deep_research", cancel)} />}
-  </section>;
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [cancel, setCancel] = useState<ResearchRun | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const next = await invoke<ResearchData>("get_deep_research_data");
+      setData(next);
+      setError(null);
+      setSelected((id) =>
+        id && next.runs.some((r) => r.id === id)
+          ? id
+          : (next.runs[0]?.id ?? null),
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const onVisible = () => {
+      if (!document.hidden) void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    const unlisten = listen("deep-research-changed", () => void load());
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      void unlisten.then((fn) => fn());
+    };
+  }, [load]);
+  useEffect(() => {
+    if (initialRunId) setSelected(initialRunId);
+  }, [initialRunId]);
+  const runs = sortResearchRuns(data.runs);
+  const current = runs.find((run) => run.id === selected) ?? runs[0];
+  const hasActive = runs.some(isActiveResearch);
+  async function start(e: React.FormEvent) {
+    e.preventDefault();
+    if (!query.trim()) return setError("Enter a research question.");
+    setBusy(true);
+    try {
+      const run = await invoke<ResearchRun>("start_deep_research", {
+        input: {
+          query,
+          model: null,
+          provider: null,
+          thinking: null,
+          originChatId: originChatId ?? null,
+          originSessionId: originSessionId ?? null,
+        },
+      });
+      setQuery("");
+      setSelected(run.id);
+      await load();
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    const completed = data.runs.find(
+      (run) =>
+        run.id === selected &&
+        run.state === "completed" &&
+        run.origin_chat_id === originChatId &&
+        run.origin_session_id === originSessionId &&
+        !run.handoff_delivered &&
+        run.handoff_state !== "delivering",
+    );
+    if (completed) onCompleted?.(completed);
+  }, [data.runs, onCompleted, originChatId, originSessionId, selected]);
+  async function action(command: string, run: ResearchRun) {
+    setBusy(true);
+    try {
+      const next = await invoke<ResearchRun>(command, { runId: run.id });
+      setSelected(next.id);
+      setCancel(null);
+      await load();
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove(run: ResearchRun) {
+    if (
+      !(await confirm({
+        title: "Delete research",
+        message: `Delete research "${run.query}"? This cannot be undone.`,
+        confirmLabel: "Delete",
+        cancelLabel: "Keep",
+        danger: true,
+      }))
+    )
+      return;
+    setBusy(true);
+    try {
+      await invoke("delete_deep_research", { runId: run.id });
+      setSelected(null);
+      await load();
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className={`deep-research-view${embedded ? " embedded" : ""}`}>
+      <header className="deep-research-header">
+        <div>
+          <small>Global · Web only</small>
+          <h1>Deep Research</h1>
+          <p>
+            Dedicated cited research. Local history. No project or file access.
+          </p>
+        </div>
+        <span>{runs.length} reports</span>
+      </header>
+      <form className="research-composer" onSubmit={start}>
+        <label htmlFor="research-question">Research question</label>
+        <textarea
+          id="research-question"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          maxLength={10000}
+          placeholder="What should Pi investigate across the web?"
+          disabled={hasActive || busy}
+        />
+        <div>
+          <span>
+            {hasActive
+              ? "One run is already active."
+              : "Only approved web tools are available."}
+          </span>
+          <button disabled={hasActive || busy}>
+            {busy ? "Starting…" : "Start research"}
+          </button>
+        </div>
+      </form>
+      {error && (
+        <p className="kanban-error" role="alert">
+          {error}
+        </p>
+      )}
+      {data.warnings.map((warning) => (
+        <p className="research-warning" role="status" key={warning}>
+          {warning}
+        </p>
+      ))}
+      {!runs.length ? (
+        <div className="research-empty">
+          <strong>No research reports yet</strong>
+          <span>Ask a focused question to create the first local report.</span>
+        </div>
+      ) : (
+        <div className="research-layout">
+          <nav id="research-library" aria-label="Research runs">
+            {runs.map((run) => (
+              <button
+                key={run.id}
+                className={run.id === current?.id ? "active" : ""}
+                onClick={() => setSelected(run.id)}
+              >
+                <strong>{run.query}</strong>
+                <span>
+                  {run.state} ·{" "}
+                  {new Date(run.updated_at * 1000).toLocaleString()}
+                </span>
+              </button>
+            ))}
+          </nav>
+          {current && (
+            <div className="research-detail">
+              <header>
+                <div>
+                  <span className={`research-state ${current.state}`}>
+                    {current.state}
+                  </span>
+                  <h2>{current.query}</h2>
+                  <small>
+                    {elapsedResearch(current.created_at)} elapsed · generation{" "}
+                    {current.generation}
+                    {current.recovery_mode ? ` · ${current.recovery_mode}` : ""}
+                  </small>
+                </div>
+                <div>
+                  {isActiveResearch(current) &&
+                    current.state !== "cancelling" && (
+                      <button
+                        className="research-danger"
+                        onClick={() => setCancel(current)}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  {canResumeResearch(current) && !hasActive && (
+                    <button
+                      onClick={() =>
+                        void action("resume_deep_research", current)
+                      }
+                      disabled={busy}
+                    >
+                      Resume
+                    </button>
+                  )}
+                  {!isActiveResearch(current) && (
+                    <button
+                      className="research-danger"
+                      onClick={() => void remove(current)}
+                      disabled={busy}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </header>
+              <section
+                className="research-progress"
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <strong>{current.progress.phase || current.state}</strong>
+                <span>
+                  {current.progress.activity ||
+                    current.error ||
+                    "No current activity"}
+                </span>
+                <dl>
+                  <div>
+                    <dt>Searches</dt>
+                    <dd>{current.progress.searches}</dd>
+                  </div>
+                  <div>
+                    <dt>Reads</dt>
+                    <dd>{current.progress.reads}</dd>
+                  </div>
+                  <div>
+                    <dt>Checks</dt>
+                    <dd>{current.progress.checks}</dd>
+                  </div>
+                  <div>
+                    <dt>Sources</dt>
+                    <dd>{current.sources.length}</dd>
+                  </div>
+                </dl>
+              </section>
+              {current.error && (
+                <p className="research-run-error" role="status">
+                  {current.error}
+                </p>
+              )}
+              {current.final_report || current.partial_report ? (
+                (() => {
+                  const report = reportPresentation(current);
+                  const toc = extractToc(report.body);
+                  return (
+                    <article
+                      className={`research-report${embedded ? "" : " research-article"}`}
+                      aria-labelledby={
+                        embedded ? undefined : "research-article-title"
+                      }
+                    >
+                      {embedded ? (
+                        <header>
+                          <strong>
+                            {current.final_report ? "Report" : "Partial report"}
+                          </strong>
+                          <span>
+                            {(
+                              current.final_report || current.partial_report
+                            ).length.toLocaleString()}{" "}
+                            characters
+                          </span>
+                        </header>
+                      ) : (
+                        <header className="research-article-header">
+                          <a
+                            className="research-publication"
+                            href="#research-library"
+                          >
+                            Command RDev · Deep Research
+                          </a>
+                          <p className="research-kicker">
+                            {current.final_report
+                              ? "Research report"
+                              : "Working draft"}
+                          </p>
+                          <h1 id="research-article-title">{report.heading}</h1>
+                          {report.excerpt && (
+                            <p className="research-deck">
+                              {report.excerpt}
+                              {report.excerpt.length === 280 ? "…" : ""}
+                            </p>
+                          )}
+                          <dl className="research-byline">
+                            <div>
+                              <dt>Status</dt>
+                              <dd>{current.state}</dd>
+                            </div>
+                            <div>
+                              <dt>Published</dt>
+                              <dd>
+                                <time
+                                  dateTime={new Date(
+                                    current.updated_at * 1000,
+                                  ).toISOString()}
+                                >
+                                  {new Date(
+                                    current.updated_at * 1000,
+                                  ).toLocaleDateString(undefined, {
+                                    dateStyle: "long",
+                                  })}
+                                </time>
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Reading time</dt>
+                              <dd>{report.minutes} min</dd>
+                            </div>
+                            <div>
+                              <dt>Sources</dt>
+                              <dd>{current.sources.length}</dd>
+                            </div>
+                            <div>
+                              <dt>Length</dt>
+                              <dd>
+                                {(
+                                  current.final_report || current.partial_report
+                                ).length.toLocaleString()}{" "}
+                                characters
+                              </dd>
+                            </div>
+                          </dl>
+                        </header>
+                      )}
+                      <TocBlock entries={toc} />
+                      <MarkdownMessage>{report.body}</MarkdownMessage>
+                    </article>
+                  );
+                })()
+              ) : (
+                <div className="research-waiting">
+                  Report output appears here while Pi works.
+                </div>
+              )}
+              {!!current.sources.length && (
+                <section
+                  className={`research-sources${embedded ? "" : " research-article-sources"}`}
+                  aria-labelledby="research-sources-title"
+                >
+                  <h2 id="research-sources-title">Sources</h2>
+                  <ol>
+                    {current.sources.map((source) => (
+                      <li key={source.canonical_url}>
+                        <a href={source.url} target="_blank" rel="noreferrer">
+                          {source.title || source.url}
+                        </a>
+                        {source.cited && <span>cited</span>}
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      {cancel && (
+        <CancelDialog
+          onClose={() => setCancel(null)}
+          onConfirm={() => void action("cancel_deep_research", cancel)}
+        />
+      )}
+    </section>
+  );
 }

@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 import { beforeEach, expect, test } from "vitest";
-import { APPEARANCE_KEY, COLOR_THEME_KEY, applyAppearance, applyColorTheme, readAppearance, readColorTheme, resolveAppearance } from "./theme";
+import {
+  APPEARANCE_KEY,
+  COLOR_THEME_KEY,
+  applyAppearance,
+  applyColorTheme,
+  readAppearance,
+  readColorTheme,
+  resolveAppearance,
+} from "./theme";
 
 beforeEach(() => {
   localStorage.clear();

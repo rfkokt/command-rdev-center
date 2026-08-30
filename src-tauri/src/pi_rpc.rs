@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RpcEvent {
@@ -119,17 +119,45 @@ fn candidate_pi_paths(configured: &str) -> Vec<PathBuf> {
 }
 
 fn pi_runtime_complete(path: &Path) -> bool {
-    let Ok(cli) = path.canonicalize() else { return false };
-    let Some(package) = cli.ancestors().find(|ancestor| ancestor.file_name().is_some_and(|name| name == "pi-coding-agent")) else {
+    let Ok(cli) = path.canonicalize() else {
+        return false;
+    };
+    let Some(package) = cli.ancestors().find(|ancestor| {
+        ancestor
+            .file_name()
+            .is_some_and(|name| name == "pi-coding-agent")
+    }) else {
         return true;
     };
     let api = package.join("node_modules/@earendil-works/pi-ai/dist/api");
     api.join("openai-completions.js").is_file() && api.join("openai-completions.lazy.js").is_file()
 }
 
+fn bundled_prettier_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|e| format!("formatter resource directory: {e}"))?;
+    [
+        resource_dir.join("node_modules/prettier/bin/prettier.cjs"),
+        resource_dir.join("prettier/bin/prettier.cjs"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../node_modules/prettier/bin/prettier.cjs"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or_else(|| "bundled Prettier is unavailable; reinstall Kern Studio".into())
+}
+
 fn pi_version_with_path(path: &Path, env_path: std::ffi::OsString) -> Option<String> {
-    let output = Command::new(path).arg("--version").env("PATH", env_path).output().ok()?;
-    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let output = Command::new(path)
+        .arg("--version")
+        .env("PATH", env_path)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn installed_pi(configured: &str) -> Option<PathBuf> {
@@ -157,7 +185,15 @@ fn pi_version(path: &Path) -> Option<String> {
 }
 
 fn latest_pi_version() -> Option<String> {
-    let output = Command::new("curl").args(["-fsSL", "--max-time", "10", "https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest"]).output().ok()?;
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "10",
+            "https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest",
+        ])
+        .output()
+        .ok()?;
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
     value.get("version")?.as_str().map(str::to_string)
 }
@@ -165,11 +201,20 @@ fn latest_pi_version() -> Option<String> {
 #[tauri::command]
 pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
     let (configured, _) = read_pi_config()?;
-    let candidate = candidate_pi_paths(&configured).into_iter().find(|path| path.is_file());
+    let candidate = candidate_pi_paths(&configured)
+        .into_iter()
+        .find(|path| path.is_file());
     let healthy = installed_pi(&configured);
     let path = healthy.as_ref().or(candidate.as_ref());
     Ok(PiRuntimeStatus {
-        health: if healthy.is_some() { "healthy" } else if candidate.is_some() { "partial" } else { "missing" }.into(),
+        health: if healthy.is_some() {
+            "healthy"
+        } else if candidate.is_some() {
+            "partial"
+        } else {
+            "missing"
+        }
+        .into(),
         path: path.map(|path| path.to_string_lossy().into_owned()),
         installed_version: path.and_then(|path| pi_version(path)),
         latest_version: latest_pi_version(),
@@ -180,7 +225,9 @@ pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
 pub fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
     install_pi_via_curl()?;
     let status = get_pi_runtime_status()?;
-    if status.health != "healthy" { return Err("Pi installer finished but runtime health check still fails".into()); }
+    if status.health != "healthy" {
+        return Err("Pi installer finished but runtime health check still fails".into());
+    }
     Ok(status)
 }
 
@@ -191,9 +238,21 @@ pub fn sync_pi_extensions() -> Result<String, String> {
 }
 
 fn installer_failure(output: &std::process::Output) -> String {
-    let diagnostics = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    let diagnostics = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     let diagnostics = diagnostics.trim();
-    format!("Pi installer failed with {}{}", output.status, if diagnostics.is_empty() { String::new() } else { format!(":\n{diagnostics}") })
+    format!(
+        "Pi installer failed with {}{}",
+        output.status,
+        if diagnostics.is_empty() {
+            String::new()
+        } else {
+            format!(":\n{diagnostics}")
+        }
+    )
 }
 
 fn install_pi_via_curl() -> Result<(), String> {
@@ -206,8 +265,14 @@ fn install_pi_via_curl() -> Result<(), String> {
     if !download.success() {
         return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
     }
-    let pi_path = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".local/bin/pi");
-    let install = Command::new("sh").arg(&installer).env("PATH", path_for_pi(&pi_path.to_string_lossy())).output();
+    let pi_path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join(".local/bin/pi");
+    let install = Command::new("sh")
+        .arg(&installer)
+        .env("PATH", path_for_pi(&pi_path.to_string_lossy()))
+        .output();
     let _ = std::fs::remove_file(&installer);
     let install = install.map_err(|error| format!("failed to run Pi installer: {error}"))?;
     if !install.status.success() {
@@ -267,6 +332,8 @@ fn ensure_pi_installed_with_repair(
         format!("Pi still missing after auto-reinstall. Manually run: curl -fsSL https://pi.dev/install.sh | sh (checked: {:?})", candidate_pi_paths(configured))
     })
 }
+
+const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
 
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
@@ -421,6 +488,7 @@ pub fn spawn_pi_rpc(
     }
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
+    let prettier_path = bundled_prettier_path(&app)?;
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -518,6 +586,8 @@ pub fn spawn_pi_rpc(
                 .to_string_lossy()
                 .into(),
         );
+        args.push("--extension".into());
+        args.push(extensions.join("auto-format.ts").to_string_lossy().into());
     } else {
         args.push("--extension".into());
         args.push(
@@ -564,21 +634,19 @@ pub fn spawn_pi_rpc(
     } else {
         None
     };
-    if global_chat {
-        let prompt_path = std::env::temp_dir().join(format!("crc-global-terminal-{session_id}.md"));
-        std::fs::write(
-            &prompt_path,
-            "## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. Never expose scratchpad, implementation planning, internal notes, or raw tool/provider errors as the final answer; summarize failures cleanly for the user. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n",
+    let runtime_prompt = if global_chat {
+        format!("{MARKDOWN_RESPONSE_PROMPT}\n## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n")
+    } else {
+        format!(
+            "{MARKDOWN_RESPONSE_PROMPT}{}",
+            worktree_system_prompt(Path::new(&cwd), &owning_project).unwrap_or_default()
         )
-        .map_err(|e| format!("global terminal prompt: {e}"))?;
-        args.push("--append-system-prompt".into());
-        args.push(prompt_path.to_string_lossy().to_string());
-    } else if let Some(prompt) = worktree_system_prompt(Path::new(&cwd), &owning_project) {
-        let prompt_path = std::env::temp_dir().join(format!("crc-worktree-{session_id}.md"));
-        std::fs::write(&prompt_path, prompt).map_err(|e| format!("worktree prompt: {e}"))?;
-        args.push("--append-system-prompt".into());
-        args.push(prompt_path.to_string_lossy().to_string());
-    }
+    };
+    let prompt_path = std::env::temp_dir().join(format!("crc-response-format-{session_id}.md"));
+    std::fs::write(&prompt_path, runtime_prompt)
+        .map_err(|e| format!("response format prompt: {e}"))?;
+    args.push("--append-system-prompt".into());
+    args.push(prompt_path.to_string_lossy().to_string());
 
     // Workspace graphs live centrally under the durable parent checkout.
     let graph_workspace = crate::projects::registered_workspace(&owning_project)
@@ -619,9 +687,11 @@ pub fn spawn_pi_rpc(
         .env(
             "CRC_TERMINAL_DIR",
             std::env::temp_dir().join("command-rdev-center-terminals"),
-        );
+        )
+        .env("CRC_PRETTIER_PATH", &prettier_path);
     if !global_chat {
-        let workspace_root = crate::projects::registered_workspace(&owning_project).unwrap_or_else(|| owning_project.clone());
+        let workspace_root = crate::projects::registered_workspace(&owning_project)
+            .unwrap_or_else(|| owning_project.clone());
         let workspace_repositories = crate::projects::discover_git_repositories(&workspace_root).into_iter().map(|root| serde_json::json!({
             "name": root.file_name().unwrap_or_default().to_string_lossy(),
             "root": root,
@@ -630,7 +700,10 @@ pub fn spawn_pi_rpc(
         command
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_WORKSPACE_ROOT", &workspace_root)
-            .env("CRC_WORKSPACE_REPOSITORIES", serde_json::to_string(&workspace_repositories).map_err(|e| e.to_string())?)
+            .env(
+                "CRC_WORKSPACE_REPOSITORIES",
+                serde_json::to_string(&workspace_repositories).map_err(|e| e.to_string())?,
+            )
             .env("CRC_PROJECT_CWD", &cwd)
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
@@ -670,7 +743,8 @@ pub fn spawn_pi_rpc(
                             .env(
                                 "CRC_TERMINAL_DIR",
                                 std::env::temp_dir().join("command-rdev-center-terminals"),
-                            );
+                            )
+                            .env("CRC_PRETTIER_PATH", &prettier_path);
                         if !global_chat {
                             command
                                 .env("CRC_PROJECT_ROOT", &owning_project)
@@ -985,7 +1059,10 @@ mod tests {
         std::fs::write(&node, "#!/bin/sh\nprintf 'test-version\\n'\n").unwrap();
         std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        assert_eq!(pi_version_with_path(&pi, std::env::join_paths([bin]).unwrap()).as_deref(), Some("test-version"));
+        assert_eq!(
+            pi_version_with_path(&pi, std::env::join_paths([bin]).unwrap()).as_deref(),
+            Some("test-version")
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1012,6 +1089,12 @@ mod tests {
         std::fs::write(api.join("openai-completions.lazy.js"), "").unwrap();
         assert!(pi_runtime_complete(&shim));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn response_format_prompt_requires_clean_markdown() {
+        assert!(MARKDOWN_RESPONSE_PROMPT.contains("clean Markdown"));
+        assert!(MARKDOWN_RESPONSE_PROMPT.contains("fenced blocks"));
     }
 
     #[test]

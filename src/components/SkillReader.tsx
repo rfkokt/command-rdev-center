@@ -1,16 +1,207 @@
 import MarkdownMessage from "./MarkdownMessage";
 import { useModalFocus } from "./useModalFocus";
 
-export type SkillSource = { id: string; label: string; path: string; readable: boolean; error?: string | null };
-export type SkillDocument = { name: string; description: string; location: string; source_id: string; valid: boolean; invalid_reason?: string | null; compatibility?: string | null; allowed_tools?: string | null; content: string; supporting_files: string[] };
+export type SkillSource = {
+  id: string;
+  label: string;
+  path: string;
+  readable: boolean;
+  error?: string | null;
+};
+export type SkillDocument = {
+  name: string;
+  description: string;
+  location: string;
+  source_id: string;
+  valid: boolean;
+  invalid_reason?: string | null;
+  compatibility?: string | null;
+  allowed_tools?: string | null;
+  content: string;
+  supporting_files: string[];
+};
 
-function body(skill: SkillDocument) { return skill.content.replace(/^---\n[\s\S]*?\n---\n?/, "").trim(); }
-function toc(content: string) { return content.split("\n").flatMap((line) => { const match = line.match(/^(#{2,3})\s+(.+)/); return match ? [{ level: match[1].length, text: match[2].replace(/[`*_]/g, "") }] : []; }); }
+function body(skill: SkillDocument) {
+  return skill.content.replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+}
+function toc(content: string) {
+  return content.split("\n").flatMap((line) => {
+    const match = line.match(/^(#{2,3})\s+(.+)/);
+    return match
+      ? [{ level: match[1].length, text: match[2].replace(/[`*_]/g, "") }]
+      : [];
+  });
+}
 
-export default function SkillReader({ skill, source, onClose, onUse }: { skill: SkillDocument; source?: SkillSource; onClose: () => void; onUse: (name: string) => void }) {
-  const ref = useModalFocus<HTMLElement>(onClose); const command = `/skill:${skill.name}`; const content = body(skill); const sections = toc(content);
-  return <div className="settings-backdrop skill-reader-backdrop" onClick={onClose}><section ref={ref} className="skill-reader" role="dialog" aria-modal="true" aria-labelledby="skill-detail-title" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
-    <aside className="skill-reader-sidebar"><div className="skill-reader-brand"><small>LOCAL PI AGENT</small><strong>Skill Library</strong></div><button className="skill-reader-back" onClick={onClose}>← Semua skill</button><div className="skill-reader-current"><small>{skill.valid ? "READY TO USE" : "INVALID SKILL"}</small><strong>{skill.name}</strong><span>{source?.label ?? skill.source_id}</span></div>{sections.length > 0 && <nav aria-label="Skill sections"><small>DAFTAR ISI</small>{sections.map((item, index) => <span key={`${item.text}-${index}`} className={item.level === 3 ? "nested" : ""}>{item.text}</span>)}</nav>}<dl className="skill-reader-facts"><div><dt>COMMAND</dt><dd><code>{command}</code></dd></div><div><dt>TOOLS</dt><dd>{skill.allowed_tools || "Mengikuti izin chat"}</dd></div>{skill.compatibility && <div><dt>COMPATIBILITY</dt><dd>{skill.compatibility}</dd></div>}</dl></aside>
-    <main className="skill-reader-main"><header className="skill-reader-toolbar"><span>SKILL DETAIL</span><div><button onClick={() => void navigator.clipboard.writeText(command)}>Copy command</button><button className="skill-reader-close" onClick={onClose} aria-label="Close skill details">×</button></div></header><article className="skill-reader-article"><header className="skill-reader-hero"><p>PI SKILL · {skill.valid ? "GLOBAL INSTRUCTION" : "REQUIRES ATTENTION"}</p><h1 id="skill-detail-title">{skill.name}</h1><p className="skill-reader-deck">{skill.description || skill.invalid_reason || "Tidak ada deskripsi untuk skill ini."}</p><dl><div><dt>STATUS</dt><dd>{skill.valid ? "Ready" : "Invalid"}</dd></div><div><dt>SUMBER</dt><dd>{source?.label ?? skill.source_id}</dd></div><div><dt>FILES</dt><dd>{skill.supporting_files.length + 1}</dd></div><div><dt>INVOKE</dt><dd><code>{command}</code></dd></div></dl></header>{skill.invalid_reason ? <p className="settings-error">{skill.invalid_reason}</p> : <><section className="skill-reader-callout"><small>CARA PAKAI</small><p>Klik <b>Use in Chat</b> untuk memasukkan command ini ke chat aktif, lalu kirim untuk memuat instruksinya.</p></section><div className="skill-reader-content">{content.split(/(?=^#{2,3}\s)/m).map((section, index) => <section id={`skill-section-${index}`} key={index}><MarkdownMessage>{section}</MarkdownMessage></section>)}</div></>}{skill.supporting_files.length > 0 && <section className="skill-reader-files"><small>SUPPORTING FILES</small><ul>{skill.supporting_files.map((file) => <li key={file}><code>{file}</code></li>)}</ul></section>}</article><footer className="skill-reader-footer"><span>Skill dibaca lokal dari <code>{skill.location}</code></span><button className="save-settings" disabled={!skill.valid} onClick={() => onUse(skill.name)}>Use in Chat →</button></footer></main>
-  </section></div>;
+export default function SkillReader({
+  skill,
+  source,
+  onClose,
+  onUse,
+}: {
+  skill: SkillDocument;
+  source?: SkillSource;
+  onClose: () => void;
+  onUse: (name: string) => void;
+}) {
+  const ref = useModalFocus<HTMLElement>(onClose);
+  const command = `/skill:${skill.name}`;
+  const content = body(skill);
+  const sections = toc(content);
+  return (
+    <div className="settings-backdrop skill-reader-backdrop" onClick={onClose}>
+      <section
+        ref={ref}
+        className="skill-reader"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-detail-title"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <aside className="skill-reader-sidebar">
+          <div className="skill-reader-brand">
+            <small>LOCAL PI AGENT</small>
+            <strong>Skill Library</strong>
+          </div>
+          <button className="skill-reader-back" onClick={onClose}>
+            ← Semua skill
+          </button>
+          <div className="skill-reader-current">
+            <small>{skill.valid ? "READY TO USE" : "INVALID SKILL"}</small>
+            <strong>{skill.name}</strong>
+            <span>{source?.label ?? skill.source_id}</span>
+          </div>
+          {sections.length > 0 && (
+            <nav aria-label="Skill sections">
+              <small>DAFTAR ISI</small>
+              {sections.map((item, index) => (
+                <span
+                  key={`${item.text}-${index}`}
+                  className={item.level === 3 ? "nested" : ""}
+                >
+                  {item.text}
+                </span>
+              ))}
+            </nav>
+          )}
+          <dl className="skill-reader-facts">
+            <div>
+              <dt>COMMAND</dt>
+              <dd>
+                <code>{command}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>TOOLS</dt>
+              <dd>{skill.allowed_tools || "Mengikuti izin chat"}</dd>
+            </div>
+            {skill.compatibility && (
+              <div>
+                <dt>COMPATIBILITY</dt>
+                <dd>{skill.compatibility}</dd>
+              </div>
+            )}
+          </dl>
+        </aside>
+        <main className="skill-reader-main">
+          <header className="skill-reader-toolbar">
+            <span>SKILL DETAIL</span>
+            <div>
+              <button
+                onClick={() => void navigator.clipboard.writeText(command)}
+              >
+                Copy command
+              </button>
+              <button
+                className="skill-reader-close"
+                onClick={onClose}
+                aria-label="Close skill details"
+              >
+                ×
+              </button>
+            </div>
+          </header>
+          <article className="skill-reader-article">
+            <header className="skill-reader-hero">
+              <p>
+                PI SKILL ·{" "}
+                {skill.valid ? "GLOBAL INSTRUCTION" : "REQUIRES ATTENTION"}
+              </p>
+              <h1 id="skill-detail-title">{skill.name}</h1>
+              <p className="skill-reader-deck">
+                {skill.description ||
+                  skill.invalid_reason ||
+                  "Tidak ada deskripsi untuk skill ini."}
+              </p>
+              <dl>
+                <div>
+                  <dt>STATUS</dt>
+                  <dd>{skill.valid ? "Ready" : "Invalid"}</dd>
+                </div>
+                <div>
+                  <dt>SUMBER</dt>
+                  <dd>{source?.label ?? skill.source_id}</dd>
+                </div>
+                <div>
+                  <dt>FILES</dt>
+                  <dd>{skill.supporting_files.length + 1}</dd>
+                </div>
+                <div>
+                  <dt>INVOKE</dt>
+                  <dd>
+                    <code>{command}</code>
+                  </dd>
+                </div>
+              </dl>
+            </header>
+            {skill.invalid_reason ? (
+              <p className="settings-error">{skill.invalid_reason}</p>
+            ) : (
+              <>
+                <section className="skill-reader-callout">
+                  <small>CARA PAKAI</small>
+                  <p>
+                    Klik <b>Use in Chat</b> untuk memasukkan command ini ke chat
+                    aktif, lalu kirim untuk memuat instruksinya.
+                  </p>
+                </section>
+                <div className="skill-reader-content">
+                  {content.split(/(?=^#{2,3}\s)/m).map((section, index) => (
+                    <section id={`skill-section-${index}`} key={index}>
+                      <MarkdownMessage>{section}</MarkdownMessage>
+                    </section>
+                  ))}
+                </div>
+              </>
+            )}
+            {skill.supporting_files.length > 0 && (
+              <section className="skill-reader-files">
+                <small>SUPPORTING FILES</small>
+                <ul>
+                  {skill.supporting_files.map((file) => (
+                    <li key={file}>
+                      <code>{file}</code>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </article>
+          <footer className="skill-reader-footer">
+            <span>
+              Skill dibaca lokal dari <code>{skill.location}</code>
+            </span>
+            <button
+              className="save-settings"
+              disabled={!skill.valid}
+              onClick={() => onUse(skill.name)}
+            >
+              Use in Chat →
+            </button>
+          </footer>
+        </main>
+      </section>
+    </div>
+  );
 }

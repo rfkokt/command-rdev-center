@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "test": "vitest run",
+    "format": "prettier --write .github/workflows src src-tauri/extensions scripts index.html package.json tsconfig.json tsconfig.node.json vite.config.ts src-tauri/capabilities/default.json src-tauri/crc.config.json src-tauri/tauri.conf.json && cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "format:check": "prettier --check .github/workflows src src-tauri/extensions scripts index.html package.json tsconfig.json tsconfig.node.json vite.config.ts src-tauri/capabilities/default.json src-tauri/crc.config.json src-tauri/tauri.conf.json && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "check:version": "node scripts/check-version.mjs",
     "build": "pnpm check:version && tsc && vite build",
     "preview": "vite preview",
@@ -52,6 +54,7 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.6.0",
     "jsdom": "^30.0.0",
+    "prettier": "3.5.3",
     "typescript": "~5.8.3",
     "vite": "^7.0.4",
     "vitest": "^4.1.10"

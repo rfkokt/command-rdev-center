@@ -22,7 +22,10 @@ pub struct FigmaMcpSettings {
 
 impl Default for FigmaMcpSettings {
     fn default() -> Self {
-        Self { enabled: false, url: "https://mcp.figma.com/mcp".into() }
+        Self {
+            enabled: false,
+            url: "https://mcp.figma.com/mcp".into(),
+        }
     }
 }
 
@@ -32,23 +35,33 @@ fn figma_mcp_settings_path() -> Result<PathBuf, String> {
 }
 
 fn validate_figma_mcp_url(url: &str) -> Result<(), String> {
-    if !url.starts_with("https://") { return Err("Figma MCP URL must use HTTPS".into()); }
+    if !url.starts_with("https://") {
+        return Err("Figma MCP URL must use HTTPS".into());
+    }
     Ok(())
 }
 
 #[tauri::command]
 pub fn get_figma_mcp_settings() -> Result<FigmaMcpSettings, String> {
     let path = figma_mcp_settings_path()?;
-    if !path.exists() { return Ok(FigmaMcpSettings::default()); }
-    serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    if !path.exists() {
+        return Ok(FigmaMcpSettings::default());
+    }
+    serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn save_figma_mcp_settings(enabled: bool, url: String) -> Result<(), String> {
-    let settings = FigmaMcpSettings { enabled, url: url.trim().to_string() };
+    let settings = FigmaMcpSettings {
+        enabled,
+        url: url.trim().to_string(),
+    };
     validate_figma_mcp_url(&settings.url)?;
     let path = figma_mcp_settings_path()?;
-    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     std::fs::write(path, format!("{raw}\n")).map_err(|e| e.to_string())
 }

@@ -37,7 +37,10 @@ export type ApprovalRequest = {
   raw: string;
 };
 
-export function parseApprovalRequest(session_id: string, raw: string): ApprovalRequest | null {
+export function parseApprovalRequest(
+  session_id: string,
+  raw: string,
+): ApprovalRequest | null {
   try {
     const j = JSON.parse(raw) as Record<string, unknown>;
     if (j.type !== "extension_ui_request") return null;

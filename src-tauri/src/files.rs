@@ -7,10 +7,14 @@ const MAX_PDF_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_ATTACHMENT_TEXT_BYTES: usize = 1_000_000;
 
 fn macos_tool(name: &str) -> String {
-    [format!("/opt/homebrew/bin/{name}"), format!("/usr/local/bin/{name}"), name.into()]
-        .into_iter()
-        .find(|path| Path::new(path).is_file())
-        .unwrap_or_else(|| name.into())
+    [
+        format!("/opt/homebrew/bin/{name}"),
+        format!("/usr/local/bin/{name}"),
+        name.into(),
+    ]
+    .into_iter()
+    .find(|path| Path::new(path).is_file())
+    .unwrap_or_else(|| name.into())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,7 +135,10 @@ pub async fn install_poppler() -> Result<(), String> {
         let output = Command::new(macos_tool("brew"))
             .args(["install", "poppler"])
             .output()
-            .map_err(|_| "Homebrew is required to install Poppler. Install Homebrew first: https://brew.sh".to_string())?;
+            .map_err(|_| {
+                "Homebrew is required to install Poppler. Install Homebrew first: https://brew.sh"
+                    .to_string()
+            })?;
         if output.status.success() {
             Ok(())
         } else {
@@ -143,37 +150,84 @@ pub async fn install_poppler() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn read_chat_attachments(project_path: Option<String>, paths: Vec<String>) -> Result<Vec<ChatAttachment>, String> {
+pub async fn read_chat_attachments(
+    project_path: Option<String>,
+    paths: Vec<String>,
+) -> Result<Vec<ChatAttachment>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if let Some(root) = project_path.as_deref() {
             crate::projects::ensure_registered_project(Path::new(root))?;
         }
-        let attachments: Result<Vec<_>, String> = paths.into_iter().map(|path| {
-            if let Some(root) = project_path.as_deref() {
-                crate::projects::ensure_child_of_root(Path::new(root), Path::new(&path))?;
-            }
-            let metadata = std::fs::metadata(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
-            if !metadata.is_file() { return Err(format!("Not a file: {path}")); }
-            let name = Path::new(&path).file_name().and_then(|name| name.to_str()).unwrap_or(&path).to_string();
-            let is_pdf = Path::new(&path).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
-            let limit = if is_pdf { MAX_PDF_ATTACHMENT_BYTES } else { MAX_TEXT_ATTACHMENT_BYTES };
-            if metadata.len() > limit { return Err(format!("File exceeds {} MB: {path}", limit / 1024 / 1024)); }
-            let content = if is_pdf {
-                let output = Command::new(macos_tool("pdftotext")).arg(&path).arg("-").output()
-                    .map_err(|_| "PDF support requires pdftotext (install Poppler).".to_string())?;
-                if !output.status.success() { return Err(format!("Could not extract PDF text from {path}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
-                String::from_utf8(output.stdout).map_err(|_| format!("PDF text is not UTF-8: {path}"))?
-            } else {
-                std::fs::read_to_string(&path).map_err(|_| format!("File is not UTF-8 text: {path}"))?
-            };
-            Ok(ChatAttachment { name, path, content })
-        }).collect();
+        let attachments: Result<Vec<_>, String> = paths
+            .into_iter()
+            .map(|path| {
+                if let Some(root) = project_path.as_deref() {
+                    crate::projects::ensure_child_of_root(Path::new(root), Path::new(&path))?;
+                }
+                let metadata =
+                    std::fs::metadata(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
+                if !metadata.is_file() {
+                    return Err(format!("Not a file: {path}"));
+                }
+                let name = Path::new(&path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&path)
+                    .to_string();
+                let is_pdf = Path::new(&path)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+                let limit = if is_pdf {
+                    MAX_PDF_ATTACHMENT_BYTES
+                } else {
+                    MAX_TEXT_ATTACHMENT_BYTES
+                };
+                if metadata.len() > limit {
+                    return Err(format!("File exceeds {} MB: {path}", limit / 1024 / 1024));
+                }
+                let content = if is_pdf {
+                    let output = Command::new(macos_tool("pdftotext"))
+                        .arg(&path)
+                        .arg("-")
+                        .output()
+                        .map_err(|_| {
+                            "PDF support requires pdftotext (install Poppler).".to_string()
+                        })?;
+                    if !output.status.success() {
+                        return Err(format!(
+                            "Could not extract PDF text from {path}: {}",
+                            String::from_utf8_lossy(&output.stderr).trim()
+                        ));
+                    }
+                    String::from_utf8(output.stdout)
+                        .map_err(|_| format!("PDF text is not UTF-8: {path}"))?
+                } else {
+                    std::fs::read_to_string(&path)
+                        .map_err(|_| format!("File is not UTF-8 text: {path}"))?
+                };
+                Ok(ChatAttachment {
+                    name,
+                    path,
+                    content,
+                })
+            })
+            .collect();
         let attachments = attachments?;
-        if attachments.iter().map(|attachment| attachment.content.len()).sum::<usize>() > MAX_ATTACHMENT_TEXT_BYTES {
-            return Err(format!("Total attachment text exceeds {} MB", MAX_ATTACHMENT_TEXT_BYTES / 1_000_000));
+        if attachments
+            .iter()
+            .map(|attachment| attachment.content.len())
+            .sum::<usize>()
+            > MAX_ATTACHMENT_TEXT_BYTES
+        {
+            return Err(format!(
+                "Total attachment text exceeds {} MB",
+                MAX_ATTACHMENT_TEXT_BYTES / 1_000_000
+            ));
         }
         Ok(attachments)
-    }).await.map_err(|e| format!("Attachment reader failed: {e}"))?
+    })
+    .await
+    .map_err(|e| format!("Attachment reader failed: {e}"))?
 }
 
 #[cfg(test)]
