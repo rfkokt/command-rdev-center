@@ -1876,14 +1876,14 @@ export default function ChatView({
               <button onClick={() => handleRestart(true)} className="chat-retry" title="Retry interrupted task" aria-label="Retry interrupted task">↻</button>
             )}
             {worktreeDiff && shouldShowChanges(m, lastAssistantId, worktreeDiff.files.length) && (
-              <div className="chat-changes">
-                <strong>FILES CHANGED</strong>
+              <details className="chat-changes">
+                <summary><strong>FILES CHANGED</strong><span>{worktreeDiff.files.length}</span></summary>
                 {worktreeDiff.files.map((file) => (
                   <button key={`${file.repository ?? ""}:${file.path}`} onClick={() => setExpandedDiff(file.path)}>
                     <span>{file.status}</span><b>{file.repository && <small>{file.repository}</small>}{file.path}</b><i>+{file.added}</i><em>-{file.removed}</em>
                   </button>
                 ))}
-              </div>
+              </details>
             )}
             {m.id === lastAssistantId && terminalApproval && <section className="terminal-command-approval" role="alert">
               <small>AGENT REQUEST · TERMINAL COMMAND</small>
