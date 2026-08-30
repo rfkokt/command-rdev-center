@@ -20,6 +20,16 @@ pub struct PiSkill {
 pub struct SkillCatalog { pub skills: Vec<PiSkill>, pub sources: Vec<SkillSource> }
 
 fn home() -> Result<PathBuf, String> { Ok(PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)) }
+fn bundled_root(home: &Path) -> Result<PathBuf, String> {
+    let root = home.join("Library/Application Support/command-rdev-center/bundled-skills");
+    let path = root.join("screenshot-to-existing-ui/SKILL.md");
+    let content = include_str!("../skills/screenshot-to-existing-ui/SKILL.md");
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|error| error.to_string())?;
+        std::fs::write(&path, content).map_err(|error| error.to_string())?;
+    }
+    Ok(root)
+}
 fn configured_roots(home: &Path) -> Vec<PathBuf> {
     let path = home.join(".pi/agent/settings.json");
     let Ok(raw) = std::fs::read_to_string(path) else { return Vec::new() };
@@ -31,6 +41,7 @@ fn configured_roots(home: &Path) -> Vec<PathBuf> {
 fn sources() -> Result<Vec<(String, String, PathBuf)>, String> {
     let home = home()?;
     let mut roots = vec![
+        ("crc-bundled".into(), "Command RDEV Center".into(), bundled_root(&home)?),
         ("pi-global".into(), "~/.pi/agent/skills".into(), home.join(".pi/agent/skills")),
         ("agents-global".into(), "~/.agents/skills".into(), home.join(".agents/skills")),
     ];
@@ -84,4 +95,5 @@ fn staged_skills(repo: &Path, path: Option<&str>) -> Result<Vec<PiSkill>, String
     #[test] fn discovers_nested_valid_skill() { let root = temp("nested"); let path = root.join("nested/a/SKILL.md"); std::fs::create_dir_all(path.parent().unwrap()).unwrap(); std::fs::write(&path, "---\nname: Test\ndescription: Works\nlicense: MIT\n---\n# Test").unwrap(); let catalog = discover(vec![("test".into(), "Test".into(), root.clone())]); assert_eq!(catalog.skills[0].name, "Test"); assert!(catalog.skills[0].valid); std::fs::remove_dir_all(root).unwrap(); }
     #[test] fn reports_invalid_frontmatter() { let root = temp("invalid"); std::fs::write(root.join("SKILL.md"), "# no frontmatter").unwrap(); let catalog = discover(vec![("test".into(), "Test".into(), root.clone())]); assert!(!catalog.skills[0].valid); assert!(catalog.skills[0].invalid_reason.as_deref().unwrap().contains("opening")); std::fs::remove_dir_all(root).unwrap(); }
     #[test] fn reports_missing_directory() { let root = std::env::temp_dir().join("crc-skills-does-not-exist"); let catalog = discover(vec![("test".into(), "Test".into(), root)]); assert!(!catalog.sources[0].readable); }
+    #[test] fn bundled_screenshot_skill_is_valid() { let root = temp("bundled"); let path = root.join("screenshot-to-existing-ui/SKILL.md"); std::fs::create_dir_all(path.parent().unwrap()).unwrap(); std::fs::write(&path, include_str!("../skills/screenshot-to-existing-ui/SKILL.md")).unwrap(); let catalog = discover(vec![("bundled".into(), "Bundled".into(), root.clone())]); assert_eq!(catalog.skills[0].name, "screenshot-to-existing-ui"); assert!(catalog.skills[0].valid); std::fs::remove_dir_all(root).unwrap(); }
 }
