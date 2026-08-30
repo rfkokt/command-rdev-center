@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kern Studio",
-  "version": "0.2.8",
+  "version": "0.2.10",
   "identifier": "com.rifkioktapratama.command-rdev-center",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -23,7 +23,9 @@
   },
   "bundle": {
     "active": true,
-    "resources": ["../node_modules/prettier"],
+    "resources": [
+      "../node_modules/prettier"
+    ],
     "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
