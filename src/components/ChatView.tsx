@@ -3663,8 +3663,11 @@ export default function ChatView({
                     lastAssistantId,
                     worktreeDiff.files.length,
                   ) && (
-                    <div className="chat-changes">
-                      <strong>FILES CHANGED</strong>
+                    <details className="chat-changes">
+                      <summary>
+                        <strong>FILES CHANGED</strong>
+                        <span>{worktreeDiff.files.length}</span>
+                      </summary>
                       {worktreeDiff.files.map((file) => (
                         <button
                           key={`${file.repository ?? ""}:${file.path}`}
@@ -3681,7 +3684,7 @@ export default function ChatView({
                           <em>-{file.removed}</em>
                         </button>
                       ))}
-                    </div>
+                    </details>
                   )}
                 {m.id === lastAssistantId && terminalApproval && (
                   <section className="terminal-command-approval" role="alert">

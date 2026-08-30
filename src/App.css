@@ -3078,13 +3078,37 @@ select:focus-visible {
   border: 1px solid #35372f;
   background: #171814;
 }
-.chat-changes > strong {
-  display: block;
+.chat-changes > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 8px 11px;
-  border-bottom: 1px solid #30322a;
+  cursor: pointer;
+  list-style: none;
   color: var(--colors-muted);
+}
+.chat-changes > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-changes > summary::before {
+  content: "▶";
+  color: var(--accent);
+  font-size: 8px;
+  transition: transform 0.15s ease-out;
+}
+.chat-changes[open] > summary {
+  border-bottom: 1px solid #30322a;
+}
+.chat-changes[open] > summary::before {
+  transform: rotate(90deg);
+}
+.chat-changes > summary strong {
   font-size: 13px;
   letter-spacing: 0.12em;
+}
+.chat-changes > summary span {
+  margin-left: auto;
+  font-size: 12px;
 }
 .chat-changes button {
   width: 100%;
