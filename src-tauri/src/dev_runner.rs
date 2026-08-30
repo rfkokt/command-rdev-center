@@ -11,6 +11,8 @@ use std::time::Duration;
 
 static RUNNERS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
 static REGISTRY_LOCK: Mutex<()> = Mutex::new(());
+// ponytail: one global install avoids RAM spikes; use per-project locks if parallel projects become common.
+static INSTALL_LOCK: Mutex<()> = Mutex::new(());
 
 fn runners() -> &'static Mutex<HashMap<String, Child>> {
     RUNNERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -174,24 +176,91 @@ fn remove_record(chat_id: &str) -> Result<Option<DevRunnerRecord>, String> {
     Ok(removed)
 }
 
+fn dependency_fingerprint(cwd: &Path) -> Result<String, String> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    for name in [
+        "package.json",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "bun.lock",
+        "bun.lockb",
+        "package-lock.json",
+    ] {
+        let path = cwd.join(name);
+        if path.is_file() {
+            name.hash(&mut hasher);
+            std::fs::read(path).map_err(|e| e.to_string())?.hash(&mut hasher);
+        }
+    }
+    Ok(format!("{:x}", hasher.finish()))
+}
+
+fn dependency_install_command(cwd: &Path) -> (&'static str, &'static [&'static str]) {
+    if cwd.join("pnpm-lock.yaml").exists() {
+        ("pnpm", &["install", "--frozen-lockfile"])
+    } else if cwd.join("yarn.lock").exists() {
+        ("yarn", &["install", "--frozen-lockfile"])
+    } else if cwd.join("bun.lock").exists() || cwd.join("bun.lockb").exists() {
+        ("bun", &["install", "--frozen-lockfile"])
+    } else if cwd.join("package-lock.json").exists() {
+        ("npm", &["ci"])
+    } else {
+        ("npm", &["install"])
+    }
+}
+
+fn ensure_node_dependencies(cwd: &Path) -> Result<(), String> {
+    let marker = cwd.join("node_modules/.crc-lockfile-hash");
+    let fingerprint = dependency_fingerprint(cwd)?;
+    if marker.is_file() && std::fs::read_to_string(&marker).ok().as_deref() == Some(&fingerprint) {
+        return Ok(());
+    }
+
+    let _lock = INSTALL_LOCK
+        .lock()
+        .map_err(|_| "dependency install lock poisoned")?;
+    if marker.is_file() && std::fs::read_to_string(&marker).ok().as_deref() == Some(&fingerprint) {
+        return Ok(());
+    }
+
+    let modules = cwd.join("node_modules");
+    if modules.is_symlink() {
+        std::fs::remove_file(&modules).map_err(|e| e.to_string())?;
+    }
+    let (program, args) = dependency_install_command(cwd);
+    let log_path = std::env::temp_dir().join("command-rdev-center-dependency-install.log");
+    let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
+    let status = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .env("PATH", shell_path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(log))
+        .status()
+        .map_err(|e| format!("failed to start {program}: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "{program} dependency install failed: {}",
+            read_log_tail(&log_path.to_string_lossy())
+        ));
+    }
+    std::fs::create_dir_all(&modules).map_err(|e| e.to_string())?;
+    std::fs::write(marker, fingerprint).map_err(|e| e.to_string())
+}
+
 fn ensure_dependencies(cwd: &Path, project: &Path, needs_vendor: bool) -> Result<(), String> {
-    for directory in ["node_modules", "vendor"] {
-        if directory == "vendor" && !needs_vendor {
-            continue;
-        }
-        let target = cwd.join(directory);
-        if target.exists() {
-            continue;
-        }
-        let source = project.join(directory);
+    if cwd.join("package.json").is_file() {
+        ensure_node_dependencies(cwd)?;
+    }
+    if needs_vendor && !cwd.join("vendor").exists() {
+        let source = project.join("vendor");
         if !source.exists() {
-            return Err(format!(
-                "{directory} missing: run install once in {}",
-                project.display()
-            ));
+            return Err(format!("vendor missing: run install once in {}", project.display()));
         }
         #[cfg(unix)]
-        std::os::unix::fs::symlink(source, target).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(source, cwd.join("vendor")).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -385,14 +454,14 @@ fn start_dev_server_blocking(
     kill_port_listener(&format!("http://localhost:{port}"));
 
     let path = shell_path();
-    let project_bins = project.join("node_modules/.bin");
+    let project_bins = Path::new(&cwd).join("node_modules/.bin");
     let log_path = std::env::temp_dir().join(format!("command-rdev-center-dev-{chat_id}.log"));
     let log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
     let mut child = Command::new("sh")
         .args(["-c", &run_command])
         .current_dir(&cwd)
         .env("PATH", format!("{}:{path}", project_bins.display()))
-        .env("NODE_PATH", project.join("node_modules"))
+        .env("NODE_PATH", Path::new(&cwd).join("node_modules"))
         .env("PORT", port.to_string())
         .env("VITE_PORT", vite_port.to_string())
         .process_group(0)
@@ -599,14 +668,31 @@ mod tests {
         let root = std::env::temp_dir().join(format!("crc-laravel-vendor-{}", std::process::id()));
         let project = root.join("project");
         let worktree = root.join("worktree");
-        std::fs::create_dir_all(project.join("node_modules")).unwrap();
         std::fs::create_dir_all(project.join("vendor")).unwrap();
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(worktree.join("artisan"), "").unwrap();
 
         ensure_dependencies(&worktree, &project, true).unwrap();
-        assert!(worktree.join("node_modules").exists());
         assert!(worktree.join("vendor").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn dependency_install_follows_lockfile() {
+        let root = std::env::temp_dir().join(format!("crc-lockfile-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(dependency_install_command(&root), ("npm", &["install"][..]));
+        std::fs::write(root.join("package-lock.json"), "{}").unwrap();
+        assert_eq!(dependency_install_command(&root), ("npm", &["ci"][..]));
+        std::fs::write(root.join("pnpm-lock.yaml"), "lockfileVersion: 9").unwrap();
+        assert_eq!(
+            dependency_install_command(&root),
+            ("pnpm", &["install", "--frozen-lockfile"][..])
+        );
+        let first = dependency_fingerprint(&root).unwrap();
+        std::fs::write(root.join("package.json"), "{}").unwrap();
+        assert_ne!(first, dependency_fingerprint(&root).unwrap());
         let _ = std::fs::remove_dir_all(root);
     }
 
