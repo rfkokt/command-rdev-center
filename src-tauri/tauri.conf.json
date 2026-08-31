@@ -23,9 +23,9 @@
   },
   "bundle": {
     "active": true,
-    "resources": [
-      "../node_modules/prettier"
-    ],
+    "resources": {
+      "../node_modules/prettier": "node_modules/prettier"
+    },
     "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
