@@ -78,12 +78,18 @@ export default function ProjectList({
     null,
   );
   const [projectToEdit, setProjectToEdit] = useState<ProjectInfo | null>(null);
+  const [settingsTab, setSettingsTab] = useState<
+    "repositories" | "tasks" | "api" | "pipeline"
+  >("repositories");
   const [taskSource, setTaskSource] = useState<TaskSource>({
     type: "local",
     url: "",
     sheets: [],
     pics: [],
   });
+  const [swaggerUrl, setSwaggerUrl] = useState("");
+  const [postmanCollectionUrl, setPostmanCollectionUrl] = useState("");
+  const [postmanCollectionPath, setPostmanCollectionPath] = useState("");
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [availablePics, setAvailablePics] = useState<string[]>([]);
   const [loadingSheets, setLoadingSheets] = useState(false);
@@ -197,17 +203,26 @@ export default function ProjectList({
           repositoryEntries.map(([path, , selected]) => [path, selected]),
         ),
       );
-      const source = await invoke<TaskSource>("get_project_task_source", {
-        path: project.path,
-      });
+      const [source, savedSwaggerUrl, savedPostmanCollectionUrl] =
+        await Promise.all([
+          invoke<TaskSource>("get_project_task_source", { path: project.path }),
+          invoke<string>("get_project_swagger_url", { path: project.path }),
+          invoke<string>("get_project_postman_collection_url", {
+            path: project.path,
+          }),
+        ]);
       const selectedSheets = source.sheets?.length
         ? source.sheets
         : source.sheet
           ? [source.sheet]
           : [];
       setTaskSource({ ...source, sheets: selectedSheets });
+      setSwaggerUrl(savedSwaggerUrl);
+      setPostmanCollectionUrl(savedPostmanCollectionUrl);
+      setPostmanCollectionPath("");
       setAvailableSheets(selectedSheets);
       setAvailablePics(source.pics);
+      setSettingsTab("repositories");
       setProjectToEdit(project);
       setErr(null);
     } catch (e) {
@@ -345,6 +360,22 @@ export default function ProjectList({
     }
   }
 
+  async function saveApiDocumentation() {
+    if (!projectToEdit) return;
+    try {
+      await invoke("save_project_api_documentation", {
+        path: projectToEdit.path,
+        swaggerUrl,
+        postmanCollectionUrl,
+        postmanCollectionPath: postmanCollectionPath || null,
+      });
+      onToast("API documentation fetched and saved for new chats.");
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
   async function saveTaskSource() {
     if (!projectToEdit) return;
     try {
@@ -441,7 +472,49 @@ export default function ProjectList({
               <small>PROJECT SETTINGS</small>
               <strong id="edit-base-branch-title">{projectToEdit.name}</strong>
               <span>{projectToEdit.path}</span>
-              {projectToEdit.is_git && (
+              <div
+                className="project-settings-tabs"
+                role="tablist"
+                aria-label="Project settings"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={settingsTab === "repositories"}
+                  className={settingsTab === "repositories" ? "active" : ""}
+                  onClick={() => setSettingsTab("repositories")}
+                >
+                  REPOSITORIES
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={settingsTab === "tasks"}
+                  className={settingsTab === "tasks" ? "active" : ""}
+                  onClick={() => setSettingsTab("tasks")}
+                >
+                  TASKS
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={settingsTab === "api"}
+                  className={settingsTab === "api" ? "active" : ""}
+                  onClick={() => setSettingsTab("api")}
+                >
+                  API
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={settingsTab === "pipeline"}
+                  className={settingsTab === "pipeline" ? "active" : ""}
+                  onClick={() => setSettingsTab("pipeline")}
+                >
+                  PIPELINE
+                </button>
+              </div>
+              {settingsTab === "repositories" && projectToEdit.is_git && (
                 <section>
                   <h3>GENERAL</h3>
                   <ListPicker
@@ -463,7 +536,8 @@ export default function ProjectList({
                   </button>
                 </section>
               )}
-              {!projectToEdit.is_git &&
+              {settingsTab === "repositories" &&
+                !projectToEdit.is_git &&
                 !!projectToEdit.repositories?.length && (
                   <section className="workspace-repository-settings">
                     <h3>REPOSITORIES</h3>
@@ -511,140 +585,208 @@ export default function ProjectList({
                     ))}
                   </section>
                 )}
-              <section className="project-task-source">
-                <h3>TASK SOURCE</h3>
-                <ListPicker
-                  label="SOURCE"
-                  value={taskSource.type}
-                  options={["local", "google_sheets"]}
-                  includeAll={false}
-                  formatOption={(value) =>
-                    value === "local"
-                      ? "Local JSON"
-                      : "Google Sheets · read-only"
-                  }
-                  onChange={(type) =>
-                    setTaskSource({
-                      ...taskSource,
-                      type: type as TaskSource["type"],
-                    })
-                  }
-                />
-                {taskSource.type === "google_sheets" && (
-                  <>
+              {settingsTab === "tasks" && (
+                <section className="project-task-source">
+                  <h3>TASK SOURCE</h3>
+                  <ListPicker
+                    label="SOURCE"
+                    value={taskSource.type}
+                    options={["local", "google_sheets"]}
+                    includeAll={false}
+                    formatOption={(value) =>
+                      value === "local"
+                        ? "Local JSON"
+                        : "Google Sheets · read-only"
+                    }
+                    onChange={(type) =>
+                      setTaskSource({
+                        ...taskSource,
+                        type: type as TaskSource["type"],
+                      })
+                    }
+                  />
+                  {taskSource.type === "google_sheets" && (
+                    <>
+                      <label>
+                        <span>PUBLIC SHEET URL</span>
+                        <input
+                          type="url"
+                          value={taskSource.url}
+                          onChange={(event) => {
+                            setTaskSource({
+                              ...taskSource,
+                              url: event.target.value,
+                              sheets: [],
+                            });
+                            setAvailableSheets([]);
+                            setAvailablePics([]);
+                          }}
+                          placeholder="https://docs.google.com/spreadsheets/d/…/edit"
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="project-load-pics"
+                        disabled={loadingSheets}
+                        onClick={loadSheets}
+                      >
+                        {loadingSheets
+                          ? "READING WORKSHEETS…"
+                          : "LOAD WORKSHEETS"}
+                      </button>
+                      {availableSheets.length > 0 && (
+                        <fieldset className="project-pic-options">
+                          <legend>INCLUDE WORKSHEETS</legend>
+                          {availableSheets.map((sheet) => (
+                            <label key={sheet}>
+                              <input
+                                type="checkbox"
+                                checked={taskSource.sheets.includes(sheet)}
+                                onChange={(event) =>
+                                  setTaskSource((source) => ({
+                                    ...source,
+                                    sheets: event.target.checked
+                                      ? [...source.sheets, sheet]
+                                      : source.sheets.filter(
+                                          (selected) => selected !== sheet,
+                                        ),
+                                  }))
+                                }
+                              />
+                              <span>{sheet}</span>
+                            </label>
+                          ))}
+                        </fieldset>
+                      )}
+                      <button
+                        type="button"
+                        className="project-load-pics"
+                        disabled={loadingPics || taskSource.sheets.length === 0}
+                        onClick={loadPics}
+                      >
+                        {loadingPics ? "READING SHEET…" : "LOAD PIC"}
+                      </button>
+                      {availablePics.length > 0 && (
+                        <fieldset className="project-pic-options">
+                          <legend>INCLUDE TASKS FOR</legend>
+                          {availablePics.map((pic) => (
+                            <label key={pic}>
+                              <input
+                                type="checkbox"
+                                checked={taskSource.pics.includes(pic)}
+                                onChange={(event) =>
+                                  setTaskSource((source) => ({
+                                    ...source,
+                                    pics: event.target.checked
+                                      ? [...source.pics, pic]
+                                      : source.pics.filter(
+                                          (selected) => selected !== pic,
+                                        ),
+                                  }))
+                                }
+                              />
+                              <span>{pic}</span>
+                            </label>
+                          ))}
+                        </fieldset>
+                      )}
+                    </>
+                  )}
+                  <p>
+                    {taskSource.type === "local"
+                      ? "Use the existing local backlog file."
+                      : "Load the sheet, then select which PIC should appear in Kanban. No PIC selected means no tasks are imported."}
+                  </p>
+                  <button
+                    className="project-save-task-source"
+                    onClick={saveTaskSource}
+                  >
+                    SAVE TASK SOURCE
+                  </button>
+                </section>
+              )}
+              {settingsTab === "api" && (
+                <section className="project-api-documentation">
+                  <h3>API DOCUMENTATION</h3>
+                  <p>
+                    Add a reference only when this project exposes an API. New
+                    chats use saved documentation as context.
+                  </p>
+                  <div className="project-api-fields">
                     <label>
-                      <span>PUBLIC SHEET URL</span>
+                      <span>SWAGGER / OPENAPI URL</span>
                       <input
                         type="url"
-                        value={taskSource.url}
-                        onChange={(event) => {
-                          setTaskSource({
-                            ...taskSource,
-                            url: event.target.value,
-                            sheets: [],
-                          });
-                          setAvailableSheets([]);
-                          setAvailablePics([]);
-                        }}
-                        placeholder="https://docs.google.com/spreadsheets/d/…/edit"
+                        value={swaggerUrl}
+                        onChange={(event) => setSwaggerUrl(event.target.value)}
+                        placeholder="https://api.example.com/swagger-ui/index.html"
                       />
                     </label>
-                    <button
-                      type="button"
-                      className="project-load-pics"
-                      disabled={loadingSheets}
-                      onClick={loadSheets}
-                    >
-                      {loadingSheets
-                        ? "READING WORKSHEETS…"
-                        : "LOAD WORKSHEETS"}
-                    </button>
-                    {availableSheets.length > 0 && (
-                      <fieldset className="project-pic-options">
-                        <legend>INCLUDE WORKSHEETS</legend>
-                        {availableSheets.map((sheet) => (
-                          <label key={sheet}>
-                            <input
-                              type="checkbox"
-                              checked={taskSource.sheets.includes(sheet)}
-                              onChange={(event) =>
-                                setTaskSource((source) => ({
-                                  ...source,
-                                  sheets: event.target.checked
-                                    ? [...source.sheets, sheet]
-                                    : source.sheets.filter(
-                                        (selected) => selected !== sheet,
-                                      ),
-                                }))
-                              }
-                            />
-                            <span>{sheet}</span>
-                          </label>
-                        ))}
-                      </fieldset>
-                    )}
-                    <button
-                      type="button"
-                      className="project-load-pics"
-                      disabled={loadingPics || taskSource.sheets.length === 0}
-                      onClick={loadPics}
-                    >
-                      {loadingPics ? "READING SHEET…" : "LOAD PIC"}
-                    </button>
-                    {availablePics.length > 0 && (
-                      <fieldset className="project-pic-options">
-                        <legend>INCLUDE TASKS FOR</legend>
-                        {availablePics.map((pic) => (
-                          <label key={pic}>
-                            <input
-                              type="checkbox"
-                              checked={taskSource.pics.includes(pic)}
-                              onChange={(event) =>
-                                setTaskSource((source) => ({
-                                  ...source,
-                                  pics: event.target.checked
-                                    ? [...source.pics, pic]
-                                    : source.pics.filter(
-                                        (selected) => selected !== pic,
-                                      ),
-                                }))
-                              }
-                            />
-                            <span>{pic}</span>
-                          </label>
-                        ))}
-                      </fieldset>
-                    )}
-                  </>
-                )}
-                <p>
-                  {taskSource.type === "local"
-                    ? "Use the existing local backlog file."
-                    : "Load the sheet, then select which PIC should appear in Kanban. No PIC selected means no tasks are imported."}
-                </p>
-                <button
-                  className="project-save-task-source"
-                  onClick={saveTaskSource}
-                >
-                  SAVE TASK SOURCE
-                </button>
-              </section>
-              <section>
-                <h3>PIPELINE</h3>
-                <p>
-                  Configure presets, commands, failure policies, and consult AI.
-                </p>
-                <button
-                  className="project-open-pipeline"
-                  onClick={() => {
-                    const project = projectToEdit;
-                    setProjectToEdit(null);
-                    onPipelineSettings(project);
-                  }}
-                >
-                  OPEN PIPELINE SETTINGS
-                </button>
-              </section>
+                    <label>
+                      <span>POSTMAN COLLECTION URL (OPTIONAL)</span>
+                      <input
+                        type="url"
+                        value={postmanCollectionUrl}
+                        onChange={(event) =>
+                          setPostmanCollectionUrl(event.target.value)
+                        }
+                        placeholder="https://api.postman.com/collections/…"
+                      />
+                    </label>
+                    <label>
+                      <span>POSTMAN COLLECTION JSON</span>
+                      <input
+                        value={
+                          postmanCollectionPath
+                            ? postmanCollectionPath.split(/[\\/]/).pop()
+                            : ""
+                        }
+                        readOnly
+                        placeholder="Choose exported collection JSON"
+                      />
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const path = await open({
+                            multiple: false,
+                            title: "Select Postman Collection JSON",
+                            filters: [{ name: "JSON", extensions: ["json"] }],
+                          });
+                          if (typeof path === "string")
+                            setPostmanCollectionPath(path);
+                        }}
+                      >
+                        {postmanCollectionPath ? "CHANGE JSON" : "CHOOSE JSON"}
+                      </button>
+                    </label>
+                  </div>
+                  <button
+                    className="project-save-task-source"
+                    onClick={saveApiDocumentation}
+                  >
+                    SAVE API DOCUMENTATION
+                  </button>
+                </section>
+              )}
+              {settingsTab === "pipeline" && (
+                <section>
+                  <h3>PIPELINE</h3>
+                  <p>
+                    Configure presets, commands, failure policies, and consult
+                    AI.
+                  </p>
+                  <button
+                    className="project-open-pipeline"
+                    onClick={() => {
+                      const project = projectToEdit;
+                      setProjectToEdit(null);
+                      onPipelineSettings(project);
+                    }}
+                  >
+                    OPEN PIPELINE SETTINGS
+                  </button>
+                </section>
+              )}
               <section className="project-danger-zone">
                 <h3>DANGER ZONE</h3>
                 <p>

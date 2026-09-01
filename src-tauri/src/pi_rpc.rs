@@ -335,6 +335,30 @@ fn ensure_pi_installed_with_repair(
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
 
+fn api_documentation_system_prompt(project: &Path) -> String {
+    let context = crate::projects::api_documentation_context_for_project(project)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            crate::projects::refresh_project_api_documentation(
+                project.to_string_lossy().into_owned(),
+            )
+            .ok()
+            .and_then(|_| {
+                crate::projects::api_documentation_context_for_project(project)
+                    .ok()
+                    .flatten()
+            })
+        });
+    context
+        .map(|context| {
+            format!(
+                "## Project API documentation\nThe complete cached Swagger/OpenAPI and Postman contract follows. It is authoritative: inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory.\n{context}"
+            )
+        })
+        .unwrap_or_default()
+}
+
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
         format!(
@@ -651,7 +675,8 @@ pub fn spawn_pi_rpc(
         format!("{MARKDOWN_RESPONSE_PROMPT}\n## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n")
     } else {
         format!(
-            "{MARKDOWN_RESPONSE_PROMPT}{}",
+            "{MARKDOWN_RESPONSE_PROMPT}{}{}",
+            api_documentation_system_prompt(&owning_project),
             worktree_system_prompt(Path::new(&cwd), &owning_project).unwrap_or_default()
         )
     };

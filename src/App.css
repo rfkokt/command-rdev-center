@@ -567,6 +567,33 @@ select:focus-visible {
   max-height: calc(100vh - 40px);
   overflow: auto;
 }
+.project-settings-tabs {
+  display: flex !important;
+  gap: 0 !important;
+  overflow-x: auto;
+  margin: 2px -20px 2px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--colors-hairline);
+}
+.project-settings-tabs button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--colors-muted) !important;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.project-settings-tabs button:hover {
+  color: var(--colors-on-dark) !important;
+}
+.project-settings-tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent) !important;
+}
 .project-settings-dialog section {
   display: grid;
   gap: 8px;
@@ -582,6 +609,76 @@ select:focus-visible {
 }
 .project-settings-dialog section p {
   margin: 0;
+}
+.project-settings-dialog .project-api-documentation {
+  gap: 12px;
+  padding: 16px;
+  border-color: var(--colors-hairline-strong);
+  background: #11120f;
+}
+.project-api-documentation > p {
+  max-width: 440px;
+  color: var(--colors-muted);
+  line-height: 1.45;
+}
+.project-api-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.project-api-fields label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--colors-muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+.project-api-fields label:last-child {
+  grid-column: 1 / -1;
+}
+.project-api-fields input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 10px 11px;
+  border: 1px solid var(--colors-hairline-strong);
+  outline: none;
+  background: var(--colors-canvas);
+  color: var(--colors-on-dark);
+  font: 13px/1.25 var(--font-mono);
+}
+.project-api-fields label:last-child {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.project-api-fields label:last-child span {
+  grid-column: 1 / -1;
+}
+.project-api-fields label:last-child button {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--colors-hairline-strong);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.project-api-fields label:last-child button:hover,
+.project-api-fields label:last-child button:focus-visible {
+  border-color: var(--accent);
+  background: var(--colors-surface-elevated);
+}
+@media (max-width: 480px) {
+  .project-api-fields {
+    grid-template-columns: 1fr;
+  }
+}
+.project-api-fields input::placeholder {
+  color: var(--colors-muted-soft);
+}
+.project-api-fields input:focus {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .project-settings-dialog section > button {
   width: max-content;
@@ -608,6 +705,7 @@ select:focus-visible {
   width: 100%;
 }
 .project-task-source input {
+  box-sizing: border-box;
   width: 100%;
   padding: 9px;
   border: 1px solid var(--colors-hairline-strong);

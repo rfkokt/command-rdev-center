@@ -151,19 +151,16 @@ pub async fn install_poppler() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn read_chat_attachments(
-    project_path: Option<String>,
+    _project_path: Option<String>,
     paths: Vec<String>,
 ) -> Result<Vec<ChatAttachment>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if let Some(root) = project_path.as_deref() {
-            crate::projects::ensure_registered_project(Path::new(root))?;
-        }
+        // Attachments are explicitly selected by the user through the native file dialog,
+        // so they may live outside the active project. Project-only containment applies to
+        // agent-initiated file access, not this user-initiated upload boundary.
         let attachments: Result<Vec<_>, String> = paths
             .into_iter()
             .map(|path| {
-                if let Some(root) = project_path.as_deref() {
-                    crate::projects::ensure_child_of_root(Path::new(root), Path::new(&path))?;
-                }
                 let metadata =
                     std::fs::metadata(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
                 if !metadata.is_file() {
@@ -237,6 +234,22 @@ mod tests {
     #[test]
     fn macos_tool_prefers_known_homebrew_paths() {
         assert!(macos_tool("pdftotext").ends_with("pdftotext"));
+    }
+
+    #[test]
+    fn reads_user_selected_file_outside_project() {
+        let path = std::env::temp_dir().join(format!(
+            "crc-external-attachment-{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&path, "attached outside project").unwrap();
+        let attachments = tauri::async_runtime::block_on(read_chat_attachments(
+            Some("/definitely/not/the/project".into()),
+            vec![path.to_string_lossy().into_owned()],
+        ))
+        .unwrap();
+        assert_eq!(attachments[0].content, "attached outside project");
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

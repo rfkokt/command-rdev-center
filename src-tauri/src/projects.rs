@@ -58,6 +58,14 @@ struct StoredConfig {
     #[serde(default)]
     task_sources: HashMap<String, TaskSource>,
     #[serde(default)]
+    swagger_urls: HashMap<String, String>,
+    #[serde(default)]
+    postman_collection_urls: HashMap<String, String>,
+    #[serde(default)]
+    postman_collection_jsons: HashMap<String, String>,
+    #[serde(default)]
+    api_documentation_contexts: HashMap<String, String>,
+    #[serde(default)]
     backlog_dir: Option<String>,
 }
 
@@ -747,6 +755,317 @@ pub fn task_sources() -> Result<HashMap<String, TaskSource>, String> {
     Ok(read_config()?.task_sources)
 }
 
+const MAX_API_DOCUMENTATION_BYTES: usize = 512 * 1024;
+
+fn validated_swagger_url(url: &str) -> Result<String, String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Ok(String::new());
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://"))
+        || url
+            .split("//")
+            .nth(1)
+            .is_none_or(|host| host.is_empty() || host.starts_with('/'))
+    {
+        return Err("Swagger URL must be a valid HTTP(S) URL".into());
+    }
+    Ok(url.into())
+}
+
+fn project_config_key(path: &Path) -> Result<String, String> {
+    let path = canonicalize_or_original(path);
+    let config = read_config()?;
+    config
+        .projects
+        .iter()
+        .find_map(|saved| {
+            let saved = canonicalize_or_original(Path::new(saved));
+            path.starts_with(&saved)
+                .then(|| saved.to_string_lossy().into_owned())
+        })
+        .ok_or_else(|| format!("project is not registered: {}", path.display()))
+}
+
+fn fetch_url(url: &str) -> Result<String, String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "5", "--max-time", "20", url])
+        .output()
+        .map_err(|error| format!("API documentation fetch: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "API documentation fetch failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    if output.stdout.len() > MAX_API_DOCUMENTATION_BYTES {
+        return Err("API documentation exceeds 512 KB".into());
+    }
+    String::from_utf8(output.stdout).map_err(|_| "API documentation is not UTF-8".into())
+}
+
+fn absolute_url(source: &str, target: &str) -> Result<String, String> {
+    if target.starts_with("http://") || target.starts_with("https://") {
+        return Ok(target.into());
+    }
+    let (_, rest) = source
+        .split_once("://")
+        .ok_or("API documentation URL is invalid")?;
+    let host = rest.split('/').next().unwrap_or_default();
+    let scheme = source.split(':').next().unwrap_or_default();
+    if target.starts_with('/') {
+        Ok(format!("{scheme}://{host}{target}"))
+    } else {
+        let base = source
+            .rsplit_once('/')
+            .map(|(base, _)| base)
+            .unwrap_or(source);
+        Ok(format!("{base}/{target}"))
+    }
+}
+
+fn swagger_document_url(url: &str) -> Result<String, String> {
+    if !url.contains("swagger-ui") {
+        return Ok(url.into());
+    }
+    let initializer = absolute_url(url, "swagger-initializer.js")?;
+    let initializer_source = fetch_url(&initializer)?;
+    let config_url = initializer_source
+        .split_once("\"configUrl\" : \"")
+        .and_then(|(_, value)| value.split('"').next())
+        .ok_or("Swagger UI config URL was not found")?;
+    let config_url = absolute_url(&initializer, config_url)?;
+    let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
+        .map_err(|_| "Swagger config is not valid JSON")?;
+    let document_url = config
+        .get("urls")
+        .and_then(|urls| urls.as_array())
+        .and_then(|urls| urls.first())
+        .and_then(|item| item.get("url"))
+        .and_then(|item| item.as_str())
+        .or_else(|| config.get("url").and_then(|item| item.as_str()))
+        .ok_or("Swagger config contains no API document")?;
+    absolute_url(&config_url, document_url)
+}
+
+fn validated_postman_collection_json(json: String) -> Result<String, String> {
+    if json.len() > MAX_API_DOCUMENTATION_BYTES {
+        return Err("Postman collection exceeds 512 KB".into());
+    }
+    let collection: serde_json::Value =
+        serde_json::from_str(&json).map_err(|_| "Postman collection is not valid JSON")?;
+    if collection.get("info").is_none() || collection.get("item").is_none() {
+        return Err("Postman collection must contain `info` and `item`".into());
+    }
+    Ok(json)
+}
+
+fn api_documentation_context(
+    swagger_url: Option<&str>,
+    postman_url: Option<&str>,
+    postman_json: Option<&str>,
+) -> Result<String, String> {
+    let mut context = String::new();
+    if let Some(url) = swagger_url.filter(|url| !url.is_empty()) {
+        let document_url = swagger_document_url(url)?;
+        context.push_str("## Swagger/OpenAPI contract\nSource: ");
+        context.push_str(&document_url);
+        context.push_str("\n```json\n");
+        context.push_str(&fetch_url(&document_url)?);
+        context.push_str("\n```\n");
+    }
+    if let Some(json) = postman_json.filter(|json| !json.is_empty()) {
+        context.push_str("## Postman collection\nSource: user-selected JSON export\n```json\n");
+        context.push_str(json);
+        context.push_str("\n```\n");
+    } else if let Some(url) = postman_url.filter(|url| !url.is_empty()) {
+        context.push_str("## Postman collection\nSource: ");
+        context.push_str(url);
+        context.push_str("\n```json\n");
+        context.push_str(&fetch_url(url)?);
+        context.push_str("\n```\n");
+    }
+    Ok(context)
+}
+
+fn refresh_api_documentation_context(config: &mut StoredConfig, key: &str) -> Result<(), String> {
+    let context = api_documentation_context(
+        config.swagger_urls.get(key).map(String::as_str),
+        config.postman_collection_urls.get(key).map(String::as_str),
+        config.postman_collection_jsons.get(key).map(String::as_str),
+    )?;
+    if context.is_empty() {
+        config.api_documentation_contexts.remove(key);
+    } else {
+        config
+            .api_documentation_contexts
+            .insert(key.into(), context);
+    }
+    Ok(())
+}
+
+pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<String>, String> {
+    let key = project_config_key(path)?;
+    Ok(read_config()?
+        .api_documentation_contexts
+        .get(&key)
+        .filter(|context| !context.is_empty())
+        .cloned())
+}
+
+pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
+    let path = canonicalize_or_original(path);
+    let config = read_config()?;
+    Ok(config
+        .projects
+        .iter()
+        .find_map(|saved| {
+            let saved = canonicalize_or_original(Path::new(saved));
+            path.starts_with(&saved).then(|| {
+                config
+                    .swagger_urls
+                    .get(&saved.to_string_lossy().into_owned())
+                    .filter(|url| !url.is_empty())
+                    .cloned()
+            })
+        })
+        .flatten())
+}
+
+#[tauri::command]
+pub fn get_project_swagger_url(path: String) -> Result<String, String> {
+    Ok(swagger_url_for_project(Path::new(&path))?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_project_swagger_url(path: String, swagger_url: String) -> Result<String, String> {
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .into_owned();
+    let swagger_url = validated_swagger_url(&swagger_url)?;
+    let mut config = read_config()?;
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical)
+    {
+        return Err(format!("project is not registered: {canonical}"));
+    }
+    if swagger_url.is_empty() {
+        config.swagger_urls.remove(&canonical);
+        config.swagger_urls.remove(&path);
+    } else {
+        config
+            .swagger_urls
+            .insert(canonical.clone(), swagger_url.clone());
+    }
+    refresh_api_documentation_context(&mut config, &canonical)?;
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    Ok(swagger_url)
+}
+
+pub fn postman_collection_url_for_project(path: &Path) -> Result<Option<String>, String> {
+    let path = canonicalize_or_original(path);
+    let config = read_config()?;
+    Ok(config
+        .projects
+        .iter()
+        .find_map(|saved| {
+            let saved = canonicalize_or_original(Path::new(saved));
+            path.starts_with(&saved).then(|| {
+                config
+                    .postman_collection_urls
+                    .get(&saved.to_string_lossy().into_owned())
+                    .filter(|url| !url.is_empty())
+                    .cloned()
+            })
+        })
+        .flatten())
+}
+
+#[tauri::command]
+pub fn get_project_postman_collection_url(path: String) -> Result<String, String> {
+    Ok(postman_collection_url_for_project(Path::new(&path))?.unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_project_postman_collection_url(
+    path: String,
+    postman_collection_url: String,
+) -> Result<String, String> {
+    let canonical = canonicalize_or_original(Path::new(&path))
+        .to_string_lossy()
+        .into_owned();
+    let postman_collection_url = validated_swagger_url(&postman_collection_url)?;
+    let mut config = read_config()?;
+    if !config
+        .projects
+        .iter()
+        .any(|saved| canonicalize_or_original(Path::new(saved)).to_string_lossy() == canonical)
+    {
+        return Err(format!("project is not registered: {canonical}"));
+    }
+    if postman_collection_url.is_empty() {
+        config.postman_collection_urls.remove(&canonical);
+        config.postman_collection_urls.remove(&path);
+    } else {
+        config
+            .postman_collection_urls
+            .insert(canonical.clone(), postman_collection_url.clone());
+    }
+    refresh_api_documentation_context(&mut config, &canonical)?;
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
+    Ok(postman_collection_url)
+}
+
+#[tauri::command]
+pub fn save_project_api_documentation(
+    path: String,
+    swagger_url: String,
+    postman_collection_url: String,
+    postman_collection_path: Option<String>,
+) -> Result<(), String> {
+    let canonical = project_config_key(Path::new(&path))?;
+    let swagger_url = validated_swagger_url(&swagger_url)?;
+    let postman_collection_url = validated_swagger_url(&postman_collection_url)?;
+    let mut config = read_config()?;
+    if swagger_url.is_empty() {
+        config.swagger_urls.remove(&canonical);
+        config.swagger_urls.remove(&path);
+    } else {
+        config.swagger_urls.insert(canonical.clone(), swagger_url);
+    }
+    if postman_collection_url.is_empty() {
+        config.postman_collection_urls.remove(&canonical);
+        config.postman_collection_urls.remove(&path);
+    } else {
+        config
+            .postman_collection_urls
+            .insert(canonical.clone(), postman_collection_url);
+    }
+    if let Some(path) = postman_collection_path.filter(|path| !path.trim().is_empty()) {
+        let json = std::fs::read_to_string(&path)
+            .map_err(|error| format!("Cannot read Postman collection: {error}"))?;
+        config
+            .postman_collection_jsons
+            .insert(canonical.clone(), validated_postman_collection_json(json)?);
+    }
+    refresh_api_documentation_context(&mut config, &canonical)?;
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn refresh_project_api_documentation(path: String) -> Result<(), String> {
+    let canonical = project_config_key(Path::new(&path))?;
+    let mut config = read_config()?;
+    refresh_api_documentation_context(&mut config, &canonical)?;
+    let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
+}
+
 pub fn project_base_branch(path: &Path) -> Result<String, String> {
     let canonical = canonicalize_or_original(path).to_string_lossy().to_string();
     read_config()?
@@ -947,6 +1266,14 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.pipeline_types.remove(&path);
     config.task_sources.remove(&canonical);
     config.task_sources.remove(&path);
+    config.swagger_urls.remove(&canonical);
+    config.swagger_urls.remove(&path);
+    config.postman_collection_urls.remove(&canonical);
+    config.postman_collection_urls.remove(&path);
+    config.postman_collection_jsons.remove(&canonical);
+    config.postman_collection_jsons.remove(&path);
+    config.api_documentation_contexts.remove(&canonical);
+    config.api_documentation_contexts.remove(&path);
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }
@@ -999,6 +1326,30 @@ mod tests {
         serde_json::from_str::<StoredConfig>(DEFAULT_CONFIG).unwrap();
         assert!(KANBAN_EXTENSION.contains("track_kanban_task"));
         assert!(GRAPHIFY_EXTENSION.contains("before_agent_start"));
+    }
+
+    #[test]
+    fn postman_collection_json_requires_collection_shape() {
+        assert!(validated_postman_collection_json(
+            r#"{"info":{"name":"RoLink"},"item":[]}"#.into()
+        )
+        .is_ok());
+        assert!(validated_postman_collection_json(r#"{"info":{}}"#.into()).is_err());
+        assert!(validated_postman_collection_json("not json".into()).is_err());
+    }
+
+    #[test]
+    fn swagger_url_must_be_http_or_https() {
+        assert_eq!(
+            validated_swagger_url(" https://api.example.com/swagger-ui ").unwrap(),
+            "https://api.example.com/swagger-ui"
+        );
+        assert_eq!(
+            validated_swagger_url("https://api.postman.com/collections/123").unwrap(),
+            "https://api.postman.com/collections/123"
+        );
+        assert!(validated_swagger_url("ftp://api.example.com/openapi.json").is_err());
+        assert!(validated_swagger_url("https:///openapi.json").is_err());
     }
 
     fn init_repo(path: &Path) {
