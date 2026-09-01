@@ -14,11 +14,17 @@ const VERSION: u32 = 1;
 const MAX_REPORT: usize = 500_000;
 const MAX_RUNTIME: Duration = Duration::from_secs(30 * 60);
 const MAX_RESEARCH_ROUNDS: u8 = 6;
-const TOOLS: [&str; 4] = [
+const TOOLS: [&str; 10] = [
     "web_search",
     "source_check",
     "fetch_content",
     "get_search_content",
+    "agent_reach_web_read",
+    "agent_reach_github_search",
+    "agent_reach_youtube_search",
+    "agent_reach_youtube_transcript",
+    "agent_reach_rss_read",
+    "agent_reach_exa_search",
 ];
 static LOCK: Mutex<()> = Mutex::new(());
 static ACTIVE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
@@ -113,7 +119,9 @@ pub struct ResearchData {
     pub runs: Vec<ResearchRun>,
     pub warnings: Vec<String>,
 }
+
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StartInput {
     pub query: String,
     pub model: Option<String>,
@@ -254,13 +262,24 @@ fn emit(app: &tauri::AppHandle, run: &ResearchRun) {
     );
 }
 
+fn recover_interrupted_handoff(run: &mut ResearchRun) -> bool {
+    if run.handoff_state != HandoffState::Delivering {
+        return false;
+    }
+    // The process may have accepted the prompt before a crash. Prefer at-most-once
+    // delivery; the report remains visible for manual copy/recovery.
+    run.handoff_state = HandoffState::Delivered;
+    run.handoff_delivered = true;
+    run.error = Some("Research handoff outcome was interrupted; automatic retry disabled to avoid duplicate chat context".into());
+    true
+}
+
 pub fn reconcile_startup() -> Result<(), String> {
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     let dir = runs_dir()?;
     let mut data = load_at(&dir);
     for run in &mut data.runs {
-        if run.handoff_state == HandoffState::Delivering {
-            run.handoff_state = HandoffState::Pending;
+        if recover_interrupted_handoff(run) {
             run.generation += 1;
             run.updated_at = now();
             write_run_at(&dir, run)?;
@@ -370,9 +389,16 @@ fn text_from_message(value: Option<&Value>) -> String {
 }
 fn phase(tool: &str) -> (&'static str, &'static str) {
     match tool {
-        "web_search" => ("searching", "Searching the web"),
+        "web_search"
+        | "agent_reach_github_search"
+        | "agent_reach_youtube_search"
+        | "agent_reach_exa_search" => ("searching", "Searching public sources"),
         "source_check" => ("verifying", "Verifying claims"),
-        "fetch_content" | "get_search_content" => ("reading", "Reading sources"),
+        "fetch_content"
+        | "get_search_content"
+        | "agent_reach_web_read"
+        | "agent_reach_youtube_transcript"
+        | "agent_reach_rss_read" => ("reading", "Reading sources"),
         _ => ("working", "Researching"),
     }
 }
@@ -463,7 +489,10 @@ fn reduce_event(run: &mut ResearchRun, event: &Value) -> bool {
             run.completed_calls.push(call.into());
             run.progress.active_calls.retain(|x| x != call);
             match tool {
-                "web_search" => run.progress.searches += 1,
+                "web_search"
+                | "agent_reach_github_search"
+                | "agent_reach_youtube_search"
+                | "agent_reach_exa_search" => run.progress.searches += 1,
                 "source_check" => run.progress.checks += 1,
                 _ => run.progress.reads += 1,
             }
@@ -572,7 +601,7 @@ pub(crate) fn observe_end(app: &tauri::AppHandle, session_id: &str) {
 }
 
 fn prompt(run: &ResearchRun, fallback: bool) -> String {
-    format!("Conduct independent web research using only web_search, fetch_content, get_search_content, and source_check. Establish sub-questions; use at most {MAX_RESEARCH_ROUNDS} research rounds with 2–4 diverse searches per round; stop earlier when further work is unlikely to improve the answer. Read strong sources and verify important claims. Return one Markdown report with Executive summary, Findings, Caveats, Conclusion, and Sources. Cite claims with full URLs that also appear in Sources. Do not ask questions.{}\n\nResearch question:\n{}",if fallback{format!("\nThe transcript was unavailable. Continue from this checkpoint, avoid duplicate work, and disclose recovery:\n{}\nKnown sources:\n{}",bounded(&run.partial_report,20_000),run.sources.iter().map(|s|s.url.as_str()).collect::<Vec<_>>().join("\n"))}else{String::new()},run.query)
+    format!("Conduct independent research using the built-in web tools and optional Agent Reach public tools. Call agent_reach_status once; if unavailable or a public channel fails, continue with built-in web_search, fetch_content, get_search_content, and source_check. Never install, configure, authenticate, access cookies, or use login-backed channels. Choose source-specific public tools when useful: official GitHub, YouTube public metadata/subtitles, RSS, Jina Reader (which sends URLs to r.jina.ai), and Exa (which sends queries to Exa). Prioritize primary sources. Establish sub-questions; use at most {MAX_RESEARCH_ROUNDS} research rounds with 2–4 diverse searches per round; stop earlier when further work is unlikely to improve the answer. Read strong sources and verify important claims. Return one Markdown report with Executive summary, Findings, Caveats, Conclusion, and Sources. Cite claims with full URLs that also appear in Sources. Do not ask questions.{}\n\nResearch question:\n{}", if fallback{format!("\nThe transcript was unavailable. Continue from this checkpoint, avoid duplicate work, and disclose recovery:\n{}\nKnown sources:\n{}",bounded(&run.partial_report,20_000),run.sources.iter().map(|s|s.url.as_str()).collect::<Vec<_>>().join("\n"))}else{String::new()},run.query)
 }
 
 fn watchdog_matches(run: &ResearchRun, session_id: &str, launched_generation: u64) -> bool {
@@ -770,6 +799,37 @@ pub fn start_deep_research(
 pub fn get_deep_research_data() -> Result<ResearchData, String> {
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     Ok(load_at(&runs_dir()?))
+}
+
+fn attach_origin(run: &mut ResearchRun, chat_id: &str, session_id: &str) -> bool {
+    if chat_id.trim().is_empty() || session_id != format!("chat-{chat_id}") {
+        return false;
+    }
+    if run.origin_chat_id.as_deref() == Some(chat_id)
+        && run.origin_session_id.as_deref() == Some(session_id)
+    {
+        return false;
+    }
+    run.origin_chat_id = Some(chat_id.into());
+    run.origin_session_id = Some(session_id.into());
+    run.handoff_state = HandoffState::Pending;
+    run.handoff_delivered = false;
+    true
+}
+
+#[tauri::command]
+pub fn attach_deep_research_to_chat(
+    app: tauri::AppHandle,
+    run_id: String,
+    origin_chat_id: String,
+    origin_session_id: String,
+) -> Result<ResearchRun, String> {
+    let run = mutate(&run_id, |run| {
+        attach_origin(run, &origin_chat_id, &origin_session_id)
+    })?
+    .ok_or("research run already belongs to this chat or chat identity is invalid")?;
+    emit(&app, &run);
+    Ok(run)
 }
 
 #[tauri::command]
@@ -970,6 +1030,21 @@ mod tests {
         }
     }
     #[test]
+    fn start_input_accepts_frontend_camel_case_origin() {
+        let input: StartInput = serde_json::from_value(serde_json::json!({
+            "query": "q",
+            "model": null,
+            "provider": null,
+            "thinking": null,
+            "originChatId": "global-1",
+            "originSessionId": "chat-global-1"
+        }))
+        .unwrap();
+        assert_eq!(input.origin_chat_id.as_deref(), Some("global-1"));
+        assert_eq!(input.origin_session_id.as_deref(), Some("chat-global-1"));
+    }
+
+    #[test]
     fn old_snapshots_default_origin_and_handoff_fields() {
         let value = serde_json::to_value(sample("legacy")).unwrap();
         let mut object = value.as_object().unwrap().clone();
@@ -980,6 +1055,41 @@ mod tests {
         assert_eq!(run.origin_chat_id, None);
         assert_eq!(run.origin_session_id, None);
         assert!(!run.handoff_delivered);
+    }
+
+    #[test]
+    fn attach_origin_moves_run_and_resets_handoff_with_matching_identity() {
+        let mut run = sample("attach");
+        assert!(attach_origin(&mut run, "global-1", "chat-global-1"));
+        assert_eq!(run.origin_chat_id.as_deref(), Some("global-1"));
+        assert!(!attach_origin(&mut run, "global-1", "chat-global-1"));
+
+        run.handoff_state = HandoffState::Delivered;
+        run.handoff_delivered = true;
+        assert!(attach_origin(&mut run, "global-2", "chat-global-2"));
+        assert_eq!(run.origin_chat_id.as_deref(), Some("global-2"));
+        assert_eq!(run.origin_session_id.as_deref(), Some("chat-global-2"));
+        assert_eq!(run.handoff_state, HandoffState::Pending);
+        assert!(!run.handoff_delivered);
+
+        let mut invalid = sample("invalid");
+        assert!(!attach_origin(&mut invalid, "global-1", "wrong"));
+        assert_eq!(invalid.origin_chat_id, None);
+    }
+
+    #[test]
+    fn interrupted_handoff_recovers_at_most_once() {
+        let mut run = sample("handoff");
+        run.handoff_state = HandoffState::Delivering;
+        assert!(recover_interrupted_handoff(&mut run));
+        assert_eq!(run.handoff_state, HandoffState::Delivered);
+        assert!(run.handoff_delivered);
+        assert!(run
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("automatic retry disabled"));
+        assert!(!recover_interrupted_handoff(&mut run));
     }
 
     #[test]
@@ -1012,6 +1122,18 @@ mod tests {
         assert_eq!(r.progress.searches, 1);
         assert!(r.progress.active_calls.is_empty())
     }
+    #[test]
+    fn agent_reach_events_update_counters_and_collect_sources() {
+        let mut run = sample("reach");
+        let search = serde_json::json!({"type":"tool_execution_end","toolCallId":"s","toolName":"agent_reach_github_search","result":{"url":"https://github.com/example/repo"}});
+        let read = serde_json::json!({"type":"tool_execution_end","toolCallId":"r","toolName":"agent_reach_youtube_transcript","result":"https://youtube.com/watch?v=abc"});
+        assert!(reduce_event(&mut run, &search));
+        assert!(reduce_event(&mut run, &read));
+        assert_eq!(run.progress.searches, 1);
+        assert_eq!(run.progress.reads, 1);
+        assert_eq!(run.sources.len(), 2);
+    }
+
     #[test]
     fn completion_requires_resolvable_structured_citation() {
         let mut r = sample("x");

@@ -35,6 +35,7 @@ import {
   clearRestartErrors,
   agentNotification,
   projectTaskIntent,
+  researchQuery,
   tsvToMarkdown,
 } from "./chat-utils";
 import ToolCallView, {
@@ -52,7 +53,12 @@ import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import SourceControlPanel from "./SourceControlPanel";
 import TerminalPanel from "./TerminalPanel";
-import { isActiveResearch, type ResearchRun } from "../lib/deep-research";
+import {
+  canResumeResearch,
+  elapsedResearch,
+  isActiveResearch,
+  type ResearchRun,
+} from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -340,7 +346,9 @@ export default function ChatView({
   customSystemPrompt,
   inputPlaceholder,
   initialPrompt,
+  initialDraft,
   onInitialPromptConsumed,
+  onInitialDraftConsumed,
 }: {
   projectPath: string;
   projectName: string;
@@ -377,13 +385,15 @@ export default function ChatView({
   customSystemPrompt?: string;
   inputPlaceholder?: string;
   initialPrompt?: string;
+  initialDraft?: string;
   onInitialPromptConsumed?: () => void;
+  onInitialDraftConsumed?: () => void;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const toolArgsRef = useRef(new Map<string, Record<string, unknown>>());
-  const [mode, setMode] = useState<"chat" | "research">("chat");
   const [researchResults, setResearchResults] = useState<ResearchRun[]>([]);
   const [researchBusy, setResearchBusy] = useState(false);
+  const [researchUsageError, setResearchUsageError] = useState(false);
   const [chatReady, setChatReady] = useState(false);
   const [researchHandoffError, setResearchHandoffError] = useState<
     string | null
@@ -1964,6 +1974,13 @@ export default function ChatView({
   }
 
   useEffect(() => {
+    if (!initialDraft || input) return;
+    setInput(initialDraft);
+    onInitialDraftConsumed?.();
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }, [initialDraft, input, onInitialDraftConsumed]);
+
+  useEffect(() => {
     if (
       !initialPrompt ||
       !chatReady ||
@@ -2482,7 +2499,7 @@ export default function ChatView({
   const tablePreviews = useMemo(() => extractMarkdownTables(input), [input]);
 
   const atHint =
-    mode === "chat" && filePickerQuery !== null
+    filePickerQuery !== null
       ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.`
       : "";
   const filteredModels = models.filter((model) =>
@@ -2522,9 +2539,14 @@ export default function ChatView({
       description: "Sync app-owned Pi extensions and reload this chat",
       source: "client",
     },
+    {
+      name: "research",
+      description: "Run cited Deep Research in this chat",
+      source: "client",
+    },
   ];
   const slashCommands =
-    mode === "research" || slashQuery === null
+    slashQuery === null
       ? []
       : [...clientCommands, ...commands]
           .filter(
@@ -2538,7 +2560,8 @@ export default function ChatView({
     if (command.name === "model") {
       setInput("");
       openModelPicker();
-    } else if (command.name === "thinking") setInput(`/${command.name} `);
+    } else if (command.name === "thinking" || command.name === "research")
+      setInput(`/${command.name} `);
     else setInput(`/${command.name}`);
     setCommandIndex(0);
   }
@@ -2547,19 +2570,25 @@ export default function ChatView({
     submitMode: "prompt" | "follow_up" | "steer" = "prompt",
   ) {
     const text = input.trim();
-    if (mode === "research") {
-      if (
-        !text ||
-        images.length ||
-        files.length ||
-        researchBusy ||
-        researchResults.some(isActiveResearch)
-      )
+    const query = researchQuery(text);
+    if (query !== null) {
+      if (!query) {
+        setResearchUsageError(true);
         return;
+      }
+      setResearchUsageError(false);
+      if (images.length || files.length) {
+        onToast("Remove attachments before starting Deep Research");
+        return;
+      }
+      if (researchBusy || researchResults.some(isActiveResearch)) {
+        onToast("Another Deep Research run is active");
+        return;
+      }
       if (
         !(await confirm({
           title: "Run Deep Research",
-          message: `${text}\n\nThis spins up a multi-step web research job that uses tokens.`,
+          message: `${query}\n\nThis spins up a multi-step web research job that uses tokens.`,
           confirmLabel: "Run",
           cancelLabel: "Cancel",
         }))
@@ -2570,7 +2599,7 @@ export default function ChatView({
         const slash = modelRef.current.indexOf("/");
         const run = await invoke<ResearchRun>("start_deep_research", {
           input: {
-            query: text,
+            query,
             model:
               slash < 0
                 ? modelRef.current || null
@@ -2729,29 +2758,21 @@ export default function ChatView({
       if (!isActive || event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        if (mode === "chat" && agentStatus === "running") void handleAbort();
-      } else if (
-        mode === "chat" &&
-        event.ctrlKey &&
-        event.key.toLowerCase() === "l"
-      ) {
+        if (agentStatus === "running") void handleAbort();
+      } else if (event.ctrlKey && event.key.toLowerCase() === "l") {
         event.preventDefault();
         openModelPicker();
-      } else if (
-        mode === "chat" &&
-        event.ctrlKey &&
-        event.key.toLowerCase() === "p"
-      ) {
+      } else if (event.ctrlKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         sendRaw({ type: "cycle_model" });
-      } else if (mode === "chat" && event.key === "Tab" && event.shiftKey) {
+      } else if (event.key === "Tab" && event.shiftKey) {
         event.preventDefault();
         sendRaw({ type: "cycle_thinking_level" });
       }
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [agentStatus, sendRaw, models, currentModel, isActive, mode]);
+  }, [agentStatus, sendRaw, models, currentModel, isActive]);
 
   const loadResearchResults = useCallback(async () => {
     const data = await invoke<{ runs: ResearchRun[] }>(
@@ -2808,7 +2829,6 @@ export default function ChatView({
               createdAt: Date.now(),
             },
           ]);
-          setMode("chat");
           window.setTimeout(() => inputRef.current?.focus(), 0);
           onToast("Deep Research accepted by this chat process");
         }
@@ -2832,6 +2852,18 @@ export default function ChatView({
     );
     if (completed) void handleResearchCompleted(completed);
   }, [handleResearchCompleted, researchResults]);
+
+  async function researchAction(command: string, run: ResearchRun) {
+    setResearchBusy(true);
+    try {
+      await invoke(command, { runId: run.id });
+      await loadResearchResults();
+    } catch (error) {
+      onToast(`Deep Research: ${String(error)}`);
+    } finally {
+      setResearchBusy(false);
+    }
+  }
 
   const lastAssistantId = [...messages]
     .reverse()
@@ -2881,41 +2913,6 @@ export default function ChatView({
         >
           {projectName}
         </strong>
-        <div
-          className="chat-mode-toggle"
-          role="group"
-          aria-label="Workspace mode"
-        >
-          <button
-            className={mode === "chat" ? "active" : ""}
-            aria-pressed={mode === "chat"}
-            onClick={() => setMode("chat")}
-          >
-            Chat
-          </button>
-          <button
-            className={mode === "research" ? "active" : ""}
-            aria-pressed={mode === "research"}
-            disabled={images.length > 0 || files.length > 0}
-            title={
-              images.length > 0
-                ? "Remove image attachments before starting Deep Research"
-                : files.length > 0
-                  ? "Remove file attachments before starting Deep Research"
-                  : "Use the composer for Deep Research"
-            }
-            aria-label={
-              images.length > 0
-                ? "Deep Research unavailable while image attachments are present"
-                : files.length > 0
-                  ? "Deep Research unavailable while file attachments are present"
-                  : "Deep Research"
-            }
-            onClick={() => setMode("research")}
-          >
-            Deep Research
-          </button>
-        </div>
         <button
           onClick={handleClose}
           className="small-icon-button"
@@ -2943,10 +2940,10 @@ export default function ChatView({
             AGENT STOPPED
           </span>
         )}
-        {mode === "chat" && approval && (
+        {approval && (
           <output className="follow-up-badge">● INPUT REQUIRED</output>
         )}
-        {mode === "chat" && !globalChat && graphStatus && (
+        {!globalChat && graphStatus && (
           <>
             <span
               className="category-tag graph-status"
@@ -2974,12 +2971,12 @@ export default function ChatView({
             </button>
           </>
         )}
-        {mode === "chat" && graphError && (
+        {graphError && (
           <span className="dev-error" title={graphError}>
             GRAPH ERROR: {graphError}
           </span>
         )}
-        {mode === "chat" && graphBusy && graphProgress && (
+        {graphBusy && graphProgress && (
           <div className="graph-progress" role="status" aria-live="polite">
             <span>
               <b>
@@ -3006,70 +3003,68 @@ export default function ChatView({
           </div>
         )}
 
-        {mode === "chat" && (
-          <div className="chat-header-actions">
-            <button
-              onClick={openModelPicker}
-              className="dev-control"
-              style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
-              title="Change model (Ctrl+L or /model) — works in Global and project chat"
-              aria-label="Change model"
-            >
-              ◍{" "}
-              {currentModel
-                ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ??
-                  "MODEL")
-                : "MODEL"}
+        <div className="chat-header-actions">
+          <button
+            onClick={openModelPicker}
+            className="dev-control"
+            style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+            title="Change model (Ctrl+L or /model) — works in Global and project chat"
+            aria-label="Change model"
+          >
+            ◍{" "}
+            {currentModel
+              ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ??
+                "MODEL")
+              : "MODEL"}
+          </button>
+          {!globalChat && !devRunner && (
+            <button onClick={handleRunDev} className="dev-control run">
+              ▶ RUN DEV
             </button>
-            {!globalChat && !devRunner && (
-              <button onClick={handleRunDev} className="dev-control run">
-                ▶ RUN DEV
+          )}
+          <button
+            onClick={handleOpenTerminal}
+            className={`dev-control open${showTerminal ? " active" : ""}`}
+          >
+            ⌘ TERMINAL
+          </button>
+          {!globalChat && devRunner && (
+            <>
+              <button onClick={handleStopDev} className="dev-control stop">
+                ■ STOP
               </button>
-            )}
-            <button
-              onClick={handleOpenTerminal}
-              className={`dev-control open${showTerminal ? " active" : ""}`}
-            >
-              ⌘ TERMINAL
-            </button>
-            {!globalChat && devRunner && (
-              <>
-                <button onClick={handleStopDev} className="dev-control stop">
-                  ■ STOP
-                </button>
-                <button
-                  onClick={() => openUrl(devRunner.url)}
-                  className="dev-control open"
-                >
-                  ↗ {devRunner.url}
-                </button>
-              </>
-            )}
-            {!globalChat && devError && (
-              <span className="dev-error" title={devError}>
-                RUN DEV ERROR: {devError}
-              </span>
-            )}
-            {agentStatus === "running" && (
-              <button onClick={handleAbort} className="caption-uppercase">
-                ABORT
-              </button>
-            )}
-            {agentStatus !== "running" && (
               <button
-                onClick={() => handleRestart()}
-                className="caption-uppercase"
-                disabled={isRestarting}
+                onClick={() => openUrl(devRunner.url)}
+                className="dev-control open"
               >
-                {isRestarting
-                  ? "RELOADING…"
-                  : agentStatus === "stopped"
-                    ? "RESTART"
-                    : "RELOAD PI"}
+                ↗ {devRunner.url}
               </button>
-            )}
-          </div>
-        )}
+            </>
+          )}
+          {!globalChat && devError && (
+            <span className="dev-error" title={devError}>
+              RUN DEV ERROR: {devError}
+            </span>
+          )}
+          {agentStatus === "running" && (
+            <button onClick={handleAbort} className="caption-uppercase">
+              ABORT
+            </button>
+          )}
+          {agentStatus !== "running" && (
+            <button
+              onClick={() => handleRestart()}
+              className="caption-uppercase"
+              disabled={isRestarting}
+            >
+              {isRestarting
+                ? "RELOADING…"
+                : agentStatus === "stopped"
+                  ? "RESTART"
+                  : "RELOAD PI"}
+            </button>
+          )}
+        </div>
       </div>
 
       {terminalMounted && (
@@ -3351,6 +3346,7 @@ export default function ChatView({
               </div>
             )}
             {messages.length === 0 &&
+              researchResults.length === 0 &&
               !isNewSessionLoading &&
               (isHistoryLoading ? (
                 <div
@@ -3379,56 +3375,99 @@ export default function ChatView({
                   AGENT IDLE. SEND PROMPT.
                 </div>
               ))}
-            {researchHandoffError && (
-              <div className="research-run-error" role="alert">
-                Context handoff failed: {researchHandoffError}. Open the report
-                to retry.
-              </div>
-            )}
-            {researchResults.map((run) => {
+            {[...researchResults].reverse().map((run) => {
               const report = run.final_report ?? run.partial_report;
-              const preview = report
-                .replace(/^#+\s.*$/gm, "")
-                .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
-                .trim();
-              return (
+              return [
+                <div
+                  key={`${run.id}-request`}
+                  className="chat-bubble-user body-md"
+                  style={{ order: run.created_at * 1000 }}
+                >
+                  /research {run.query}
+                </div>,
                 <article
-                  className="research-result-card"
+                  className={`research-result-card${isActiveResearch(run) ? " is-active" : ""}`}
                   key={run.id}
+                  style={{ order: run.created_at * 1000 + 1 }}
                   aria-live={isActiveResearch(run) ? "polite" : undefined}
                 >
                   <small>
-                    {isActiveResearch(run)
-                      ? `Deep Research · ${run.progress.phase || run.state}`
-                      : "Deep Research result"}
+                    {isActiveResearch(run) && (
+                      <span className="research-live-mark" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    )}
+                    Deep Research · {run.progress.phase || run.state} ·{" "}
+                    {elapsedResearch(run.created_at)}
                   </small>
                   <h3>{run.query}</h3>
                   {isActiveResearch(run) ? (
                     <p>{run.progress.activity || "Preparing research…"}</p>
-                  ) : (
-                    <p>
-                      {preview.slice(0, 420)}
-                      {preview.length > 420 ? "…" : ""}
-                    </p>
+                  ) : report ? (
+                    <div className="research-inline-report">
+                      <MarkdownMessage>{report}</MarkdownMessage>
+                    </div>
+                  ) : null}
+                  {run.error && (
+                    <p className="research-run-error">{run.error}</p>
                   )}
+                  {researchHandoffError &&
+                    run.state === "completed" &&
+                    !run.handoff_delivered && (
+                      <p className="research-run-error" role="alert">
+                        Context handoff failed: {researchHandoffError}
+                      </p>
+                    )}
                   <footer>
                     <span>
                       {run.progress.searches} searches · {run.progress.reads}{" "}
                       reads · {run.progress.checks} checks ·{" "}
                       {run.sources.length} sources
                     </span>
-                    <button onClick={() => onOpenResearch(run.id)}>
-                      {isActiveResearch(run)
-                        ? "Open progress"
-                        : "Read full report"}
-                    </button>
+                    <div>
+                      {isActiveResearch(run) && (
+                        <button
+                          disabled={researchBusy}
+                          onClick={() =>
+                            void researchAction("cancel_deep_research", run)
+                          }
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      {canResumeResearch(run) && (
+                        <button
+                          disabled={researchBusy}
+                          onClick={() =>
+                            void researchAction("resume_deep_research", run)
+                          }
+                        >
+                          Resume
+                        </button>
+                      )}
+                      {researchHandoffError &&
+                        run.state === "completed" &&
+                        !run.handoff_delivered && (
+                          <button
+                            onClick={() => void handleResearchCompleted(run)}
+                          >
+                            Retry context handoff
+                          </button>
+                        )}
+                      <button onClick={() => onOpenResearch(run.id)}>
+                        Open full report
+                      </button>
+                    </div>
                   </footer>
-                </article>
-              );
+                </article>,
+              ];
             })}
             {messages.map((m) => (
               <div
                 key={m.id}
+                style={{ order: m.createdAt ?? 0 }}
                 className={
                   m.role === "user"
                     ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
@@ -3900,7 +3939,7 @@ export default function ChatView({
                   </div>
                 );
               })()}
-            <div ref={bottomRef} />
+            <div ref={bottomRef} style={{ order: Number.MAX_SAFE_INTEGER }} />
           </div>
         </div>
 
@@ -3938,7 +3977,7 @@ export default function ChatView({
                 ))}
               </div>
             )}
-            {mode === "chat" && !globalChat && filePickerQuery !== null && (
+            {!globalChat && filePickerQuery !== null && (
               <FilePicker
                 projectPath={projectPath}
                 query={filePickerQuery}
@@ -4034,7 +4073,7 @@ export default function ChatView({
                 )}
               </div>
             )}
-            {mode === "chat" && images.length > 0 && (
+            {images.length > 0 && (
               <div className="image-previews">
                 {images.map((image, index) => (
                   <div key={index}>
@@ -4061,7 +4100,7 @@ export default function ChatView({
                 ))}
               </div>
             )}
-            {mode === "chat" && files.length > 0 && (
+            {files.length > 0 && (
               <div className="image-previews" aria-label="File attachments">
                 {files.map((file) => (
                   <div key={file.path} className="file-attachment">
@@ -4082,6 +4121,12 @@ export default function ChatView({
                 ))}
               </div>
             )}
+            {researchUsageError && (
+              <p className="research-run-error" role="alert">
+                Add a question after <code>/research</code>, for example:{" "}
+                <code>/research compare Tauri and Electron</code>.
+              </p>
+            )}
             {agentStatus === "running" && (
               <div
                 className={`queue-status${pendingMessageCount ? " has-queue" : ""}`}
@@ -4101,9 +4146,10 @@ export default function ChatView({
             <textarea
               ref={inputRef}
               value={input}
-              onPaste={mode === "chat" ? handlePaste : undefined}
+              onPaste={handlePaste}
               onChange={(e) => {
                 setInput(e.target.value);
+                setResearchUsageError(false);
                 setCommandIndex(0);
               }}
               onKeyDown={(e) => {
@@ -4159,11 +4205,9 @@ export default function ChatView({
                   ? "Reconnect the drive to continue"
                   : agentStatus === "stopped"
                     ? "Restart the session to continue"
-                    : mode === "research"
-                      ? "Ask a research question…"
-                      : agentStatus === "running"
-                        ? "Write a follow-up…"
-                        : inputPlaceholder || "Message the agent…"
+                    : agentStatus === "running"
+                      ? "Write a follow-up…"
+                      : inputPlaceholder || "Message the agent…"
               }
               disabled={
                 driveDetached ||
@@ -4174,8 +4218,7 @@ export default function ChatView({
                 !globalChat &&
                 !atHint &&
                 !driveDetached &&
-                agentStatus !== "stopped" &&
-                mode === "chat"
+                agentStatus !== "stopped"
                   ? "chat-composer-help"
                   : undefined
               }
@@ -4189,21 +4232,19 @@ export default function ChatView({
                 resize: "none",
               }}
             />
-            {mode === "chat" && (
-              <button
-                onClick={() => void attachFiles()}
-                disabled={
-                  driveDetached ||
-                  agentStatus === "stopped" ||
-                  isNewSessionLoading
-                }
-                className="small-icon-button"
-                title="Attach files"
-                aria-label="Attach files"
-              >
-                📎
-              </button>
-            )}
+            <button
+              onClick={() => void attachFiles()}
+              disabled={
+                driveDetached ||
+                agentStatus === "stopped" ||
+                isNewSessionLoading
+              }
+              className="small-icon-button"
+              title="Attach files"
+              aria-label="Attach files"
+            >
+              📎
+            </button>
             <button
               onClick={() => submitInput()}
               disabled={
@@ -4212,12 +4253,7 @@ export default function ChatView({
                 agentStatus === "stopped" ||
                 isNewSessionLoading ||
                 researchBusy ||
-                (mode === "research"
-                  ? !input.trim() ||
-                    images.length > 0 ||
-                    files.length > 0 ||
-                    researchResults.some(isActiveResearch)
-                  : !input.trim() && images.length === 0 && files.length === 0)
+                (!input.trim() && images.length === 0 && files.length === 0)
               }
               className="button-primary chat-action"
             >
@@ -4227,11 +4263,9 @@ export default function ChatView({
                   ? "STARTING…"
                   : isNewSessionLoading
                     ? "LOADING…"
-                    : mode === "research"
-                      ? "SEND"
-                      : agentStatus === "running"
-                        ? "QUEUE"
-                        : "SEND"}
+                    : agentStatus === "running"
+                      ? "QUEUE"
+                      : "SEND"}
             </button>
           </div>
         </div>

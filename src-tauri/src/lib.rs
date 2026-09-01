@@ -58,6 +58,7 @@ pub fn run() {
             get_config,
             deep_research::start_deep_research,
             deep_research::get_deep_research_data,
+            deep_research::attach_deep_research_to_chat,
             deep_research::handoff_deep_research,
             deep_research::delete_deep_research,
             deep_research::cancel_deep_research,

@@ -96,6 +96,11 @@ export function projectTaskIntent(input: string): TaskIntent | null {
   return null;
 }
 
+export function researchQuery(input: string) {
+  const match = input.match(/^\/research(?:\s+([\s\S]*))?$/i);
+  return match ? (match[1]?.trim() ?? "") : null;
+}
+
 export function shouldSubmitCommand(input: string, command: { name: string }) {
   return input.trim() === `/${command.name}`;
 }

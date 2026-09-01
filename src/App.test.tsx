@@ -9,6 +9,8 @@ const { checkUpdate, invokeMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(() => Promise.resolve({})),
 }));
 const unreadCallbacks: Array<(chatId: string) => void> = [];
+const researchProps: Array<Record<string, unknown>> = [];
+const chatProps: Array<Record<string, unknown>> = [];
 
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: vi.fn(() => Promise.resolve("1.2.3")),
@@ -55,13 +57,27 @@ vi.mock("./components/KanbanBoard", () => ({
 vi.mock("./components/RagKnowledge", () => ({
   default: () => <div>Knowledge view</div>,
 }));
+vi.mock("./components/DeepResearchView", () => ({
+  default: (props: Record<string, unknown>) => {
+    researchProps.push(props);
+    return <div>Deep Research view</div>;
+  },
+}));
 vi.mock("./components/ChatView", async () => {
   const { useEffect } = await import("react");
   return {
-    default: ({ onUnread }: { onUnread: (chatId: string) => void }) => {
-      unreadCallbacks.push(onUnread);
+    default: (props: Record<string, unknown>) => {
+      chatProps.push(props);
+      unreadCallbacks.push(props.onUnread as (chatId: string) => void);
       useEffect(() => () => unmounted(), []);
-      return <div>Chat view</div>;
+      return (
+        <div>
+          Chat view
+          {typeof props.initialDraft === "string" && (
+            <span>Draft: {props.initialDraft}</span>
+          )}
+        </div>
+      );
     },
   };
 });
@@ -82,6 +98,8 @@ beforeEach(() => {
   checkUpdate.mockResolvedValue(null);
   invokeMock.mockClear();
   unreadCallbacks.length = 0;
+  researchProps.length = 0;
+  chatProps.length = 0;
   localStorage.clear();
   localStorage.setItem(
     "crc-chat-tabs",
@@ -169,6 +187,35 @@ test("opens the dedicated knowledge workspace", async () => {
 test("exposes the Deep Research report library", () => {
   render(<App />);
   expect(screen.getByTitle("Deep Research")).toBeInTheDocument();
+});
+
+test("starts research by returning to the active chat with a draft", async () => {
+  render(<App />);
+  fireEvent.click(screen.getByTitle("Deep Research"));
+  expect(await screen.findByText("Deep Research view")).toBeInTheDocument();
+  expect(researchProps[researchProps.length - 1]).toMatchObject({
+    originChatId: "chat-1",
+    originSessionId: "chat-chat-1",
+  });
+  (researchProps[researchProps.length - 1].onStartInChat as () => void)();
+  expect(await screen.findByText("Chat view")).toBeVisible();
+  expect(chatProps[chatProps.length - 1]).toMatchObject({
+    chatId: "chat-1",
+    initialDraft: "/research ",
+  });
+  expect(screen.getByText("Draft: /research")).toBeInTheDocument();
+});
+
+test("returns to and activates the report target chat", async () => {
+  render(<App />);
+  fireEvent.click(screen.getByTitle("Deep Research"));
+  await screen.findByText("Deep Research view");
+  const onContinue = researchProps[researchProps.length - 1]
+    .onContinueInChat as (run: { origin_chat_id: string }) => void;
+  onContinue({ origin_chat_id: "chat-1" });
+  await screen.findByText("Chat view");
+  expect(screen.getByText("Chat view")).toBeVisible();
+  expect(screen.queryByText("Deep Research view")).not.toBeInTheDocument();
 });
 
 test("shows project operations in the workspace toolbar, not the sidebar", () => {

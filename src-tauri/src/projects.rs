@@ -14,6 +14,8 @@ const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts"
 const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts");
 const WORKSPACE_EXTENSION: &str = include_str!("../extensions/workspace-repositories.ts");
 const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts");
+const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts");
+const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -245,6 +247,8 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("terminal-context.ts", TERMINAL_EXTENSION),
         ("workspace-repositories.ts", WORKSPACE_EXTENSION),
         ("auto-format.ts", AUTO_FORMAT_EXTENSION),
+        ("agent-reach.ts", AGENT_REACH_EXTENSION),
+        ("agent-reach-security.ts", AGENT_REACH_SECURITY),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }

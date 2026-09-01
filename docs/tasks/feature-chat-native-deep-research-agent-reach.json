@@ -1,0 +1,171 @@
+{
+  "feature": {
+    "id": "chat-native-deep-research-agent-reach",
+    "name": "Chat-native Deep Research with Agent Reach",
+    "type": "feature",
+    "status": "ready",
+    "summary": "Move Deep Research initiation and follow-up into ordinary chat through /research while preserving the existing Deep Research report page and extending source acquisition with optional Agent Reach channels.",
+    "source_task": "User request: combine the existing Deep Research workflow with Panniantong/agent-reach and make it usable and follow-up capable from ordinary chat.",
+    "principles": [
+      "Extend the existing Deep Research engine; do not create a second research subsystem.",
+      "Keep one ordinary chat composer and use /research <query> instead of a Chat/Research mode toggle.",
+      "The same ResearchRun must power both the inline chat experience and the standalone Deep Research page.",
+      "Completed research must be inserted into the originating Pi session so subsequent chat messages can follow it up.",
+      "Agent Reach is an optional source provider; existing web tools remain the fallback.",
+      "Do not automatically install system packages, access browser cookies, or enable authenticated channels."
+    ],
+    "user_flow": [
+      "The user enters /research <question> in the ordinary chat composer.",
+      "ChatView starts the existing start_deep_research command with the current chat and Pi session as origin metadata.",
+      "An inline research card shows state, activity, source counts, and cancel or resume actions.",
+      "The existing isolated research Pi session uses built-in web tools and healthy enabled Agent Reach channels.",
+      "When complete, the report is handed to the originating Pi session and rendered inline in chat.",
+      "The user can immediately ask follow-up questions in the same chat.",
+      "Open full report navigates to the same run in the standalone Deep Research page."
+    ],
+    "phases": [
+      {
+        "id": "chat-command",
+        "name": "Replace research mode with /research",
+        "scope": [
+          "Remove the Chat/Research composer mode toggle from ChatView.",
+          "Register /research in the ordinary chat slash-command list.",
+          "Parse /research <query>, reject an empty query, and preserve the existing confirmation before starting a token-consuming run.",
+          "Start the existing ResearchRun with origin_chat_id and origin_session_id.",
+          "Do not change normal prompt, follow-up, steer, attachment, model, or thinking behavior."
+        ],
+        "acceptance_criteria": [
+          "/research <query> starts exactly one existing Deep Research run.",
+          "/research without a query shows an actionable validation message and starts nothing.",
+          "Ordinary chat no longer requires switching composer modes.",
+          "Only one active Deep Research run remains allowed, matching current backend behavior."
+        ]
+      },
+      {
+        "id": "inline-research",
+        "name": "Render research runs inside chat",
+        "scope": [
+          "Render originating ResearchRun records as inline chat cards in chronological context.",
+          "Show current state, progress activity, searches, reads, checks, elapsed time, partial failure details, and source count.",
+          "Expose existing cancel and resume commands from the inline card.",
+          "Render the completed report inline and provide Open full report using onOpenResearch(run.id).",
+          "Keep the standalone Deep Research page and its local history unchanged."
+        ],
+        "acceptance_criteria": [
+          "Research progress updates without leaving the chat.",
+          "Completed reports are readable directly in chat.",
+          "Open full report opens the identical ResearchRun on the Deep Research page.",
+          "Reloading the app restores the run from the existing persisted research store."
+        ]
+      },
+      {
+        "id": "follow-up-handoff",
+        "name": "Make completed research follow-up capable",
+        "scope": [
+          "Reuse handoff_deep_research to deliver the final report to the originating Pi session exactly once.",
+          "Keep report content wrapped as untrusted reference material.",
+          "Surface handoff failure on the inline card and allow a safe retry.",
+          "Do not switch views or silently create a new chat after handoff."
+        ],
+        "acceptance_criteria": [
+          "A completed report becomes context for the same originating chat session.",
+          "A normal follow-up question can reference findings from the report without pasting it again.",
+          "Duplicate events or app reloads do not inject the same report twice.",
+          "A failed handoff does not mark the run as delivered."
+        ]
+      },
+      {
+        "id": "agent-reach-provider",
+        "name": "Add Agent Reach as an optional research source provider",
+        "scope": [
+          "Integrate Panniantong/agent-reach with the existing isolated Deep Research Pi session, preferably through its structured MCP integration.",
+          "Add an app-owned availability and health check using agent-reach doctor.",
+          "Enable public, low-risk channels first: web, GitHub, YouTube, RSS, and Exa when available.",
+          "Teach the research prompt to choose source-specific channels and prioritize primary sources.",
+          "Collect Agent Reach result URLs into the existing ResearchRun source and citation-validation flow.",
+          "Fall back to web_search, source_check, fetch_content, and get_search_content when Agent Reach is unavailable or a channel fails."
+        ],
+        "acceptance_criteria": [
+          "Deep Research still completes when Agent Reach is not installed.",
+          "When healthy, Agent Reach public channels can be selected by the research agent.",
+          "Agent Reach source URLs participate in the existing structured citation checks.",
+          "Failure of one Agent Reach channel does not fail the whole run when fallback sources remain available.",
+          "Ordinary non-research chat behavior is unchanged."
+        ]
+      },
+      {
+        "id": "security-settings",
+        "name": "Add explicit health and security boundaries",
+        "scope": [
+          "Show Agent Reach as unavailable, partial, or ready without installing it automatically.",
+          "Require explicit user action for installation or system modification.",
+          "Keep authenticated and cookie-backed channels disabled by default.",
+          "Do not expose credentials, cookies, or the complete host environment to research output or the frontend.",
+          "Document which requests are sent to external services such as Jina or Exa."
+        ],
+        "acceptance_criteria": [
+          "No application startup or research action invokes agent-reach install --system.",
+          "No browser cookie is read without explicit channel configuration.",
+          "Health-check errors are actionable and do not block built-in research.",
+          "Agent Reach subprocess permissions are limited to the configured research integration."
+        ]
+      },
+      {
+        "id": "verification",
+        "name": "Regression and end-to-end verification",
+        "scope": [
+          "Add focused frontend tests for /research parsing, validation, inline run rendering, and full-report navigation.",
+          "Preserve backend tests for run persistence, citation validation, cancellation, resume, and idempotent handoff.",
+          "Add integration coverage for healthy, missing, and failing Agent Reach states.",
+          "Run formatting, TypeScript tests, Rust tests, and the production build."
+        ],
+        "acceptance_criteria": [
+          "The test suite covers start, progress, completion, follow-up handoff, cancel, resume, reload, and Agent Reach fallback.",
+          "Existing ordinary chat, Global Chat, and standalone Deep Research behavior has no regression.",
+          "pnpm test passes.",
+          "cargo test with the src-tauri manifest passes.",
+          "pnpm build passes."
+        ]
+      }
+    ],
+    "dependencies": {
+      "required": [
+        "Existing Deep Research backend and ResearchRun persistence",
+        "Existing ChatView Pi RPC session",
+        "Existing handoff_deep_research command",
+        "Existing standalone DeepResearchView"
+      ],
+      "optional": [
+        "Panniantong/agent-reach",
+        "Python 3.10+",
+        "Agent Reach MCP integration and channel-specific external tools"
+      ]
+    },
+    "out_of_scope": [
+      "Replacing the existing Deep Research engine with Agent Reach.",
+      "Creating a second research run store or report page.",
+      "Automatically deciding that arbitrary normal prompts are Deep Research requests.",
+      "Automatically installing Python, system packages, browser extensions, or Agent Reach dependencies.",
+      "Enabling Twitter, Reddit, LinkedIn, Facebook, Instagram, Xiaohongshu, or other authenticated channels by default.",
+      "Copying or porting every Agent Reach channel implementation into Rust.",
+      "Removing the standalone Deep Research page or its history."
+    ],
+    "delivery_order": [
+      "chat-command",
+      "inline-research",
+      "follow-up-handoff",
+      "agent-reach-provider",
+      "security-settings",
+      "verification"
+    ],
+    "definition_of_done": [
+      "A user can run /research <query> from an ordinary chat without changing modes.",
+      "The run is visible, controllable, and readable inline in that chat.",
+      "The completed report can be followed up by the same chat agent.",
+      "The identical persisted report remains available on the Deep Research page.",
+      "Healthy Agent Reach public channels extend source coverage while missing or failing Agent Reach falls back safely.",
+      "Security boundaries and authenticated-channel opt-in behavior are documented and tested.",
+      "All required tests and the production build pass."
+    ]
+  }
+}

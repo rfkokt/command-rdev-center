@@ -111,16 +111,19 @@ export default function DeepResearchView({
   originChatId,
   originSessionId,
   onCompleted,
+  onStartInChat,
+  onContinueInChat,
 }: {
   initialRunId?: string | null;
   embedded?: boolean;
   originChatId?: string;
   originSessionId?: string;
   onCompleted?: (run: ResearchRun) => void;
+  onStartInChat?: () => void;
+  onContinueInChat?: (run: ResearchRun) => void;
 }) {
   const [data, setData] = useState<ResearchData>({ runs: [], warnings: [] });
   const [selected, setSelected] = useState<string | null>(initialRunId ?? null);
-  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cancel, setCancel] = useState<ResearchRun | null>(null);
@@ -158,30 +161,6 @@ export default function DeepResearchView({
   const runs = sortResearchRuns(data.runs);
   const current = runs.find((run) => run.id === selected) ?? runs[0];
   const hasActive = runs.some(isActiveResearch);
-  async function start(e: React.FormEvent) {
-    e.preventDefault();
-    if (!query.trim()) return setError("Enter a research question.");
-    setBusy(true);
-    try {
-      const run = await invoke<ResearchRun>("start_deep_research", {
-        input: {
-          query,
-          model: null,
-          provider: null,
-          thinking: null,
-          originChatId: originChatId ?? null,
-          originSessionId: originSessionId ?? null,
-        },
-      });
-      setQuery("");
-      setSelected(run.id);
-      await load();
-    } catch (x) {
-      setError(String(x));
-    } finally {
-      setBusy(false);
-    }
-  }
   useEffect(() => {
     const completed = data.runs.find(
       (run) =>
@@ -201,6 +180,29 @@ export default function DeepResearchView({
       setSelected(next.id);
       setCancel(null);
       await load();
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function attachToChat(run: ResearchRun) {
+    if (!originChatId || !originSessionId) {
+      setError("Open a chat before continuing this research there.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const attached = await invoke<ResearchRun>(
+        "attach_deep_research_to_chat",
+        {
+          runId: run.id,
+          originChatId,
+          originSessionId,
+        },
+      );
+      await load();
+      onContinueInChat?.(attached);
     } catch (x) {
       setError(String(x));
     } finally {
@@ -239,29 +241,13 @@ export default function DeepResearchView({
             Dedicated cited research. Local history. No project or file access.
           </p>
         </div>
-        <span>{runs.length} reports</span>
-      </header>
-      <form className="research-composer" onSubmit={start}>
-        <label htmlFor="research-question">Research question</label>
-        <textarea
-          id="research-question"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          maxLength={10000}
-          placeholder="What should Pi investigate across the web?"
-          disabled={hasActive || busy}
-        />
         <div>
-          <span>
-            {hasActive
-              ? "One run is already active."
-              : "Only approved web tools are available."}
-          </span>
-          <button disabled={hasActive || busy}>
-            {busy ? "Starting…" : "Start research"}
+          <span>{runs.length} reports</span>
+          <button onClick={onStartInChat} disabled={!onStartInChat}>
+            Start in chat
           </button>
         </div>
-      </form>
+      </header>
       {error && (
         <p className="kanban-error" role="alert">
           {error}
@@ -328,6 +314,28 @@ export default function DeepResearchView({
                       Resume
                     </button>
                   )}
+                  {originChatId &&
+                    originSessionId &&
+                    (current.origin_chat_id === originChatId &&
+                    current.origin_session_id === originSessionId ? (
+                      <button onClick={() => onContinueInChat?.(current)}>
+                        Continue in current chat
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => void attachToChat(current)}
+                        disabled={busy}
+                        title={
+                          current.origin_chat_id
+                            ? "Move this report and its follow-up context to the active chat"
+                            : "Attach this report to the active chat"
+                        }
+                      >
+                        {current.origin_chat_id
+                          ? "Move to current chat"
+                          : "Continue in current chat"}
+                      </button>
+                    ))}
                   {!isActiveResearch(current) && (
                     <button
                       className="research-danger"

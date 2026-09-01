@@ -523,10 +523,14 @@ pub fn spawn_pi_rpc(
         args.push(config_path.to_string_lossy().into());
     }
     if global_chat {
-        // Global chat may operate a user-visible terminal, but every write is explicitly
-        // confirmed in the UI before it reaches the shell.
         args.push("--tools".into());
-        args.push("web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal".into());
+        if session_id.starts_with("research-") {
+            args.push("web_search,source_check,fetch_content,get_search_content,agent_reach_status,agent_reach_web_read,agent_reach_github_search,agent_reach_youtube_search,agent_reach_youtube_transcript,agent_reach_rss_read,agent_reach_exa_search".into());
+        } else {
+            // Global chat may operate a user-visible terminal, but every write is explicitly
+            // confirmed in the UI before it reaches the shell.
+            args.push("web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal".into());
+        }
     } else if let Some(tools) = tools {
         if tools.is_empty() {
             args.push("--no-tools".into());
@@ -593,6 +597,15 @@ pub fn spawn_pi_rpc(
         args.push(
             crate::projects::ensure_extensions()?
                 .join("terminal-context.ts")
+                .to_string_lossy()
+                .into(),
+        );
+    }
+    if session_id.starts_with("research-") {
+        args.push("--extension".into());
+        args.push(
+            crate::projects::ensure_extensions()?
+                .join("agent-reach.ts")
                 .to_string_lossy()
                 .into(),
         );

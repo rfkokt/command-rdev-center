@@ -27,8 +27,6 @@ vi.mock("./FilePicker", () => ({ default: () => null }));
 import ChatView from "./ChatView";
 
 Element.prototype.scrollIntoView = vi.fn();
-// ConfirmHost (styled confirm) is only mounted in App; in isolation its module-level opener is null,
-// so confirm() falls back to window.confirm, which jsdom returns false from. Stub it true so research submit proceeds.
 window.confirm = vi.fn(() => true);
 const baseProps = {
   projectPath: "/tmp/demo",
@@ -50,130 +48,14 @@ const baseProps = {
   isActive: true,
 };
 
-function mockBackend(runs: unknown[] = []) {
-  let currentRuns = runs;
-  invoke.mockImplementation((command: string) => {
-    if (command === "get_deep_research_data")
-      return Promise.resolve({ runs: currentRuns, warnings: [] });
-    if (command === "get_global_chat_cwd")
-      return Promise.resolve("/tmp/global");
-    if (command === "get_graph_status")
-      return Promise.resolve({
-        state: "fresh",
-        code_stale: false,
-        docs_stale: false,
-      });
-    if (command === "get_dev_server") return Promise.resolve(null);
-    if (command === "start_deep_research") {
-      const run = {
-        id: "run-one",
-        query: "Investigate this",
-        state: "creating",
-        partial_report: "",
-        progress: {
-          phase: "creating",
-          activity: "Starting",
-          searches: 0,
-          reads: 0,
-          checks: 0,
-          active_calls: [],
-        },
-        sources: [],
-      };
-      currentRuns = [run];
-      return Promise.resolve(run);
-    }
-    return Promise.resolve({});
-  });
-}
-afterEach(() => {
-  cleanup();
-  invoke.mockReset();
-  vi.clearAllMocks();
-});
-
-describe.each([
-  ["project", false],
-  ["global", true],
-] as const)("Deep Research in %s chat", (_kind, globalChat) => {
-  it("keeps the normal timeline and composer", async () => {
-    mockBackend();
-    render(<ChatView {...baseProps} globalChat={globalChat} />);
-    expect(
-      await screen.findByText("AGENT IDLE. SEND PROMPT."),
-    ).toBeInTheDocument();
-    const input = screen.getByRole("textbox");
-    fireEvent.change(input, { target: { value: "research this" } });
-    fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
-    expect(screen.getByText("AGENT IDLE. SEND PROMPT.")).toBeInTheDocument();
-    expect(screen.getByRole("textbox")).toHaveValue("research this");
-    expect(
-      screen.queryByLabelText("Research question"),
-    ).not.toBeInTheDocument();
-  });
-});
-
-it("waits for the Pi session before enabling the composer", async () => {
-  let finishSpawn: (() => void) | undefined;
-  mockBackend();
-  invoke.mockImplementation((command: string) => {
-    if (command === "get_deep_research_data")
-      return Promise.resolve({ runs: [], warnings: [] });
-    if (command === "get_global_chat_cwd")
-      return Promise.resolve("/tmp/global");
-    if (command === "spawn_pi_rpc")
-      return new Promise<void>((resolve) => {
-        finishSpawn = resolve;
-      });
-    return Promise.resolve({});
-  });
-  render(<ChatView {...baseProps} globalChat />);
-  expect(
-    await screen.findByRole("button", { name: "CONNECTING…" }),
-  ).toBeDisabled();
-  finishSpawn?.();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "SEND" })).toBeDisabled(),
-  );
-});
-
-it("routes SEND only through the isolated research command", async () => {
-  mockBackend();
-  render(<ChatView {...baseProps} />);
-  fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
-  fireEvent.change(screen.getByRole("textbox"), {
-    target: { value: "Investigate this" },
-  });
-  fireEvent.click(await screen.findByRole("button", { name: "SEND" }));
-  await waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith("start_deep_research", {
-      input: expect.objectContaining({
-        query: "Investigate this",
-        originChatId: "chat-one",
-        originSessionId: "chat-chat-one",
-      }),
-    }),
-  );
-  expect(screen.getByRole("textbox")).toHaveValue("");
-  expect(invoke).not.toHaveBeenCalledWith(
-    "send_pi_command",
-    expect.objectContaining({
-      jsonLine: expect.stringContaining("Investigate this"),
-    }),
-  );
-  expect(
-    await screen.findByText("Deep Research · creating"),
-  ).toBeInTheDocument();
-});
-
-it("shows compact active research and routes full progress to the library", async () => {
-  const active = {
+function run(state = "running") {
+  return {
     version: 1,
     id: "run-one",
-    query: "Question",
-    state: "running",
+    query: "Investigate this",
+    state,
     generation: 1,
-    created_at: 1,
+    created_at: Math.floor(Date.now() / 1000) - 5,
     updated_at: 2,
     session_id: "research-one",
     origin_chat_id: "chat-one",
@@ -183,125 +65,189 @@ it("shows compact active research and routes full progress to the library", asyn
       activity: "Searching official docs",
       searches: 2,
       reads: 1,
-      checks: 0,
+      checks: 1,
       active_calls: [],
     },
-    partial_report: "",
-    sources: [],
+    partial_report:
+      state === "completed" ? "# Report\n\nVerified **finding**." : "",
+    final_report:
+      state === "completed" ? "# Report\n\nVerified **finding**." : null,
+    sources: [
+      {
+        url: "https://example.com",
+        canonical_url: "https://example.com",
+        title: "",
+        cited: true,
+      },
+    ],
     cancellation_requested: false,
     resume_count: 0,
+    handoff_delivered: state === "completed",
+    handoff_state: state === "completed" ? "delivered" : "pending",
   };
-  mockBackend([active]);
-  render(<ChatView {...baseProps} />);
-  expect(
-    await screen.findByText("Deep Research · searching"),
-  ).toBeInTheDocument();
-  expect(screen.getByText("Searching official docs")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Open progress" }));
-  expect(baseProps.onOpenResearch).toHaveBeenCalledWith("run-one");
+}
+
+function mockBackend(runs: unknown[] = []) {
+  let current = runs;
+  invoke.mockImplementation((command: string) => {
+    if (command === "get_deep_research_data")
+      return Promise.resolve({ runs: current, warnings: [] });
+    if (command === "get_graph_status")
+      return Promise.resolve({
+        state: "fresh",
+        code_stale: false,
+        docs_stale: false,
+      });
+    if (command === "get_dev_server") return Promise.resolve(null);
+    if (command === "start_deep_research") {
+      current = [run("creating")];
+      return Promise.resolve(current[0]);
+    }
+    return Promise.resolve({});
+  });
+}
+
+afterEach(() => {
+  cleanup();
+  invoke.mockReset();
+  vi.clearAllMocks();
 });
 
-it("does not let a stale run from an older exact session block new research", async () => {
-  const stale = {
-    version: 1,
-    id: "run-old",
-    query: "Old question",
-    state: "running",
-    generation: 1,
-    created_at: 1,
-    updated_at: 2,
-    session_id: "research-old",
-    origin_chat_id: "chat-one",
-    origin_session_id: "chat-chat-old",
-    progress: {
-      phase: "searching",
-      activity: "Old search",
-      searches: 1,
-      reads: 0,
-      checks: 0,
-      active_calls: [],
-    },
-    partial_report: "",
-    sources: [],
-    cancellation_requested: false,
-    resume_count: 0,
-  };
-  mockBackend([stale]);
-  render(<ChatView {...baseProps} />);
-  fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
-  fireEvent.change(screen.getByRole("textbox"), {
-    target: { value: "New question" },
-  });
-  const send = await screen.findByRole("button", { name: "SEND" });
-  expect(send).toBeEnabled();
-  fireEvent.click(send);
-  await waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith("start_deep_research", {
-      input: expect.objectContaining({
-        query: "New question",
-        originSessionId: "chat-chat-one",
+describe("chat-native Deep Research", () => {
+  it("has no mode toggle and starts only through /research", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    expect(
+      screen.queryByRole("button", { name: "Deep Research" }),
+    ).not.toBeInTheDocument();
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, {
+      target: { value: "/research Investigate this" },
+    });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("start_deep_research", {
+        input: expect.objectContaining({
+          query: "Investigate this",
+          originChatId: "chat-one",
+          originSessionId: "chat-chat-one",
+        }),
       }),
-    }),
-  );
-  expect(screen.queryByText("Old search")).not.toBeInTheDocument();
-});
-
-it("preserves image attachments and disables Deep Research until they are removed", async () => {
-  mockBackend();
-  render(<ChatView {...baseProps} />);
-  const input = screen.getByRole("textbox");
-  const file = new File(["image"], "example.png", { type: "image/png" });
-  fireEvent.paste(input, { clipboardData: { files: [file] } });
-  const toggle = await screen.findByRole("button", {
-    name: "Deep Research unavailable while image attachments are present",
-  });
-  expect(toggle).toBeDisabled();
-  expect(toggle).toHaveAttribute(
-    "title",
-    "Remove image attachments before starting Deep Research",
-  );
-  expect(
-    await screen.findByAltText("Pasted attachment preview"),
-  ).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Remove image" }));
-  expect(screen.getByRole("button", { name: "Deep Research" })).toBeEnabled();
-});
-
-it("keeps image-only normal chat messages sendable", async () => {
-  mockBackend();
-  render(<ChatView {...baseProps} />);
-  const input = screen.getByRole("textbox");
-  const file = new File(["image"], "example.png", { type: "image/png" });
-  fireEvent.paste(input, { clipboardData: { files: [file] } });
-  await screen.findByAltText("Pasted attachment preview");
-  expect(screen.getByRole("button", { name: "SEND" })).toBeEnabled();
-  fireEvent.click(screen.getByRole("button", { name: "SEND" }));
-  await waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith(
+    );
+    expect(baseProps.onOpenResearch).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalledWith(
       "send_pi_command",
       expect.objectContaining({
-        jsonLine: expect.stringContaining('"type":"prompt"'),
+        jsonLine: expect.stringContaining("Investigate this"),
       }),
-    ),
-  );
-  expect(invoke).not.toHaveBeenCalledWith(
-    "start_deep_research",
-    expect.anything(),
-  );
-});
+    );
+  });
 
-it("does not run chat shortcuts in research mode", async () => {
-  mockBackend();
-  render(<ChatView {...baseProps} />);
-  fireEvent.click(screen.getByRole("button", { name: "Deep Research" }));
-  fireEvent.keyDown(window, { key: "p", ctrlKey: true });
-  expect(
-    invoke.mock.calls.filter(
-      ([command, args]) =>
-        command === "send_pi_command" &&
-        String((args as { jsonLine?: string })?.jsonLine).includes(
-          "cycle_model",
-        ),
-    ),
-  ).toHaveLength(0);
+  it("selects /research with a trailing space ready for the query", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/rese" } });
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(input).toHaveValue("/research ");
+  });
+
+  it("prefills a Start in chat draft without submitting it", async () => {
+    mockBackend();
+    const onInitialDraftConsumed = vi.fn();
+    render(
+      <ChatView
+        {...baseProps}
+        initialDraft="/research "
+        onInitialDraftConsumed={onInitialDraftConsumed}
+      />,
+    );
+    expect(await screen.findByRole("textbox")).toHaveValue("/research ");
+    expect(onInitialDraftConsumed).toHaveBeenCalledOnce();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "start_deep_research",
+      expect.anything(),
+    );
+    expect(baseProps.onOpenResearch).not.toHaveBeenCalled();
+  });
+
+  it("validates an empty /research command", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/research" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add a question after /research",
+    );
+    expect(baseProps.onOpenResearch).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue("/research");
+    expect(invoke).not.toHaveBeenCalledWith(
+      "start_deep_research",
+      expect.anything(),
+    );
+  });
+
+  it("renders progress, counts, cancel, and full-report navigation", async () => {
+    mockBackend([run()]);
+    render(<ChatView {...baseProps} />);
+    expect(
+      await screen.findByText("Searching official docs"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/2 searches · 1 reads · 1 checks · 1 sources/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("cancel_deep_research", {
+        runId: "run-one",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open full report" }));
+    expect(baseProps.onOpenResearch).toHaveBeenCalledWith("run-one");
+  });
+
+  it("places a restored research request chronologically in the timeline", async () => {
+    mockBackend([run("completed")]);
+    render(<ChatView {...baseProps} />);
+    const request = await screen.findByText("/research Investigate this");
+    const report = screen.getByRole("article");
+    expect(
+      Number(request.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
+    ).toBeLessThan(
+      Number(report.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
+    );
+  });
+
+  it("renders the complete Markdown report inline without an empty-state claim", async () => {
+    mockBackend([run("completed")]);
+    render(<ChatView {...baseProps} />);
+    expect(
+      await screen.findByRole("heading", { name: "Report" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("finding")).toBeInTheDocument();
+    expect(
+      screen.queryByText("AGENT IDLE. SEND PROMPT."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps multiple sequential reports visible for the same chat", async () => {
+    const first = {
+      ...run("completed"),
+      id: "run-a",
+      query: "Research A",
+      created_at: 10,
+    };
+    const second = {
+      ...run("completed"),
+      id: "run-b",
+      query: "Research B",
+      created_at: 20,
+    };
+    mockBackend([second, first]);
+    render(<ChatView {...baseProps} />);
+    expect(await screen.findByText("/research Research A")).toBeInTheDocument();
+    expect(screen.getByText("/research Research B")).toBeInTheDocument();
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
 });

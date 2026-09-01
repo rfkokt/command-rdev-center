@@ -79,6 +79,7 @@ type Tab = {
   interrupted?: boolean;
   unread?: number;
   initialPrompt?: string;
+  initialDraft?: string;
 };
 type KanbanTaskContext = {
   no?: string | number;
@@ -830,7 +831,29 @@ export default function App() {
                 </div>
               }
             >
-              <DeepResearchView initialRunId={researchRunId} />
+              <DeepResearchView
+                initialRunId={researchRunId}
+                originChatId={activeTab?.id}
+                originSessionId={activeTab ? `chat-${activeTab.id}` : undefined}
+                onStartInChat={() => {
+                  if (!activeTab) return;
+                  setTabs((current) =>
+                    current.map((tab) =>
+                      tab.id === activeTab.id
+                        ? { ...tab, initialDraft: "/research " }
+                        : tab,
+                    ),
+                  );
+                  activateTab(activeTab.id);
+                  setDashboard(null);
+                }}
+                onContinueInChat={(run) => {
+                  const tabId = run.origin_chat_id;
+                  if (!tabId || !tabs.some((tab) => tab.id === tabId)) return;
+                  activateTab(tabId);
+                  setDashboard(null);
+                }}
+              />
             </Suspense>
           )}
           {dashboard === "engines" && (
@@ -883,11 +906,21 @@ export default function App() {
                     onClose={() => closeTab(tab.id)}
                     onToast={addToast}
                     initialPrompt={tab.initialPrompt}
+                    initialDraft={tab.initialDraft}
                     onInitialPromptConsumed={() =>
                       setTabs((prev) =>
                         prev.map((item) =>
                           item.id === tab.id
                             ? { ...item, initialPrompt: undefined }
+                            : item,
+                        ),
+                      )
+                    }
+                    onInitialDraftConsumed={() =>
+                      setTabs((prev) =>
+                        prev.map((item) =>
+                          item.id === tab.id
+                            ? { ...item, initialDraft: undefined }
                             : item,
                         ),
                       )

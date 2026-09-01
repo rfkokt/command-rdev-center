@@ -12,6 +12,7 @@ import {
   insertSteerMessage,
   preserveStreamedContent,
   projectTaskIntent,
+  researchQuery,
   recentItems,
   settleAgentMessages,
   settleWithError,
@@ -170,6 +171,28 @@ describe("projectTaskIntent", () => {
   test("does not hijack unrelated test or Sonar requests", () => {
     expect(projectTaskIntent("test")).toBeNull();
     expect(projectTaskIntent("jalankan task runner npm")).toBeNull();
+  });
+});
+
+describe("researchQuery", () => {
+  test("extracts only explicit /research commands", () => {
+    expect(researchQuery("/research investigate this")).toBe(
+      "investigate this",
+    );
+    expect(researchQuery("/RESEARCH   question ")).toBe("question");
+    expect(researchQuery("/research")).toBe("");
+    expect(researchQuery("research this")).toBeNull();
+  });
+});
+
+describe("researchQuery", () => {
+  test("parses only the dedicated slash command", () => {
+    expect(researchQuery("/research source quality ")).toBe("source quality");
+    expect(researchQuery("/RESEARCH\nmultiline question")).toBe(
+      "multiline question",
+    );
+    expect(researchQuery("/research")).toBe("");
+    expect(researchQuery("research this")).toBeNull();
   });
 });
 
