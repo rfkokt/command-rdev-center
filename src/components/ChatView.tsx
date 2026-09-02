@@ -117,6 +117,10 @@ type SessionStats = {
 type ChatFile = { name: string; path: string };
 type ChatAttachment = ChatFile & { content: string };
 
+function attachmentContext(attachments: ChatAttachment[]) {
+  return `\n\n<authoritative_attachments>\nThe user explicitly attached the files below. Use their exact contents as authoritative context.\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}\n</authoritative_attachments>`;
+}
+
 const MAX_HISTORY = 600;
 const AGENT_INACTIVITY_TIMEOUT_MS = 120_000;
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
@@ -1839,7 +1843,7 @@ export default function ChatView({
         "read_chat_attachments",
         { projectPath, paths },
       );
-      return `\n\n<authoritative_attachments>\nThe user explicitly attached the files below. Use their exact contents as authoritative context.\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}\n</authoritative_attachments>`;
+      return attachmentContext(attachments);
     } catch (error) {
       if (
         !String(error).includes("PDF support requires pdftotext") ||
@@ -1858,7 +1862,7 @@ export default function ChatView({
         { projectPath, paths },
       );
       onToast("Poppler installed.");
-      return `\n\n<authoritative_attachments>\nThe user explicitly attached the files below. Use their exact contents as authoritative context.\n${attachments.map((file) => `--- ${file.name} (${file.path}) ---\n${file.content}\n--- end ${file.name} ---`).join("\n")}\n</authoritative_attachments>`;
+      return attachmentContext(attachments);
     }
   }
 
@@ -1949,7 +1953,10 @@ export default function ChatView({
       return;
     }
     const message = `${text}${fileContext}`;
-    if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
+    const visibleMessage =
+      text || files.map((file) => `@${file.name}`).join(" ");
+    if (visibleMessage)
+      onFirstMessage(chatId, visibleMessage.replace(/\s+/g, " ").slice(0, 60));
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => {
       const next = [
@@ -1957,7 +1964,7 @@ export default function ChatView({
         {
           id: uid(),
           role: "user",
-          text: message,
+          text: visibleMessage,
           images,
           thinking: "",
           toolCalls: [],
