@@ -32,7 +32,7 @@ describe("terminalCommandIsDestructive", () => {
     ).toBe(false);
   });
 
-  test("allows routine file and git maintenance", () => {
+  test("allows routine file, git, and API operations", () => {
     expect(
       terminalCommandIsDestructive(
         "rm /tmp/stale.index.lock && git add src && git commit -m fix",
@@ -41,6 +41,11 @@ describe("terminalCommandIsDestructive", () => {
     expect(
       terminalCommandIsDestructive(
         "chmod 644 config.json && git push origin main",
+      ),
+    ).toBe(false);
+    expect(
+      terminalCommandIsDestructive(
+        "curl --request POST http://localhost:3000/api/items --data '{}';",
       ),
     ).toBe(false);
   });

@@ -106,7 +106,7 @@ export function shouldSubmitCommand(input: string, command: { name: string }) {
 }
 
 export function terminalCommandIsDestructive(command: string) {
-  return /\brm\s+(?:[^\n;&|]*\s)?-(?:[a-z]*r[a-z]*f?|[a-z]*f[a-z]*r)\b|\b(?:mkfs|dd\s+[^\n;&|]*(?:of=|if=)|shutdown|reboot|poweroff|halt|wipefs|userdel|deluser|drop\s+(?:database|table)|delete\s+from|truncate\s+table|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f[a-z]*|docker\s+system\s+prune|kubectl\s+delete|terraform\s+(?:destroy|apply)|systemctl\s+(?:stop|disable|restart)|launchctl\s+(?:unload|bootout))\b|\b(?:curl|wget)\b[^\n|;]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request\s*(?:POST|PUT|PATCH|DELETE))\b/i.test(
+  return /\brm\s+(?:[^\n;&|]*\s)?-(?:[a-z]*r[a-z]*f?|[a-z]*f[a-z]*r)\b|\b(?:mkfs|dd\s+[^\n;&|]*(?:of=|if=)|shutdown|reboot|poweroff|halt|wipefs|userdel|deluser|drop\s+(?:database|table)|delete\s+from|truncate\s+table|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f[a-z]*|docker\s+system\s+prune|kubectl\s+delete|terraform\s+(?:destroy|apply)|systemctl\s+(?:stop|disable|restart)|launchctl\s+(?:unload|bootout))\b/i.test(
     command,
   );
 }

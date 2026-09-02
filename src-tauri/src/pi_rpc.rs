@@ -336,24 +336,30 @@ fn ensure_pi_installed_with_repair(
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
-    let context = crate::projects::api_documentation_context_for_project(project)
+    let cached = crate::projects::api_documentation_context_for_project(project)
         .ok()
-        .flatten()
-        .or_else(|| {
-            crate::projects::refresh_project_api_documentation(
-                project.to_string_lossy().into_owned(),
-            )
-            .ok()
-            .and_then(|_| {
-                crate::projects::api_documentation_context_for_project(project)
-                    .ok()
-                    .flatten()
-            })
-        });
+        .flatten();
+    let (context, is_cached_fallback) = match crate::projects::refresh_project_api_documentation(
+        project.to_string_lossy().into_owned(),
+    ) {
+        Ok(()) => (
+            crate::projects::api_documentation_context_for_project(project)
+                .ok()
+                .flatten(),
+            false,
+        ),
+        Err(_) => (cached, true),
+    };
+
     context
         .map(|context| {
+            let freshness = if is_cached_fallback {
+                "The live refresh failed, so this is the last successfully fetched contract; do not claim it is current."
+            } else {
+                "This was refreshed when this chat started."
+            };
             format!(
-                "## Project API documentation\nThe complete cached Swagger/OpenAPI and Postman contract follows. It is authoritative: inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory.\n{context}"
+                "## Project API documentation\n{freshness} It is authoritative: inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory.\n{context}"
             )
         })
         .unwrap_or_default()

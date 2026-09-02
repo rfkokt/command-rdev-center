@@ -3760,14 +3760,23 @@ export default function ChatView({
                               await refreshDiff();
                               setTerminalApproval(null);
                               return sendRaw({
-                                type: "follow_up",
+                                type:
+                                  agentStatus === "running"
+                                    ? "steer"
+                                    : "prompt",
                                 message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
                               });
                             })
                             .catch((error) => {
                               const message = `Approved terminal command failed: ${String(error)}`;
                               onToast(message);
-                              void sendRaw({ type: "follow_up", message });
+                              void sendRaw({
+                                type:
+                                  agentStatus === "running"
+                                    ? "steer"
+                                    : "prompt",
+                                message,
+                              });
                             })
                             .finally(() => setTerminalApprovalStatus(null));
                         }}
@@ -3784,7 +3793,8 @@ export default function ChatView({
                         onClick={() => {
                           setTerminalApproval(null);
                           void sendRaw({
-                            type: "follow_up",
+                            type:
+                              agentStatus === "running" ? "steer" : "prompt",
                             message:
                               "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
                           });
