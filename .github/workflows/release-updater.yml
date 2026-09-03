@@ -38,7 +38,12 @@ jobs:
           targets: ${{ env.TARGET }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          npm ci --ignore-scripts --prefix src-tauri/browser-host
+          PLAYWRIGHT_BROWSERS_PATH=src-tauri/browser-host/.browsers npx --prefix src-tauri/browser-host playwright install chromium
+          mkdir -p src-tauri/browser-host/runtime
+          cp "$(command -v node)" src-tauri/browser-host/runtime/node-aarch64-apple-darwin
 
       - name: Bump patch version
         id: version
