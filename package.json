@@ -4,7 +4,7 @@
   "version": "0.2.18",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/prepare-browser-host.mjs && vite",
     "test": "vitest run",
     "format": "prettier --write .github/workflows src src-tauri/extensions scripts index.html package.json tsconfig.json tsconfig.node.json vite.config.ts src-tauri/capabilities/default.json src-tauri/crc.config.json src-tauri/tauri.conf.json && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "prettier --check .github/workflows src src-tauri/extensions scripts index.html package.json tsconfig.json tsconfig.node.json vite.config.ts src-tauri/capabilities/default.json src-tauri/crc.config.json src-tauri/tauri.conf.json && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",

@@ -2499,20 +2499,41 @@ export default function ChatView({
       onToast("Still streaming — abort first.");
       return;
     }
+    let removed = false;
+    if (worktree && isGit) {
+      removed = await invoke<boolean>("remove_worktree", {
+        repoPath: projectPath,
+        worktreePath: worktree.worktree_path,
+        parentRef: worktree.parent_ref,
+      }).catch(() => false);
+      if (!removed) {
+        const discard = await confirm({
+          title: "Discard chat changes?",
+          message:
+            "This worktree has changes or commits that have not been merged. Permanently delete the worktree and its branch?",
+          confirmLabel: "Discard and delete",
+          cancelLabel: "Keep chat",
+          danger: true,
+        });
+        if (!discard) return;
+      }
+    }
+
     setBackgroundWork(null);
     try {
       await invoke("stop_dev_server", { chatId }).catch(() => {});
       await invoke("kill_pi_session", { sessionId }).catch(() => {});
-      if (worktree && isGit) {
-        const removed = await invoke<boolean>("remove_worktree", {
+      if (worktree && isGit && !removed) {
+        await invoke("force_remove_worktree", {
           repoPath: projectPath,
           worktreePath: worktree.worktree_path,
-          parentRef: worktree.parent_ref,
-        }).catch(() => false);
-        if (removed) onToast(`Worktree removed: ${worktree.worktree_path}`);
+        });
+        removed = true;
       }
-    } finally {
+      if (removed) onToast(`Worktree removed: ${worktree?.worktree_path}`);
       onClose();
+    } catch (error) {
+      onToast(`Close chat: ${String(error)}`);
     }
   }
 

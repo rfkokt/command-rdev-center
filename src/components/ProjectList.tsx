@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import ListPicker from "./ListPicker";
+import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
 import {
   ChevronRightIcon,
@@ -95,6 +96,7 @@ export default function ProjectList({
   const [loadingSheets, setLoadingSheets] = useState(false);
   const [loadingPics, setLoadingPics] = useState(false);
   const [fetchingBranches, setFetchingBranches] = useState(false);
+  const [cleaningWorktrees, setCleaningWorktrees] = useState(false);
   const registerDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingPath(null),
     Boolean(pendingPath),
@@ -113,6 +115,40 @@ export default function ProjectList({
       .then(setProjects)
       .catch((e) => setErr(String(e)));
   }, []);
+
+  async function cleanupWorktrees() {
+    const approved = await confirm({
+      title: "Clean up orphaned worktrees?",
+      message:
+        "Permanently delete worktrees and crc/* branches whose chats no longer exist? Active chats will be kept.",
+      confirmLabel: "Clean up",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!approved) return;
+    setCleaningWorktrees(true);
+    try {
+      const activeSlugs = tabs.map((tab) =>
+        tab.id
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/-+/g, "-")
+          .slice(0, 32),
+      );
+      const removed = await invoke<number>("cleanup_orphaned_worktrees", {
+        activeSlugs,
+      });
+      onToast(
+        removed
+          ? `Cleaned up ${removed} orphaned worktree(s).`
+          : "No orphaned worktrees found.",
+      );
+    } catch (error) {
+      onToast(`Worktree cleanup: ${String(error)}`);
+    } finally {
+      setCleaningWorktrees(false);
+    }
+  }
 
   async function addProject() {
     const path = await open({
@@ -790,9 +826,12 @@ export default function ProjectList({
               <section className="project-danger-zone">
                 <h3>DANGER ZONE</h3>
                 <p>
-                  Remove this registration only. Repository files remain
-                  untouched.
+                  Remove stale worktrees or this project registration.
+                  Repository files remain untouched.
                 </p>
+                <button onClick={cleanupWorktrees} disabled={cleaningWorktrees}>
+                  {cleaningWorktrees ? "CLEANING…" : "CLEAN UP WORKTREES"}
+                </button>
                 <button
                   onClick={() => {
                     setProjectToDelete(projectToEdit);

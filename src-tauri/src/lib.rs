@@ -165,6 +165,8 @@ pub fn run() {
             worktree::ensure_worktree,
             worktree::ensure_workspace_session,
             worktree::remove_worktree,
+            worktree::cleanup_orphaned_worktrees,
+            worktree::force_remove_worktree,
             pi_rpc::get_global_chat_cwd,
             pi_rpc::list_available_models,
             skills::list_pi_skills,

@@ -118,6 +118,14 @@ function savedTabs(): Tab[] {
   }
 }
 
+function chatSlug(id: string) {
+  return id
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 32);
+}
+
 export default function App() {
   const [configErr, setConfigErr] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tab[]>(savedTabs);
@@ -170,6 +178,16 @@ export default function App() {
 
   useEffect(() => {
     fetchConfig();
+    invoke<number>("cleanup_orphaned_worktrees", {
+      activeSlugs: savedTabs()
+        .filter((tab) => !tab.global)
+        .map((tab) => chatSlug(tab.id)),
+    })
+      .then((removed) => {
+        if (typeof removed === "number" && removed > 0)
+          addToast(`Cleaned up ${removed} orphaned worktree(s)`);
+      })
+      .catch((error) => addToast(`Worktree cleanup: ${String(error)}`));
     getVersion()
       .then(setAppVersion)
       .catch(() => {});

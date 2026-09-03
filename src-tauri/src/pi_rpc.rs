@@ -755,13 +755,23 @@ pub fn spawn_pi_rpc(
             &app,
             &app.state::<crate::browser_spike::BrowserState>(),
             &session_id,
-        ).ok();
+        )
+        .ok();
         if let Some((ref socket, ref cap)) = browser {
             args.push("--extension".into());
-            args.push(crate::projects::ensure_extensions()?.join("browser-tools.ts").to_string_lossy().into());
-            command.env("CRC_BROWSER_SOCKET", socket).env("CRC_BROWSER_CAPABILITY", cap);
+            args.push(
+                crate::projects::ensure_extensions()?
+                    .join("browser-tools.ts")
+                    .to_string_lossy()
+                    .into(),
+            );
+            command
+                .env("CRC_BROWSER_SOCKET", socket)
+                .env("CRC_BROWSER_CAPABILITY", cap);
         } else {
-            eprintln!("Browser bridge unavailable for {session_id} — chat starts without browser tools");
+            eprintln!(
+                "Browser bridge unavailable for {session_id} — chat starts without browser tools"
+            );
         }
         command
             .env("CRC_PROJECT_ROOT", &owning_project)

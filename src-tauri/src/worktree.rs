@@ -493,14 +493,10 @@ pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<
     Ok(session.to_string_lossy().into_owned())
 }
 
-fn remove_worktree_blocking(
-    repo_path: String,
-    worktree_path: String,
-    parent_ref: String,
-) -> Result<bool, String> {
+fn verified_worktree(repo_path: &str, worktree_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let project_root = read_config_project_root()?;
-    let rp = crate::projects::ensure_verified_repository(Path::new(&repo_path))?;
-    let wt = PathBuf::from(&worktree_path);
+    let rp = crate::projects::ensure_verified_repository(Path::new(repo_path))?;
+    let wt = PathBuf::from(worktree_path);
     let worktree_repository = crate::projects::verified_repository_root(&wt)?;
     let common = Command::new("git")
         .args([
@@ -541,7 +537,114 @@ fn remove_worktree_blocking(
             expected_prefix.display()
         ));
     }
+    Ok((project_root, rp))
+}
+
+fn remove_worktree_blocking(
+    repo_path: String,
+    worktree_path: String,
+    parent_ref: String,
+) -> Result<bool, String> {
+    let (project_root, rp) = verified_worktree(&repo_path, &worktree_path)?;
     remove_worktree_if_empty(&project_root, &rp, &worktree_path, &parent_ref)
+}
+
+fn force_remove_registered_worktree(rp: &Path, worktree_path: &str) -> Result<(), String> {
+    let branch = Command::new("git")
+        .args(["-C", worktree_path, "branch", "--show-current"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !branch.status.success() {
+        return Err(String::from_utf8_lossy(&branch.stderr).trim().to_string());
+    }
+    let branch = String::from_utf8_lossy(&branch.stdout).trim().to_string();
+    if !branch.starts_with("crc/") {
+        return Err("refusing to delete a non-CRC branch".into());
+    }
+    let repo = rp.to_string_lossy();
+    let removed = Command::new("git")
+        .args(["-C", &repo, "worktree", "remove", "--force", worktree_path])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !removed.status.success() {
+        return Err(String::from_utf8_lossy(&removed.stderr).trim().to_string());
+    }
+    let deleted = Command::new("git")
+        .args(["-C", &repo, "branch", "-D", &branch])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !deleted.status.success() {
+        return Err(String::from_utf8_lossy(&deleted.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+fn force_remove_worktree_blocking(repo_path: String, worktree_path: String) -> Result<(), String> {
+    let (_, rp) = verified_worktree(&repo_path, &worktree_path)?;
+    force_remove_registered_worktree(&rp, &worktree_path)
+}
+
+fn cleanup_orphaned_worktrees_blocking(active_slugs: Vec<String>) -> Result<usize, String> {
+    let root = crate::projects::global_worktree_root()?;
+    if !root.exists() {
+        return Ok(0);
+    }
+    let active = active_slugs
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let mut removed = 0;
+    for repository_dir in std::fs::read_dir(&root).map_err(|e| e.to_string())? {
+        let repository_dir = repository_dir.map_err(|e| e.to_string())?.path();
+        if !repository_dir.is_dir()
+            || repository_dir.file_name().and_then(|name| name.to_str())
+                == Some("workspace-sessions")
+        {
+            continue;
+        }
+        for entry in std::fs::read_dir(repository_dir).map_err(|e| e.to_string())? {
+            let worktree = entry.map_err(|e| e.to_string())?.path();
+            let slug = worktree
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if active.contains(slug) || !worktree.is_dir() {
+                continue;
+            }
+            let common = Command::new("git")
+                .args([
+                    "-C",
+                    &worktree.to_string_lossy(),
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-common-dir",
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !common.status.success() {
+                continue;
+            }
+            let common = PathBuf::from(String::from_utf8_lossy(&common.stdout).trim());
+            let Some(repository) = common.parent() else {
+                continue;
+            };
+            force_remove_registered_worktree(repository, &worktree.to_string_lossy())?;
+            removed += 1;
+        }
+    }
+    let sessions = root.join("workspace-sessions");
+    if sessions.exists() {
+        for entry in std::fs::read_dir(sessions).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            let slug = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if !active.contains(slug) {
+                std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    Ok(removed)
 }
 
 #[tauri::command]
@@ -557,9 +660,145 @@ pub async fn remove_worktree(
     .map_err(|e| format!("Worktree worker failed: {e}"))?
 }
 
+#[tauri::command]
+pub async fn cleanup_orphaned_worktrees(active_slugs: Vec<String>) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || cleanup_orphaned_worktrees_blocking(active_slugs))
+        .await
+        .map_err(|e| format!("Worktree worker failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn force_remove_worktree(repo_path: String, worktree_path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        force_remove_worktree_blocking(repo_path, worktree_path)
+    })
+    .await
+    .map_err(|e| format!("Worktree worker failed: {e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn force_remove_deletes_dirty_worktree_and_crc_branch() {
+        let root = std::env::temp_dir().join(format!("crc-force-remove-{}", std::process::id()));
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        std::fs::write(repo.join("tracked"), "base").unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "tracked"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "commit", "-m", "base"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "-b",
+                "crc/test-close",
+            ])
+            .output()
+            .unwrap();
+        std::fs::write(worktree.join("dirty"), "discard me").unwrap();
+
+        force_remove_registered_worktree(&repo, worktree.to_str().unwrap()).unwrap();
+
+        assert!(!worktree.exists());
+        let branch = Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "branch",
+                "--list",
+                "crc/test-close",
+            ])
+            .output()
+            .unwrap();
+        assert!(branch.stdout.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn force_remove_refuses_non_crc_branch() {
+        let root = std::env::temp_dir().join(format!("crc-force-guard-{}", std::process::id()));
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        std::fs::write(repo.join("tracked"), "base").unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "tracked"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "commit", "-m", "base"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "-b",
+                "keep-me",
+            ])
+            .output()
+            .unwrap();
+
+        assert_eq!(
+            force_remove_registered_worktree(&repo, worktree.to_str().unwrap()).unwrap_err(),
+            "refusing to delete a non-CRC branch"
+        );
+        assert!(worktree.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn sync_env_files_overwrites_ignored_env_only() {
