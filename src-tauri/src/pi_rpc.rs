@@ -526,6 +526,14 @@ pub fn spawn_pi_rpc(
     }
     // Existing chat behavior remains replace-and-restart.
     if !session_id.starts_with("research-") {
+        crate::browser_spike::close_session(
+            &app.state::<crate::browser_spike::BrowserState>(),
+            &session_id,
+        );
+        crate::browser_spike::allow_fresh_session(
+            &app.state::<crate::browser_spike::BrowserState>(),
+            &session_id,
+        );
         if let Ok(map) = sessions_map().lock() {
             if let Some(h) = map.get(&session_id) {
                 if let Ok(mut maybe_child) = h.child.lock() {
@@ -622,6 +630,8 @@ pub fn spawn_pi_rpc(
         );
         args.push("--extension".into());
         args.push(extensions.join("auto-format.ts").to_string_lossy().into());
+        args.push("--extension".into());
+        args.push(extensions.join("browser-tools.ts").to_string_lossy().into());
     } else {
         args.push("--extension".into());
         args.push(
@@ -741,7 +751,14 @@ pub fn spawn_pi_rpc(
             "root": root,
             "baseBranch": crate::projects::project_base_branch(&root).unwrap_or_else(|_| "main".into()),
         })).collect::<Vec<_>>();
+        let (browser_socket, browser_capability) = crate::browser_spike::ensure_bridge(
+            &app,
+            &app.state::<crate::browser_spike::BrowserState>(),
+            &session_id,
+        )?;
         command
+            .env("CRC_BROWSER_SOCKET", browser_socket)
+            .env("CRC_BROWSER_CAPABILITY", browser_capability)
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_WORKSPACE_ROOT", &workspace_root)
             .env(
@@ -879,6 +896,10 @@ pub fn spawn_pi_rpc(
             })
             == Some(process_id);
         if is_current {
+            crate::browser_spike::close_session(
+                &app_clone.state::<crate::browser_spike::BrowserState>(),
+                &sid,
+            );
             if sid.starts_with("research-") {
                 crate::deep_research::observe_end(&app_clone, &sid);
             }
@@ -1184,6 +1205,15 @@ mod tests {
             "track_kanban_task",
             "run_pipeline",
             "graphify",
+            "browser_open",
+            "browser_snapshot",
+            "browser_click",
+            "browser_fill",
+            "browser_wait",
+            "browser_network",
+            "browser_console",
+            "browser_screenshot",
+            "browser_close",
         ] {
             assert!(!tools.split(',').any(|tool| tool == denied));
         }

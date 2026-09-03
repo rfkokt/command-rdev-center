@@ -507,6 +507,7 @@ dependencies = [
  "fs2",
  "getrandom 0.3.4",
  "ignore",
+ "libc",
  "portable-pty",
  "security-framework",
  "serde",
@@ -519,6 +520,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "url",
 ]
 
 [[package]]

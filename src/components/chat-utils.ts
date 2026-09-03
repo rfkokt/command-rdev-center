@@ -148,6 +148,63 @@ export function insertSteerMessage(
   ];
 }
 
+export type BackgroundAgentWork = {
+  runId?: string;
+};
+
+function parsedToolResult(result: unknown): unknown {
+  if (typeof result !== "string") return result;
+  const value = result.trim();
+  if (!value.startsWith("{") && !value.startsWith("[")) return result;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return result;
+  }
+}
+
+function backgroundRunId(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = backgroundRunId(item);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const object = value as Record<string, unknown>;
+  for (const key of ["runId", "run_id", "id"]) {
+    if (typeof object[key] === "string" && object[key])
+      return object[key] as string;
+  }
+  for (const item of Object.values(object)) {
+    const found = backgroundRunId(item);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+export function backgroundAgentWork(
+  toolName: string,
+  result: unknown,
+  isError = false,
+): BackgroundAgentWork | null {
+  if (isError || !/(?:^|\.)subagent$/.test(toolName) || result == null)
+    return null;
+
+  const value = parsedToolResult(result);
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!/\b(?:async|background|detached)\b/i.test(text)) return null;
+  if (!/\b(?:running|started|launched|active)\b/i.test(text)) return null;
+
+  const candidate =
+    backgroundRunId(value) ??
+    text.match(/\b(?:run(?:\s+id)?|id)\s*[:=]\s*["'`]?([\w-]{6,})/i)?.[1];
+  return {
+    ...(typeof candidate === "string" && candidate ? { runId: candidate } : {}),
+  };
+}
+
 export function shouldToastPiStderr(line: string) {
   const text = line.trim();
   return (

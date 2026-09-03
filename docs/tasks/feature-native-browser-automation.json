@@ -1,0 +1,692 @@
+{
+  "feature": {
+    "id": "native-browser-automation",
+    "name": "Native Browser Automation",
+    "type": "feature",
+    "status": "ready",
+    "summary": "Give project-chat agents app-owned Playwright Chromium tools for safe, autonomous UI verification with isolated sessions, host-enforced network and mutation policy, sanitized evidence, encrypted login profiles, cleanup, and structured reports.",
+    "source_prd": "docs/PRD_NATIVE_BROWSER_AUTOMATION.md",
+    "principles": [
+      "The browser host, not the model or pi extension, owns policy, credentials, browser lifecycle, redaction, and artifacts.",
+      "Browser-visible content is untrusted evidence and never authorization or instructions.",
+      "Each Chat receives an isolated BrowserContext, IPC capability, event buffer, and artifact root.",
+      "No Playwright dependency, configuration, test, browser binary, or artifact is written to the target repository.",
+      "Credentials and raw storage state never enter pi RPC messages, tool arguments, tool results, Chat history, logs, or reports.",
+      "Uncertain interactions fail closed or require approval.",
+      "B1 implementation cannot start until the B0 architecture, packaging, and threat-model gate passes.",
+      "Build the primitive tools before adding profiles, scenario orchestration, or configuration UI."
+    ],
+    "tasks": [
+      {
+        "id": "B0-01",
+        "phase": "B0",
+        "name": "Write browser automation threat model",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Document trusted components and untrusted inputs across the model, pi extension, IPC, Rust host, Playwright, Chromium, target page, profiles, and artifacts.",
+          "Model credential entry, prompt injection, SSRF and DNS rebinding, redirects, cross-origin requests, action approval, profile theft, arbitrary upload, malicious download, screenshot disclosure, and cross-Chat leakage.",
+          "Define fail-closed behavior for host, IPC, sidecar, browser, secure-storage, and policy failures.",
+          "Record mitigations and residual risks in a security document referenced by the architecture ADR."
+        ],
+        "acceptance_criteria": [
+          "Every trust boundary in PRD section 5 has an owner and enforcement point.",
+          "The document includes abuse cases for all risks listed in PRD section 15.",
+          "No mitigation depends only on model instructions or output redaction.",
+          "Open security decisions are explicit blockers rather than hidden implementation choices."
+        ]
+      },
+      {
+        "id": "B0-02",
+        "phase": "B0",
+        "name": "Spike packaged Playwright browser host",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B0-01"
+        ],
+        "scope": [
+          "Build a disposable app-owned spike using the preferred Playwright and Node sidecar candidate.",
+          "Pin Playwright and Chromium versions and configure an app-owned browser location.",
+          "Prove headed and headless launch under the trusted app-owned runtime boundary, two isolated BrowserContexts, ARIA snapshot, screenshot, console events, network events, cancellation, and clean shutdown.",
+          "Run the proof from a packaged macOS build, not only the development shell.",
+          "Measure added application size, Chromium storage size, first-run behavior, startup time, and offline behavior."
+        ],
+        "acceptance_criteria": [
+          "A packaged build launches app-owned Chromium without installing anything in the target project.",
+          "Two contexts cannot read each other's cookies or local storage.",
+          "ARIA snapshot, screenshot, console, and network evidence are captured successfully.",
+          "Closing the spike leaves no browser or sidecar process running.",
+          "Size, startup, signing/update ownership, and offline findings are recorded; owner credentials remain a release-pipeline concern."
+        ]
+      },
+      {
+        "id": "B0-03",
+        "phase": "B0",
+        "name": "Decide browser host architecture",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B0-01",
+          "B0-02"
+        ],
+        "scope": [
+          "Write an ADR selecting the browser host runtime and explaining the Node-sidecar exception to the existing Tauri architecture preference.",
+          "Specify Rust-to-sidecar IPC framing, protocol versioning, request IDs, event streaming, authentication, cancellation, health checks, restart, and shutdown.",
+          "Specify Tauri externalBin layout, target-triple packaging, browser binary storage, signing, updates, and offline installation.",
+          "Define macOS delivery now and the compatibility decision required for Windows and WSL.",
+          "Document the model-to-extension-to-host call chain and approval flow.",
+          "Record the approved authenticated-proxy boundary and accepted residual risk for direct sockets after compromise of the pinned app-owned Chromium runtime."
+        ],
+        "acceptance_criteria": [
+          "The ADR resolves every B0 decision required by PRD section 12.2 under the approved proxy boundary.",
+          "The chosen architecture passed the packaged spike.",
+          "The IPC and lifecycle contracts are implementable without inventing behavior during B1.",
+          "B0 exit criteria are signed off before any production B1 browser tools are added."
+        ]
+      },
+      {
+        "id": "B1-01",
+        "phase": "B1",
+        "name": "Implement authenticated browser-host IPC",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B0-03"
+        ],
+        "scope": [
+          "Implement the versioned IPC request, response, event, and error envelopes selected by the ADR.",
+          "Generate an unguessable per-Chat capability and bind it to Chat identity, process identity, and browser session.",
+          "Reject unknown versions, malformed payloads, replayed or cross-Chat capabilities, oversized messages, and calls during shutdown.",
+          "Forward cancellation and implement idempotent close, health, crash recovery, and orphan-process cleanup.",
+          "Keep decrypted profile data out of the extension and IPC logs."
+        ],
+        "acceptance_criteria": [
+          "Valid requests are correlated by Chat and tool-call ID.",
+          "Cross-Chat, expired, malformed, and replayed requests fail closed.",
+          "Cancellation stops active work and leaves the session in a known state.",
+          "Sidecar crash and app shutdown leave no orphan process.",
+          "IPC logs contain no capability or credential values."
+        ]
+      },
+      {
+        "id": "B1-02",
+        "phase": "B1",
+        "name": "Add Chat-scoped browser lifecycle",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-01"
+        ],
+        "scope": [
+          "Create one BrowserContext, active page registry, event buffers, and artifact root per Chat.",
+          "Start browser resources lazily on browser_open.",
+          "Close resources on browser_close, pi session_shutdown, Chat replacement, app quit, inactivity timeout, and crash recovery.",
+          "Prevent one Chat from addressing another Chat's page, context, events, or artifacts.",
+          "Support headed and headless contexts according to the B0 ADR."
+        ],
+        "acceptance_criteria": [
+          "Two simultaneous Chats remain isolated across cookies, storage, pages, buffers, and artifacts.",
+          "browser_close is idempotent.",
+          "Every lifecycle exit path closes the associated context.",
+          "No browser process remains after the final context closes unless ADR-approved process reuse is active.",
+          "An unavailable or restarting browser host returns a stable retryable error."
+        ]
+      },
+      {
+        "id": "B1-03",
+        "phase": "B1",
+        "name": "Enforce browser network policy",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-01",
+          "B0-01"
+        ],
+        "scope": [
+          "Centralize or reuse tested IP classification for loopback, public, private, link-local, multicast, unspecified, mapped-private, and metadata destinations.",
+          "Allow only approved http and https destinations and deny credential-bearing URLs and unsupported top-level schemes.",
+          "Resolve and revalidate DNS answers, redirects, popups, iframe navigation, fetch/XHR, form navigation, WebSocket, beacon, worker, and service-worker requests.",
+          "Permit passive cross-origin subresources only under the PRD's same-network-class and safe-retrieval rules.",
+          "Ensure proxy settings cannot bypass destination validation."
+        ],
+        "acceptance_criteria": [
+          "Explicitly approved loopback and public staging origins can load.",
+          "Private LAN, link-local, cloud metadata, unsupported schemes, credential-bearing URLs, and privilege-class transitions are blocked.",
+          "DNS rebinding and redirect tests re-evaluate the final destination.",
+          "A new top-level origin requires approval.",
+          "Blocked requests are recorded without exposing secret request data."
+        ]
+      },
+      {
+        "id": "B1-04",
+        "phase": "B1",
+        "name": "Implement browser action approvals",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-01",
+          "B1-03"
+        ],
+        "scope": [
+          "Classify browser interactions conservatively before execution.",
+          "Require approval for mutation-capable or uncertain clicks, fills, submits, cross-origin navigation, uploads, and other risky actions.",
+          "Build structured approval previews with origin, URL, action, semantic element identity, bounded surrounding text, masked value, expected scope, and expiry.",
+          "Use pi ctx.ui confirm or select so approval travels through the existing RPC extension UI protocol.",
+          "Bind approval to the exact Chat, action, target, value hash, origin, and one-shot or time-bounded scope."
+        ],
+        "acceptance_criteria": [
+          "No uncertain interaction executes before matching approval.",
+          "Approval for one action cannot authorize a changed target, value, origin, Chat, or expired request.",
+          "Rejected, dismissed, timed-out, and mismatched approvals fail closed.",
+          "Secret values are masked and never included in approval payloads.",
+          "Read-only and approved actions produce auditable non-secret policy decisions."
+        ]
+      },
+      {
+        "id": "B1-05",
+        "phase": "B1",
+        "name": "Build artifact store and redaction boundary",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-02"
+        ],
+        "scope": [
+          "Create restrictive per-Chat browser directories under app-owned session storage.",
+          "Store screenshots, snapshots, response bodies, downloads, network JSONL, and console JSONL beneath canonicalized subdirectories.",
+          "Return opaque artifact references instead of filesystem paths.",
+          "Implement recursive model-output sanitization, safe-header allowlists, query and JSON-key filtering, body size and content-type limits, and binary artifact handling.",
+          "Label all page-derived text as untrusted observed data and bound every result by size and cursor."
+        ],
+        "acceptance_criteria": [
+          "Traversal, symlink, absolute-path, and cross-Chat artifact access are rejected.",
+          "Authorization, cookie, token, password, session, API-key, and secret-shaped test fixtures never appear in model-visible output.",
+          "Binary bodies remain artifact-only.",
+          "Screenshots are not automatically added to model context.",
+          "No artifact is written to the target repository."
+        ]
+      },
+      {
+        "id": "B1-06",
+        "phase": "B1",
+        "name": "Register B1 pi browser tools",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-01",
+          "B1-02",
+          "B1-03",
+          "B1-04",
+          "B1-05"
+        ],
+        "scope": [
+          "Add bundled browser-tools.ts using pi.registerTool for browser_open, browser_snapshot, browser_click, browser_fill, browser_wait, browser_network, browser_console, browser_screenshot, and browser_close.",
+          "Implement the common status, data, stable error, and artifactRefs envelope.",
+          "Forward calls and abort signals through authenticated IPC and clean up on session_shutdown.",
+          "Pass the extension path and per-session IPC environment through spawn_pi_rpc.",
+          "Add browser tools to project-Chat allowlists only; leave Global Chat support deferred."
+        ],
+        "acceptance_criteria": [
+          "All B1 tools appear to project agents with bounded schemas and clear untrusted-data guidance.",
+          "Tools cannot execute without a valid host capability.",
+          "No browser tool is exposed in Global Chat.",
+          "Abort and session_shutdown propagate to the browser host.",
+          "Tool results follow the documented common envelope."
+        ]
+      },
+      {
+        "id": "B1-07",
+        "phase": "B1",
+        "name": "Implement semantic snapshot and locators",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [
+          "B1-06"
+        ],
+        "scope": [
+          "Use Playwright ARIA snapshots where available and attach host-issued element references.",
+          "Include roles, accessible names, visible text, relevant non-secret form state, and bounded hierarchy.",
+          "Resolve role and name, label, placeholder, and visible text before explicit selector fallback.",
+          "Reject ambiguous, stale, missing, disabled, or blocked targets with stable errors.",
+          "Omit password values, scripts, styles, comments, unnecessary attributes, and unapproved cross-origin frame contents."
+        ],
+        "acceptance_criteria": [
+          "A local fixture can be navigated using role/name, label, placeholder, and text locators.",
+          "Ambiguous locators do not choose an element silently.",
+          "Stale host references are detected.",
+          "Snapshot paging and maxChars limits are enforced.",
+          "Secret or hidden sensitive values do not appear in snapshots."
+        ]
+      },
+      {
+        "id": "B1-08",
+        "phase": "B1",
+        "name": "Implement safe click, fill, wait, and screenshot",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": [
+          "B1-04",
+          "B1-07"
+        ],
+        "scope": [
+          "Execute click and fill through resolved semantic targets and the action-policy gate.",
+          "Reject password, OTP, API-key, payment, passkey, and other secret-classified fields or values.",
+          "Implement waits for URL, text, selector state, request ID, load state, and bounded network quiet periods.",
+          "Treat network quiet as optional evidence rather than a universal readiness condition.",
+          "Capture page or element screenshots using logical artifact names."
+        ],
+        "acceptance_criteria": [
+          "A non-secret form can be filled and its explicit submit control activated after approval.",
+          "Secret-field fixtures and secret-shaped values are blocked before entering pi-visible channels.",
+          "Wait results identify the condition that completed or timed out.",
+          "Long-polling and WebSocket fixtures do not force false network-ready claims.",
+          "Screenshot output cannot escape the artifact root."
+        ]
+      },
+      {
+        "id": "B1-09",
+        "phase": "B1",
+        "name": "Implement console and network evidence",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": [
+          "B1-05",
+          "B1-06"
+        ],
+        "scope": [
+          "Capture bounded console messages and uncaught page exceptions with cursor-based retrieval.",
+          "Assign stable request IDs and record sanitized method, normalized URL, resource type, initiator, timing, disposition, status, safe headers, and optional body evidence.",
+          "Distinguish completed HTTP errors, transport failures, cancellation, and policy blocks.",
+          "Correlate UI actions to observed requests and responses using IDs and timing.",
+          "Record service-worker mode and evidence completeness."
+        ],
+        "acceptance_criteria": [
+          "An HTTP 500 appears as a completed response with sanitized body evidence, not a transport failure.",
+          "AbortController and browser cancellation are reported as cancelled when proven and marked uncertain otherwise.",
+          "Transport failure and policy block have distinct dispositions.",
+          "Console errors and uncaught exceptions are retrievable without unbounded output.",
+          "Service-worker evidence gaps are disclosed rather than treated as absence."
+        ]
+      },
+      {
+        "id": "B1-10",
+        "phase": "B1",
+        "name": "Verify B1 security and lifecycle",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": [
+          "B1-08",
+          "B1-09"
+        ],
+        "scope": [
+          "Create a local fixture covering semantic controls, a mutation approval, console error, HTTP 500, cancellation, redirect, denied destination, and long-lived network activity.",
+          "Add cross-Chat isolation, IPC authorization, artifact traversal, redaction, lifecycle, and orphan-process tests.",
+          "Run the B1 flow against localhost and one approved staging origin.",
+          "Verify the target repository remains free of Playwright dependencies and artifacts.",
+          "Run formatting, frontend tests, Rust tests, sidecar tests, and production packaging/build checks."
+        ],
+        "acceptance_criteria": [
+          "Every B1 acceptance criterion in the PRD passes with recorded evidence.",
+          "Cross-Chat and policy bypass tests fail before execution.",
+          "No credential fixture appears in RPC, Chat history, logs, tool results, or artifact previews.",
+          "Closing the Chat or app leaves no orphan browser process.",
+          "Required test and build commands pass."
+        ]
+      },
+      {
+        "id": "B2-01",
+        "phase": "B2",
+        "name": "Add headed authentication takeover",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B1-10"
+        ],
+        "scope": [
+          "Pause agent browser execution while the user controls a headed session.",
+          "Show a clear takeover state and require explicit Return control to agent.",
+          "Prevent model tool calls from racing user input during takeover.",
+          "Resume with sanitized page metadata only and never capture typed secret values in model-visible channels."
+        ],
+        "acceptance_criteria": [
+          "The user can authenticate without sending credentials through pi.",
+          "Agent actions remain blocked until explicit control return.",
+          "Password, OTP, and equivalent values do not appear in RPC, logs, screenshots metadata, or reports.",
+          "Closing or timing out takeover leaves a known browser state."
+        ]
+      },
+      {
+        "id": "B2-02",
+        "phase": "B2",
+        "name": "Implement encrypted browser profiles",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B2-01"
+        ],
+        "scope": [
+          "Store versioned profile state with opaque ID, name, scoped origins, creation time, and last-used time.",
+          "Encrypt state at rest with platform-backed key material and restrictive file permissions.",
+          "Support consented save, apply, metadata inspection, overwrite, revoke, and delete.",
+          "Avoid plaintext temporary files when Playwright accepts in-memory state.",
+          "Implement atomic writes, incompatible-version invalidation or migration, and safe failure when secure storage is unavailable."
+        ],
+        "acceptance_criteria": [
+          "A saved login can be reapplied only to its approved origins.",
+          "Raw cookies, headers, local storage, IndexedDB, session storage, and passkey state never reach pi-visible channels.",
+          "Missing secure storage fails closed without plaintext fallback.",
+          "Profile overwrite, revoke, delete, and incompatible-version behavior are tested.",
+          "Profiles are not shared across projects or Chats by default."
+        ]
+      },
+      {
+        "id": "B2-03",
+        "phase": "B2",
+        "name": "Add complete browser interactions",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B1-10"
+        ],
+        "scope": [
+          "Add browser_select, browser_press, browser_scroll, and explicit submit behavior.",
+          "Add browser_upload using only a user-selected or Chat-attached host-issued file handle.",
+          "Validate upload handle ownership, expiry, canonical path, symlinks, size, and file type.",
+          "Quarantine downloads under the artifact root and never auto-open or execute them.",
+          "Expose only sanitized download metadata unless the user explicitly exports a file."
+        ],
+        "acceptance_criteria": [
+          "Select, keyboard, scroll, and explicit submit work through semantic targets and approval policy.",
+          "Model-supplied filesystem paths are rejected.",
+          "Expired, cross-Chat, symlinked, oversized, and disallowed upload handles are blocked.",
+          "Downloads remain quarantined and are never executed automatically.",
+          "All interactions honor cancellation and stable error semantics."
+        ]
+      },
+      {
+        "id": "B2-04",
+        "phase": "B2",
+        "name": "Add browser assertions",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B1-10",
+          "B2-03"
+        ],
+        "scope": [
+          "Implement browser_assert for URL, visibility, text, form value, table row, toast, dialog, and HTTP status.",
+          "Return expected, actual, pass or fail, failure reason, and evidence references.",
+          "Use semantic locators and stable request IDs instead of arbitrary JavaScript evaluation.",
+          "Bound actual values and sanitize assertion evidence."
+        ],
+        "acceptance_criteria": [
+          "Every PRD assertion type has passing and failing coverage.",
+          "Failures include actionable reasons and evidence references.",
+          "Assertions cannot execute arbitrary page JavaScript.",
+          "Sensitive form values and response data remain sanitized."
+        ]
+      },
+      {
+        "id": "B2-05",
+        "phase": "B2",
+        "name": "Implement bounded test mode",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B1-04",
+          "B2-04"
+        ],
+        "scope": [
+          "Define a test-mode authorization containing exact origins, methods or routes, action classes, exact test-record identifiers, duration, and cleanup steps.",
+          "Require explicit user approval before activation and display active scope and expiry.",
+          "Bind every action to the active scope and fall back to normal approval when it does not match.",
+          "Expire the authorization on time, Chat shutdown, origin change, or explicit cancellation.",
+          "Keep network restrictions, credential isolation, redaction, and artifact boundaries active."
+        ],
+        "acceptance_criteria": [
+          "Only actions matching the exact approved scope bypass one-shot prompts.",
+          "Changed origin, route, record, action class, method, Chat, or expiry requires new approval.",
+          "Test mode cannot authorize denied network classes or credential exposure.",
+          "Activation, expiry, cancellation, and mismatch behavior are tested."
+        ]
+      },
+      {
+        "id": "B2-06",
+        "phase": "B2",
+        "name": "Implement cleanup execution and verification",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B2-04",
+          "B2-05"
+        ],
+        "scope": [
+          "Allow scenarios to declare cleanup actions covered by explicit approval or matching test mode.",
+          "Run cleanup after the associated mutation and preserve evidence even if primary assertions fail.",
+          "Verify cleanup through an observable assertion, response, or exact record absence.",
+          "Record cleanup as verified, failed, skipped, blocked, or cancelled with evidence."
+        ],
+        "acceptance_criteria": [
+          "Cleanup never runs outside its approved scope.",
+          "Success is never inferred only from issuing an action.",
+          "Cleanup failure does not erase primary test evidence.",
+          "All cleanup terminal states are distinguishable and tested."
+        ]
+      },
+      {
+        "id": "B2-07",
+        "phase": "B2",
+        "name": "Verify profiles and Master Penugasan flow",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "B2-02",
+          "B2-03",
+          "B2-04",
+          "B2-05",
+          "B2-06"
+        ],
+        "scope": [
+          "Verify headed authentication and encrypted profile application without credential exposure.",
+          "Run the Master Penugasan scenario with a disposable exact test identifier.",
+          "Approve deletion or activate a matching bounded test scope.",
+          "Record correlated DELETE and subsequent GET evidence, assert exact record absence, and capture the final screenshot.",
+          "Report suspected backend behavior without over-claiming when cache, service worker, race, or evidence completeness remains plausible."
+        ],
+        "acceptance_criteria": [
+          "Every B2 acceptance criterion in the PRD passes.",
+          "The test record is selected only by an exact disposable identifier.",
+          "DELETE and GET method, URL, status, and sanitized body evidence are recorded.",
+          "Cleanup status is verified, failed, or skipped with evidence.",
+          "No credential appears in any model-visible or persisted diagnostic channel."
+        ]
+      },
+      {
+        "id": "B3-01",
+        "phase": "B3",
+        "name": "Define versioned browser_test schema",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [
+          "B2-07"
+        ],
+        "scope": [
+          "Define a versioned schema for startUrl, optional profile, steps, assertions, networkAssertions, cleanupSteps, and captureOnFailure.",
+          "Reference prior outputs and elements through stable IDs.",
+          "Reject arbitrary JavaScript, arbitrary filesystem paths, unknown actions, cyclic references, oversized scenarios, and unbounded timeouts.",
+          "Define deterministic result and error semantics for every step."
+        ],
+        "acceptance_criteria": [
+          "Valid scenarios compose only existing primitive tools.",
+          "Invalid versions, actions, references, paths, sizes, and timeouts are rejected before execution.",
+          "The schema can represent the Master Penugasan verification and cleanup flow.",
+          "Schema compatibility rules are documented and tested."
+        ]
+      },
+      {
+        "id": "B3-02",
+        "phase": "B3",
+        "name": "Implement browser_test orchestration",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [
+          "B3-01"
+        ],
+        "scope": [
+          "Execute versioned scenarios by calling the existing browser primitives in order.",
+          "Preserve approval and test-mode checks at every primitive boundary.",
+          "Support cancellation, bounded per-step and total timeouts, failure short-circuit rules, and cleanup execution.",
+          "Capture screenshot, snapshot, console, exception, and network evidence automatically on failure.",
+          "Return deterministic step, assertion, network assertion, artifact, and cleanup results."
+        ],
+        "acceptance_criteria": [
+          "browser_test does not bypass primitive policy or duplicate browser logic.",
+          "Failure capture runs without hiding the original failure.",
+          "Cancellation and timeout behavior leave a known browser state and still report cleanup status.",
+          "The Master Penugasan scenario executes through browser_test."
+        ]
+      },
+      {
+        "id": "B3-03",
+        "phase": "B3",
+        "name": "Generate Markdown and JSON reports",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [
+          "B3-02"
+        ],
+        "scope": [
+          "Generate a concise Markdown report and versioned JSON artifact for each scenario.",
+          "Include step results, assertions, network evidence, screenshots and artifact references, service-worker evidence completeness, redaction summary, and cleanup status.",
+          "Keep raw secrets and arbitrary page instructions out of reports.",
+          "Resolve artifact references through the app instead of exposing filesystem paths."
+        ],
+        "acceptance_criteria": [
+          "Passing and failing scenarios produce valid Markdown and schema-valid JSON.",
+          "Reports distinguish response, transport failure, cancellation, policy block, and incomplete evidence.",
+          "Reports contain no configured secret fixtures.",
+          "Artifact references open only within the owning Chat."
+        ]
+      },
+      {
+        "id": "B3-04",
+        "phase": "B3",
+        "name": "Add artifact retention and deletion",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [
+          "B1-05",
+          "B3-03"
+        ],
+        "scope": [
+          "Add per-Chat artifact quotas, expiry metadata, and bounded cleanup of expired data.",
+          "Allow explicit deletion of a Chat's browser artifacts without deleting its encrypted profiles.",
+          "Keep profile deletion and artifact deletion separate and auditable without secret values.",
+          "Handle partial deletion, locked files, and app restart safely."
+        ],
+        "acceptance_criteria": [
+          "Quota and expiry prevent unbounded disk growth.",
+          "A Chat cannot delete another Chat's artifacts.",
+          "Artifact deletion leaves profiles unchanged and profile deletion leaves unrelated artifacts unchanged.",
+          "Deletion failures are reported accurately and can be retried."
+        ]
+      },
+      {
+        "id": "B3-05",
+        "phase": "B3",
+        "name": "Run final browser automation verification",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [
+          "B3-03",
+          "B3-04"
+        ],
+        "scope": [
+          "Run B0 through B3 regression coverage, packaged smoke tests, and the Master Penugasan browser_test scenario.",
+          "Verify failure capture, report schemas, retention, deletion, cleanup, credential isolation, network policy, cross-Chat isolation, and orphan-process cleanup.",
+          "Run formatting, frontend tests, Rust tests, sidecar tests, production build, and packaged application smoke checks.",
+          "Document residual risks and deferred Global Chat and Windows or WSL decisions."
+        ],
+        "acceptance_criteria": [
+          "Every B3 and overall PRD acceptance criterion passes.",
+          "Markdown and JSON reports contain complete sanitized evidence and cleanup status.",
+          "No Playwright files or dependencies appear in the target repository.",
+          "No known policy bypass, credential leak, cross-Chat leak, or orphan process remains.",
+          "Required test, build, and packaged smoke commands pass."
+        ]
+      }
+    ],
+    "dependencies": {
+      "required": [
+        "Existing pi RPC extension loading and extension UI approval protocol",
+        "Existing Chat/session identity and lifecycle",
+        "Existing Tauri/Rust process supervision and app-data path access",
+        "Playwright with a pinned Chromium revision",
+        "The B0-selected browser host runtime and IPC transport",
+        "Platform-backed secure storage for B2 profiles"
+      ],
+      "deferred": [
+        "Global Chat browser-tool exposure",
+        "Windows and WSL browser execution decision",
+        "Firefox and WebKit",
+        "Browser dashboard or broad settings UI",
+        "Visual regression testing"
+      ]
+    },
+    "delivery_order": [
+      "B0-01",
+      "B0-02",
+      "B0-03",
+      "B1-01",
+      "B1-02",
+      "B1-03",
+      "B1-04",
+      "B1-05",
+      "B1-06",
+      "B1-07",
+      "B1-08",
+      "B1-09",
+      "B1-10",
+      "B2-01",
+      "B2-02",
+      "B2-03",
+      "B2-04",
+      "B2-05",
+      "B2-06",
+      "B2-07",
+      "B3-01",
+      "B3-02",
+      "B3-03",
+      "B3-04",
+      "B3-05"
+    ],
+    "phase_gates": {
+      "B0": "ADR, threat model, and packaged spike prove the selected runtime, packaging, IPC, lifecycle, and security boundaries.",
+      "B1": "Safe project-Chat primitives pass isolation, policy, evidence, approval, redaction, lifecycle, localhost, and staging acceptance tests.",
+      "B2": "Host-mediated authentication, encrypted profiles, complete interactions, assertions, bounded test mode, cleanup, and Master Penugasan verification pass.",
+      "B3": "browser_test composes primitives, generates sanitized Markdown and JSON reports, captures failures, and enforces retention and deletion."
+    },
+    "out_of_scope": [
+      "Adding Playwright dependencies, configuration, tests, browsers, or artifacts to the target repository.",
+      "Replacing project-owned end-to-end test suites.",
+      "Unrestricted browsing, crawling, scraping, production automation, payment flows, or account administration.",
+      "Arbitrary JavaScript evaluation through browser tools or browser_test.",
+      "Model-supplied host filesystem paths for upload or artifacts.",
+      "Automatic execution or opening of downloaded files.",
+      "Automatic screenshot attachment to model context.",
+      "Global Chat browser automation in B0 through B3.",
+      "Firefox, WebKit, recorder, visual regression, dashboard, and broad configuration UI."
+    ],
+    "definition_of_done": [
+      "A project agent can independently open approved localhost and staging applications, inspect semantic structure, interact safely, and collect bounded sanitized evidence.",
+      "Credentials and storage state remain host-only while headed takeover and encrypted scoped profiles support authenticated testing.",
+      "Network, mutation, upload, download, prompt-injection, artifact, and cross-Chat boundaries are deterministic and tested.",
+      "The Master Penugasan scenario records correlated DELETE and GET evidence, exact-record assertions, screenshots, and verified cleanup status.",
+      "browser_test emits sanitized Markdown and versioned JSON reports with failure evidence and retention controls.",
+      "No browser dependency or artifact is added to the repository under test.",
+      "All required tests, production builds, packaged smoke checks, and orphan-process checks pass."
+    ]
+  }
+}

@@ -4,6 +4,7 @@ import {
   appendAgentLog,
   appendBoundedText,
   appendStreamingText,
+  backgroundAgentWork,
   clearRestartErrors,
   ensureAssistantTurn,
   filePickerKey,
@@ -24,6 +25,46 @@ import {
   tsvToMarkdown,
 } from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
+
+describe("backgroundAgentWork", () => {
+  test("detects namespaced successful detached launches and extracts run IDs", () => {
+    expect(
+      backgroundAgentWork("functions.subagent", {
+        status: "running",
+        mode: "async",
+        runId: "run-123456",
+      }),
+    ).toEqual({ runId: "run-123456" });
+    expect(
+      backgroundAgentWork(
+        "subagent",
+        "Background agent launched; run id: 3448d238-b9a0-4af9-81f3-f49cba5ba9b2",
+      ),
+    ).toEqual({ runId: "3448d238-b9a0-4af9-81f3-f49cba5ba9b2" });
+    expect(
+      backgroundAgentWork("subagent", {
+        status: "started",
+        mode: "detached",
+        details: { run_id: "nested-run-123" },
+      }),
+    ).toEqual({ runId: "nested-run-123" });
+  });
+
+  test("ignores synchronous, completed, failed, and unrelated tool results", () => {
+    expect(
+      backgroundAgentWork("subagent", { status: "completed", mode: "async" }),
+    ).toBeNull();
+    expect(
+      backgroundAgentWork("subagent", { status: "running", mode: "serial" }),
+    ).toBeNull();
+    expect(
+      backgroundAgentWork("functions.bash", "background process started"),
+    ).toBeNull();
+    expect(
+      backgroundAgentWork("subagent", "Background agent launched", true),
+    ).toBeNull();
+  });
+});
 
 describe("terminalCommandIsDestructive", () => {
   test("allows read-only SSH inspection", () => {

@@ -24,7 +24,13 @@
   "bundle": {
     "active": true,
     "resources": {
-      "../node_modules/prettier": "node_modules/prettier"
+      "../node_modules/prettier": "node_modules/prettier",
+      "browser-host/host.mjs": "browser-host/host.mjs",
+      "browser-host/proxy.mjs": "browser-host/proxy.mjs",
+      "browser-host/node_modules/playwright": "browser-host/node_modules/playwright",
+      "browser-host/node_modules/playwright-core": "browser-host/node_modules/playwright-core",
+      "browser-host/.browsers": "browser-host/.browsers",
+      "browser-host/runtime/node-aarch64-apple-darwin": "browser-host/runtime/node-aarch64-apple-darwin"
     },
     "targets": "all",
     "createUpdaterArtifacts": true,

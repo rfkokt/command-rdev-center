@@ -29,6 +29,7 @@ import {
   ensureAssistantTurn,
   shouldToastPiStderr,
   appendAgentLog,
+  backgroundAgentWork,
   settleAgentMessages,
   settleWithError,
   shouldOfferRestart,
@@ -483,6 +484,11 @@ export default function ChatView({
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [backgroundWork, setBackgroundWork] = useState<{
+    runId?: string;
+    startedAt: number;
+  } | null>(null);
+  const [backgroundElapsedSeconds, setBackgroundElapsedSeconds] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [savingMessageId, setSavingMessageId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<{
@@ -874,6 +880,24 @@ export default function ChatView({
     return () => window.clearInterval(id);
   }, [agentStatus, chatId, onAgentRunning, onToast, sessionId]);
 
+  useEffect(() => {
+    if (agentStatus === "stopped") setBackgroundWork(null);
+  }, [agentStatus]);
+
+  useEffect(() => {
+    if (!backgroundWork) {
+      setBackgroundElapsedSeconds(0);
+      return;
+    }
+    const update = () =>
+      setBackgroundElapsedSeconds(
+        Math.max(0, Math.round((Date.now() - backgroundWork.startedAt) / 1000)),
+      );
+    update();
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, [backgroundWork]);
+
   // Elapsed timer for agent running duration
   useEffect(() => {
     if (agentStatus !== "running") {
@@ -1211,6 +1235,7 @@ export default function ChatView({
         }
 
         if (t === "agent_start") {
+          setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
           setAgentStatus("running");
           onAgentRunning(chatId, true);
@@ -1398,6 +1423,16 @@ export default function ChatView({
             result: ev.result as unknown,
             isError: Boolean(ev.isError),
           });
+          const launchedBackgroundWork = backgroundAgentWork(
+            name,
+            ev.result,
+            Boolean(ev.isError),
+          );
+          if (launchedBackgroundWork)
+            setBackgroundWork({
+              ...launchedBackgroundWork,
+              startedAt: Date.now(),
+            });
           if (
             !ev.isError &&
             name === "run_pipeline" &&
@@ -2349,6 +2384,7 @@ export default function ChatView({
   }
 
   async function handleAbort() {
+    setBackgroundWork(null);
     await sendRaw({ type: "abort" });
     setAgentStatus("idle");
     setIsStreaming(false);
@@ -2365,6 +2401,7 @@ export default function ChatView({
     if (isRestarting) return;
     setIsRestarting(true);
     setDriveDetached(false);
+    setBackgroundWork(null);
     try {
       await invoke("kill_pi_session", { sessionId }).catch(() => {});
       const [provider, ...modelParts] = modelRef.current.split("/");
@@ -2462,6 +2499,7 @@ export default function ChatView({
       onToast("Still streaming — abort first.");
       return;
     }
+    setBackgroundWork(null);
     try {
       await invoke("stop_dev_server", { chatId }).catch(() => {});
       await invoke("kill_pi_session", { sessionId }).catch(() => {});
@@ -3808,6 +3846,35 @@ export default function ChatView({
                 )}
               </div>
             ))}
+            {backgroundWork && agentStatus !== "running" && (
+              <div
+                className="agent-working activity-nodes phase-executing"
+                style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="agent-working-mark" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </span>
+                <div>
+                  <strong>BACKGROUND AGENT WORKING</strong>
+                  <small className="agent-working-detail">
+                    {backgroundWork.runId
+                      ? `Run ${backgroundWork.runId}`
+                      : "Detached task in progress"}
+                  </small>
+                </div>
+                <span className="agent-working-stats">
+                  <span>
+                    {backgroundElapsedSeconds >= 60
+                      ? `${Math.floor(backgroundElapsedSeconds / 60)}m ${backgroundElapsedSeconds % 60}s`
+                      : `${backgroundElapsedSeconds}s`}
+                  </span>
+                </span>
+              </div>
+            )}
             {agentStatus === "running" &&
               (() => {
                 const allTools = messages.flatMap(
