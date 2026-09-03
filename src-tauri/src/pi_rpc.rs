@@ -630,8 +630,7 @@ pub fn spawn_pi_rpc(
         );
         args.push("--extension".into());
         args.push(extensions.join("auto-format.ts").to_string_lossy().into());
-        args.push("--extension".into());
-        args.push(extensions.join("browser-tools.ts").to_string_lossy().into());
+        // ponytail: browser extension added conditionally below after ensure_bridge
     } else {
         args.push("--extension".into());
         args.push(
@@ -751,14 +750,20 @@ pub fn spawn_pi_rpc(
             "root": root,
             "baseBranch": crate::projects::project_base_branch(&root).unwrap_or_else(|_| "main".into()),
         })).collect::<Vec<_>>();
-        let (browser_socket, browser_capability) = crate::browser_spike::ensure_bridge(
+        // Browser tools are optional — missing runtime/socket must not block chat.
+        let browser = crate::browser_spike::ensure_bridge(
             &app,
             &app.state::<crate::browser_spike::BrowserState>(),
             &session_id,
-        )?;
+        ).ok();
+        if let Some((ref socket, ref cap)) = browser {
+            args.push("--extension".into());
+            args.push(crate::projects::ensure_extensions()?.join("browser-tools.ts").to_string_lossy().into());
+            command.env("CRC_BROWSER_SOCKET", socket).env("CRC_BROWSER_CAPABILITY", cap);
+        } else {
+            eprintln!("Browser bridge unavailable for {session_id} — chat starts without browser tools");
+        }
         command
-            .env("CRC_BROWSER_SOCKET", browser_socket)
-            .env("CRC_BROWSER_CAPABILITY", browser_capability)
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_WORKSPACE_ROOT", &workspace_root)
             .env(
