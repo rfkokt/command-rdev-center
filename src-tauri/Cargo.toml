@@ -1,6 +1,6 @@
 [package]
 name = "command-rdev-center"
-version = "0.2.16"
+version = "0.2.17"
 description = "Kern Studio — local-first AI developer workspace"
 authors = ["garcia"]
 edition = "2021"
