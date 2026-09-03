@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
+mod browser_spike;
 mod deep_research;
 mod dev_runner;
 mod diff;
@@ -37,11 +39,17 @@ fn get_config() -> Result<Config, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(browser_spike::BrowserState::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             projects::init_config(app.handle())?;
+            let browser_app = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                browser_spike::reap_inactive(&browser_app.state::<browser_spike::BrowserState>());
+            });
             std::thread::spawn(|| {
                 if let Err(error) = projects::migrate_base_branches() {
                     eprintln!("startup branch migration failed: {error}");
@@ -52,10 +60,16 @@ pub fn run() {
             });
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                browser_spike::shutdown(&window.state::<browser_spike::BrowserState>());
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_config,
+            browser_spike::browser_b0_packaged_smoke,
             deep_research::start_deep_research,
             deep_research::get_deep_research_data,
             deep_research::attach_deep_research_to_chat,
