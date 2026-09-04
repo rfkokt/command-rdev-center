@@ -1,7 +1,7 @@
 {
   "name": "command-rdev-center",
   "private": true,
-  "version": "0.2.19",
+  "version": "0.2.20",
   "type": "module",
   "scripts": {
     "dev": "node scripts/prepare-browser-host.mjs && vite",
