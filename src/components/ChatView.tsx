@@ -40,7 +40,10 @@ import {
   tsvToMarkdown,
 } from "./chat-utils";
 import ToolCallView, {
+  BrowserScreenshot,
   activityKind,
+  browserScreenshotRef,
+  browserScreenshotRefFromText,
   getSubagentMeta,
   isSubagentTool,
   isWebSearchTool,
@@ -123,7 +126,7 @@ function attachmentContext(attachments: ChatAttachment[]) {
 }
 
 const MAX_HISTORY = 600;
-const AGENT_INACTIVITY_TIMEOUT_MS = 120_000;
+const AGENT_INACTIVITY_TIMEOUT_MS = 2 * 60_000;
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
 type DiffSide = {
   number?: number;
@@ -315,6 +318,24 @@ function describeToolActivity(tool: ToolCall): string {
   if (name === "web_search" || name === "fetch_content") {
     const q = String(a.query ?? a.url ?? "").slice(0, 40);
     return q ? `Web: ${q}` : "Searching web";
+  }
+  if (name === "api_contract_test" || name === "api_request") {
+    const partial = tool.result as
+      | { details?: { activity?: unknown }; activity?: unknown }
+      | undefined;
+    const activity = partial?.details?.activity ?? partial?.activity;
+    if (typeof activity === "string" && activity) return activity;
+    const method = String(a.method ?? "").toUpperCase();
+    const path = String(a.path ?? "");
+    const operation = String(a.operationId ?? "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+      .replace(/[_-]+/g, " ")
+      .replace(/^./, (letter) => letter.toUpperCase());
+    const target = path || operation;
+    const bounded = target.length > 48 ? `${target.slice(0, 45)}…` : target;
+    return name === "api_contract_test"
+      ? `Swagger operation · ${bounded || "Resolving operation"}`
+      : `${method || "API"} ${bounded || "request"}`;
   }
   if (name === "subagent" || name === "subagent_wait") {
     const task = String(a.task ?? a.description ?? "").slice(0, 50);
@@ -518,6 +539,7 @@ export default function ChatView({
   const surfacedPipelineInputRef = useRef("");
   const taskStartedAtRef = useRef<number | null>(null);
   const lastAgentActivityRef = useRef(Date.now());
+  const activeToolCallsRef = useRef(new Set<string>());
   const latestAssistantResponseRef = useRef("");
   const devDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingDevCommand(null),
@@ -941,8 +963,8 @@ export default function ChatView({
     if (agentStatus !== "running") return;
     const id = window.setInterval(() => {
       if (
-        Date.now() - lastAgentActivityRef.current <
-        AGENT_INACTIVITY_TIMEOUT_MS
+        activeToolCallsRef.current.size > 0 ||
+        Date.now() - lastAgentActivityRef.current < AGENT_INACTIVITY_TIMEOUT_MS
       )
         return;
       lastAgentActivityRef.current = Date.now();
@@ -953,10 +975,12 @@ export default function ChatView({
       setMessages((messages) =>
         settleWithError(
           messages,
-          "Provider produced no activity for 2 minutes. Restart the session or choose another model, then retry.",
+          "Provider produced no model or tool activity for 2 minutes. Restart the session or choose another model, then retry.",
         ),
       );
-      onToast("Provider stalled for 2 minutes — turn aborted");
+      onToast(
+        "Provider stalled with no model or tool activity for 2 minutes — turn aborted",
+      );
     }, 5_000);
     return () => window.clearInterval(id);
   }, [agentStatus, chatId, onAgentRunning, onToast, sendRaw]);
@@ -1155,6 +1179,17 @@ export default function ChatView({
               | Array<Record<string, unknown>>
               | undefined;
             if (hist && hist.length > 0) {
+              const historicalToolResults = new Map<
+                string,
+                Record<string, unknown>
+              >();
+              for (const message of hist) {
+                if (
+                  message.role === "toolResult" &&
+                  typeof message.toolCallId === "string"
+                )
+                  historicalToolResults.set(message.toolCallId, message);
+              }
               const mapped: ChatMessage[] = hist
                 .map((mm) => {
                   const role = (mm.role as string) ?? "assistant";
@@ -1166,10 +1201,14 @@ export default function ChatView({
                     return null;
                   let text = "";
                   let historyImages: ChatImage[] = [];
+                  let historyToolCalls: ToolCall[] = [];
                   if (typeof mm.content === "string") text = mm.content;
                   else if (Array.isArray(mm.content)) {
                     const content = mm.content as Array<{
                       type: string;
+                      id?: string;
+                      name?: string;
+                      arguments?: Record<string, unknown>;
                       text?: string;
                       data?: string;
                       mimeType?: string;
@@ -1190,6 +1229,26 @@ export default function ChatView({
                         data,
                         mimeType,
                       }));
+                    historyToolCalls = content
+                      .filter(
+                        (c) =>
+                          c.type === "toolCall" &&
+                          typeof c.id === "string" &&
+                          c.name === "browser_screenshot",
+                      )
+                      .map((c) => {
+                        const result = historicalToolResults.get(c.id!) as
+                          | { content?: unknown; isError?: boolean }
+                          | undefined;
+                        return {
+                          callId: c.id!,
+                          name: c.name!,
+                          args: c.arguments ?? {},
+                          result: result?.content,
+                          isError: Boolean(result?.isError),
+                          phase: "end",
+                        };
+                      });
                   }
                   if (!text && typeof mm.text === "string")
                     text = mm.text as string;
@@ -1205,7 +1264,7 @@ export default function ChatView({
                     text: text.slice(0, 200_000),
                     images: historyImages,
                     thinking: "",
-                    toolCalls: [],
+                    toolCalls: historyToolCalls,
                     createdAt:
                       typeof mm.timestamp === "number"
                         ? mm.timestamp
@@ -1257,6 +1316,7 @@ export default function ChatView({
           const assistants =
             generated?.filter((message) => message.role === "assistant") ?? [];
           finalizeAssistant(assistants[assistants.length - 1]);
+          activeToolCallsRef.current.clear();
           setAgentStatus("idle");
           setIsStreaming(false);
           onAgentRunning(chatId, false);
@@ -1393,6 +1453,7 @@ export default function ChatView({
           const name = String(ev.toolName ?? "tool");
           const args = (ev.args as Record<string, unknown>) ?? {};
           toolArgsRef.current.set(callId, args);
+          activeToolCallsRef.current.add(callId);
           upsertToolCall(callId, { name, args, phase: "start", callId });
           return;
         }
@@ -1417,6 +1478,7 @@ export default function ChatView({
               ? endArgs
               : (toolArgsRef.current.get(callId) ?? {});
           toolArgsRef.current.delete(callId);
+          activeToolCallsRef.current.delete(callId);
           upsertToolCall(callId, {
             phase: "end",
             callId,
@@ -3646,6 +3708,30 @@ export default function ChatView({
                       </details>
                     );
                   })()}
+                {m.toolCalls
+                  .filter((tool) => browserScreenshotRef(tool))
+                  .map((tool) => (
+                    <BrowserScreenshot
+                      key={`screenshot-${tool.callId}`}
+                      tc={tool}
+                    />
+                  ))}
+                {m.toolCalls.length === 0 &&
+                  browserScreenshotRefFromText(m.text) && (
+                    <BrowserScreenshot
+                      tc={{
+                        callId: `restored-${m.id}`,
+                        name: "browser_screenshot",
+                        args: {},
+                        phase: "end",
+                        result: {
+                          data: {
+                            artifactRef: browserScreenshotRefFromText(m.text),
+                          },
+                        },
+                      }}
+                    />
+                  )}
                 {m.text && (
                   <MarkdownMessage isStreaming={m.isStreaming}>
                     {m.text}
@@ -3908,6 +3994,13 @@ export default function ChatView({
                 const completedCount = allTools.filter(
                   (tool) => tool.phase === "end",
                 ).length;
+                const completedApiCount = allTools.filter(
+                  (tool) =>
+                    tool.phase === "end" &&
+                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
+                      tool.name,
+                    ),
+                ).length;
                 const lastCompleted = [...allTools]
                   .reverse()
                   .find((tool) => tool.phase === "end");
@@ -3957,6 +4050,14 @@ export default function ChatView({
                     title = "SEARCHING WEB";
                     detail = describeToolActivity(activeTool);
                     icon = "search";
+                  } else if (
+                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
+                      activeTool.name,
+                    )
+                  ) {
+                    title = "TESTING API";
+                    detail = describeToolActivity(activeTool);
+                    icon = "api";
                   } else {
                     const kind = activityKind(activeTool.name);
                     if (kind === "process") {
@@ -4011,6 +4112,29 @@ export default function ChatView({
                   icon = "meter";
                 }
 
+                const apiProgress =
+                  icon === "api"
+                    ? ((
+                        activeTool?.result as {
+                          details?: {
+                            stage?: unknown;
+                            method?: unknown;
+                            path?: unknown;
+                            httpStatus?: unknown;
+                          };
+                        }
+                      )?.details ?? null)
+                    : null;
+                const apiStage = String(apiProgress?.stage ?? "request");
+                const apiStages = [
+                  "contract",
+                  "destination",
+                  "authentication",
+                  "request",
+                  "response",
+                  "validation",
+                ];
+                const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
                 const elapsed =
                   elapsedSeconds >= 60
                     ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
@@ -4032,13 +4156,46 @@ export default function ChatView({
                       <small className="agent-working-detail" title={detail}>
                         {detail}
                       </small>
+                      {apiProgress && (
+                        <div className="api-live-progress">
+                          <span className="api-live-target">
+                            {String(apiProgress.method ?? "API")} ·{" "}
+                            {String(apiProgress.path ?? "Resolving endpoint")}
+                            {apiProgress.httpStatus != null &&
+                              ` · HTTP ${String(apiProgress.httpStatus)}`}
+                          </span>
+                          <span
+                            className="api-live-track"
+                            aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
+                          >
+                            {apiStages.map((stage, index) => (
+                              <i
+                                key={stage}
+                                className={
+                                  index < apiStageIndex
+                                    ? "done"
+                                    : index === apiStageIndex
+                                      ? "active"
+                                      : ""
+                                }
+                                title={stage}
+                              />
+                            ))}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <span className="agent-working-stats">
-                      {completedCount > 0 && (
+                      {icon === "api" && completedApiCount > 0 ? (
+                        <span>
+                          {completedApiCount} API call
+                          {completedApiCount !== 1 ? "s" : ""} done
+                        </span>
+                      ) : completedCount > 0 ? (
                         <span>
                           {completedCount} tool{completedCount !== 1 ? "s" : ""}
                         </span>
-                      )}
+                      ) : null}
                       {elapsedSeconds > 0 && <span>{elapsed}</span>}
                     </span>
                     <button onClick={handleAbort}>ABORT</button>

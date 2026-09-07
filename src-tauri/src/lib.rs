@@ -70,6 +70,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_config,
             browser_spike::browser_b0_packaged_smoke,
+            browser_spike::read_browser_screenshot,
             deep_research::start_deep_research,
             deep_research::get_deep_research_data,
             deep_research::attach_deep_research_to_chat,

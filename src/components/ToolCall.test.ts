@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   activityKind,
+  browserScreenshotRef,
+  browserScreenshotRefFromText,
   getSubagentMeta,
   isSubagentTool,
   isWebSearchTool,
@@ -13,6 +15,55 @@ describe("isWebSearchTool", () => {
     expect(isWebSearchTool("functions.fetch_content")).toBe(true);
     expect(isWebSearchTool("functions.read")).toBe(false);
     expect(isWebSearchTool("search_files")).toBe(false);
+  });
+});
+
+describe("browserScreenshotRef", () => {
+  test("extracts persisted artifact refs from assistant text", () => {
+    expect(
+      browserScreenshotRefFromText(
+        "Artifact: browser-artifact:chat-global-1:8fdefd828991e2db423196317ccc71c8",
+      ),
+    ).toBe("browser-artifact:chat-global-1:8fdefd828991e2db423196317ccc71c8");
+  });
+
+  test("extracts restored tool-result content", () => {
+    expect(
+      browserScreenshotRef({
+        callId: "restored",
+        name: "browser_screenshot",
+        args: {},
+        result: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              status: "ok",
+              data: {
+                artifactRef:
+                  "browser-artifact:chat-global-1:8fdefd828991e2db423196317ccc71c8",
+              },
+            }),
+          },
+        ],
+        phase: "end",
+      }),
+    ).toBe("browser-artifact:chat-global-1:8fdefd828991e2db423196317ccc71c8");
+  });
+
+  test("extracts completed browser screenshot artifacts", () => {
+    expect(
+      browserScreenshotRef({
+        callId: "1",
+        name: "browser_screenshot",
+        args: {},
+        result: {
+          details: {
+            data: { artifactRef: "browser-artifact:chat-a:0123456789abcdef" },
+          },
+        },
+        phase: "end",
+      }),
+    ).toBe("browser-artifact:chat-a:0123456789abcdef");
   });
 });
 

@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-export function fixture() {
+export function fixture(hostname = "127.0.0.1") {
   const server = createServer((request, response) => {
     if (request.url === "/slow")
       return setTimeout(() => response.end("slow"), 5_000);
@@ -14,9 +14,9 @@ export function fixture() {
     );
   });
   return new Promise((resolve) =>
-    server.listen(0, "127.0.0.1", () =>
+    server.listen(0, hostname, () =>
       resolve({
-        url: `http://127.0.0.1:${server.address().port}`,
+        url: `http://${hostname}:${server.address().port}`,
         close: () => new Promise((done) => server.close(done)),
       }),
     ),

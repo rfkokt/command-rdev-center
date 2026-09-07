@@ -17,6 +17,7 @@ const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts")
 const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts");
 const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
 const BROWSER_TOOLS_EXTENSION: &str = include_str!("../extensions/browser-tools.ts");
+const API_TEST_EXTENSION: &str = include_str!("../extensions/api-test.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -259,6 +260,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("agent-reach.ts", AGENT_REACH_EXTENSION),
         ("agent-reach-security.ts", AGENT_REACH_SECURITY),
         ("browser-tools.ts", BROWSER_TOOLS_EXTENSION),
+        ("api-test.ts", API_TEST_EXTENSION),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }
@@ -913,6 +915,27 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .get(&key)
         .filter(|context| !context.is_empty())
         .cloned())
+}
+
+pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, String> {
+    let Some(url) = swagger_url_for_project(path)? else {
+        return Ok(None);
+    };
+    match swagger_document_url(&url).and_then(|document_url| fetch_url(&document_url)) {
+        Ok(document) => Ok(Some(document)),
+        Err(error) => api_documentation_context_for_project(path)?
+            .and_then(|context| {
+                context
+                    .split_once("## Swagger/OpenAPI contract")?
+                    .1
+                    .split_once("```json\n")?
+                    .1
+                    .split_once("\n```")
+                    .map(|(document, _)| document.to_owned())
+            })
+            .map(Some)
+            .ok_or(error),
+    }
 }
 
 pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {

@@ -26,7 +26,11 @@
     "resources": {
       "../node_modules/prettier": "node_modules/prettier",
       "browser-host/host.mjs": "browser-host/host.mjs",
+      "browser-host/artifact-store.mjs": "browser-host/artifact-store.mjs",
+      "browser-host/browser-actions.mjs": "browser-host/browser-actions.mjs",
+      "browser-host/network-policy.mjs": "browser-host/network-policy.mjs",
       "browser-host/proxy.mjs": "browser-host/proxy.mjs",
+      "browser-host/semantic-snapshot.mjs": "browser-host/semantic-snapshot.mjs",
       "browser-host/node_modules/playwright": "browser-host/node_modules/playwright",
       "browser-host/node_modules/playwright-core": "browser-host/node_modules/playwright-core",
       "browser-host/.browsers": "browser-host/.browsers",

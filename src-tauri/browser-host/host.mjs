@@ -80,13 +80,14 @@ async function context(sessionId) {
         token: capability,
         allowLoopback: true,
         allowPublicHttps: process.env.KERN_BROWSER_ALLOW_PUBLIC_HTTPS === "1",
+        allowPrivateHttps: true,
       });
       await proxy.listen();
     }
     browser ??= await chromium.launch({
       headless: process.env.KERN_BROWSER_HEADED !== "1",
       proxy: { server: proxy.url, username: "Bearer", password: capability },
-      args: ["--disable-quic", "--proxy-bypass-list=<-loopback>"],
+      args: ["--disable-quic"],
       ...(process.env.KERN_BROWSER_EXECUTABLE && {
         executablePath: process.env.KERN_BROWSER_EXECUTABLE,
       }),
@@ -111,13 +112,19 @@ async function context(sessionId) {
           documentOrigin,
           approvedOrigins,
         });
-        await validateRequestNetwork(request.url(), documentOrigin);
+        const hostname = new URL(request.url()).hostname;
+        if (!["localhost", "127.0.0.1", "::1"].includes(hostname))
+          await validateRequestNetwork(request.url(), documentOrigin);
         await route.continue();
       } catch (error) {
         session?.events.network.push({
           disposition: "blocked",
           code: error.message,
+          url: bounded(request.url(), 2_000),
         });
+        process.stderr.write(
+          `browser request blocked: ${error.message} ${request.url()}\n`,
+        );
         await route.abort("blockedbyclient");
       }
     });
@@ -135,17 +142,52 @@ async function context(sessionId) {
           ? new ArtifactStore(artifactRoot, sessionId)
           : null,
     };
+    page.on("console", (message) =>
+      session.events.console.push({
+        level: message.type(),
+        text: bounded(message.text(), 2_000),
+        url: bounded(message.location().url, 1_000),
+      }),
+    );
+    page.on("pageerror", (error) =>
+      session.events.console.push({
+        level: "error",
+        text: bounded(error.message, 2_000),
+        pageError: true,
+      }),
+    );
     page.on("request", (request) => {
       session.inflight += 1;
+      session.events.network.push({
+        method: request.method(),
+        url: bounded(request.url(), 2_000),
+        resourceType: request.resourceType(),
+      });
       const id = request.headers()["x-kern-request-id"];
       if (id) {
         session.requestIds.add(id);
         for (const notify of session.requestWaiters) notify(id);
       }
     });
-    const settled = () => { session.inflight = Math.max(0, session.inflight - 1); };
+    page.on("response", (response) =>
+      session.events.network.push({
+        method: response.request().method(),
+        url: bounded(response.url(), 2_000),
+        status: response.status(),
+      }),
+    );
+    const settled = () => {
+      session.inflight = Math.max(0, session.inflight - 1);
+    };
     page.on("requestfinished", settled);
-    page.on("requestfailed", settled);
+    page.on("requestfailed", (request) => {
+      settled();
+      session.events.network.push({
+        method: request.method(),
+        url: bounded(request.url(), 2_000),
+        error: bounded(request.failure()?.errorText, 500),
+      });
+    });
     initializeSemanticSession(session);
     sessions.set(sessionId, session);
   }
@@ -254,13 +296,27 @@ function classifyAction(args) {
   return "approval_required";
 }
 
+function isLocalPage(page) {
+  try {
+    return ["localhost", "127.0.0.1", "::1"].includes(
+      new URL(page.url()).hostname,
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function requestApproval(sessionId, args) {
   if (!args?.origin || !args?.action)
     throw new Error("approval_invalid_request");
   const classification = classifyAction(args);
   let executionHash;
   if (["click", "fill"].includes(args.action)) {
-    const resolved = await resolveActionTarget(await context(sessionId), args, args.action);
+    const resolved = await resolveActionTarget(
+      await context(sessionId),
+      args,
+      args.action,
+    );
     executionHash = resolved.hash;
     args = { ...args, target: resolved.target };
   }
@@ -307,6 +363,7 @@ function resolveApproval(args) {
   if (Date.now() >= grant.expiresAt) throw new Error("approval_expired");
   const { normalized, hash } = actionBinding(args);
   if (hash !== grant.hash) throw new Error("approval_mismatch");
+  if (normalized.action === "open") approvedOrigins.add(normalized.origin);
   const approvalToken = randomBytes(32).toString("hex");
   if (grant.executionHash)
     executionGrants.set(approvalToken, {
@@ -337,8 +394,21 @@ async function dispatch(message, signal) {
     return { decisions: audit.slice(-100) };
   if (message.action === "open") {
     if (message.args?.url) {
+      const url = new URL(message.args.url);
+      if (
+        url.protocol !== "https:" &&
+        url.hostname !== "localhost" &&
+        url.hostname !== "127.0.0.1"
+      )
+        throw new Error("scheme_blocked");
+      approvedOrigins.add(url.origin);
       validateNavigationUrl(message.args.url, approvedOrigins);
-      await validateDestinationUrl(message.args.url, approvedOrigins);
+      await validateDestinationUrl(
+        message.args.url,
+        approvedOrigins,
+        undefined,
+        true,
+      );
     }
     const session = await context(message.sessionId);
     if (message.args?.url)
@@ -353,24 +423,49 @@ async function dispatch(message, signal) {
     };
   }
   if (message.action === "snapshot") {
-    return semanticSnapshot(
-      await context(message.sessionId),
-      message.args ?? {},
-    );
+    const session = await context(message.sessionId);
+    try {
+      return await semanticSnapshot(session, message.args ?? {});
+    } catch (error) {
+      if (error instanceof SemanticError && error.code === "stale_element_ref")
+        return semanticSnapshot(session, {
+          ...message.args,
+          rootRef: undefined,
+        });
+      throw error;
+    }
   }
   if (message.action === "click" || message.action === "fill") {
     const session = await context(message.sessionId);
-    return executeAction(session, message.args ?? {}, message.action, (token, hash) => {
-      const grant = executionGrants.get(token);
-      if (!grant) return false;
-      executionGrants.delete(token);
-      return Date.now() < grant.expiresAt && grant.hash === hash;
-    });
+    return executeAction(
+      session,
+      message.args ?? {},
+      message.action,
+      (token, hash) => {
+        if (isLocalPage(session.page)) return true;
+        const grant = executionGrants.get(token);
+        if (!grant) return false;
+        executionGrants.delete(token);
+        return Date.now() < grant.expiresAt && grant.hash === hash;
+      },
+    );
   }
   if (message.action === "wait")
-    return waitForCondition(await context(message.sessionId), message.args ?? {}, signal);
+    return waitForCondition(
+      await context(message.sessionId),
+      message.args ?? {},
+      signal,
+    );
+  if (message.action === "console" || message.action === "network") {
+    const events = (await context(message.sessionId)).events[message.action];
+    const cursor = Math.max(0, Number(message.args?.since) || 0);
+    return boundedPage(events, cursor);
+  }
   if (message.action === "screenshot")
-    return captureScreenshot(await context(message.sessionId), message.args ?? {});
+    return captureScreenshot(
+      await context(message.sessionId),
+      message.args ?? {},
+    );
   if (message.action === "resolve_target") {
     const target = await resolveSemanticTarget(
       await context(message.sessionId),
@@ -390,7 +485,6 @@ async function dispatch(message, signal) {
     sessions.delete(message.sessionId);
     approvals.clear();
     executionGrants.clear();
-    terminal = true;
     return { closed: true };
   }
   if (message.action === "smoke")
