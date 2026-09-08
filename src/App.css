@@ -622,21 +622,22 @@ select:focus-visible {
   line-height: 1.45;
 }
 .project-api-fields {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+  width: 100%;
 }
 .project-api-fields label {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 7px;
+  width: 100%;
   min-width: 0;
   color: var(--colors-muted);
   font-size: 11px;
   letter-spacing: 0.08em;
 }
-.project-api-fields label:last-child {
-  grid-column: 1 / -1;
-}
+
 .project-api-fields input {
   box-sizing: border-box;
   width: 100%;
@@ -649,28 +650,37 @@ select:focus-visible {
   color: var(--colors-on-dark);
   font: 13px/1.25 var(--font-mono);
 }
-.project-api-fields label:last-child {
-  grid-template-columns: minmax(0, 1fr) auto;
+.project-api-url-row,
+.project-api-inline-row {
+  display: flex;
+  gap: 8px;
   align-items: end;
+  width: 100%;
 }
-.project-api-fields label:last-child span {
-  grid-column: 1 / -1;
+.project-api-url-row input,
+.project-api-inline-row input {
+  flex: 1 1 auto;
 }
-.project-api-fields label:last-child button {
+.project-api-inline-row button,
+.project-api-url-row button {
   height: 40px;
   padding: 0 12px;
   border: 1px solid var(--colors-hairline-strong);
   color: var(--accent);
   white-space: nowrap;
 }
-.project-api-fields label:last-child button:hover,
-.project-api-fields label:last-child button:focus-visible {
+.project-api-inline-row button:hover,
+.project-api-inline-row button:focus-visible,
+.project-api-url-row button:hover,
+.project-api-url-row button:focus-visible {
   border-color: var(--accent);
   background: var(--colors-surface-elevated);
 }
 @media (max-width: 480px) {
-  .project-api-fields {
-    grid-template-columns: 1fr;
+  .project-api-inline-row,
+  .project-api-url-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }
 .project-api-fields input::placeholder {

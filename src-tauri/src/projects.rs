@@ -852,10 +852,23 @@ fn swagger_document_url(url: &str) -> Result<String, String> {
     let config_url = absolute_url(&initializer, config_url)?;
     let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
         .map_err(|_| "Swagger config is not valid JSON")?;
+    let primary_name = url::Url::parse(url)
+        .ok()
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(key, _)| key == "urls.primaryName")
+                .map(|(_, value)| value.into_owned())
+        });
     let document_url = config
         .get("urls")
         .and_then(|urls| urls.as_array())
-        .and_then(|urls| urls.first())
+        .and_then(|urls| {
+            primary_name.as_deref().and_then(|name| {
+                urls.iter().find(|item| {
+                    item.get("name").and_then(|value| value.as_str()) == Some(name)
+                })
+            }).or_else(|| urls.first())
+        })
         .and_then(|item| item.get("url"))
         .and_then(|item| item.as_str())
         .or_else(|| config.get("url").and_then(|item| item.as_str()))
@@ -951,6 +964,43 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .get(&key)
         .filter(|context| !context.is_empty())
         .cloned())
+}
+
+#[derive(Serialize)]
+pub struct ApiContract {
+    id: String,
+    origin: String,
+    document: serde_json::Value,
+}
+
+pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, String> {
+    swagger_urls_for_project(path)?
+        .into_iter()
+        .map(|url| {
+            let document_url = swagger_document_url(&url)?;
+            let document: serde_json::Value = serde_json::from_str(&fetch_url(&document_url)?)
+                .map_err(|_| "Swagger contract is not valid JSON")?;
+            let id = document
+                .pointer("/info/title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&document_url)
+                .to_lowercase()
+                .chars()
+                .map(|character| if character.is_ascii_alphanumeric() { character } else { '-' })
+                .collect::<String>()
+                .trim_matches('-')
+                .to_owned();
+            let server = document
+                .pointer("/servers/0/url")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&url);
+            let origin = url::Url::parse(server)
+                .map_err(|_| "Swagger server URL must be valid")?
+                .origin()
+                .ascii_serialization();
+            Ok(ApiContract { id, origin, document })
+        })
+        .collect()
 }
 
 pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, String> {

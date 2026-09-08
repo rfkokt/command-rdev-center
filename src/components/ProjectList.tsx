@@ -830,26 +830,30 @@ export default function ProjectList({
                     </label>
                     <label>
                       <span>API LIST GOOGLE SHEET (OPTIONAL)</span>
-                      <input
-                        type="url"
-                        value={apiListSheet.url}
-                        onChange={(event) =>
-                          setApiListSheet({
-                            url: event.target.value,
-                            sheet: "",
-                          })
-                        }
-                        placeholder="https://docs.google.com/spreadsheets/d/…"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => void loadApiListSheets()}
-                        disabled={
-                          loadingApiListSheets || !apiListSheet.url.trim()
-                        }
-                      >
-                        {loadingApiListSheets ? "LOADING…" : "LOAD WORKSHEETS"}
-                      </button>
+                      <div className="project-api-inline-row">
+                        <input
+                          type="url"
+                          value={apiListSheet.url}
+                          onChange={(event) =>
+                            setApiListSheet({
+                              url: event.target.value,
+                              sheet: "",
+                            })
+                          }
+                          placeholder="https://docs.google.com/spreadsheets/d/…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void loadApiListSheets()}
+                          disabled={
+                            loadingApiListSheets || !apiListSheet.url.trim()
+                          }
+                        >
+                          {loadingApiListSheets
+                            ? "LOADING…"
+                            : "LOAD WORKSHEETS"}
+                        </button>
+                      </div>
                       {(apiListSheets.length > 0 || apiListSheet.sheet) && (
                         <select
                           value={apiListSheet.sheet}
@@ -884,29 +888,33 @@ export default function ProjectList({
                     </label>
                     <label>
                       <span>POSTMAN COLLECTION JSON</span>
-                      <input
-                        value={
-                          postmanCollectionPath
-                            ? postmanCollectionPath.split(/[\\/]/).pop()
-                            : ""
-                        }
-                        readOnly
-                        placeholder="Choose exported collection JSON"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const path = await open({
-                            multiple: false,
-                            title: "Select Postman Collection JSON",
-                            filters: [{ name: "JSON", extensions: ["json"] }],
-                          });
-                          if (typeof path === "string")
-                            setPostmanCollectionPath(path);
-                        }}
-                      >
-                        {postmanCollectionPath ? "CHANGE JSON" : "CHOOSE JSON"}
-                      </button>
+                      <div className="project-api-inline-row">
+                        <input
+                          value={
+                            postmanCollectionPath
+                              ? postmanCollectionPath.split(/[\\/]/).pop()
+                              : ""
+                          }
+                          readOnly
+                          placeholder="Choose exported collection JSON"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const path = await open({
+                              multiple: false,
+                              title: "Select Postman Collection JSON",
+                              filters: [{ name: "JSON", extensions: ["json"] }],
+                            });
+                            if (typeof path === "string")
+                              setPostmanCollectionPath(path);
+                          }}
+                        >
+                          {postmanCollectionPath
+                            ? "CHANGE JSON"
+                            : "CHOOSE JSON"}
+                        </button>
+                      </div>
                     </label>
                   </div>
                   <button

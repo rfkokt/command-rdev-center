@@ -4,8 +4,11 @@ import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
 import { isPublicIp } from "./agent-reach-security";
 
-const allowedOrigin = process.env.CRC_API_ALLOWED_ORIGIN || "";
-const contractPath = process.env.CRC_API_CONTRACT_PATH || "";
+const contractsPath = process.env.CRC_API_CONTRACTS_PATH || "";
+type Contract = { id: string; origin: string; document: any };
+const contracts: Contract[] = contractsPath
+  ? JSON.parse(await readFile(contractsPath, "utf8"))
+  : [];
 const MAX_BODY = 100_000;
 let authToken = "";
 let mutationsAllowed = false;
@@ -18,7 +21,7 @@ const result = (data: unknown, isError = false) => ({
 function privateAddress(address: string) {
   return /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\.|^(fc|fd)/i.test(address);
 }
-async function validateUrl(raw: string) {
+async function validateUrl(raw: string, allowedOrigin: string) {
   const url = new URL(raw, allowedOrigin);
   if (!allowedOrigin || url.origin !== allowedOrigin)
     throw new Error("api_origin_not_allowed");
@@ -46,6 +49,7 @@ async function request(
     path: string;
     body?: unknown;
     authenticated?: boolean;
+    origin?: string;
   },
   signal: AbortSignal,
   ctx: any,
@@ -57,12 +61,12 @@ async function request(
         activity,
         stage,
         method: input.method,
-        path: new URL(input.path, allowedOrigin).pathname,
+        path: new URL(input.path, input.origin).pathname,
         ...(status !== undefined && { httpStatus: status }),
       }),
     );
   update("destination", "Validating API destination");
-  const url = await validateUrl(input.path);
+  const url = await validateUrl(input.path, input.origin || "");
   if (
     input.method !== "GET" &&
     !mutationsAllowed &&
@@ -161,7 +165,9 @@ async function request(
 }
 
 export default function (pi: ExtensionAPI) {
-  if (!allowedOrigin) return;
+  if (!contracts.length) return;
+  const contractIds = contracts.map(({ id }) => id);
+  const origins = [...new Set(contracts.map(({ origin }) => origin))];
   pi.registerTool({
     name: "api_request",
     label: "Test backend API",
@@ -178,10 +184,26 @@ export default function (pi: ExtensionAPI) {
       path: Type.String({ minLength: 1, maxLength: 4000 }),
       body: Type.Optional(Type.Unknown()),
       authenticated: Type.Optional(Type.Boolean()),
+      contractId: Type.Optional(
+        Type.Union(contractIds.map((id) => Type.Literal(id))),
+      ),
+      origin: Type.Optional(
+        Type.Union(origins.map((origin) => Type.Literal(origin))),
+      ),
     }),
     async execute(_id, input, signal, onUpdate, ctx) {
       try {
-        return await request(input, signal, ctx, onUpdate);
+        const contract = contracts.find(({ id }) => id === input.contractId);
+        const origin =
+          input.origin ||
+          contract?.origin ||
+          (origins.length === 1 ? origins[0] : "");
+        if (!origin)
+          return result(
+            { status: "error", code: "contract_required", contractIds },
+            true,
+          );
+        return await request({ ...input, origin }, signal, ctx, onUpdate);
       } catch (error) {
         return result(
           {
@@ -194,115 +216,144 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  if (contractPath)
-    pi.registerTool({
-      name: "api_contract_test",
-      label: "Test Swagger operation",
-      description:
-        "Run one operation from the project's saved Swagger/OpenAPI contract and compare the HTTP status with documented responses.",
-      parameters: Type.Object({
-        operationId: Type.Optional(Type.String({ maxLength: 300 })),
-        method: Type.Optional(Type.String({ maxLength: 10 })),
-        path: Type.Optional(Type.String({ maxLength: 2000 })),
-        pathParams: Type.Optional(Type.Record(Type.String(), Type.String())),
-        query: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
-        body: Type.Optional(Type.Unknown()),
-      }),
-      async execute(_id, input, signal, onUpdate, ctx) {
-        try {
-          onUpdate(
-            result({
-              activity: "Resolving operation from Swagger",
-              stage: "contract",
-              operationId: input.operationId,
-              method: input.method,
-              path: input.path,
-            }),
-          );
-          const contract = JSON.parse(await readFile(contractPath, "utf8"));
-          let selected: any;
-          for (const [path, methods] of Object.entries(contract.paths || {}))
-            for (const [method, operation] of Object.entries(methods as object))
-              if (
-                (input.operationId &&
-                  (operation as any).operationId === input.operationId) ||
-                (!input.operationId &&
-                  method.toUpperCase() === input.method?.toUpperCase() &&
-                  path === input.path)
-              )
-                selected = { method: method.toUpperCase(), path, operation };
-          if (!selected)
-            return result(
-              { status: "error", code: "operation_not_found" },
-              true,
-            );
-          let path = selected.path.replace(
-            /\{([^}]+)\}/g,
-            (_: string, name: string) =>
-              encodeURIComponent(input.pathParams?.[name] ?? `{${name}}`),
-          );
-          if (path.includes("{"))
-            return result(
-              { status: "error", code: "path_parameter_required" },
-              true,
-            );
-          const query = new URLSearchParams();
-          for (const [key, value] of Object.entries(input.query || {}))
-            query.set(key, String(value));
-          const required = (selected.operation.requestBody?.content?.[
-            "application/json"
-          ]?.schema?.required || []) as string[];
-          const missing = required.filter(
-            (key) =>
-              !(
-                input.body &&
-                typeof input.body === "object" &&
-                key in input.body
-              ),
-          );
-          if (missing.length)
-            return result(
-              {
-                status: "error",
-                code: "required_body_fields_missing",
-                missing,
-              },
-              true,
-            );
-          const execution = await request(
-            {
-              method: selected.method,
-              path: `${path}${query.size ? `?${query}` : ""}`,
-              body: input.body,
-            },
-            signal,
-            ctx,
-            onUpdate,
-          );
-          const details = execution.details as any;
-          const documented = Object.keys(selected.operation.responses || {});
+  pi.registerTool({
+    name: "api_contract_test",
+    label: "Test Swagger operation",
+    description:
+      "Run one operation from the project's saved Swagger/OpenAPI contract and compare the HTTP status with documented responses.",
+    parameters: Type.Object({
+      operationId: Type.Optional(Type.String({ maxLength: 300 })),
+      method: Type.Optional(Type.String({ maxLength: 10 })),
+      path: Type.Optional(Type.String({ maxLength: 2000 })),
+      pathParams: Type.Optional(Type.Record(Type.String(), Type.String())),
+      query: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+      body: Type.Optional(Type.Unknown()),
+      contractId: Type.Optional(
+        Type.Union(contractIds.map((id) => Type.Literal(id))),
+      ),
+      origin: Type.Optional(
+        Type.Union(origins.map((origin) => Type.Literal(origin))),
+      ),
+    }),
+    async execute(_id, input, signal, onUpdate, ctx) {
+      try {
+        onUpdate(
+          result({
+            activity: "Resolving operation from Swagger",
+            stage: "contract",
+            operationId: input.operationId,
+            method: input.method,
+            path: input.path,
+          }),
+        );
+        let selected: any;
+        for (const contract of contracts)
+          if (
+            (!input.contractId || input.contractId === contract.id) &&
+            (!input.origin || input.origin === contract.origin)
+          )
+            for (const [path, methods] of Object.entries(
+              contract.document.paths || {},
+            ))
+              for (const [method, operation] of Object.entries(
+                methods as object,
+              ))
+                if (
+                  (input.operationId &&
+                    (operation as any).operationId === input.operationId) ||
+                  (!input.operationId &&
+                    method.toUpperCase() === input.method?.toUpperCase() &&
+                    path === input.path)
+                ) {
+                  if (selected)
+                    return result(
+                      {
+                        status: "error",
+                        code: "contract_origin_required",
+                        contractIds,
+                      },
+                      true,
+                    );
+                  selected = {
+                    contractId: contract.id,
+                    origin: contract.origin,
+                    method: method.toUpperCase(),
+                    path,
+                    operation,
+                  };
+                }
+        if (!selected)
+          return result({ status: "error", code: "operation_not_found" }, true);
+        let path = selected.path.replace(
+          /\{([^}]+)\}/g,
+          (_: string, name: string) =>
+            encodeURIComponent(input.pathParams?.[name] ?? `{${name}}`),
+        );
+        if (path.includes("{"))
           return result(
-            {
-              ...details,
-              operationId: selected.operation.operationId,
-              contractStatus:
-                documented.includes(String(details.httpStatus)) ||
-                documented.includes("default")
-                  ? "pass"
-                  : "fail",
-              documentedStatuses: documented,
-            },
-            details.status === "error",
+            { status: "error", code: "path_parameter_required" },
+            true,
           );
-        } catch (error) {
+        const query = new URLSearchParams();
+        for (const [key, value] of Object.entries(input.query || {}))
+          query.set(key, String(value));
+        const required = (selected.operation.requestBody?.content?.[
+          "application/json"
+        ]?.schema?.required || []) as string[];
+        const missing = required.filter(
+          (key) =>
+            !(
+              input.body &&
+              typeof input.body === "object" &&
+              key in input.body
+            ),
+        );
+        if (missing.length)
           return result(
             {
               status: "error",
-              code: error instanceof Error ? error.message : String(error),
+              code: "required_body_fields_missing",
+              missing,
             },
             true,
           );
-        }
-      },
-    });
+        const execution = await request(
+          {
+            method: selected.method,
+            path: `${path}${query.size ? `?${query}` : ""}`,
+            body: input.body,
+            origin: selected.origin,
+          },
+          signal,
+          ctx,
+          onUpdate,
+        );
+        const details = execution.details as any;
+        const documented = Object.keys(selected.operation.responses || {});
+        return result(
+          {
+            ...details,
+            contractId: selected.contractId,
+            origin: selected.origin,
+            operationId: selected.operation.operationId,
+            contractStatus:
+              documented.includes(String(details.httpStatus)) ||
+              documented.includes("default")
+                ? "pass"
+                : "fail",
+            documentedStatuses: documented,
+          },
+          details.status === "error",
+        );
+      } catch (error) {
+        return result(
+          {
+            status: "error",
+            code: error instanceof Error ? error.message : String(error),
+          },
+          true,
+        );
+      }
+    },
+  });
 }

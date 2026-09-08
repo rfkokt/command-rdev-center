@@ -519,25 +519,16 @@ pub fn spawn_pi_rpc(
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
     let prettier_path = bundled_prettier_path(&app)?;
-    let (api_origin, api_contract_path) = if global_chat {
-        (None, None)
+    let api_contracts_path = if global_chat {
+        None
     } else {
-        let swagger_url = crate::projects::swagger_url_for_project(&owning_project)?;
-        let origin = swagger_url
-            .clone()
-            .or(crate::projects::postman_collection_url_for_project(
-                &owning_project,
-            )?)
-            .and_then(|value| url::Url::parse(&value).ok())
-            .map(|url| url.origin().ascii_serialization());
-        let contract_path = crate::projects::swagger_document_for_project(&owning_project)?
-            .map(|document| {
-                let path = std::env::temp_dir().join(format!("crc-api-contract-{session_id}.json"));
-                std::fs::write(&path, document).map_err(|error| error.to_string())?;
-                Ok::<_, String>(path)
-            })
-            .transpose()?;
-        (origin, contract_path)
+        let contracts = crate::projects::swagger_documents_for_project(&owning_project)?;
+        (!contracts.is_empty()).then(|| {
+            let path = std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
+            std::fs::write(&path, serde_json::to_string(&contracts).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(path)
+        }).transpose()?
     };
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
@@ -759,7 +750,7 @@ pub fn spawn_pi_rpc(
             None
         }
     };
-    if api_origin.is_some() {
+    if api_contracts_path.is_some() {
         args.push("--extension".into());
         args.push(
             crate::projects::ensure_extensions()?
@@ -817,11 +808,8 @@ pub fn spawn_pi_rpc(
             .env("CRC_BROWSER_SOCKET", socket)
             .env("CRC_BROWSER_CAPABILITY", cap);
     }
-    if let Some(origin) = api_origin {
-        command.env("CRC_API_ALLOWED_ORIGIN", origin);
-    }
-    if let Some(path) = api_contract_path {
-        command.env("CRC_API_CONTRACT_PATH", path);
+    if let Some(path) = api_contracts_path {
+        command.env("CRC_API_CONTRACTS_PATH", path);
     }
     if !global_chat {
         let workspace_root = crate::projects::registered_workspace(&owning_project)
