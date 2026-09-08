@@ -69,9 +69,17 @@ struct StoredConfig {
     #[serde(default)]
     postman_collection_jsons: HashMap<String, String>,
     #[serde(default)]
+    api_list_sheets: HashMap<String, ApiListSheet>,
+    #[serde(default)]
     api_documentation_contexts: HashMap<String, String>,
     #[serde(default)]
     backlog_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiListSheet {
+    pub url: String,
+    pub sheet: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -871,6 +879,7 @@ fn api_documentation_context(
     swagger_urls: &[String],
     postman_url: Option<&str>,
     postman_json: Option<&str>,
+    api_list_sheet: Option<&ApiListSheet>,
 ) -> Result<String, String> {
     let mut context = String::new();
     for url in swagger_urls {
@@ -879,6 +888,18 @@ fn api_documentation_context(
         context.push_str(&document_url);
         context.push_str("\n```json\n");
         context.push_str(&fetch_url(&document_url)?);
+        context.push_str("\n```\n");
+    }
+    if let Some(api_list_sheet) = api_list_sheet {
+        let csv =
+            crate::kanban::fetch_google_sheet_csv(&api_list_sheet.url, &api_list_sheet.sheet)?;
+        if csv.len() > MAX_API_DOCUMENTATION_BYTES {
+            return Err("API list exceeds 512 KB".into());
+        }
+        context.push_str("## API list\nSource: Google Sheet / ");
+        context.push_str(&api_list_sheet.sheet);
+        context.push_str("\n```csv\n");
+        context.push_str(&csv);
         context.push_str("\n```\n");
     }
     if let Some(json) = postman_json.filter(|json| !json.is_empty()) {
@@ -911,6 +932,7 @@ fn refresh_api_documentation_context(config: &mut StoredConfig, key: &str) -> Re
         &swagger_urls,
         config.postman_collection_urls.get(key).map(String::as_str),
         config.postman_collection_jsons.get(key).map(String::as_str),
+        config.api_list_sheets.get(key),
     )?;
     if context.is_empty() {
         config.api_documentation_contexts.remove(key);
@@ -1084,6 +1106,7 @@ pub fn save_project_api_documentation(
     swagger_urls: Vec<String>,
     postman_collection_url: String,
     postman_collection_path: Option<String>,
+    api_list_sheet: Option<ApiListSheet>,
 ) -> Result<(), String> {
     let canonical = project_config_key(Path::new(&path))?;
     let swagger_urls = validated_swagger_urls(swagger_urls)?;
@@ -1114,9 +1137,30 @@ pub fn save_project_api_documentation(
             .postman_collection_jsons
             .insert(canonical.clone(), validated_postman_collection_json(json)?);
     }
+    if let Some(api_list_sheet) = api_list_sheet
+        .filter(|sheet| !sheet.url.trim().is_empty() && !sheet.sheet.trim().is_empty())
+    {
+        let csv =
+            crate::kanban::fetch_google_sheet_csv(&api_list_sheet.url, &api_list_sheet.sheet)?;
+        if csv.len() > MAX_API_DOCUMENTATION_BYTES {
+            return Err("API list exceeds 512 KB".into());
+        }
+        config
+            .api_list_sheets
+            .insert(canonical.clone(), api_list_sheet);
+    } else {
+        config.api_list_sheets.remove(&canonical);
+        config.api_list_sheets.remove(&path);
+    }
     refresh_api_documentation_context(&mut config, &canonical)?;
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_project_api_list_sheet(path: String) -> Result<Option<ApiListSheet>, String> {
+    let key = project_config_key(Path::new(&path))?;
+    Ok(read_config()?.api_list_sheets.get(&key).cloned())
 }
 
 #[tauri::command]
@@ -1336,6 +1380,8 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.postman_collection_urls.remove(&path);
     config.postman_collection_jsons.remove(&canonical);
     config.postman_collection_jsons.remove(&path);
+    config.api_list_sheets.remove(&canonical);
+    config.api_list_sheets.remove(&path);
     config.api_documentation_contexts.remove(&canonical);
     config.api_documentation_contexts.remove(&path);
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;

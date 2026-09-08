@@ -139,6 +139,7 @@ pub fn run() {
             projects::get_project_postman_collection_url,
             projects::save_project_postman_collection_url,
             projects::save_project_api_documentation,
+            projects::get_project_api_list_sheet,
             projects::refresh_project_api_documentation,
             projects::get_backlog_dir,
             projects::save_backlog_dir,

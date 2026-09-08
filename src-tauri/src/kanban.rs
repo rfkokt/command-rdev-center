@@ -277,7 +277,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
     Ok(tasks)
 }
 
-fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> {
     let csv_url = google_sheet_csv_url(url, sheet)?;
     let output = std::process::Command::new("curl")
         .args([
@@ -294,7 +294,11 @@ fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    parse_sheet_tasks(&output.stdout)
+    String::from_utf8(output.stdout).map_err(|_| "Google Sheet is not UTF-8".into())
+}
+
+fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+    parse_sheet_tasks(fetch_google_sheet_csv(url, sheet)?.as_bytes())
 }
 
 fn parse_google_sheet_names(html: &str) -> Vec<String> {
