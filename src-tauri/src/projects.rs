@@ -59,8 +59,11 @@ struct StoredConfig {
     pipeline_types: HashMap<String, String>,
     #[serde(default)]
     task_sources: HashMap<String, TaskSource>,
+    // Retained for backward compatibility with existing config files.
     #[serde(default)]
     swagger_urls: HashMap<String, String>,
+    #[serde(default)]
+    swagger_url_lists: HashMap<String, Vec<String>>,
     #[serde(default)]
     postman_collection_urls: HashMap<String, String>,
     #[serde(default)]
@@ -865,12 +868,12 @@ fn validated_postman_collection_json(json: String) -> Result<String, String> {
 }
 
 fn api_documentation_context(
-    swagger_url: Option<&str>,
+    swagger_urls: &[String],
     postman_url: Option<&str>,
     postman_json: Option<&str>,
 ) -> Result<String, String> {
     let mut context = String::new();
-    if let Some(url) = swagger_url.filter(|url| !url.is_empty()) {
+    for url in swagger_urls {
         let document_url = swagger_document_url(url)?;
         context.push_str("## Swagger/OpenAPI contract\nSource: ");
         context.push_str(&document_url);
@@ -892,9 +895,20 @@ fn api_documentation_context(
     Ok(context)
 }
 
+fn swagger_urls_for_config(config: &StoredConfig, key: &str) -> Vec<String> {
+    config
+        .swagger_url_lists
+        .get(key)
+        .cloned()
+        .filter(|urls| !urls.is_empty())
+        .or_else(|| config.swagger_urls.get(key).cloned().map(|url| vec![url]))
+        .unwrap_or_default()
+}
+
 fn refresh_api_documentation_context(config: &mut StoredConfig, key: &str) -> Result<(), String> {
+    let swagger_urls = swagger_urls_for_config(config, key);
     let context = api_documentation_context(
-        config.swagger_urls.get(key).map(String::as_str),
+        &swagger_urls,
         config.postman_collection_urls.get(key).map(String::as_str),
         config.postman_collection_jsons.get(key).map(String::as_str),
     )?;
@@ -938,7 +952,7 @@ pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, Strin
     }
 }
 
-pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
+pub fn swagger_urls_for_project(path: &Path) -> Result<Vec<String>, String> {
     let path = canonicalize_or_original(path);
     let config = read_config()?;
     Ok(config
@@ -946,15 +960,29 @@ pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
         .iter()
         .find_map(|saved| {
             let saved = canonicalize_or_original(Path::new(saved));
-            path.starts_with(&saved).then(|| {
-                config
-                    .swagger_urls
-                    .get(&saved.to_string_lossy().into_owned())
-                    .filter(|url| !url.is_empty())
-                    .cloned()
-            })
+            path.starts_with(&saved)
+                .then(|| swagger_urls_for_config(&config, &saved.to_string_lossy()))
         })
-        .flatten())
+        .unwrap_or_default())
+}
+
+pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
+    Ok(swagger_urls_for_project(path)?.into_iter().next())
+}
+
+#[tauri::command]
+pub fn get_project_swagger_urls(path: String) -> Result<Vec<String>, String> {
+    swagger_urls_for_project(Path::new(&path))
+}
+
+fn validated_swagger_urls(urls: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(urls
+        .into_iter()
+        .map(|url| validated_swagger_url(&url))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|url| !url.is_empty())
+        .collect())
 }
 
 #[tauri::command]
@@ -979,10 +1007,15 @@ pub fn save_project_swagger_url(path: String, swagger_url: String) -> Result<Str
     if swagger_url.is_empty() {
         config.swagger_urls.remove(&canonical);
         config.swagger_urls.remove(&path);
+        config.swagger_url_lists.remove(&canonical);
+        config.swagger_url_lists.remove(&path);
     } else {
         config
             .swagger_urls
             .insert(canonical.clone(), swagger_url.clone());
+        config
+            .swagger_url_lists
+            .insert(canonical.clone(), vec![swagger_url.clone()]);
     }
     refresh_api_documentation_context(&mut config, &canonical)?;
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
@@ -1048,19 +1081,23 @@ pub fn save_project_postman_collection_url(
 #[tauri::command]
 pub fn save_project_api_documentation(
     path: String,
-    swagger_url: String,
+    swagger_urls: Vec<String>,
     postman_collection_url: String,
     postman_collection_path: Option<String>,
 ) -> Result<(), String> {
     let canonical = project_config_key(Path::new(&path))?;
-    let swagger_url = validated_swagger_url(&swagger_url)?;
+    let swagger_urls = validated_swagger_urls(swagger_urls)?;
     let postman_collection_url = validated_swagger_url(&postman_collection_url)?;
     let mut config = read_config()?;
-    if swagger_url.is_empty() {
-        config.swagger_urls.remove(&canonical);
-        config.swagger_urls.remove(&path);
+    config.swagger_urls.remove(&canonical);
+    config.swagger_urls.remove(&path);
+    if swagger_urls.is_empty() {
+        config.swagger_url_lists.remove(&canonical);
+        config.swagger_url_lists.remove(&path);
     } else {
-        config.swagger_urls.insert(canonical.clone(), swagger_url);
+        config
+            .swagger_url_lists
+            .insert(canonical.clone(), swagger_urls);
     }
     if postman_collection_url.is_empty() {
         config.postman_collection_urls.remove(&canonical);
@@ -1293,6 +1330,8 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.task_sources.remove(&path);
     config.swagger_urls.remove(&canonical);
     config.swagger_urls.remove(&path);
+    config.swagger_url_lists.remove(&canonical);
+    config.swagger_url_lists.remove(&path);
     config.postman_collection_urls.remove(&canonical);
     config.postman_collection_urls.remove(&path);
     config.postman_collection_jsons.remove(&canonical);

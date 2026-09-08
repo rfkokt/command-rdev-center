@@ -134,6 +134,7 @@ pub fn run() {
             projects::get_project_task_source,
             projects::save_project_task_source,
             projects::get_project_swagger_url,
+            projects::get_project_swagger_urls,
             projects::save_project_swagger_url,
             projects::get_project_postman_collection_url,
             projects::save_project_postman_collection_url,

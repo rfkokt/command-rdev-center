@@ -88,7 +88,7 @@ export default function ProjectList({
     sheets: [],
     pics: [],
   });
-  const [swaggerUrl, setSwaggerUrl] = useState("");
+  const [swaggerUrls, setSwaggerUrls] = useState<string[]>([""]);
   const [postmanCollectionUrl, setPostmanCollectionUrl] = useState("");
   const [postmanCollectionPath, setPostmanCollectionPath] = useState("");
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
@@ -239,10 +239,10 @@ export default function ProjectList({
           repositoryEntries.map(([path, , selected]) => [path, selected]),
         ),
       );
-      const [source, savedSwaggerUrl, savedPostmanCollectionUrl] =
+      const [source, savedSwaggerUrls, savedPostmanCollectionUrl] =
         await Promise.all([
           invoke<TaskSource>("get_project_task_source", { path: project.path }),
-          invoke<string>("get_project_swagger_url", { path: project.path }),
+          invoke<string[]>("get_project_swagger_urls", { path: project.path }),
           invoke<string>("get_project_postman_collection_url", {
             path: project.path,
           }),
@@ -253,7 +253,7 @@ export default function ProjectList({
           ? [source.sheet]
           : [];
       setTaskSource({ ...source, sheets: selectedSheets });
-      setSwaggerUrl(savedSwaggerUrl);
+      setSwaggerUrls(savedSwaggerUrls.length ? savedSwaggerUrls : [""]);
       setPostmanCollectionUrl(savedPostmanCollectionUrl);
       setPostmanCollectionPath("");
       setAvailableSheets(selectedSheets);
@@ -401,7 +401,7 @@ export default function ProjectList({
     try {
       await invoke("save_project_api_documentation", {
         path: projectToEdit.path,
-        swaggerUrl,
+        swaggerUrls,
         postmanCollectionUrl,
         postmanCollectionPath: postmanCollectionPath || null,
       });
@@ -750,13 +750,44 @@ export default function ProjectList({
                   </p>
                   <div className="project-api-fields">
                     <label>
-                      <span>SWAGGER / OPENAPI URL</span>
-                      <input
-                        type="url"
-                        value={swaggerUrl}
-                        onChange={(event) => setSwaggerUrl(event.target.value)}
-                        placeholder="https://api.example.com/swagger-ui/index.html"
-                      />
+                      <span>SWAGGER / OPENAPI URLS</span>
+                      {swaggerUrls.map((swaggerUrl, index) => (
+                        <div key={index} className="project-api-url-row">
+                          <input
+                            type="url"
+                            value={swaggerUrl}
+                            onChange={(event) =>
+                              setSwaggerUrls((urls) =>
+                                urls.map((url, position) =>
+                                  position === index ? event.target.value : url,
+                                ),
+                              )
+                            }
+                            placeholder="https://api.example.com/swagger-ui/index.html"
+                          />
+                          {swaggerUrls.length > 1 && (
+                            <button
+                              type="button"
+                              aria-label={`Remove Swagger URL ${index + 1}`}
+                              onClick={() =>
+                                setSwaggerUrls((urls) =>
+                                  urls.filter(
+                                    (_, position) => position !== index,
+                                  ),
+                                )
+                              }
+                            >
+                              REMOVE
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setSwaggerUrls((urls) => [...urls, ""])}
+                      >
+                        ADD SWAGGER URL
+                      </button>
                     </label>
                     <label>
                       <span>POSTMAN COLLECTION URL (OPTIONAL)</span>
