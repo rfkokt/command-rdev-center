@@ -550,7 +550,8 @@ pub fn spawn_pi_rpc(
         match crate::projects::swagger_documents_for_project(&owning_project) {
             Ok(contracts) => (!contracts.is_empty())
                 .then(|| {
-                    let path = std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
+                    let path =
+                        std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
                     std::fs::write(
                         &path,
                         serde_json::to_string(&contracts).map_err(|error| error.to_string())?,
