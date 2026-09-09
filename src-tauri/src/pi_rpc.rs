@@ -334,6 +334,7 @@ fn ensure_pi_installed_with_repair(
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
+const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contract below is authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory. Do not use `web_search`, open a Swagger URL in the browser, or take a browser snapshot merely to discover endpoints: this saved contract is the source of truth. If the required endpoint is absent from the saved contract, state that clearly and ask the user for the endpoint or an updated contract; do not search the web or Swagger UI for it. Use browser tools only when the user explicitly asks for browser/UI verification, or when direct API testing has passed and UI integration must be verified.";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
     let cached = crate::projects::api_documentation_context_for_project(project)
@@ -359,7 +360,7 @@ fn api_documentation_system_prompt(project: &Path) -> String {
                 "This was refreshed when this chat started."
             };
             format!(
-                "## Project API documentation\n{freshness} It is authoritative: inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory.\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. Do not use the browser unless direct API testing passes and UI integration must be verified. The tools own authentication: invoke them to open the private token dialog, never request tokens in chat or tell the user to refresh host authentication. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
+                "## Project API documentation\n{freshness} {API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
             )
         })
         .unwrap_or_default()
@@ -1240,6 +1241,15 @@ mod tests {
     fn response_format_prompt_requires_clean_markdown() {
         assert!(MARKDOWN_RESPONSE_PROMPT.contains("clean Markdown"));
         assert!(MARKDOWN_RESPONSE_PROMPT.contains("fenced blocks"));
+    }
+
+    #[test]
+    fn api_documentation_prompt_requires_saved_contract_before_browser() {
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("inspect its `paths` and `components` directly"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not use `web_search`"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("ask the user for the endpoint or an updated contract"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("user explicitly asks for browser/UI verification"));
     }
 
     #[test]
