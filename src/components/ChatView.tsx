@@ -435,6 +435,7 @@ export default function ChatView({
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isAborting, setIsAborting] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [repositoryStatuses, setRepositoryStatuses] = useState(repositories);
@@ -540,6 +541,7 @@ export default function ChatView({
   const taskStartedAtRef = useRef<number | null>(null);
   const lastAgentActivityRef = useRef(Date.now());
   const activeToolCallsRef = useRef(new Set<string>());
+  const abortResponseRef = useRef<(() => void) | null>(null);
   const latestAssistantResponseRef = useRef("");
   const devDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingDevCommand(null),
@@ -1102,6 +1104,11 @@ export default function ChatView({
 
         if (t === "response") {
           const cmd = ev.command as string | undefined;
+          if (cmd === "abort") {
+            abortResponseRef.current?.();
+            abortResponseRef.current = null;
+            return;
+          }
           const data = ev.data as Record<string, unknown> | undefined;
           if (!data) return;
           if (cmd === "get_commands") {
@@ -2446,17 +2453,32 @@ export default function ChatView({
   }
 
   async function handleAbort() {
+    if (isAborting) return;
+    setIsAborting(true);
     setBackgroundWork(null);
-    await sendRaw({ type: "abort" });
-    setAgentStatus("idle");
-    setIsStreaming(false);
-    setMessages((prev) =>
-      prev.map((message) =>
-        message.isStreaming ? { ...message, isStreaming: false } : message,
-      ),
-    );
-    onAgentRunning(chatId, false);
-    onToast("Agent aborted");
+    try {
+      const aborted = new Promise<void>((resolve) => {
+        const timeout = window.setTimeout(resolve, 15_000);
+        abortResponseRef.current = () => {
+          window.clearTimeout(timeout);
+          resolve();
+        };
+      });
+      if (!(await sendRaw({ type: "abort" }))) return;
+      await aborted;
+      setAgentStatus("idle");
+      setIsStreaming(false);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.isStreaming ? { ...message, isStreaming: false } : message,
+        ),
+      );
+      onAgentRunning(chatId, false);
+      onToast("Agent aborted");
+    } finally {
+      abortResponseRef.current = null;
+      setIsAborting(false);
+    }
   }
 
   async function handleRestart(retry = false) {
@@ -3175,8 +3197,12 @@ export default function ChatView({
             </span>
           )}
           {agentStatus === "running" && (
-            <button onClick={handleAbort} className="caption-uppercase">
-              ABORT
+            <button
+              onClick={handleAbort}
+              disabled={isAborting}
+              className="caption-uppercase"
+            >
+              {isAborting ? "ABORTING…" : "ABORT"}
             </button>
           )}
           {agentStatus !== "running" && (
@@ -4198,7 +4224,9 @@ export default function ChatView({
                       ) : null}
                       {elapsedSeconds > 0 && <span>{elapsed}</span>}
                     </span>
-                    <button onClick={handleAbort}>ABORT</button>
+                    <button onClick={handleAbort} disabled={isAborting}>
+                      {isAborting ? "ABORTING…" : "ABORT"}
+                    </button>
                   </div>
                 );
               })()}
@@ -4515,6 +4543,7 @@ export default function ChatView({
                 driveDetached ||
                 agentStatus === "stopped" ||
                 isNewSessionLoading ||
+                isAborting ||
                 researchBusy ||
                 (!input.trim() && images.length === 0 && files.length === 0)
               }

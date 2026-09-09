@@ -519,22 +519,8 @@ pub fn spawn_pi_rpc(
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
     let prettier_path = bundled_prettier_path(&app)?;
-    let api_contracts_path = if global_chat {
-        None
-    } else {
-        let contracts = crate::projects::swagger_documents_for_project(&owning_project)?;
-        (!contracts.is_empty()).then(|| {
-            let path = std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
-            std::fs::write(&path, serde_json::to_string(&contracts).map_err(|error| error.to_string())?)
-                .map_err(|error| error.to_string())?;
-            Ok::<_, String>(path)
-        }).transpose()?
-    };
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
-    if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
-        return Err("research session is already running".into());
-    }
     // Existing chat behavior remains replace-and-restart.
     if !session_id.starts_with("research-") {
         crate::browser_spike::close_session(
@@ -545,8 +531,10 @@ pub fn spawn_pi_rpc(
             &app.state::<crate::browser_spike::BrowserState>(),
             &session_id,
         );
-        if let Ok(map) = sessions_map().lock() {
-            if let Some(h) = map.get(&session_id) {
+        if let Ok(mut map) = sessions_map().lock() {
+            // Remove before killing so the old stdout reader cannot emit a
+            // `pi-rpc-ended` event that stops the replacement chat.
+            if let Some(h) = map.remove(&session_id) {
                 if let Ok(mut maybe_child) = h.child.lock() {
                     if let Some(child) = maybe_child.as_mut() {
                         let _ = child.kill();
@@ -554,6 +542,35 @@ pub fn spawn_pi_rpc(
                 }
             }
         }
+    }
+
+    let api_contracts_path = if global_chat {
+        None
+    } else {
+        match crate::projects::swagger_documents_for_project(&owning_project) {
+            Ok(contracts) => (!contracts.is_empty())
+                .then(|| {
+                    let path = std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
+                    std::fs::write(
+                        &path,
+                        serde_json::to_string(&contracts).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(path)
+                })
+                .transpose()?,
+            // API contracts are optional context. A temporary DNS or network outage must not
+            // prevent an existing chat session from starting or resuming.
+            Err(error) => {
+                eprintln!("Skipping live API contracts for {session_id}: {error}");
+                None
+            }
+        }
+    };
+
+    // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
+    if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
+        return Err("research session is already running".into());
     }
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
@@ -1082,11 +1099,10 @@ pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn kill_pi_session(session_id: String) -> Result<(), String> {
-    let map = sessions_map()
+    let h = sessions_map()
         .lock()
-        .map_err(|_| "poisoned lock".to_string())?;
-    let h = map
-        .get(&session_id)
+        .map_err(|_| "poisoned lock".to_string())?
+        .remove(&session_id)
         .ok_or_else(|| format!("unknown session {}", session_id))?;
     let mut guard = h.child.lock().map_err(|_| "poisoned".to_string())?;
     if let Some(child) = guard.as_mut() {

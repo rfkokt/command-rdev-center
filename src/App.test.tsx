@@ -298,7 +298,7 @@ test("creates a project session after switching from Global Chat to a project", 
   expect(saved.filter((tab) => tab.global)).toHaveLength(1);
 });
 
-test("keeps chat callbacks stable when the active tab changes", () => {
+test("lazy-mounts saved chats when first activated", () => {
   localStorage.setItem(
     "crc-chat-tabs",
     JSON.stringify([
@@ -325,9 +325,11 @@ test("keeps chat callbacks stable when the active tab changes", () => {
     ]),
   );
   render(<App />);
-  const initialUnread = unreadCallbacks[0];
+
+  expect(chatProps.every((props) => props.chatId === "chat-2")).toBe(true);
 
   fireEvent.click(screen.getByRole("button", { name: "Open chat-1" }));
 
-  expect(unreadCallbacks[unreadCallbacks.length - 1]).toBe(initialUnread);
+  expect(chatProps.some((props) => props.chatId === "chat-1")).toBe(true);
+  expect(screen.getAllByText("Chat view")).toHaveLength(2);
 });
