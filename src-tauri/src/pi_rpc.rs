@@ -1245,11 +1245,18 @@ mod tests {
 
     #[test]
     fn api_documentation_prompt_requires_saved_contract_before_browser() {
-        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("inspect its `paths` and `components` directly"));
+        assert!(
+            API_DOCUMENTATION_WORKFLOW_PROMPT
+                .contains("inspect its `paths` and `components` directly")
+        );
         assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not use `web_search`"));
-        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser"));
-        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("ask the user for the endpoint or an updated contract"));
-        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("user explicitly asks for browser/UI verification"));
+        assert!(
+            API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser")
+        );
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("ask the user for the endpoint or an updated contract"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("user explicitly asks for browser/UI verification"));
     }
 
     #[test]
