@@ -209,7 +209,11 @@ export default function MarkdownMessage({
   isStreaming?: boolean;
 }) {
   const [showLargeMessage, setShowLargeMessage] = useState(false);
-  const formatted = useMemo(() => formatChatCode(children), [children]);
+  // ponytail: format is O(n^2)-ish scanning; skip it per-frame while streaming.
+  const formatted = useMemo(
+    () => (isStreaming ? children : formatChatCode(children)),
+    [children, isStreaming],
+  );
   const components = useMemo<Components>(
     () => ({
       a: ({ node: _node, ...props }) => (

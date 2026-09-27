@@ -369,6 +369,8 @@ select:focus-visible {
 }
 .conversation-row {
   height: 31px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 31px;
   padding: 0 12px 0 43px;
   color: #9b9c93;
   justify-content: space-between;

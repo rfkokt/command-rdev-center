@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import {
+  memo,
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -127,6 +135,25 @@ function attachmentContext(attachments: ChatAttachment[]) {
 
 const MAX_HISTORY = 600;
 const AGENT_INACTIVITY_TIMEOUT_MS = 2 * 60_000;
+
+// ponytail: own 1s ticker so the whole chat tree doesn't re-render every second.
+const ElapsedLabel = memo(function ElapsedLabel({
+  startedAt,
+  ticking,
+}: {
+  startedAt: number;
+  ticking: boolean;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [ticking, startedAt]);
+  const s = Math.max(0, Math.round((now - startedAt) / 1000));
+  return <>{s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`}</>;
+});
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
 type DiffSide = {
   number?: number;
@@ -505,12 +532,10 @@ export default function ChatView({
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
   const [usageOpen, setUsageOpen] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [backgroundWork, setBackgroundWork] = useState<{
     runId?: string;
     startedAt: number;
   } | null>(null);
-  const [backgroundElapsedSeconds, setBackgroundElapsedSeconds] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [savingMessageId, setSavingMessageId] = useState<string | null>(null);
   const [pipelineStatus, setPipelineStatus] = useState<{
@@ -594,12 +619,19 @@ export default function ChatView({
 
   useEffect(() => {
     if (!isActive) return;
-    const reduceMotion =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    bottomRef.current?.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
+    const anchor = bottomRef.current;
+    if (!anchor) return;
+    // ponytail: stick-to-bottom only; never yank the user out of history they scrolled to.
+    let scroller: HTMLElement | null = anchor.parentElement;
+    while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
+      scroller = scroller.parentElement;
+    }
+    if (scroller) {
+      const distance =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      if (distance > 160) return;
+    }
+    anchor.scrollIntoView({ behavior: "auto", block: "end" });
   }, [isActive, messages, researchResults]);
 
   useEffect(() => {
@@ -659,45 +691,71 @@ export default function ChatView({
     [createAssistantTurn],
   );
 
+  // ponytail: Tauri streams deltas faster than React can paint; batch per frame.
+  const pendingTextRef = useRef("");
+  const pendingThinkingRef = useRef("");
+  const deltaRafRef = useRef(0);
+  const flushDeltas = useCallback(() => {
+    deltaRafRef.current = 0;
+    const text = pendingTextRef.current;
+    pendingTextRef.current = "";
+    const thinking = pendingThinkingRef.current;
+    pendingThinkingRef.current = "";
+    if (!text && !thinking) return;
+    setMessages((prev) => {
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].role === "assistant" && copy[i].isStreaming) {
+          copy[i] = {
+            ...copy[i],
+            ...(text
+              ? {
+                  text: appendStreamingText(copy[i].text, text),
+                }
+              : null),
+            ...(thinking
+              ? {
+                  thinking: appendBoundedText(
+                    copy[i].thinking ?? "",
+                    thinking,
+                    200_000,
+                  ),
+                }
+              : null),
+          };
+          if (text) latestAssistantResponseRef.current = copy[i].text;
+          break;
+        }
+      }
+      return copy;
+    });
+  }, [createAssistantTurn]);
+  const queueDeltaFlush = useCallback(() => {
+    if (deltaRafRef.current) return;
+    deltaRafRef.current = requestAnimationFrame(flushDeltas);
+  }, [flushDeltas]);
+  useEffect(
+    () => () => {
+      if (deltaRafRef.current) cancelAnimationFrame(deltaRafRef.current);
+    },
+    [],
+  );
   const appendTextDelta = useCallback(
     (textDelta: string) => {
-      setMessages((prev) => {
-        const copy = ensureAssistantTurn(prev, createAssistantTurn);
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant" && copy[i].isStreaming) {
-            const text = appendStreamingText(copy[i].text, textDelta);
-            latestAssistantResponseRef.current = text;
-            copy[i] = { ...copy[i], text };
-            break;
-          }
-        }
-        return copy;
-      });
+      if (!textDelta) return;
+      pendingTextRef.current += textDelta;
+      queueDeltaFlush();
     },
-    [createAssistantTurn],
+    [queueDeltaFlush],
   );
 
   const appendThinkingDelta = useCallback(
     (delta: string) => {
-      setMessages((prev) => {
-        const copy = ensureAssistantTurn(prev, createAssistantTurn);
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant" && copy[i].isStreaming) {
-            copy[i] = {
-              ...copy[i],
-              thinking: appendBoundedText(
-                copy[i].thinking ?? "",
-                delta,
-                200_000,
-              ),
-            };
-            break;
-          }
-        }
-        return copy;
-      });
+      if (!delta) return;
+      pendingThinkingRef.current += delta;
+      queueDeltaFlush();
     },
-    [createAssistantTurn],
+    [queueDeltaFlush],
   );
 
   useEffect(() => {
@@ -882,7 +940,7 @@ export default function ChatView({
   ]);
 
   useEffect(() => {
-    if (agentStatus !== "running") return;
+    if (agentStatus !== "running" || !isActive) return;
     const check = async () => {
       try {
         if (await invoke<boolean>("is_pi_session_running", { sessionId }))
@@ -902,41 +960,17 @@ export default function ChatView({
     };
     const id = window.setInterval(check, 3000);
     return () => window.clearInterval(id);
-  }, [agentStatus, chatId, onAgentRunning, onToast, sessionId]);
+  }, [agentStatus, chatId, isActive, onAgentRunning, onToast, sessionId]);
+
+  // Elapsed timers live in <ElapsedLabel/> so ticking doesn't re-render the tree.
 
   useEffect(() => {
     if (agentStatus === "stopped") setBackgroundWork(null);
   }, [agentStatus]);
 
-  useEffect(() => {
-    if (!backgroundWork) {
-      setBackgroundElapsedSeconds(0);
-      return;
-    }
-    const update = () =>
-      setBackgroundElapsedSeconds(
-        Math.max(0, Math.round((Date.now() - backgroundWork.startedAt) / 1000)),
-      );
-    update();
-    const id = window.setInterval(update, 1000);
-    return () => window.clearInterval(id);
-  }, [backgroundWork]);
+  // Elapsed timers live in <ElapsedLabel/> so ticking doesn't re-render the tree.
 
-  // Elapsed timer for agent running duration
-  useEffect(() => {
-    if (agentStatus !== "running") {
-      setElapsedSeconds(0);
-      return;
-    }
-    lastAgentActivityRef.current = Date.now();
-    const start = taskStartedAtRef.current ?? Date.now();
-    setElapsedSeconds(Math.round((Date.now() - start) / 1000));
-    const id = window.setInterval(
-      () => setElapsedSeconds(Math.round((Date.now() - start) / 1000)),
-      1000,
-    );
-    return () => window.clearInterval(id);
-  }, [agentStatus]);
+  // Elapsed timer for agent running duration lives in <ElapsedLabel/>.
 
   const sendRaw = useCallback(
     async (obj: Record<string, unknown>) => {
@@ -1914,7 +1948,7 @@ export default function ChatView({
   ]);
 
   useEffect(() => {
-    if (globalChat || !devRunner) return;
+    if (globalChat || !devRunner || !isActive) return;
     const id = window.setInterval(async () => {
       try {
         const runner = await invoke<DevRunnerInfo | null>("get_dev_server", {
@@ -1937,7 +1971,7 @@ export default function ChatView({
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [chatId, cwd, devRunner, onToast]);
+  }, [chatId, cwd, devRunner, isActive, onToast]);
 
   async function readAttachments() {
     if (!files.length) return "";
@@ -2481,52 +2515,64 @@ export default function ChatView({
     }
   }
 
-  async function handleRestart(retry = false) {
-    if (isRestarting) return;
-    setIsRestarting(true);
-    setDriveDetached(false);
-    setBackgroundWork(null);
-    try {
-      await invoke("kill_pi_session", { sessionId }).catch(() => {});
-      const [provider, ...modelParts] = modelRef.current.split("/");
-      await invoke("spawn_pi_rpc", {
-        sessionId,
-        cwd,
-        sessionFile: sessionFileRef.current,
-        provider: modelParts.length ? provider : undefined,
-        model: modelParts.length
-          ? modelParts.join("/")
-          : modelRef.current || undefined,
-        thinking: thinkingRef.current || undefined,
-        graphReportPath: globalChat ? undefined : graphReportRef.current,
-        globalChat,
-        customSystemPrompt,
-        projectName,
-      });
-      setAgentStatus("idle");
-      setMessages(clearRestartErrors);
-      onToast(retry ? "Agent retrying" : "Pi agent reloaded");
-      setTimeout(() => {
-        sendRaw({ type: "get_available_models" });
-        sendRaw({ type: "get_commands" });
-        sendRaw({ type: "get_state" });
-        sendRaw({ type: "get_messages" });
-        sendRaw({ type: "get_session_stats" });
-        if (retry)
-          sendRaw({
-            type: "prompt",
-            message:
-              "Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.",
-          });
-      }, 300);
-    } catch (e) {
-      setAgentStatus("stopped");
-      onToast(String(e));
-      if (String(e).includes("detached")) setDriveDetached(true);
-    } finally {
-      setIsRestarting(false);
-    }
-  }
+  const handleRestart = useCallback(
+    async (retry = false) => {
+      if (isRestarting) return;
+      setIsRestarting(true);
+      setDriveDetached(false);
+      setBackgroundWork(null);
+      try {
+        await invoke("kill_pi_session", { sessionId }).catch(() => {});
+        const [provider, ...modelParts] = modelRef.current.split("/");
+        await invoke("spawn_pi_rpc", {
+          sessionId,
+          cwd,
+          sessionFile: sessionFileRef.current,
+          provider: modelParts.length ? provider : undefined,
+          model: modelParts.length
+            ? modelParts.join("/")
+            : modelRef.current || undefined,
+          thinking: thinkingRef.current || undefined,
+          graphReportPath: globalChat ? undefined : graphReportRef.current,
+          globalChat,
+          customSystemPrompt,
+          projectName,
+        });
+        setAgentStatus("idle");
+        setMessages(clearRestartErrors);
+        onToast(retry ? "Agent retrying" : "Pi agent reloaded");
+        setTimeout(() => {
+          sendRaw({ type: "get_available_models" });
+          sendRaw({ type: "get_commands" });
+          sendRaw({ type: "get_state" });
+          sendRaw({ type: "get_messages" });
+          sendRaw({ type: "get_session_stats" });
+          if (retry)
+            sendRaw({
+              type: "prompt",
+              message:
+                "Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.",
+            });
+        }, 300);
+      } catch (e) {
+        setAgentStatus("stopped");
+        onToast(String(e));
+        if (String(e).includes("detached")) setDriveDetached(true);
+      } finally {
+        setIsRestarting(false);
+      }
+    },
+    [
+      customSystemPrompt,
+      cwd,
+      globalChat,
+      isRestarting,
+      onToast,
+      projectName,
+      sendRaw,
+      sessionId,
+    ],
+  );
 
   async function handleOpenTerminal() {
     setTerminalMounted(true);
@@ -3018,6 +3064,31 @@ export default function ChatView({
   const lastAssistantId = [...messages]
     .reverse()
     .find((message) => message.role === "assistant")?.id;
+
+  // ponytail: settled rows keep element identity across streaming frames,
+  // so React bails out and only the live message re-renders.
+  const rowCacheRef = useRef(
+    new Map<
+      string,
+      {
+        message: ChatMessage;
+        diff: typeof worktreeDiff;
+        approval: typeof terminalApproval;
+        restart: typeof handleRestart;
+        refresh: typeof refreshDiff;
+        send: typeof sendRaw;
+        toast: typeof onToast;
+        flags: string;
+        node: ReactNode;
+      }
+    >(),
+  );
+  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${globalChat}|${terminalApprovalStatus}`;
+  if (rowCacheRef.current.size > messages.length + 32) {
+    const alive = new Set(messages.map((message) => message.id));
+    for (const id of rowCacheRef.current.keys())
+      if (!alive.has(id)) rowCacheRef.current.delete(id);
+  }
 
   if (!isActive) return null;
 
@@ -3618,367 +3689,394 @@ export default function ChatView({
                 </article>,
               ];
             })}
-            {messages.map((m) => (
-              <div
-                key={m.id}
-                style={{ order: m.createdAt ?? 0 }}
-                className={
-                  m.role === "user"
-                    ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
-                    : m.role === "system"
-                      ? "chat-notice body-sm"
-                      : "chat-bubble-assistant body-md"
-                }
-              >
-                {m.role === "system" && <small>PI CONTEXT</small>}
-                {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
-                {m.images && m.images.length > 0 && (
-                  <div className="chat-images">
-                    {m.images.map((image, index) => (
-                      <button
-                        key={index}
-                        onClick={() => setPreviewImage(image)}
-                        aria-label={`Preview attachment ${index + 1}`}
-                      >
-                        <img
-                          src={`data:${image.mimeType};base64,${image.data}`}
-                          alt="Pasted attachment"
-                        />
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {m.toolCalls
-                  .filter((tool) => tool.name === "recommend_global_skills")
-                  .map((tool) => {
-                    const skills = Array.isArray(tool.args.skills)
-                      ? tool.args.skills.filter(
-                          (name): name is string => typeof name === "string",
-                        )
-                      : [];
-                    return skills.length ? (
-                      <section
-                        className="skill-recommendation"
-                        key={tool.callId}
-                        role="status"
-                      >
-                        <div>
-                          <small>SKILL RECOMMENDATION</small>
-                          <strong>{skills.join(" · ")}</strong>
-                          <span>
-                            {typeof tool.args.reason === "string"
-                              ? tool.args.reason
-                              : "Recommended by the agent."}
-                          </span>
-                        </div>
-                        <div>
-                          {skills.map((name) => (
-                            <button
-                              key={name}
-                              onClick={() => {
-                                setInput(`/skill:${name}`);
-                                inputRef.current?.focus();
-                              }}
-                            >
-                              Use {name}
-                            </button>
-                          ))}
-                        </div>
-                      </section>
-                    ) : null;
-                  })}
-                {m.toolCalls
-                  .filter((tool) => isWebSearchTool(tool.name))
-                  .map((tool) => (
-                    <ToolCallView key={tool.callId} tc={tool} />
-                  ))}
-                {m.toolCalls.some(
-                  (tool) =>
-                    !isWebSearchTool(tool.name) &&
-                    tool.name !== "recommend_global_skills",
-                ) &&
-                  (() => {
-                    const tools = m.toolCalls.filter(
-                      (tool) =>
-                        !isWebSearchTool(tool.name) &&
-                        tool.name !== "recommend_global_skills",
-                    );
-                    return (
-                      <details className="tool-stack">
-                        <summary>
-                          <span className="tool-stack-icon">
-                            {tools.some((tool) => tool.phase !== "end")
-                              ? "◌"
-                              : "✓"}
-                          </span>
-                          <strong>
-                            {tools.length} TOOL{" "}
-                            {tools.length === 1 ? "CALL" : "CALLS"}
-                          </strong>
-                          <span>
-                            {tools
-                              .map((tool) => tool.name)
-                              .filter(
-                                (name, index, all) =>
-                                  all.indexOf(name) === index,
-                              )
-                              .join(" · ")}
-                          </span>
-                          <small>DETAILS</small>
-                        </summary>
-                        <div className="tool-stack-items">
-                          {tools.map((tool) => (
-                            <ToolCallView key={tool.callId} tc={tool} />
-                          ))}
-                        </div>
-                      </details>
-                    );
-                  })()}
-                {m.toolCalls
-                  .filter((tool) => browserScreenshotRef(tool))
-                  .map((tool) => (
-                    <BrowserScreenshot
-                      key={`screenshot-${tool.callId}`}
-                      tc={tool}
-                    />
-                  ))}
-                {m.toolCalls.length === 0 &&
-                  browserScreenshotRefFromText(m.text) && (
-                    <BrowserScreenshot
-                      tc={{
-                        callId: `restored-${m.id}`,
-                        name: "browser_screenshot",
-                        args: {},
-                        phase: "end",
-                        result: {
-                          data: {
-                            artifactRef: browserScreenshotRefFromText(m.text),
-                          },
-                        },
-                      }}
-                    />
-                  )}
-                {m.text && (
-                  <MarkdownMessage isStreaming={m.isStreaming}>
-                    {m.text}
-                  </MarkdownMessage>
-                )}
-                {m.role === "assistant" && m.text && !m.isStreaming && (
-                  <div className="chat-actions">
-                    <button
-                      className="chat-copy"
-                      onClick={() =>
-                        navigator.clipboard
-                          .writeText(m.text)
-                          .then(() => {
-                            setCopiedMessageId(m.id);
-                            window.setTimeout(
-                              () =>
-                                setCopiedMessageId((id) =>
-                                  id === m.id ? null : id,
-                                ),
-                              1600,
-                            );
-                          })
-                          .catch((error) =>
-                            onToast(`Copy failed: ${String(error)}`),
-                          )
-                      }
-                      aria-label="Copy assistant response"
-                      title="Copy response"
-                    >
-                      {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
-                    </button>
-                    {globalChat && (
-                      <details className="chat-save">
-                        <summary>
-                          {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
-                        </summary>
-                        <div
-                          className="chat-save-options"
-                          aria-label="Save response as"
-                        >
-                          {["knowledge", "memory", "context", "skill"].map(
-                            (kind) => (
-                              <button
-                                key={kind}
-                                disabled={savingMessageId === m.id}
-                                onClick={async (event) => {
-                                  const details =
-                                    event.currentTarget.closest("details");
-                                  setSavingMessageId(m.id);
-                                  try {
-                                    await invoke("save_rag_chat_response", {
-                                      text: m.text,
-                                      kind,
-                                    });
-                                    onToast(`Saved as ${kind}.`);
-                                    details?.removeAttribute("open");
-                                  } catch (error) {
-                                    onToast(`Save failed: ${String(error)}`);
-                                  } finally {
-                                    setSavingMessageId(null);
-                                  }
-                                }}
-                              >
-                                {kind}
-                                <small>
-                                  {kind === "knowledge"
-                                    ? "Reusable answer"
-                                    : kind === "context"
-                                      ? "Chat reference"
-                                      : kind === "memory"
-                                        ? "Stored preference"
-                                        : "Reusable procedure"}
-                                </small>
-                              </button>
-                            ),
-                          )}
-                        </div>
-                      </details>
-                    )}
-                  </div>
-                )}
-                {m.role === "system" && shouldOfferRestart(m.text) && (
-                  <button
-                    onClick={() => handleRestart(true)}
-                    className="chat-restart"
-                    disabled={isRestarting}
-                  >
-                    {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
-                  </button>
-                )}
-                {(m.createdAt || m.durationMs) && (
-                  <div className="chat-message-meta">
-                    {m.createdAt && (
-                      <time dateTime={new Date(m.createdAt).toISOString()}>
-                        {formatMessageTime(m.createdAt)}
-                      </time>
-                    )}
-                    {m.role === "assistant" && m.durationMs && (
-                      <span title="Task completion time">
-                        SELESAI DALAM {formatTaskDuration(m.durationMs)}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {agentStatus === "stopped" &&
-                  m.role === "user" &&
-                  m.id === messages[messages.length - 1]?.id && (
-                    <button
-                      onClick={() => handleRestart(true)}
-                      className="chat-retry"
-                      title="Retry interrupted task"
-                      aria-label="Retry interrupted task"
-                    >
-                      ↻
-                    </button>
-                  )}
-                {worktreeDiff &&
-                  shouldShowChanges(
-                    m,
-                    lastAssistantId,
-                    worktreeDiff.files.length,
-                  ) && (
-                    <details className="chat-changes">
-                      <summary>
-                        <strong>FILES CHANGED</strong>
-                        <span>{worktreeDiff.files.length}</span>
-                      </summary>
-                      {worktreeDiff.files.map((file) => (
+            {messages.map((m) => {
+              const cachedRow = rowCacheRef.current.get(m.id);
+              if (
+                cachedRow &&
+                cachedRow.message === m &&
+                cachedRow.diff === worktreeDiff &&
+                cachedRow.approval === terminalApproval &&
+                cachedRow.restart === handleRestart &&
+                cachedRow.refresh === refreshDiff &&
+                cachedRow.send === sendRaw &&
+                cachedRow.toast === onToast &&
+                cachedRow.flags === rowFlags
+              )
+                return cachedRow.node;
+              const node = (
+                <div
+                  key={m.id}
+                  style={{ order: m.createdAt ?? 0 }}
+                  className={
+                    m.role === "user"
+                      ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
+                      : m.role === "system"
+                        ? "chat-notice body-sm"
+                        : "chat-bubble-assistant body-md"
+                  }
+                >
+                  {m.role === "system" && <small>PI CONTEXT</small>}
+                  {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
+                  {m.images && m.images.length > 0 && (
+                    <div className="chat-images">
+                      {m.images.map((image, index) => (
                         <button
-                          key={`${file.repository ?? ""}:${file.path}`}
-                          onClick={() => setExpandedDiff(file.path)}
+                          key={index}
+                          onClick={() => setPreviewImage(image)}
+                          aria-label={`Preview attachment ${index + 1}`}
                         >
-                          <span>{file.status}</span>
-                          <b>
-                            {file.repository && (
-                              <small>{file.repository}</small>
-                            )}
-                            {file.path}
-                          </b>
-                          <i>+{file.added}</i>
-                          <em>-{file.removed}</em>
+                          <img
+                            src={`data:${image.mimeType};base64,${image.data}`}
+                            alt="Pasted attachment"
+                          />
                         </button>
                       ))}
-                    </details>
-                  )}
-                {m.id === lastAssistantId && terminalApproval && (
-                  <section className="terminal-command-approval" role="alert">
-                    <small>AGENT REQUEST · TERMINAL COMMAND</small>
-                    <pre>{terminalApproval.data}</pre>
-                    <div>
-                      <button
-                        className="approval-primary"
-                        onClick={() => {
-                          const request = terminalApproval;
-                          setTerminalApprovalStatus("executing");
-                          const approved = request.pane
-                            ? invoke("terminal_write", {
-                                chatId: `${chatId}__${request.pane}`,
-                                data: request.data,
-                              }).then(
-                                () =>
-                                  `Command sent to pane ${request.pane}. Read its output now.`,
-                              )
-                            : invoke<string>("terminal_execute_approved", {
-                                cwd: cwdRef.current,
-                                command: request.data,
-                              });
-                          void approved
-                            .then(async (output) => {
-                              setTerminalApprovalStatus("refreshing");
-                              await refreshDiff();
-                              setTerminalApproval(null);
-                              return sendRaw({
-                                type:
-                                  agentStatus === "running"
-                                    ? "steer"
-                                    : "prompt",
-                                message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
-                              });
-                            })
-                            .catch((error) => {
-                              const message = `Approved terminal command failed: ${String(error)}`;
-                              onToast(message);
-                              void sendRaw({
-                                type:
-                                  agentStatus === "running"
-                                    ? "steer"
-                                    : "prompt",
-                                message,
-                              });
-                            })
-                            .finally(() => setTerminalApprovalStatus(null));
-                        }}
-                        disabled={terminalApprovalStatus !== null}
-                      >
-                        {terminalApprovalStatus === "executing"
-                          ? "EXECUTING…"
-                          : terminalApprovalStatus === "refreshing"
-                            ? "REFRESHING CHANGES…"
-                            : "✅ Approve"}
-                      </button>
-                      <button
-                        disabled={terminalApprovalStatus !== null}
-                        onClick={() => {
-                          setTerminalApproval(null);
-                          void sendRaw({
-                            type:
-                              agentStatus === "running" ? "steer" : "prompt",
-                            message:
-                              "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
-                          });
-                          onToast("Terminal command denied");
-                        }}
-                      >
-                        ❌ Deny
-                      </button>
                     </div>
-                  </section>
-                )}
-              </div>
-            ))}
+                  )}
+                  {m.toolCalls
+                    .filter((tool) => tool.name === "recommend_global_skills")
+                    .map((tool) => {
+                      const skills = Array.isArray(tool.args.skills)
+                        ? tool.args.skills.filter(
+                            (name): name is string => typeof name === "string",
+                          )
+                        : [];
+                      return skills.length ? (
+                        <section
+                          className="skill-recommendation"
+                          key={tool.callId}
+                          role="status"
+                        >
+                          <div>
+                            <small>SKILL RECOMMENDATION</small>
+                            <strong>{skills.join(" · ")}</strong>
+                            <span>
+                              {typeof tool.args.reason === "string"
+                                ? tool.args.reason
+                                : "Recommended by the agent."}
+                            </span>
+                          </div>
+                          <div>
+                            {skills.map((name) => (
+                              <button
+                                key={name}
+                                onClick={() => {
+                                  setInput(`/skill:${name}`);
+                                  inputRef.current?.focus();
+                                }}
+                              >
+                                Use {name}
+                              </button>
+                            ))}
+                          </div>
+                        </section>
+                      ) : null;
+                    })}
+                  {m.toolCalls
+                    .filter((tool) => isWebSearchTool(tool.name))
+                    .map((tool) => (
+                      <ToolCallView key={tool.callId} tc={tool} />
+                    ))}
+                  {m.toolCalls.some(
+                    (tool) =>
+                      !isWebSearchTool(tool.name) &&
+                      tool.name !== "recommend_global_skills",
+                  ) &&
+                    (() => {
+                      const tools = m.toolCalls.filter(
+                        (tool) =>
+                          !isWebSearchTool(tool.name) &&
+                          tool.name !== "recommend_global_skills",
+                      );
+                      return (
+                        <details className="tool-stack">
+                          <summary>
+                            <span className="tool-stack-icon">
+                              {tools.some((tool) => tool.phase !== "end")
+                                ? "◌"
+                                : "✓"}
+                            </span>
+                            <strong>
+                              {tools.length} TOOL{" "}
+                              {tools.length === 1 ? "CALL" : "CALLS"}
+                            </strong>
+                            <span>
+                              {tools
+                                .map((tool) => tool.name)
+                                .filter(
+                                  (name, index, all) =>
+                                    all.indexOf(name) === index,
+                                )
+                                .join(" · ")}
+                            </span>
+                            <small>DETAILS</small>
+                          </summary>
+                          <div className="tool-stack-items">
+                            {tools.map((tool) => (
+                              <ToolCallView key={tool.callId} tc={tool} />
+                            ))}
+                          </div>
+                        </details>
+                      );
+                    })()}
+                  {m.toolCalls
+                    .filter((tool) => browserScreenshotRef(tool))
+                    .map((tool) => (
+                      <BrowserScreenshot
+                        key={`screenshot-${tool.callId}`}
+                        tc={tool}
+                      />
+                    ))}
+                  {m.toolCalls.length === 0 &&
+                    browserScreenshotRefFromText(m.text) && (
+                      <BrowserScreenshot
+                        tc={{
+                          callId: `restored-${m.id}`,
+                          name: "browser_screenshot",
+                          args: {},
+                          phase: "end",
+                          result: {
+                            data: {
+                              artifactRef: browserScreenshotRefFromText(m.text),
+                            },
+                          },
+                        }}
+                      />
+                    )}
+                  {m.text && (
+                    <MarkdownMessage isStreaming={m.isStreaming}>
+                      {m.text}
+                    </MarkdownMessage>
+                  )}
+                  {m.role === "assistant" && m.text && !m.isStreaming && (
+                    <div className="chat-actions">
+                      <button
+                        className="chat-copy"
+                        onClick={() =>
+                          navigator.clipboard
+                            .writeText(m.text)
+                            .then(() => {
+                              setCopiedMessageId(m.id);
+                              window.setTimeout(
+                                () =>
+                                  setCopiedMessageId((id) =>
+                                    id === m.id ? null : id,
+                                  ),
+                                1600,
+                              );
+                            })
+                            .catch((error) =>
+                              onToast(`Copy failed: ${String(error)}`),
+                            )
+                        }
+                        aria-label="Copy assistant response"
+                        title="Copy response"
+                      >
+                        {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
+                      </button>
+                      {globalChat && (
+                        <details className="chat-save">
+                          <summary>
+                            {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
+                          </summary>
+                          <div
+                            className="chat-save-options"
+                            aria-label="Save response as"
+                          >
+                            {["knowledge", "memory", "context", "skill"].map(
+                              (kind) => (
+                                <button
+                                  key={kind}
+                                  disabled={savingMessageId === m.id}
+                                  onClick={async (event) => {
+                                    const details =
+                                      event.currentTarget.closest("details");
+                                    setSavingMessageId(m.id);
+                                    try {
+                                      await invoke("save_rag_chat_response", {
+                                        text: m.text,
+                                        kind,
+                                      });
+                                      onToast(`Saved as ${kind}.`);
+                                      details?.removeAttribute("open");
+                                    } catch (error) {
+                                      onToast(`Save failed: ${String(error)}`);
+                                    } finally {
+                                      setSavingMessageId(null);
+                                    }
+                                  }}
+                                >
+                                  {kind}
+                                  <small>
+                                    {kind === "knowledge"
+                                      ? "Reusable answer"
+                                      : kind === "context"
+                                        ? "Chat reference"
+                                        : kind === "memory"
+                                          ? "Stored preference"
+                                          : "Reusable procedure"}
+                                  </small>
+                                </button>
+                              ),
+                            )}
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                  {m.role === "system" && shouldOfferRestart(m.text) && (
+                    <button
+                      onClick={() => handleRestart(true)}
+                      className="chat-restart"
+                      disabled={isRestarting}
+                    >
+                      {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
+                    </button>
+                  )}
+                  {(m.createdAt || m.durationMs) && (
+                    <div className="chat-message-meta">
+                      {m.createdAt && (
+                        <time dateTime={new Date(m.createdAt).toISOString()}>
+                          {formatMessageTime(m.createdAt)}
+                        </time>
+                      )}
+                      {m.role === "assistant" && m.durationMs && (
+                        <span title="Task completion time">
+                          SELESAI DALAM {formatTaskDuration(m.durationMs)}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {agentStatus === "stopped" &&
+                    m.role === "user" &&
+                    m.id === messages[messages.length - 1]?.id && (
+                      <button
+                        onClick={() => handleRestart(true)}
+                        className="chat-retry"
+                        title="Retry interrupted task"
+                        aria-label="Retry interrupted task"
+                      >
+                        ↻
+                      </button>
+                    )}
+                  {worktreeDiff &&
+                    shouldShowChanges(
+                      m,
+                      lastAssistantId,
+                      worktreeDiff.files.length,
+                    ) && (
+                      <details className="chat-changes">
+                        <summary>
+                          <strong>FILES CHANGED</strong>
+                          <span>{worktreeDiff.files.length}</span>
+                        </summary>
+                        {worktreeDiff.files.map((file) => (
+                          <button
+                            key={`${file.repository ?? ""}:${file.path}`}
+                            onClick={() => setExpandedDiff(file.path)}
+                          >
+                            <span>{file.status}</span>
+                            <b>
+                              {file.repository && (
+                                <small>{file.repository}</small>
+                              )}
+                              {file.path}
+                            </b>
+                            <i>+{file.added}</i>
+                            <em>-{file.removed}</em>
+                          </button>
+                        ))}
+                      </details>
+                    )}
+                  {m.id === lastAssistantId && terminalApproval && (
+                    <section className="terminal-command-approval" role="alert">
+                      <small>AGENT REQUEST · TERMINAL COMMAND</small>
+                      <pre>{terminalApproval.data}</pre>
+                      <div>
+                        <button
+                          className="approval-primary"
+                          onClick={() => {
+                            const request = terminalApproval;
+                            setTerminalApprovalStatus("executing");
+                            const approved = request.pane
+                              ? invoke("terminal_write", {
+                                  chatId: `${chatId}__${request.pane}`,
+                                  data: request.data,
+                                }).then(
+                                  () =>
+                                    `Command sent to pane ${request.pane}. Read its output now.`,
+                                )
+                              : invoke<string>("terminal_execute_approved", {
+                                  cwd: cwdRef.current,
+                                  command: request.data,
+                                });
+                            void approved
+                              .then(async (output) => {
+                                setTerminalApprovalStatus("refreshing");
+                                await refreshDiff();
+                                setTerminalApproval(null);
+                                return sendRaw({
+                                  type:
+                                    agentStatus === "running"
+                                      ? "steer"
+                                      : "prompt",
+                                  message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
+                                });
+                              })
+                              .catch((error) => {
+                                const message = `Approved terminal command failed: ${String(error)}`;
+                                onToast(message);
+                                void sendRaw({
+                                  type:
+                                    agentStatus === "running"
+                                      ? "steer"
+                                      : "prompt",
+                                  message,
+                                });
+                              })
+                              .finally(() => setTerminalApprovalStatus(null));
+                          }}
+                          disabled={terminalApprovalStatus !== null}
+                        >
+                          {terminalApprovalStatus === "executing"
+                            ? "EXECUTING…"
+                            : terminalApprovalStatus === "refreshing"
+                              ? "REFRESHING CHANGES…"
+                              : "✅ Approve"}
+                        </button>
+                        <button
+                          disabled={terminalApprovalStatus !== null}
+                          onClick={() => {
+                            setTerminalApproval(null);
+                            void sendRaw({
+                              type:
+                                agentStatus === "running" ? "steer" : "prompt",
+                              message:
+                                "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
+                            });
+                            onToast("Terminal command denied");
+                          }}
+                        >
+                          ❌ Deny
+                        </button>
+                      </div>
+                    </section>
+                  )}
+                </div>
+              );
+              rowCacheRef.current.set(m.id, {
+                message: m,
+                diff: worktreeDiff,
+                approval: terminalApproval,
+                restart: handleRestart,
+                refresh: refreshDiff,
+                send: sendRaw,
+                toast: onToast,
+                flags: rowFlags,
+                node,
+              });
+              return node;
+            })}
             {backgroundWork && agentStatus !== "running" && (
               <div
                 className="agent-working activity-nodes phase-executing"
@@ -4001,9 +4099,10 @@ export default function ChatView({
                 </div>
                 <span className="agent-working-stats">
                   <span>
-                    {backgroundElapsedSeconds >= 60
-                      ? `${Math.floor(backgroundElapsedSeconds / 60)}m ${backgroundElapsedSeconds % 60}s`
-                      : `${backgroundElapsedSeconds}s`}
+                    <ElapsedLabel
+                      startedAt={backgroundWork.startedAt}
+                      ticking={isActive}
+                    />
                   </span>
                 </span>
               </div>
@@ -4161,10 +4260,6 @@ export default function ChatView({
                   "validation",
                 ];
                 const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
-                const elapsed =
-                  elapsedSeconds >= 60
-                    ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
-                    : `${elapsedSeconds}s`;
                 return (
                   <div
                     className={`agent-working activity-${icon} phase-${phase}`}
@@ -4222,7 +4317,12 @@ export default function ChatView({
                           {completedCount} tool{completedCount !== 1 ? "s" : ""}
                         </span>
                       ) : null}
-                      {elapsedSeconds > 0 && <span>{elapsed}</span>}
+                      <span>
+                        <ElapsedLabel
+                          startedAt={taskStartedAtRef.current ?? Date.now()}
+                          ticking={isActive}
+                        />
+                      </span>
                     </span>
                     <button onClick={handleAbort} disabled={isAborting}>
                       {isAborting ? "ABORTING…" : "ABORT"}
