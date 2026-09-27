@@ -65,7 +65,24 @@ export default function ProjectList({
   onToast: (message: string) => void;
 }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("kern.projects.collapsed");
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "kern.projects.collapsed",
+        JSON.stringify([...collapsed]),
+      );
+    } catch {
+      /* ponytail: ignore quota/private-mode write failures, collapse just won't persist */
+    }
+  }, [collapsed]);
   const [err, setErr] = useState<string | null>(null);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);

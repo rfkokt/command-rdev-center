@@ -7,6 +7,16 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  build: {
+    // ponytail: split stable vendor code so app chunks stay small and cacheable.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom"],
+        },
+      },
+    },
+  },
   test: {
     exclude: [
       "src-tauri/browser-host/**",

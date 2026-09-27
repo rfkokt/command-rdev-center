@@ -21,7 +21,7 @@ import { check } from "@tauri-apps/plugin-updater";
 
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
-import KanbanBoard from "./components/KanbanBoard";
+const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
 const RagKnowledge = lazy(() => import("./components/RagKnowledge"));
@@ -808,10 +808,18 @@ export default function App() {
 
         <div className="workspace-body" id="workspace-content" tabIndex={-1}>
           {dashboard === "kanban" && (
-            <KanbanBoard
-              projectName={workspaceProject?.name}
-              onWorkTask={newTaskConversation}
-            />
+            <Suspense
+              fallback={
+                <div className="session-loading" role="status">
+                  Loading kanban…
+                </div>
+              }
+            >
+              <KanbanBoard
+                projectName={workspaceProject?.name}
+                onWorkTask={newTaskConversation}
+              />
+            </Suspense>
           )}
           {dashboard === "pipeline" && (
             <Suspense
