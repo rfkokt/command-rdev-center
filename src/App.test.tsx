@@ -123,11 +123,11 @@ afterEach(cleanup);
 test("persists explicit appearance and removes storage for system mode", () => {
   render(<App />);
 
-  fireEvent.click(screen.getByRole("button", { name: "dark" }));
+  fireEvent.click(screen.getByRole("button", { name: "☾ Dark" }));
   expect(localStorage.getItem("crc-appearance")).toBe("dark");
   expect(document.documentElement).toHaveAttribute("data-theme", "dark");
 
-  fireEvent.click(screen.getByRole("button", { name: "system" }));
+  fireEvent.click(screen.getByRole("button", { name: "◐ System" }));
   expect(localStorage.getItem("crc-appearance")).toBeNull();
   expect(document.documentElement).toHaveAttribute("data-theme", "light");
 });

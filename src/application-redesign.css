@@ -999,7 +999,6 @@ body {
   height: min(820px, calc(100vh - 32px));
   border-color: var(--app-line-strong);
   background: var(--app-sidebar);
-  box-shadow: 12px 12px 0 #080906;
 }
 .settings-panel > header {
   min-height: 64px;
@@ -1286,7 +1285,6 @@ body {
 .rag-preview-panel {
   border: 1px solid var(--app-line-strong);
   background: var(--app-sidebar);
-  box-shadow: 12px 12px 0 #080906;
 }
 .diff-panel > header,
 .model-picker header,
@@ -1333,7 +1331,6 @@ body {
 .rag-upload-toast {
   border: 1px solid var(--app-line-strong);
   background: var(--app-panel-raised);
-  box-shadow: 8px 8px 0 #080906;
 }
 
 .chat-mode-toggle {

@@ -1,33 +1,5 @@
-/* Close adaptation of Zed's bundled One Light / One Dark UI theme. */
-:root {
-  --canvas: #dcdcdd;
-  --surface: #ebebec;
-  --surface-solid: #fafafa;
-  --surface-raised: #ebebec;
-  --surface-selected: #cacaca;
-  --text-primary: #242529;
-  --text-secondary: #505156;
-  --separator: #dfdfe0;
-  --separator-strong: #c9c9ca;
-  --accent: #5c78e2;
-  --success: #669f59;
-  --danger: #d36151;
-  --info: #5c78e2;
-  --running: #5c78e2;
-  --control-bg: #ebebec;
-  --code: #fafafa;
-  --code-text: #242529;
-  --terminal: #fafafa;
-  --terminal-text: #242529;
-  --overlay: rgba(36, 37, 41, 0.34);
-  --shadow-soft: 0 8px 24px rgba(36, 37, 41, 0.16);
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-sans);
-  --font-body: var(--font-sans);
-  --radius-control: 6px;
-  --radius-compact: 4px;
-  --radius-panel: 8px;
-}
+/* NOTE: color/shape tokens moved to quiet-native.css (single owner). Font
+   tokens already live in App.css. This file keeps component rules only. */
 :root:not([data-theme="dark"]) .agent-working {
   border-color: var(--separator-strong);
   background: rgba(250, 250, 250, 0.96);
@@ -54,94 +26,14 @@
 :root:not([data-theme="dark"]) .queue-status.has-queue {
   background: var(--surface-selected);
 }
-[data-theme="dark"] {
-  --canvas: #3b414d;
-  --surface: #2f343e;
-  --surface-solid: #282c33;
-  --surface-raised: #2f343e;
-  --surface-selected: #454a56;
-  --text-primary: #dce0e5;
-  --text-secondary: #b7bdc8;
-  --separator: #363c46;
-  --separator-strong: #464b57;
-  --accent: #74ade8;
-  --success: #a1c181;
-  --danger: #d07277;
-  --info: #74ade8;
-  --running: #74ade8;
-  --control-bg: #2e343e;
-  --code: #282c33;
-  --code-text: #dce0e5;
-  --terminal: #282c34;
-  --terminal-text: #dce0e5;
-  --overlay: rgba(20, 22, 27, 0.7);
-  --shadow-soft: 0 8px 24px rgba(0, 0, 0, 0.3);
-}
+/* NOTE: dark tokens owned by quiet-native.css [data-theme="dark"]. */
 
 body {
   font-family: var(--font-sans);
 }
-.app-shell {
-  gap: 1px;
-  padding: 0;
-  background: var(--separator-strong);
-}
-.sidebar,
-.workspace {
-  height: 100vh;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-.sidebar {
-  background: var(--surface);
-}
-.workspace {
-  background: var(--surface-solid);
-}
-.app-toolbar {
-  height: 40px;
-  min-height: 40px;
-  padding: 0 10px;
-  border-radius: 0;
-  background: var(--canvas);
-}
-.workspace-body {
-  height: calc(100% - 40px);
-  background: var(--surface-solid);
-}
-.sidebar-brand {
-  height: 40px;
-  margin-bottom: 4px;
-}
-.brand-mark {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  background: var(--accent);
-  font-size: 12px;
-}
-.sidebar-brand strong {
-  font-size: 13px;
-}
-.sidebar-brand small {
-  display: none;
-}
-.project-row,
-.conversation-row,
-.settings-button {
-  border-radius: 4px;
-}
-.project-row:hover,
-.conversation-row:hover,
-.settings-button:hover {
-  background: color-mix(in srgb, var(--surface-selected) 55%, transparent);
-}
-.conversation-row.active,
-.settings-button.active {
-  background: var(--surface-selected);
-  color: var(--text-primary);
-}
+/* NOTE: shell composition owned by layout-overhaul.css (inset) +
+   core-workspace.css + quiet-native.css tokens. Zed flattening removed. */
+/* NOTE: row radius/hover/active owned by quiet-native.css. */
 .sidebar-nav-label {
   color: var(--text-secondary);
   font-size: 10px;
@@ -156,19 +48,7 @@ body {
   width: 16px;
   height: 16px;
 }
-.appearance-control {
-  border-color: var(--separator-strong);
-  background: var(--control-bg);
-  border-radius: 5px;
-}
-.appearance-control button {
-  min-height: 24px;
-  border-radius: 3px;
-}
-.appearance-control button.active {
-  background: var(--surface-selected);
-  color: var(--text-primary);
-}
+/* NOTE: appearance-control owned by quiet-native.css. */
 .sidebar-toggle,
 .sidebar-collapse {
   width: 28px;
@@ -264,34 +144,16 @@ body {
   background: var(--surface-selected);
   color: var(--text-primary);
 }
-.chat-composer {
-  border-color: var(--separator-strong);
-  border-radius: 8px;
-  background: var(--surface);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
-}
-.thinking-block,
-.tool-stack,
-.chat-changes,
-.web-search-card {
-  border-radius: 4px;
-  background: var(--surface);
-}
-.markdown-body code,
-.markdown-body pre,
-.markdown-code-block,
-.json-view,
-.file-preview-content,
-.split-diff {
-  background: var(--code);
-  color: var(--code-text);
-}
+/* NOTE: .chat-composer owned by quiet-native.css (floating glass). */
+/* NOTE: thinking/tool surfaces owned by quiet-native.css. */
+/* NOTE: markdown/code surfaces owned by quiet-native.css. */
 .terminal-modal {
   border: 1px solid var(--separator-strong);
   border-radius: 6px;
   background: var(--terminal);
   color: var(--terminal-text);
 }
+/* Workspace cards follow the canonical control radius (Batch D+E). */
 .kanban-column,
 .kanban-card,
 .pipeline-scroll,
@@ -299,36 +161,11 @@ body {
 .research-article,
 .prompt-form-section,
 .settings-form > label {
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   box-shadow: none;
 }
-.project-branch-picker,
-.diff-panel,
-.model-picker,
-.approval-dialog,
-.usage-dialog,
-.settings-panel,
-.kanban-detail,
-.rag-preview-panel,
-.file-preview-dialog,
-.list-picker-menu,
-.slash-menu,
-.toast,
-.pipeline-consult-drawer {
-  border-radius: 6px;
-  background: var(--surface);
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: none;
-}
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
-summary:focus-visible,
-a:focus-visible {
-  outline: 1px solid var(--accent) !important;
-  outline-offset: 1px;
-}
+/* NOTE: dialog material owned by quiet-native.css (glass + blur). */
+/* NOTE: focus ring owned by quiet-native.css. */
 * {
   scrollbar-color: color-mix(in srgb, var(--text-secondary) 30%, transparent)
     transparent;

@@ -1,6 +1,3 @@
-import "@fontsource/ibm-plex-sans/400.css";
-import "@fontsource/ibm-plex-sans/500.css";
-import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/merriweather/400.css";
 import "@fontsource/merriweather/400-italic.css";
 import "@fontsource/merriweather/700.css";
@@ -53,12 +50,13 @@ import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
 import "./prompt-engines.css";
-import "./quiet-native.css";
 import "./layout-overhaul.css";
 import "./zed-theme.css";
 import "./minimal-layout.css";
 import "./zed-project-panel.css";
 import "./kern-theme.css";
+// Token owner — must stay last so :root / [data-theme] tokens win the cascade.
+import "./quiet-native.css";
 
 type Config = {
   pi_path: string;
@@ -691,9 +689,10 @@ export default function App() {
                   key={value}
                   className={appearance === value ? "active" : ""}
                   aria-pressed={appearance === value}
+                  title={value === "system" ? "Follow system" : value}
                   onClick={() => chooseAppearance(value)}
                 >
-                  {value}
+                  {value === "system" ? "◐ System" : value === "light" ? "☀ Light" : "☾ Dark"}
                 </button>
               ))}
             </div>

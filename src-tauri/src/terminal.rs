@@ -93,7 +93,10 @@ pub fn terminal_open(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-il"); // interactive login shell: sources .zprofile + .zshrc so nvm/aliases/PATH match Terminal.app
-    cmd.cwd(&cwd);
+    // Interactive shell: a human is in the loop and sees the prompt, so a deleted
+    // worktree falls back to the nearest living ancestor instead of dying.
+    let (live_cwd, _) = crate::projects::resolve_live_dir(Path::new(&cwd));
+    cmd.cwd(&live_cwd);
     // no PATH override: an interactive login shell rebuilds it from the user's rc files
     cmd.env("TERM", "xterm-256color");
     // nvm refuses to load when npm_config_prefix is set (inherited from the app's parent env)
@@ -148,13 +151,26 @@ pub fn terminal_open(
 pub async fn terminal_execute_approved(cwd: String, command: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::projects::ensure_path_allowed(Path::new(&cwd))?;
-        let output = std::process::Command::new(
+        // One-shot approved commands never silently change directory: the approval
+        // was for THIS cwd. Fail actionable instead.
+        if !Path::new(&cwd).is_dir() {
+            let (live, _) = crate::projects::resolve_live_dir(Path::new(&cwd));
+            return Err(format!(
+                "cwd deleted (nearest live: {}); re-run from a live directory",
+                live.display()
+            ));
+        }
+        // `-lc` skips ~/.zshrc, so approved commands get the same shell-token import as agents.
+        let mut approved = std::process::Command::new(
             std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()),
-        )
-        .args(["-lc", &command])
-        .current_dir(&cwd)
-        .output()
-        .map_err(|error| error.to_string())?;
+        );
+        approved.args(["-lc", &command]).current_dir(&cwd);
+        for (k, v) in crate::projects::shell_token_env() {
+            approved.env(k, v);
+        }
+        let output = approved
+            .output()
+            .map_err(|error| error.to_string())?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),

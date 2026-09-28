@@ -471,10 +471,6 @@ summary {
   margin-inline: auto;
   padding: 8px clamp(12px, 4vw, 44px) 12px;
 }
-.chat-composer {
-  border-radius: 9px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-}
 .text-input {
   border-color: var(--separator-strong) !important;
   background: var(--control-bg) !important;

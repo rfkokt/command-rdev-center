@@ -426,7 +426,6 @@ select:focus-visible {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: #080906dc;
   backdrop-filter: blur(4px);
 }
 .project-branch-picker {
@@ -434,7 +433,6 @@ select:focus-visible {
   padding: 20px;
   border: 1px solid var(--colors-hairline-strong);
   background: var(--colors-surface-card);
-  box-shadow: 12px 12px 0 #080906;
   display: grid;
   gap: 12px;
 }
@@ -839,7 +837,6 @@ select:focus-visible {
   width: 7px;
   height: 7px;
   background: var(--accent);
-  box-shadow: 0 0 12px #d7ff5488;
 }
 .toolbar-actions {
   display: flex;
@@ -1050,7 +1047,6 @@ select:focus-visible {
   margin-top: 4px;
   border: 1px solid var(--colors-hairline-strong);
   background: var(--colors-surface-soft);
-  box-shadow: 8px 8px 0 #080906;
 }
 .list-picker-menu button {
   width: 100%;
@@ -1238,7 +1234,6 @@ select:focus-visible {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: #080906df;
   backdrop-filter: blur(5px);
 }
 .kanban-detail {
@@ -1249,7 +1244,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid var(--colors-hairline-strong);
   background: var(--colors-surface-soft);
-  box-shadow: 16px 16px 0 #080906;
 }
 .kanban-detail > header {
   flex: none;
@@ -1569,7 +1563,6 @@ select:focus-visible {
   border-radius: 0;
   background: var(--colors-surface-elevated);
   color: var(--colors-on-dark);
-  box-shadow: 8px 8px 0 #080906;
 }
 .toast span {
   overflow-wrap: anywhere;
@@ -2011,7 +2004,6 @@ select:focus-visible {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: #080906d9;
   backdrop-filter: blur(4px);
 }
 .usage-dialog {
@@ -2019,7 +2011,6 @@ select:focus-visible {
   padding: 18px;
   border: 1px solid #4b4d42;
   background: #151612;
-  box-shadow: 12px 12px 0 #080906;
 }
 .usage-dialog header {
   display: flex;
@@ -2127,7 +2118,6 @@ select:focus-visible {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: #080906d9;
   backdrop-filter: blur(4px);
 }
 .diff-panel {
@@ -2139,7 +2129,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid #4b4d42;
   background: #151612;
-  box-shadow: 16px 16px 0 #080906;
 }
 .diff-panel > header {
   min-height: 42px;
@@ -2305,7 +2294,6 @@ select:focus-visible {
   place-items: center;
   padding: 20px;
   overflow: auto;
-  background: #080906d9;
   backdrop-filter: blur(4px);
 }
 .model-picker {
@@ -2317,7 +2305,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid #4b4d42;
   background: #151612;
-  box-shadow: 16px 16px 0 #080906;
 }
 .model-picker header,
 .model-picker footer {
@@ -2418,7 +2405,6 @@ select:focus-visible {
   place-items: center;
   padding: 20px;
   overflow: auto;
-  background: #080906df;
   backdrop-filter: blur(5px);
 }
 .approval-dialog {
@@ -2426,7 +2412,6 @@ select:focus-visible {
   border: 1px solid var(--colors-hairline-strong);
   border-top: 3px solid var(--accent);
   background: #151612;
-  box-shadow: 16px 16px 0 #080906;
 }
 .approval-dialog header {
   display: grid;
@@ -3591,7 +3576,6 @@ select:focus-visible {
   border: 1px solid var(--colors-hairline-strong);
   background: #1c1d19;
   color: var(--colors-on-dark);
-  box-shadow: 8px 8px 0 #080906;
   font-size: 13px;
 }
 .rag-upload-toast small {
@@ -3666,7 +3650,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid #4b4d42;
   background: #151612;
-  box-shadow: 16px 16px 0 #080906;
 }
 .rag-preview-panel header {
   min-height: 52px;
@@ -4160,7 +4143,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid #4b4d42;
   background: #151612;
-  box-shadow: 16px 16px 0 #080906;
 }
 .settings-panel > header,
 .settings-panel > footer {
@@ -4944,7 +4926,6 @@ select:focus-visible {
   overflow: hidden;
   border: 1px solid var(--colors-hairline-strong);
   background: var(--colors-surface-soft);
-  box-shadow: 8px 8px 0 #080906;
   letter-spacing: 0;
 }
 .graphify-model-search {
@@ -5496,7 +5477,6 @@ select:focus-visible {
     padding: 8px;
   }
   .approval-dialog {
-    box-shadow: 8px 8px 0 #080906;
   }
   .approval-dialog header,
   .approval-message,

@@ -617,21 +617,36 @@ export default function ChatView({
       .slice(0, 32),
   ).current;
 
+  const jumpToBottomRef = useRef(true);
+  useEffect(() => {
+    jumpToBottomRef.current = true;
+  }, [chatId]);
   useEffect(() => {
     if (!isActive) return;
     const anchor = bottomRef.current;
     if (!anchor) return;
-    // ponytail: stick-to-bottom only; never yank the user out of history they scrolled to.
-    let scroller: HTMLElement | null = anchor.parentElement;
-    while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
-      scroller = scroller.parentElement;
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const jump = jumpToBottomRef.current;
+    jumpToBottomRef.current = false;
+    // ponytail: stick-to-bottom only; never yank the user out of history they scrolled to —
+    // except right after opening/switching chats, when we jump straight to the latest.
+    if (!jump) {
+      let scroller: HTMLElement | null = anchor.parentElement;
+      while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
+        scroller = scroller.parentElement;
+      }
+      if (scroller) {
+        const distance =
+          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        if (distance > 160) return;
+      }
     }
-    if (scroller) {
-      const distance =
-        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-      if (distance > 160) return;
-    }
-    anchor.scrollIntoView({ behavior: "auto", block: "end" });
+    anchor.scrollIntoView({
+      behavior: reduceMotion || jump ? "auto" : "smooth",
+      block: "end",
+    });
   }, [isActive, messages, researchResults]);
 
   useEffect(() => {
@@ -1096,6 +1111,18 @@ export default function ChatView({
             return copy;
           }
         }
+        // Late/duplicate final events after the streaming placeholder settled
+        // must not append a twin bubble: skip when the tail already has it.
+        const tail = copy.length > 0 ? copy[copy.length - 1] : undefined;
+        if (
+          tail &&
+          tail.role === "assistant" &&
+          !tail.isStreaming &&
+          preserveStreamedContent(tail.text, content.text) === tail.text &&
+          preserveStreamedContent(tail.thinking ?? "", content.thinking) ===
+            (tail.thinking ?? "")
+        )
+          return copy;
         return [
           ...copy,
           {
@@ -3874,6 +3901,22 @@ export default function ChatView({
                       >
                         {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
                       </button>
+                      <button
+                        className="chat-retry-inline"
+                        onClick={() => {
+                          const lastUser = [...messages]
+                            .reverse()
+                            .find((item) => item.role === "user");
+                          if (lastUser?.text) {
+                            setInput(lastUser.text);
+                            inputRef.current?.focus();
+                          }
+                        }}
+                        aria-label="Try again with last prompt"
+                        title="Copy last prompt back to composer"
+                      >
+                        ↻ TRY AGAIN
+                      </button>
                       {globalChat && (
                         <details className="chat-save">
                           <summary>
@@ -4334,18 +4377,40 @@ export default function ChatView({
           </div>
         </div>
 
-        <div style={{ borderTop: "1px solid var(--colors-hairline)" }}>
+        <div className="chat-composer-dock">
           <div
+            className="chat-composer"
             style={{
               maxWidth: 880,
               margin: "0 auto",
               padding: "var(--spacing-md)",
               position: "relative",
               display: "flex",
+              flexWrap: "wrap",
               gap: "var(--spacing-md)",
               alignItems: "flex-end",
             }}
           >
+            <div className="composer-chips" role="toolbar" aria-label="Quick prompts">
+              {[
+                { label: "\uD83D\uDCA1 Brainstorm", insert: "Brainstorm ideas for: " },
+                { label: "\uD83C\uDF10 Web search", insert: "/research " },
+                { label: "</> Code", insert: "Review this code: " },
+                { label: "\uFF0B Skill", insert: "/skill:" },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  className="composer-chip"
+                  onClick={() => {
+                    setInput((current) => (current ? `${current} ` : "") + chip.insert);
+                    inputRef.current?.focus();
+                  }}
+                  disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
             {slashCommands.length > 0 && (
               <div className="slash-menu" role="listbox">
                 {slashCommands.map((command, index) => (

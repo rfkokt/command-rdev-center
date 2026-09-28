@@ -102,6 +102,9 @@ body {
 .glass-surface {
   background: var(--surface);
   border-color: var(--separator);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    var(--shadow-soft);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
 }
@@ -281,6 +284,21 @@ select:hover,
   background: var(--surface-raised);
   border-radius: 10px;
 }
+/* Floating glass composer (Batch C) — principal chrome element. */
+.chat-composer-dock {
+  padding: var(--spacing-md);
+  background: transparent;
+}
+.chat-composer {
+  border: 1px solid var(--separator-strong);
+  border-radius: var(--radius-panel);
+  background: var(--surface-raised);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    var(--shadow-soft);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
 .chat-composer-help {
   max-width: 880px;
   margin: 0 auto;
@@ -295,6 +313,38 @@ select:hover,
   background: var(--surface-solid);
   color: var(--text-primary);
   font: inherit;
+}
+/* Elysium-style quick-prompt chips + try-again (Batch C). */
+.composer-chips {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 0;
+}
+.composer-chip {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  background: var(--surface-solid);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.composer-chip:hover:not(:disabled) {
+  background: var(--surface-selected);
+  color: var(--accent);
+  border-color: var(--separator-strong);
+}
+.chat-retry-inline {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.chat-retry-inline:hover {
+  color: var(--accent);
 }
 .markdown-body {
   color: var(--text-primary);
@@ -726,8 +776,19 @@ input[type="checkbox"] {
   outline-offset: -2px;
 }
 
+/* Display type: tighten tracking as size grows (Apple type discipline). */
+.markdown-body h1,
+.markdown-body h2,
+.research-article > .markdown-body h1,
+.research-article > .markdown-body h2,
+.research-article > .markdown-body h3 {
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .glass-surface,
+  .chat-composer,
   .project-branch-picker,
   .diff-panel,
   .model-picker,
@@ -745,5 +806,17 @@ input[type="checkbox"] {
     background: var(--surface-solid);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .glass-surface,
+  .chat-composer,
+  .sidebar,
+  .app-toolbar {
+    background: var(--surface-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-color: var(--text-secondary);
   }
 }
