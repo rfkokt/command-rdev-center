@@ -568,13 +568,21 @@ export default function ChatView({
       .slice(0, 32),
   ).current;
 
+  const stickToBottomRef = useRef(true);
+  const jumpToBottomRef = useRef(true);
   useEffect(() => {
-    if (!isActive) return;
+    stickToBottomRef.current = true;
+    jumpToBottomRef.current = true;
+  }, [chatId]);
+  useEffect(() => {
+    if (!isActive || !stickToBottomRef.current) return;
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const jump = jumpToBottomRef.current;
+    jumpToBottomRef.current = false;
     bottomRef.current?.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
+      behavior: reduceMotion || jump ? "auto" : "smooth",
     });
   }, [isActive, messages, researchResults]);
 
@@ -1036,6 +1044,18 @@ export default function ChatView({
             return copy;
           }
         }
+        // Late/duplicate final events after the streaming placeholder settled
+        // must not append a twin bubble: skip when the tail already has it.
+        const tail = copy.length > 0 ? copy[copy.length - 1] : undefined;
+        if (
+          tail &&
+          tail.role === "assistant" &&
+          !tail.isStreaming &&
+          preserveStreamedContent(tail.text, content.text) === tail.text &&
+          preserveStreamedContent(tail.thinking ?? "", content.thinking) ===
+            (tail.thinking ?? "")
+        )
+          return copy;
         return [
           ...copy,
           {
@@ -3379,6 +3399,11 @@ export default function ChatView({
         }
       >
         <div
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stickToBottomRef.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
           style={{
             flex: 1,
             minHeight: 0,
