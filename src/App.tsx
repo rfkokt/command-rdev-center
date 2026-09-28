@@ -692,7 +692,11 @@ export default function App() {
                   title={value === "system" ? "Follow system" : value}
                   onClick={() => chooseAppearance(value)}
                 >
-                  {value === "system" ? "◐ System" : value === "light" ? "☀ Light" : "☾ Dark"}
+                  {value === "system"
+                    ? "◐ System"
+                    : value === "light"
+                      ? "☀ Light"
+                      : "☾ Dark"}
                 </button>
               ))}
             </div>
