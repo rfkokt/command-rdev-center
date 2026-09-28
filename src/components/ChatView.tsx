@@ -555,6 +555,9 @@ export default function ChatView({
   const trackedTaskRef = useRef(false);
   // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
   const surfacedErrorRef = useRef<string | null>(null);
+  // Idempotency keys of backend assistant messages already finalized this turn.
+  // message_end/turn_end and agent_end can deliver the same message twice.
+  const finalizedIdsRef = useRef(new Set<string>());
   const pipelineRunRef = useRef<string | null>(null);
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{
@@ -625,6 +628,13 @@ export default function ChatView({
     if (!isActive) return;
     const anchor = bottomRef.current;
     if (!anchor) return;
+    // Don't consume the initial jump while history is still on its way:
+    // messages are [] on mount and real content lands async via get_messages.
+    if (
+      isHistoryLoading ||
+      (messages.length === 0 && researchResults.length === 0)
+    )
+      return;
     const reduceMotion =
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -647,7 +657,7 @@ export default function ChatView({
       behavior: reduceMotion || jump ? "auto" : "smooth",
       block: "end",
     });
-  }, [isActive, messages, researchResults]);
+  }, [isActive, messages, researchResults, isHistoryLoading]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1096,6 +1106,12 @@ export default function ChatView({
         if (!content.text && !content.thinking && !usedTool) return;
       }
       if (!content.text && !content.thinking && !usedTool) return;
+      // message_end/turn_end and agent_end can deliver the same backend
+      // message twice; key it so the second delivery can never append a twin.
+      const backendId =
+        typeof message.id === "string" && message.id ? message.id : null;
+      const alreadyFinalized =
+        backendId !== null && finalizedIdsRef.current.has(backendId);
       setMessages((prev) => {
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
@@ -1112,17 +1128,36 @@ export default function ChatView({
           }
         }
         // Late/duplicate final events after the streaming placeholder settled
-        // must not append a twin bubble: skip when the tail already has it.
+        // must not append a twin bubble: refresh the tail in place when it
+        // already holds (part of) this answer.
         const tail = copy.length > 0 ? copy[copy.length - 1] : undefined;
-        if (
-          tail &&
-          tail.role === "assistant" &&
-          !tail.isStreaming &&
-          preserveStreamedContent(tail.text, content.text) === tail.text &&
-          preserveStreamedContent(tail.thinking ?? "", content.thinking) ===
-            (tail.thinking ?? "")
-        )
-          return copy;
+        if (tail && tail.role === "assistant" && !tail.isStreaming) {
+          const mergedText = preserveStreamedContent(tail.text, content.text);
+          const mergedThinking = preserveStreamedContent(
+            tail.thinking ?? "",
+            content.thinking,
+          );
+          if (
+            mergedText === tail.text &&
+            mergedThinking === (tail.thinking ?? "")
+          )
+            return copy;
+          if (
+            alreadyFinalized ||
+            (tail.text !== "" &&
+              mergedText === content.text &&
+              mergedThinking === content.thinking)
+          ) {
+            copy[copy.length - 1] = {
+              ...tail,
+              text: usedTool ? tail.text : mergedText,
+              thinking: mergedThinking,
+            };
+            if (backendId) finalizedIdsRef.current.add(backendId);
+            return copy;
+          }
+        }
+        if (backendId) finalizedIdsRef.current.add(backendId);
         return [
           ...copy,
           {
@@ -1364,6 +1399,7 @@ export default function ChatView({
         if (t === "agent_start") {
           setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
+          finalizedIdsRef.current.clear();
           setAgentStatus("running");
           onAgentRunning(chatId, true);
           setIsStreaming(true);
