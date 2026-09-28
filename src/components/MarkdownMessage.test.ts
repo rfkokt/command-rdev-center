@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { render } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { fireEvent, render } from "@testing-library/react";
+import { describe, expect, test, vi } from "vitest";
 import MarkdownMessage, { formatChatCode } from "./MarkdownMessage";
 
 describe("MarkdownMessage", () => {
@@ -17,11 +17,19 @@ describe("MarkdownMessage", () => {
     expect(container.querySelector("td br")).not.toBeNull();
   });
 
-  test("adds a copy control to fenced code blocks", () => {
+  test("adds a working copy control to fenced code blocks", async () => {
+    const execCommand = vi.fn(() => true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
     const { getByRole } = render(
       createElement(MarkdownMessage, null, "```ts\nconst answer = 42;\n```"),
     );
-    expect(getByRole("button", { name: "COPY" })).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "COPY" }));
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(await getByRole("button", { name: "COPIED" })).toBeTruthy();
+    delete (document as { execCommand?: unknown }).execCommand;
   });
 
   test("defers Markdown parsing for oversized responses", () => {

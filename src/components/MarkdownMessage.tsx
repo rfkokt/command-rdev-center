@@ -87,14 +87,24 @@ function CodeBlock({
   isStreaming: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const copy = () =>
-    navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
-      })
-      .catch(() => undefined);
+  const copy = async () => {
+    try {
+      if (navigator.clipboard?.writeText)
+        await navigator.clipboard.writeText(code);
+      else throw new Error("Clipboard API unavailable");
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = code;
+      textarea.style.cssText = "position:fixed;opacity:0";
+      document.body.append(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div className="markdown-code-block">

@@ -292,7 +292,9 @@ export default function App() {
   function openProject(project: ProjectInfo) {
     setDashboard(null);
     setSelectedProject(project);
-    const existing = tabs.find((tab) => tab.project.path === project.path);
+    const existing = [...tabs]
+      .reverse()
+      .find((tab) => tab.project.path === project.path);
     if (existing) return activateTab(existing.id);
     newConversation(project);
   }

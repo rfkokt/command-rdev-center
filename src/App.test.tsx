@@ -22,11 +22,13 @@ vi.mock("./components/ProjectList", () => ({
   default: ({
     tabs,
     onResume,
+    onOpen,
     onSelect,
     onNewSession,
   }: {
     tabs: Array<{ id: string; project: { name: string } }>;
     onResume: (id: string, project: unknown) => void;
+    onOpen: (project: unknown) => void;
     onSelect: (project: unknown) => void;
     onNewSession: (project: unknown) => void;
   }) => (
@@ -36,6 +38,7 @@ vi.mock("./components/ProjectList", () => ({
           <button onClick={() => onResume(tab.id, tab.project)}>
             Open {tab.id}
           </button>
+          <button onClick={() => onOpen(tab.project)}>Open project</button>
           <button onClick={() => onSelect(tab.project)}>
             Select {tab.project.name}
           </button>
@@ -296,6 +299,42 @@ test("creates a project session after switching from Global Chat to a project", 
     2,
   );
   expect(saved.filter((tab) => tab.global)).toHaveLength(1);
+});
+
+test("opens the newest existing project chat", () => {
+  localStorage.setItem(
+    "crc-chat-tabs",
+    JSON.stringify([
+      {
+        id: "chat-old",
+        project: {
+          name: "demo",
+          path: "/tmp/demo",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+      {
+        id: "chat-new",
+        project: {
+          name: "demo",
+          path: "/tmp/demo",
+          kinds: [],
+          mtime_ms: 0,
+          is_git: false,
+        },
+      },
+    ]),
+  );
+  render(<App />);
+
+  const openProjectButtons = screen.getAllByRole("button", {
+    name: "Open project",
+  });
+  fireEvent.click(openProjectButtons[openProjectButtons.length - 1]);
+
+  expect(chatProps[chatProps.length - 1]).toMatchObject({ chatId: "chat-new" });
 });
 
 test("lazy-mounts saved chats when first activated", () => {
