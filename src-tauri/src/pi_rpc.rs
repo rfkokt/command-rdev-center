@@ -334,6 +334,7 @@ fn ensure_pi_installed_with_repair(
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
+const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contract below is authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory. Do not use `web_search`. Do not open a Swagger URL in the browser or take a browser snapshot merely to discover endpoints: this saved contract is the source of truth. If the required endpoint is absent from the saved contract, state that clearly and ask the user for the endpoint or an updated contract; do not search the web or Swagger UI for it. Use browser tools only when the user explicitly asks for browser/UI verification, or when direct API testing has passed and UI integration must be verified.";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
     let cached = crate::projects::api_documentation_context_for_project(project)
@@ -359,7 +360,7 @@ fn api_documentation_system_prompt(project: &Path) -> String {
                 "This was refreshed when this chat started."
             };
             format!(
-                "## Project API documentation\n{freshness} It is authoritative: inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory.\n{context}"
+                "## Project API documentation\n{freshness} {API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
             )
         })
         .unwrap_or_default()
@@ -521,9 +522,6 @@ pub fn spawn_pi_rpc(
     let prettier_path = bundled_prettier_path(&app)?;
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
-    if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
-        return Err("research session is already running".into());
-    }
     // Existing chat behavior remains replace-and-restart.
     if !session_id.starts_with("research-") {
         crate::browser_spike::close_session(
@@ -534,8 +532,10 @@ pub fn spawn_pi_rpc(
             &app.state::<crate::browser_spike::BrowserState>(),
             &session_id,
         );
-        if let Ok(map) = sessions_map().lock() {
-            if let Some(h) = map.get(&session_id) {
+        if let Ok(mut map) = sessions_map().lock() {
+            // Remove before killing so the old stdout reader cannot emit a
+            // `pi-rpc-ended` event that stops the replacement chat.
+            if let Some(h) = map.remove(&session_id) {
                 if let Ok(mut maybe_child) = h.child.lock() {
                     if let Some(child) = maybe_child.as_mut() {
                         let _ = child.kill();
@@ -543,6 +543,36 @@ pub fn spawn_pi_rpc(
                 }
             }
         }
+    }
+
+    let api_contracts_path = if global_chat {
+        None
+    } else {
+        match crate::projects::swagger_documents_for_project(&owning_project) {
+            Ok(contracts) => (!contracts.is_empty())
+                .then(|| {
+                    let path =
+                        std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
+                    std::fs::write(
+                        &path,
+                        serde_json::to_string(&contracts).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok::<_, String>(path)
+                })
+                .transpose()?,
+            // API contracts are optional context. A temporary DNS or network outage must not
+            // prevent an existing chat session from starting or resuming.
+            Err(error) => {
+                eprintln!("Skipping live API contracts for {session_id}: {error}");
+                None
+            }
+        }
+    };
+
+    // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
+    if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
+        return Err("research session is already running".into());
     }
 
     let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
@@ -567,7 +597,7 @@ pub fn spawn_pi_rpc(
         } else {
             // Global chat may operate a user-visible terminal, but every write is explicitly
             // confirmed in the UI before it reaches the shell.
-            args.push("web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal".into());
+            args.push("web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal,browser_open,browser_snapshot,browser_click,browser_fill,browser_wait,browser_network,browser_console,browser_screenshot,browser_close".into());
         }
     } else if let Some(tools) = tools {
         if tools.is_empty() {
@@ -727,6 +757,55 @@ pub fn spawn_pi_rpc(
     } else {
         crate::kanban::task_dir()?
     };
+    // Browser tools are optional — missing runtime/socket must not block chat.
+    let browser = match crate::browser_spike::ensure_bridge(
+        &app,
+        &app.state::<crate::browser_spike::BrowserState>(),
+        &session_id,
+    ) {
+        Ok(browser) => Some(browser),
+        Err(error) => {
+            eprintln!("Browser bridge unavailable for {session_id}: {error} — chat starts without browser tools");
+            None
+        }
+    };
+    if api_contracts_path.is_some() {
+        args.push("--extension".into());
+        args.push(
+            crate::projects::ensure_extensions()?
+                .join("api-test.ts")
+                .to_string_lossy()
+                .into(),
+        );
+        if let Some(index) = args.iter().position(|arg| arg == "--tools") {
+            if let Some(allowed) = args.get_mut(index + 1) {
+                if !allowed.is_empty() {
+                    allowed.push(',');
+                }
+                allowed.push_str("api_request,api_contract_test");
+            }
+        }
+    }
+    if browser.is_some() {
+        if !global_chat {
+            if let Some(index) = args.iter().position(|arg| arg == "--tools") {
+                if let Some(allowed) = args.get_mut(index + 1) {
+                    if !allowed.is_empty() {
+                        allowed.push(',');
+                    }
+                    allowed.push_str("browser_open,browser_snapshot,browser_click,browser_fill,browser_wait,browser_network,browser_console,browser_screenshot,browser_close");
+                }
+            }
+        }
+        args.push("--extension".into());
+        args.push(
+            crate::projects::ensure_extensions()?
+                .join("browser-tools.ts")
+                .to_string_lossy()
+                .into(),
+        );
+    }
+
     let mut command = Command::new(&pi_path);
     command
         .args(&args)
@@ -741,7 +820,16 @@ pub fn spawn_pi_rpc(
             "CRC_TERMINAL_DIR",
             std::env::temp_dir().join("command-rdev-center-terminals"),
         )
+        .env("CRC_SESSION_ID", &session_id)
         .env("CRC_PRETTIER_PATH", &prettier_path);
+    if let Some((ref socket, ref cap)) = browser {
+        command
+            .env("CRC_BROWSER_SOCKET", socket)
+            .env("CRC_BROWSER_CAPABILITY", cap);
+    }
+    if let Some(path) = api_contracts_path {
+        command.env("CRC_API_CONTRACTS_PATH", path);
+    }
     if !global_chat {
         let workspace_root = crate::projects::registered_workspace(&owning_project)
             .unwrap_or_else(|| owning_project.clone());
@@ -750,29 +838,6 @@ pub fn spawn_pi_rpc(
             "root": root,
             "baseBranch": crate::projects::project_base_branch(&root).unwrap_or_else(|_| "main".into()),
         })).collect::<Vec<_>>();
-        // Browser tools are optional — missing runtime/socket must not block chat.
-        let browser = crate::browser_spike::ensure_bridge(
-            &app,
-            &app.state::<crate::browser_spike::BrowserState>(),
-            &session_id,
-        )
-        .ok();
-        if let Some((ref socket, ref cap)) = browser {
-            args.push("--extension".into());
-            args.push(
-                crate::projects::ensure_extensions()?
-                    .join("browser-tools.ts")
-                    .to_string_lossy()
-                    .into(),
-            );
-            command
-                .env("CRC_BROWSER_SOCKET", socket)
-                .env("CRC_BROWSER_CAPABILITY", cap);
-        } else {
-            eprintln!(
-                "Browser bridge unavailable for {session_id} — chat starts without browser tools"
-            );
-        }
         command
             .env("CRC_PROJECT_ROOT", &owning_project)
             .env("CRC_WORKSPACE_ROOT", &workspace_root)
@@ -820,7 +885,13 @@ pub fn spawn_pi_rpc(
                                 "CRC_TERMINAL_DIR",
                                 std::env::temp_dir().join("command-rdev-center-terminals"),
                             )
+                            .env("CRC_SESSION_ID", &session_id)
                             .env("CRC_PRETTIER_PATH", &prettier_path);
+                        if let Some((ref socket, ref cap)) = browser {
+                            command
+                                .env("CRC_BROWSER_SOCKET", socket)
+                                .env("CRC_BROWSER_CAPABILITY", cap);
+                        }
                         if !global_chat {
                             command
                                 .env("CRC_PROJECT_ROOT", &owning_project)
@@ -911,10 +982,6 @@ pub fn spawn_pi_rpc(
             })
             == Some(process_id);
         if is_current {
-            crate::browser_spike::close_session(
-                &app_clone.state::<crate::browser_spike::BrowserState>(),
-                &sid,
-            );
             if sid.starts_with("research-") {
                 crate::deep_research::observe_end(&app_clone, &sid);
             }
@@ -1034,11 +1101,10 @@ pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn kill_pi_session(session_id: String) -> Result<(), String> {
-    let map = sessions_map()
+    let h = sessions_map()
         .lock()
-        .map_err(|_| "poisoned lock".to_string())?;
-    let h = map
-        .get(&session_id)
+        .map_err(|_| "poisoned lock".to_string())?
+        .remove(&session_id)
         .ok_or_else(|| format!("unknown session {}", session_id))?;
     let mut guard = h.child.lock().map_err(|_| "poisoned".to_string())?;
     if let Some(child) = guard.as_mut() {
@@ -1178,6 +1244,22 @@ mod tests {
     }
 
     #[test]
+    fn api_documentation_prompt_requires_saved_contract_before_browser() {
+        assert!(
+            API_DOCUMENTATION_WORKFLOW_PROMPT
+                .contains("inspect its `paths` and `components` directly")
+        );
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not use `web_search`"));
+        assert!(
+            API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser")
+        );
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("ask the user for the endpoint or an updated contract"));
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("user explicitly asks for browser/UI verification"));
+    }
+
+    #[test]
     fn worktree_prompt_explains_external_node_modules_symlink() {
         let prompt =
             worktree_system_prompt(Path::new("/worktrees/chat"), Path::new("/projects/app"))
@@ -1202,7 +1284,7 @@ mod tests {
 
     #[test]
     fn global_chat_search_tools_exclude_project_tools() {
-        let tools = "web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal";
+        let tools = "web_search,source_check,fetch_content,get_search_content,mcp,execute_terminal_command,list_chat_terminals,read_chat_terminal,write_chat_terminal,browser_open,browser_snapshot,browser_click,browser_fill,browser_wait,browser_network,browser_console,browser_screenshot,browser_close";
         assert!(tools.contains("web_search"));
         for allowed in [
             "execute_terminal_command",
@@ -1220,15 +1302,6 @@ mod tests {
             "track_kanban_task",
             "run_pipeline",
             "graphify",
-            "browser_open",
-            "browser_snapshot",
-            "browser_click",
-            "browser_fill",
-            "browser_wait",
-            "browser_network",
-            "browser_console",
-            "browser_screenshot",
-            "browser_close",
         ] {
             assert!(!tools.split(',').any(|tool| tool == denied));
         }

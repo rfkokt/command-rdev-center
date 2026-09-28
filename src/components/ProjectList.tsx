@@ -43,6 +43,7 @@ type TaskSource = {
   sheets: string[];
   pics: string[];
 };
+type ApiListSheet = { url: string; sheet: string };
 
 export default function ProjectList({
   onOpen,
@@ -64,7 +65,24 @@ export default function ProjectList({
   onToast: (message: string) => void;
 }) {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("kern.projects.collapsed");
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "kern.projects.collapsed",
+        JSON.stringify([...collapsed]),
+      );
+    } catch {
+      /* ponytail: ignore quota/private-mode write failures, collapse just won't persist */
+    }
+  }, [collapsed]);
   const [err, setErr] = useState<string | null>(null);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
@@ -88,9 +106,15 @@ export default function ProjectList({
     sheets: [],
     pics: [],
   });
-  const [swaggerUrl, setSwaggerUrl] = useState("");
+  const [swaggerUrls, setSwaggerUrls] = useState<string[]>([""]);
   const [postmanCollectionUrl, setPostmanCollectionUrl] = useState("");
   const [postmanCollectionPath, setPostmanCollectionPath] = useState("");
+  const [apiListSheet, setApiListSheet] = useState<ApiListSheet>({
+    url: "",
+    sheet: "",
+  });
+  const [apiListSheets, setApiListSheets] = useState<string[]>([]);
+  const [loadingApiListSheets, setLoadingApiListSheets] = useState(false);
   const [availableSheets, setAvailableSheets] = useState<string[]>([]);
   const [availablePics, setAvailablePics] = useState<string[]>([]);
   const [loadingSheets, setLoadingSheets] = useState(false);
@@ -239,23 +263,32 @@ export default function ProjectList({
           repositoryEntries.map(([path, , selected]) => [path, selected]),
         ),
       );
-      const [source, savedSwaggerUrl, savedPostmanCollectionUrl] =
-        await Promise.all([
-          invoke<TaskSource>("get_project_task_source", { path: project.path }),
-          invoke<string>("get_project_swagger_url", { path: project.path }),
-          invoke<string>("get_project_postman_collection_url", {
-            path: project.path,
-          }),
-        ]);
+      const [
+        source,
+        savedSwaggerUrls,
+        savedPostmanCollectionUrl,
+        savedApiListSheet,
+      ] = await Promise.all([
+        invoke<TaskSource>("get_project_task_source", { path: project.path }),
+        invoke<string[]>("get_project_swagger_urls", { path: project.path }),
+        invoke<string>("get_project_postman_collection_url", {
+          path: project.path,
+        }),
+        invoke<ApiListSheet | null>("get_project_api_list_sheet", {
+          path: project.path,
+        }),
+      ]);
       const selectedSheets = source.sheets?.length
         ? source.sheets
         : source.sheet
           ? [source.sheet]
           : [];
       setTaskSource({ ...source, sheets: selectedSheets });
-      setSwaggerUrl(savedSwaggerUrl);
+      setSwaggerUrls(savedSwaggerUrls.length ? savedSwaggerUrls : [""]);
       setPostmanCollectionUrl(savedPostmanCollectionUrl);
       setPostmanCollectionPath("");
+      setApiListSheet(savedApiListSheet ?? { url: "", sheet: "" });
+      setApiListSheets([]);
       setAvailableSheets(selectedSheets);
       setAvailablePics(source.pics);
       setSettingsTab("repositories");
@@ -396,14 +429,37 @@ export default function ProjectList({
     }
   }
 
+  async function loadApiListSheets() {
+    if (!apiListSheet.url.trim())
+      return setErr("Google Sheets URL is required");
+    setLoadingApiListSheets(true);
+    try {
+      const sheets = await invoke<string[]>("list_google_sheet_names", {
+        url: apiListSheet.url,
+      });
+      setApiListSheets(sheets);
+      setApiListSheet((current) => ({
+        ...current,
+        sheet: sheets.includes(current.sheet) ? current.sheet : "",
+      }));
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoadingApiListSheets(false);
+    }
+  }
+
   async function saveApiDocumentation() {
     if (!projectToEdit) return;
     try {
       await invoke("save_project_api_documentation", {
         path: projectToEdit.path,
-        swaggerUrl,
+        swaggerUrls,
         postmanCollectionUrl,
         postmanCollectionPath: postmanCollectionPath || null,
+        apiListSheet:
+          apiListSheet.url.trim() && apiListSheet.sheet ? apiListSheet : null,
       });
       onToast("API documentation fetched and saved for new chats.");
       setErr(null);
@@ -750,13 +806,91 @@ export default function ProjectList({
                   </p>
                   <div className="project-api-fields">
                     <label>
-                      <span>SWAGGER / OPENAPI URL</span>
-                      <input
-                        type="url"
-                        value={swaggerUrl}
-                        onChange={(event) => setSwaggerUrl(event.target.value)}
-                        placeholder="https://api.example.com/swagger-ui/index.html"
-                      />
+                      <span>SWAGGER / OPENAPI URLS</span>
+                      {swaggerUrls.map((swaggerUrl, index) => (
+                        <div key={index} className="project-api-url-row">
+                          <input
+                            type="url"
+                            value={swaggerUrl}
+                            onChange={(event) =>
+                              setSwaggerUrls((urls) =>
+                                urls.map((url, position) =>
+                                  position === index ? event.target.value : url,
+                                ),
+                              )
+                            }
+                            placeholder="https://api.example.com/swagger-ui/index.html"
+                          />
+                          {swaggerUrls.length > 1 && (
+                            <button
+                              type="button"
+                              aria-label={`Remove Swagger URL ${index + 1}`}
+                              onClick={() =>
+                                setSwaggerUrls((urls) =>
+                                  urls.filter(
+                                    (_, position) => position !== index,
+                                  ),
+                                )
+                              }
+                            >
+                              REMOVE
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setSwaggerUrls((urls) => [...urls, ""])}
+                      >
+                        ADD SWAGGER URL
+                      </button>
+                    </label>
+                    <label>
+                      <span>API LIST GOOGLE SHEET (OPTIONAL)</span>
+                      <div className="project-api-inline-row">
+                        <input
+                          type="url"
+                          value={apiListSheet.url}
+                          onChange={(event) =>
+                            setApiListSheet({
+                              url: event.target.value,
+                              sheet: "",
+                            })
+                          }
+                          placeholder="https://docs.google.com/spreadsheets/d/…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void loadApiListSheets()}
+                          disabled={
+                            loadingApiListSheets || !apiListSheet.url.trim()
+                          }
+                        >
+                          {loadingApiListSheets
+                            ? "LOADING…"
+                            : "LOAD WORKSHEETS"}
+                        </button>
+                      </div>
+                      {(apiListSheets.length > 0 || apiListSheet.sheet) && (
+                        <select
+                          value={apiListSheet.sheet}
+                          onChange={(event) =>
+                            setApiListSheet((current) => ({
+                              ...current,
+                              sheet: event.target.value,
+                            }))
+                          }
+                        >
+                          <option value="">SELECT API LIST WORKSHEET</option>
+                          {[...new Set([apiListSheet.sheet, ...apiListSheets])]
+                            .filter(Boolean)
+                            .map((sheet) => (
+                              <option key={sheet} value={sheet}>
+                                {sheet}
+                              </option>
+                            ))}
+                        </select>
+                      )}
                     </label>
                     <label>
                       <span>POSTMAN COLLECTION URL (OPTIONAL)</span>
@@ -771,29 +905,33 @@ export default function ProjectList({
                     </label>
                     <label>
                       <span>POSTMAN COLLECTION JSON</span>
-                      <input
-                        value={
-                          postmanCollectionPath
-                            ? postmanCollectionPath.split(/[\\/]/).pop()
-                            : ""
-                        }
-                        readOnly
-                        placeholder="Choose exported collection JSON"
-                      />
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const path = await open({
-                            multiple: false,
-                            title: "Select Postman Collection JSON",
-                            filters: [{ name: "JSON", extensions: ["json"] }],
-                          });
-                          if (typeof path === "string")
-                            setPostmanCollectionPath(path);
-                        }}
-                      >
-                        {postmanCollectionPath ? "CHANGE JSON" : "CHOOSE JSON"}
-                      </button>
+                      <div className="project-api-inline-row">
+                        <input
+                          value={
+                            postmanCollectionPath
+                              ? postmanCollectionPath.split(/[\\/]/).pop()
+                              : ""
+                          }
+                          readOnly
+                          placeholder="Choose exported collection JSON"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const path = await open({
+                              multiple: false,
+                              title: "Select Postman Collection JSON",
+                              filters: [{ name: "JSON", extensions: ["json"] }],
+                            });
+                            if (typeof path === "string")
+                              setPostmanCollectionPath(path);
+                          }}
+                        >
+                          {postmanCollectionPath
+                            ? "CHANGE JSON"
+                            : "CHOOSE JSON"}
+                        </button>
+                      </div>
                     </label>
                   </div>
                   <button

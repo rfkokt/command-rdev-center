@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 
 const MAX_FRAME: usize = 1024 * 1024;
 const CAPABILITY_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
-const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
 
 pub struct BrowserSessions {
     hosts: HashMap<String, BrowserHost>,
@@ -82,7 +82,17 @@ fn browser_host_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .resource_dir()
         .map_err(|error| error.to_string())?
         .join("browser-host");
-    if packaged.join("host.mjs").is_file() {
+    if [
+        "host.mjs",
+        "artifact-store.mjs",
+        "browser-actions.mjs",
+        "network-policy.mjs",
+        "proxy.mjs",
+        "semantic-snapshot.mjs",
+    ]
+    .iter()
+    .all(|file| packaged.join(file).is_file())
+    {
         return Ok(packaged);
     }
     Ok(Path::new(env!("CARGO_MANIFEST_DIR")).join("browser-host"))
@@ -138,10 +148,12 @@ impl BrowserHost {
                 artifact_root(app, session_id)?,
             )
             .env("KERN_BROWSER_APPROVED_ORIGINS", approved_origins)
+            .env("KERN_BROWSER_ALLOW_PUBLIC_HTTPS", "1")
+            .env("KERN_BROWSER_HEADED", "1")
             .env("PLAYWRIGHT_BROWSERS_PATH", root.join(".browsers"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::inherit());
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -326,7 +338,11 @@ pub fn ensure_bridge(
     }
     let mut host = BrowserHost::start(app, session_id, "")?;
     let capability = host.capability.clone();
-    let socket_dir = artifact_root(app, session_id)?.join("ipc");
+    // Unix-domain sockets have a small platform path limit (104 bytes on macOS),
+    // so keep IPC outside the much longer app-data artifact path.
+    let socket_dir = std::env::temp_dir()
+        .join("kern-browser-ipc")
+        .join(&capability[..16]);
     std::fs::create_dir_all(&socket_dir).map_err(|_| "browser_socket_unavailable")?;
     std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700))
         .map_err(|_| "browser_socket_unavailable")?;
@@ -387,6 +403,38 @@ pub fn ensure_bridge(
         },
     );
     Ok((socket, capability))
+}
+
+fn screenshot_artifact_id<'a>(session_id: &str, artifact_ref: &'a str) -> Result<&'a str, String> {
+    let prefix = format!("browser-artifact:{session_id}:");
+    let id = artifact_ref
+        .strip_prefix(&prefix)
+        .ok_or_else(|| "browser artifact access denied".to_string())?;
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("browser artifact access denied".into());
+    }
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn read_browser_screenshot(
+    app: AppHandle,
+    session_id: String,
+    artifact_ref: String,
+) -> Result<Vec<u8>, String> {
+    if !valid_session_id(&session_id) {
+        return Err("invalid browser session id".into());
+    }
+    let id = screenshot_artifact_id(&session_id, &artifact_ref)?;
+    let path = artifact_root(&app, &session_id)?
+        .join("screenshots")
+        .join(id);
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|_| "browser screenshot unavailable".to_string())?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err("browser screenshot unavailable".into());
+    }
+    std::fs::read(path).map_err(|_| "browser screenshot unavailable".into())
 }
 
 pub fn close_session(state: &BrowserState, session_id: &str) {
@@ -460,6 +508,19 @@ pub fn browser_b0_packaged_smoke(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshot_artifact_refs_are_session_bound() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            screenshot_artifact_id("chat-a", &format!("browser-artifact:chat-a:{id}")),
+            Ok(id)
+        );
+        assert!(
+            screenshot_artifact_id("chat-b", &format!("browser-artifact:chat-a:{id}")).is_err()
+        );
+        assert!(screenshot_artifact_id("chat-a", "browser-artifact:chat-a:../secret").is_err());
+    }
 
     #[test]
     fn capability_is_256_bits_and_unique() {

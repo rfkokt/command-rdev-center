@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { ToolCall as TC } from "../lib/rpc";
+import { useModalFocus } from "./useModalFocus";
 
 function normalize(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -69,6 +71,108 @@ function preview(args: Record<string, unknown>) {
 export function isWebSearchTool(name: string) {
   return /(?:^|\.)(?:web_search|source_check|fetch_content|get_search_content)$/.test(
     name,
+  );
+}
+
+export function browserScreenshotRefFromText(text: string): string | null {
+  return (
+    text.match(/browser-artifact:[A-Za-z0-9_-]+:[0-9a-f]{32}/)?.[0] ?? null
+  );
+}
+
+export function browserScreenshotRef(tc: TC): string | null {
+  if (!/(?:^|\.)browser_screenshot$/.test(tc.name) || tc.phase !== "end")
+    return null;
+  const result = normalize(tc.result) as {
+    details?: { data?: { artifactRef?: unknown } };
+    data?: { artifactRef?: unknown };
+  } | null;
+  const ref = result?.details?.data?.artifactRef ?? result?.data?.artifactRef;
+  if (typeof ref === "string" && ref.startsWith("browser-artifact:"))
+    return ref;
+  const serialized = JSON.stringify(result);
+  return typeof serialized === "string"
+    ? browserScreenshotRefFromText(serialized)
+    : null;
+}
+
+export function BrowserScreenshot({ tc }: { tc: TC }) {
+  const artifactRef = browserScreenshotRef(tc);
+  const [src, setSrc] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const modalRef = useModalFocus<HTMLDivElement>(() => setOpen(false), open);
+  useEffect(() => {
+    if (!artifactRef) return;
+    let active = true;
+    invoke<number[]>("read_browser_screenshot", {
+      sessionId: artifactRef.split(":")[1],
+      artifactRef,
+    })
+      .then((bytes) => {
+        if (!active) return;
+        const blob = new Blob([new Uint8Array(bytes)], { type: "image/png" });
+        setSrc(URL.createObjectURL(blob));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [artifactRef]);
+  useEffect(
+    () => () => {
+      if (src) URL.revokeObjectURL(src);
+    },
+    [src],
+  );
+  if (!src) return null;
+  const download = () => {
+    const link = document.createElement("a");
+    link.href = src;
+    link.download = `${String(tc.args.name || "browser-screenshot")}.png`;
+    link.click();
+  };
+  return (
+    <figure className="browser-screenshot-wrap">
+      <button
+        className="browser-screenshot-open"
+        onClick={() => setOpen(true)}
+        aria-label="Open browser screenshot full size"
+      >
+        <img
+          className="browser-screenshot"
+          src={src}
+          alt="Browser screenshot"
+        />
+      </button>
+      <button className="browser-screenshot-download" onClick={download}>
+        Download PNG
+      </button>
+      {open && (
+        <div
+          className="browser-screenshot-modal"
+          role="presentation"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Browser screenshot preview"
+            tabIndex={-1}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <img src={src} alt="Browser screenshot full size" />
+            <button
+              onClick={() => setOpen(false)}
+              aria-label="Close screenshot preview"
+            >
+              Close
+            </button>
+            <button onClick={download}>Download PNG</button>
+          </div>
+        </div>
+      )}
+    </figure>
   );
 }
 

@@ -17,6 +17,7 @@ const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts")
 const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts");
 const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
 const BROWSER_TOOLS_EXTENSION: &str = include_str!("../extensions/browser-tools.ts");
+const API_TEST_EXTENSION: &str = include_str!("../extensions/api-test.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -58,16 +59,27 @@ struct StoredConfig {
     pipeline_types: HashMap<String, String>,
     #[serde(default)]
     task_sources: HashMap<String, TaskSource>,
+    // Retained for backward compatibility with existing config files.
     #[serde(default)]
     swagger_urls: HashMap<String, String>,
+    #[serde(default)]
+    swagger_url_lists: HashMap<String, Vec<String>>,
     #[serde(default)]
     postman_collection_urls: HashMap<String, String>,
     #[serde(default)]
     postman_collection_jsons: HashMap<String, String>,
     #[serde(default)]
+    api_list_sheets: HashMap<String, ApiListSheet>,
+    #[serde(default)]
     api_documentation_contexts: HashMap<String, String>,
     #[serde(default)]
     backlog_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiListSheet {
+    pub url: String,
+    pub sheet: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -259,6 +271,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("agent-reach.ts", AGENT_REACH_EXTENSION),
         ("agent-reach-security.ts", AGENT_REACH_SECURITY),
         ("browser-tools.ts", BROWSER_TOOLS_EXTENSION),
+        ("api-test.ts", API_TEST_EXTENSION),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }
@@ -839,10 +852,24 @@ fn swagger_document_url(url: &str) -> Result<String, String> {
     let config_url = absolute_url(&initializer, config_url)?;
     let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
         .map_err(|_| "Swagger config is not valid JSON")?;
+    let primary_name = url::Url::parse(url).ok().and_then(|url| {
+        url.query_pairs()
+            .find(|(key, _)| key == "urls.primaryName")
+            .map(|(_, value)| value.into_owned())
+    });
     let document_url = config
         .get("urls")
         .and_then(|urls| urls.as_array())
-        .and_then(|urls| urls.first())
+        .and_then(|urls| {
+            primary_name
+                .as_deref()
+                .and_then(|name| {
+                    urls.iter().find(|item| {
+                        item.get("name").and_then(|value| value.as_str()) == Some(name)
+                    })
+                })
+                .or_else(|| urls.first())
+        })
         .and_then(|item| item.get("url"))
         .and_then(|item| item.as_str())
         .or_else(|| config.get("url").and_then(|item| item.as_str()))
@@ -863,17 +890,30 @@ fn validated_postman_collection_json(json: String) -> Result<String, String> {
 }
 
 fn api_documentation_context(
-    swagger_url: Option<&str>,
+    swagger_urls: &[String],
     postman_url: Option<&str>,
     postman_json: Option<&str>,
+    api_list_sheet: Option<&ApiListSheet>,
 ) -> Result<String, String> {
     let mut context = String::new();
-    if let Some(url) = swagger_url.filter(|url| !url.is_empty()) {
+    for url in swagger_urls {
         let document_url = swagger_document_url(url)?;
         context.push_str("## Swagger/OpenAPI contract\nSource: ");
         context.push_str(&document_url);
         context.push_str("\n```json\n");
         context.push_str(&fetch_url(&document_url)?);
+        context.push_str("\n```\n");
+    }
+    if let Some(api_list_sheet) = api_list_sheet {
+        let csv =
+            crate::kanban::fetch_google_sheet_csv(&api_list_sheet.url, &api_list_sheet.sheet)?;
+        if csv.len() > MAX_API_DOCUMENTATION_BYTES {
+            return Err("API list exceeds 512 KB".into());
+        }
+        context.push_str("## API list\nSource: Google Sheet / ");
+        context.push_str(&api_list_sheet.sheet);
+        context.push_str("\n```csv\n");
+        context.push_str(&csv);
         context.push_str("\n```\n");
     }
     if let Some(json) = postman_json.filter(|json| !json.is_empty()) {
@@ -890,11 +930,23 @@ fn api_documentation_context(
     Ok(context)
 }
 
+fn swagger_urls_for_config(config: &StoredConfig, key: &str) -> Vec<String> {
+    config
+        .swagger_url_lists
+        .get(key)
+        .cloned()
+        .filter(|urls| !urls.is_empty())
+        .or_else(|| config.swagger_urls.get(key).cloned().map(|url| vec![url]))
+        .unwrap_or_default()
+}
+
 fn refresh_api_documentation_context(config: &mut StoredConfig, key: &str) -> Result<(), String> {
+    let swagger_urls = swagger_urls_for_config(config, key);
     let context = api_documentation_context(
-        config.swagger_urls.get(key).map(String::as_str),
+        &swagger_urls,
         config.postman_collection_urls.get(key).map(String::as_str),
         config.postman_collection_jsons.get(key).map(String::as_str),
+        config.api_list_sheets.get(key),
     )?;
     if context.is_empty() {
         config.api_documentation_contexts.remove(key);
@@ -915,7 +967,75 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .cloned())
 }
 
-pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
+#[derive(Serialize)]
+pub struct ApiContract {
+    id: String,
+    origin: String,
+    document: serde_json::Value,
+}
+
+pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, String> {
+    swagger_urls_for_project(path)?
+        .into_iter()
+        .map(|url| {
+            let document_url = swagger_document_url(&url)?;
+            let document: serde_json::Value = serde_json::from_str(&fetch_url(&document_url)?)
+                .map_err(|_| "Swagger contract is not valid JSON")?;
+            let id = document
+                .pointer("/info/title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&document_url)
+                .to_lowercase()
+                .chars()
+                .map(|character| {
+                    if character.is_ascii_alphanumeric() {
+                        character
+                    } else {
+                        '-'
+                    }
+                })
+                .collect::<String>()
+                .trim_matches('-')
+                .to_owned();
+            let server = document
+                .pointer("/servers/0/url")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&url);
+            let origin = url::Url::parse(server)
+                .map_err(|_| "Swagger server URL must be valid")?
+                .origin()
+                .ascii_serialization();
+            Ok(ApiContract {
+                id,
+                origin,
+                document,
+            })
+        })
+        .collect()
+}
+
+pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, String> {
+    let Some(url) = swagger_url_for_project(path)? else {
+        return Ok(None);
+    };
+    match swagger_document_url(&url).and_then(|document_url| fetch_url(&document_url)) {
+        Ok(document) => Ok(Some(document)),
+        Err(error) => api_documentation_context_for_project(path)?
+            .and_then(|context| {
+                context
+                    .split_once("## Swagger/OpenAPI contract")?
+                    .1
+                    .split_once("```json\n")?
+                    .1
+                    .split_once("\n```")
+                    .map(|(document, _)| document.to_owned())
+            })
+            .map(Some)
+            .ok_or(error),
+    }
+}
+
+pub fn swagger_urls_for_project(path: &Path) -> Result<Vec<String>, String> {
     let path = canonicalize_or_original(path);
     let config = read_config()?;
     Ok(config
@@ -923,15 +1043,29 @@ pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
         .iter()
         .find_map(|saved| {
             let saved = canonicalize_or_original(Path::new(saved));
-            path.starts_with(&saved).then(|| {
-                config
-                    .swagger_urls
-                    .get(&saved.to_string_lossy().into_owned())
-                    .filter(|url| !url.is_empty())
-                    .cloned()
-            })
+            path.starts_with(&saved)
+                .then(|| swagger_urls_for_config(&config, &saved.to_string_lossy()))
         })
-        .flatten())
+        .unwrap_or_default())
+}
+
+pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
+    Ok(swagger_urls_for_project(path)?.into_iter().next())
+}
+
+#[tauri::command]
+pub fn get_project_swagger_urls(path: String) -> Result<Vec<String>, String> {
+    swagger_urls_for_project(Path::new(&path))
+}
+
+fn validated_swagger_urls(urls: Vec<String>) -> Result<Vec<String>, String> {
+    Ok(urls
+        .into_iter()
+        .map(|url| validated_swagger_url(&url))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|url| !url.is_empty())
+        .collect())
 }
 
 #[tauri::command]
@@ -956,10 +1090,15 @@ pub fn save_project_swagger_url(path: String, swagger_url: String) -> Result<Str
     if swagger_url.is_empty() {
         config.swagger_urls.remove(&canonical);
         config.swagger_urls.remove(&path);
+        config.swagger_url_lists.remove(&canonical);
+        config.swagger_url_lists.remove(&path);
     } else {
         config
             .swagger_urls
             .insert(canonical.clone(), swagger_url.clone());
+        config
+            .swagger_url_lists
+            .insert(canonical.clone(), vec![swagger_url.clone()]);
     }
     refresh_api_documentation_context(&mut config, &canonical)?;
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
@@ -1025,19 +1164,24 @@ pub fn save_project_postman_collection_url(
 #[tauri::command]
 pub fn save_project_api_documentation(
     path: String,
-    swagger_url: String,
+    swagger_urls: Vec<String>,
     postman_collection_url: String,
     postman_collection_path: Option<String>,
+    api_list_sheet: Option<ApiListSheet>,
 ) -> Result<(), String> {
     let canonical = project_config_key(Path::new(&path))?;
-    let swagger_url = validated_swagger_url(&swagger_url)?;
+    let swagger_urls = validated_swagger_urls(swagger_urls)?;
     let postman_collection_url = validated_swagger_url(&postman_collection_url)?;
     let mut config = read_config()?;
-    if swagger_url.is_empty() {
-        config.swagger_urls.remove(&canonical);
-        config.swagger_urls.remove(&path);
+    config.swagger_urls.remove(&canonical);
+    config.swagger_urls.remove(&path);
+    if swagger_urls.is_empty() {
+        config.swagger_url_lists.remove(&canonical);
+        config.swagger_url_lists.remove(&path);
     } else {
-        config.swagger_urls.insert(canonical.clone(), swagger_url);
+        config
+            .swagger_url_lists
+            .insert(canonical.clone(), swagger_urls);
     }
     if postman_collection_url.is_empty() {
         config.postman_collection_urls.remove(&canonical);
@@ -1054,9 +1198,30 @@ pub fn save_project_api_documentation(
             .postman_collection_jsons
             .insert(canonical.clone(), validated_postman_collection_json(json)?);
     }
+    if let Some(api_list_sheet) = api_list_sheet
+        .filter(|sheet| !sheet.url.trim().is_empty() && !sheet.sheet.trim().is_empty())
+    {
+        let csv =
+            crate::kanban::fetch_google_sheet_csv(&api_list_sheet.url, &api_list_sheet.sheet)?;
+        if csv.len() > MAX_API_DOCUMENTATION_BYTES {
+            return Err("API list exceeds 512 KB".into());
+        }
+        config
+            .api_list_sheets
+            .insert(canonical.clone(), api_list_sheet);
+    } else {
+        config.api_list_sheets.remove(&canonical);
+        config.api_list_sheets.remove(&path);
+    }
     refresh_api_documentation_context(&mut config, &canonical)?;
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn get_project_api_list_sheet(path: String) -> Result<Option<ApiListSheet>, String> {
+    let key = project_config_key(Path::new(&path))?;
+    Ok(read_config()?.api_list_sheets.get(&key).cloned())
 }
 
 #[tauri::command]
@@ -1270,10 +1435,14 @@ pub fn remove_project(path: String) -> Result<(), String> {
     config.task_sources.remove(&path);
     config.swagger_urls.remove(&canonical);
     config.swagger_urls.remove(&path);
+    config.swagger_url_lists.remove(&canonical);
+    config.swagger_url_lists.remove(&path);
     config.postman_collection_urls.remove(&canonical);
     config.postman_collection_urls.remove(&path);
     config.postman_collection_jsons.remove(&canonical);
     config.postman_collection_jsons.remove(&path);
+    config.api_list_sheets.remove(&canonical);
+    config.api_list_sheets.remove(&path);
     config.api_documentation_contexts.remove(&canonical);
     config.api_documentation_contexts.remove(&path);
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;

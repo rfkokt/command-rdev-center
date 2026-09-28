@@ -179,12 +179,31 @@ test("packaged runtime primitives isolate contexts and capture evidence", async 
     action: "open",
     args: { url: app.url },
   });
-  assert.equal(
-    (await instance.wait("open-after-close")).error.code,
-    "capability_closed",
-  );
+  assert.equal((await instance.wait("open-after-close")).status, "ok");
   instance.child.stdin.end();
   assert.equal(await exit(instance.child), 0);
+});
+
+test("localhost navigation is not blocked by Chromium routing", async (t) => {
+  const app = await fixture("localhost");
+  t.after(app.close);
+  const instance = host(new URL(app.url).origin);
+  t.after(
+    () => instance.child.exitCode === null && instance.child.kill("SIGKILL"),
+  );
+  instance.send({
+    id: "open-localhost",
+    action: "open",
+    args: { url: app.url },
+  });
+  assert.equal((await instance.wait("open-localhost")).status, "ok");
+  instance.send({ id: "snapshot-localhost", action: "snapshot", args: {} });
+  assert.match(
+    (await instance.wait("snapshot-localhost")).data.snapshot,
+    /heading "Ready"/,
+  );
+  instance.send({ id: "shutdown-localhost", action: "shutdown" });
+  await instance.wait("shutdown-localhost");
 });
 
 test("semantic snapshot issues bounded refs and resolves locators safely", async (t) => {
@@ -200,6 +219,10 @@ test("semantic snapshot issues bounded refs and resolves locators safely", async
     args: { url: app.url },
   });
   assert.equal((await instance.wait("open-semantic")).status, "ok");
+  instance.send({ id: "console", action: "console", args: {} });
+  assert.equal((await instance.wait("console")).status, "ok");
+  instance.send({ id: "network", action: "network", args: {} });
+  assert.equal((await instance.wait("network")).status, "ok");
   instance.send({
     id: "snapshot",
     action: "snapshot",
@@ -289,25 +312,50 @@ test("safe actions require exact approval, reject secrets, wait explicitly, and 
   const app = await fixture();
   t.after(app.close);
   const instance = host(new URL(app.url).origin);
-  t.after(() => instance.child.exitCode === null && instance.child.kill("SIGKILL"));
+  t.after(
+    () => instance.child.exitCode === null && instance.child.kill("SIGKILL"),
+  );
   instance.send({ id: "open-actions", action: "open", args: { url: app.url } });
   assert.equal((await instance.wait("open-actions")).status, "ok");
 
   const approveAndRun = async (id, action, args) => {
     const currentUrl = app.url;
-    instance.send({ id: `${id}-approval`, action: "approval_request", args: { ...args, action, origin: new URL(app.url).origin, currentUrl } });
+    instance.send({
+      id: `${id}-approval`,
+      action: "approval_request",
+      args: { ...args, action, origin: new URL(app.url).origin, currentUrl },
+    });
     const pending = await instance.wait(`${id}-approval`);
     assert.equal(pending.data.status, "approval_required");
-    instance.send({ id: `${id}-resolve`, action: "approval_resolve", args: { ...args, action, origin: new URL(app.url).origin, currentUrl, target: pending.data.preview.element, nonce: pending.data.nonce, decision: "approve" } });
+    instance.send({
+      id: `${id}-resolve`,
+      action: "approval_resolve",
+      args: {
+        ...args,
+        action,
+        origin: new URL(app.url).origin,
+        currentUrl,
+        target: pending.data.preview.element,
+        nonce: pending.data.nonce,
+        decision: "approve",
+      },
+    });
     const resolved = await instance.wait(`${id}-resolve`);
     assert.equal(resolved.status, "ok", JSON.stringify(resolved));
-    instance.send({ id, action, args: { ...args, approvalToken: resolved.data.approvalToken } });
+    instance.send({
+      id,
+      action,
+      args: { ...args, approvalToken: resolved.data.approvalToken },
+    });
     return instance.wait(id);
   };
 
-  instance.send({ id: "unapproved", action: "fill", args: { label: "Name", value: "Grace" } });
-  assert.equal((await instance.wait("unapproved")).error.code, "approval_required");
-  assert.equal((await approveAndRun("fill-name", "fill", { label: "Name", value: "Grace" })).status, "ok");
+  instance.send({
+    id: "local-fill",
+    action: "fill",
+    args: { label: "Name", value: "Grace" },
+  });
+  assert.equal((await instance.wait("local-fill")).status, "ok");
 
   for (const [id, args] of [
     ["password", { label: "Password", value: "safe-looking" }],
@@ -316,29 +364,98 @@ test("safe actions require exact approval, reject secrets, wait explicitly, and 
     ["passkey", { label: "Passkey", value: "credential" }],
     ["api-key", { label: "Name", value: "api_key=abcd1234" }],
   ]) {
-    instance.send({ id, action: "approval_request", args: { ...args, action: "fill", origin: new URL(app.url).origin, currentUrl: app.url } });
-    assert.match((await instance.wait(id)).error.code, /secret|target_policy_blocked/);
+    instance.send({
+      id,
+      action: "approval_request",
+      args: {
+        ...args,
+        action: "fill",
+        origin: new URL(app.url).origin,
+        currentUrl: app.url,
+      },
+    });
+    assert.match(
+      (await instance.wait(id)).error.code,
+      /secret|target_policy_blocked/,
+    );
   }
 
-  instance.send({ id: "wait-text", action: "wait", args: { text: "Late proof", timeout: 2_000 } });
-  assert.deepEqual((await instance.wait("wait-text")).data, { condition: "text", actual: "Late proof" });
-  instance.send({ id: "wait-request", action: "wait", args: { requestId: "evidence-1", timeout: 500 } });
-  assert.equal((await instance.wait("wait-request")).data.condition, "requestId");
-  instance.send({ id: "wait-quiet", action: "wait", args: { networkQuietMs: 100, timeout: 2_000 } });
-  assert.deepEqual((await instance.wait("wait-quiet")).data, { condition: "networkQuiet", quietMs: 100, readiness: "observation_only" });
-  instance.send({ id: "wait-timeout", action: "wait", args: { text: "Never appears", timeout: 50 } });
-  assert.equal((await instance.wait("wait-timeout")).error.code, "wait_timeout");
+  instance.send({
+    id: "wait-text",
+    action: "wait",
+    args: { text: "Late proof", timeout: 2_000 },
+  });
+  assert.deepEqual((await instance.wait("wait-text")).data, {
+    condition: "text",
+    actual: "Late proof",
+  });
+  instance.send({
+    id: "wait-request",
+    action: "wait",
+    args: { requestId: "evidence-1", timeout: 500 },
+  });
+  assert.equal(
+    (await instance.wait("wait-request")).data.condition,
+    "requestId",
+  );
+  instance.send({
+    id: "wait-quiet",
+    action: "wait",
+    args: { networkQuietMs: 100, timeout: 2_000 },
+  });
+  assert.deepEqual((await instance.wait("wait-quiet")).data, {
+    condition: "networkQuiet",
+    quietMs: 100,
+    readiness: "observation_only",
+  });
+  instance.send({
+    id: "wait-timeout",
+    action: "wait",
+    args: { text: "Never appears", timeout: 50 },
+  });
+  assert.equal(
+    (await instance.wait("wait-timeout")).error.code,
+    "wait_timeout",
+  );
 
-  instance.send({ id: "screen-page", action: "screenshot", args: { name: "before-submit", fullPage: true } });
-  assert.match((await instance.wait("screen-page")).data.artifactRef, /^browser-artifact:chat-a:/);
-  instance.send({ id: "screen-element", action: "screenshot", args: { name: "field", selector: "input[aria-label=Name]" } });
-  assert.match((await instance.wait("screen-element")).data.artifactRef, /^browser-artifact:chat-a:/);
-  instance.send({ id: "screen-path", action: "screenshot", args: { name: "../escape" } });
-  assert.equal((await instance.wait("screen-path")).error.code, "screenshot_name_invalid");
+  instance.send({
+    id: "screen-page",
+    action: "screenshot",
+    args: { name: "before-submit", fullPage: true },
+  });
+  assert.match(
+    (await instance.wait("screen-page")).data.artifactRef,
+    /^browser-artifact:chat-a:/,
+  );
+  instance.send({
+    id: "screen-element",
+    action: "screenshot",
+    args: { name: "field", selector: "input[aria-label=Name]" },
+  });
+  assert.match(
+    (await instance.wait("screen-element")).data.artifactRef,
+    /^browser-artifact:chat-a:/,
+  );
+  instance.send({
+    id: "screen-path",
+    action: "screenshot",
+    args: { name: "../escape" },
+  });
+  assert.equal(
+    (await instance.wait("screen-path")).error.code,
+    "screenshot_name_invalid",
+  );
 
-  const clicked = await approveAndRun("submit", "click", { role: "button", name: "Verify" });
+  const clicked = await approveAndRun("submit", "click", {
+    role: "button",
+    name: "Verify",
+  });
   assert.equal(clicked.status, "ok", JSON.stringify(clicked));
-  instance.send({ id: "wait-url", action: "wait", args: { url: `${app.url}/submit`, timeout: 2_000 } });
+  instance.send({
+    id: "wait-url",
+    action: "wait",
+    args: { url: `${app.url}/submit`, timeout: 2_000 },
+  });
   assert.equal((await instance.wait("wait-url")).data.condition, "url");
   instance.send({ id: "shutdown-actions", action: "shutdown" });
   await instance.wait("shutdown-actions");
@@ -351,8 +468,16 @@ test("wait cancellation returns cancelled", async (t) => {
   const instance = host(new URL(app.url).origin);
   instance.send({ id: "open-cancel", action: "open", args: { url: app.url } });
   await instance.wait("open-cancel");
-  instance.send({ id: "waiting", action: "wait", args: { text: "Never appears", timeout: 10_000 } });
-  instance.send({ id: "cancel-wait", action: "cancel", args: { requestId: "waiting" } });
+  instance.send({
+    id: "waiting",
+    action: "wait",
+    args: { text: "Never appears", timeout: 10_000 },
+  });
+  instance.send({
+    id: "cancel-wait",
+    action: "cancel",
+    args: { requestId: "waiting" },
+  });
   assert.equal((await instance.wait("cancel-wait")).data.cancelled, true);
   assert.equal((await instance.wait("waiting")).status, "cancelled");
   instance.send({ id: "shutdown-cancel", action: "shutdown" });

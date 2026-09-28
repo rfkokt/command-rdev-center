@@ -65,6 +65,14 @@ fn lock_tasks(dir: &Path) -> Result<File, String> {
     Ok(lock)
 }
 
+fn is_task_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("json")
+        && !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('_'))
+}
+
 fn read_tasks(path: &Path) -> Result<Vec<KanbanTask>, String> {
     let tasks: Vec<KanbanTask> =
         serde_json::from_str(&std::fs::read_to_string(path).map_err(|e| e.to_string())?)
@@ -269,7 +277,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
     Ok(tasks)
 }
 
-fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> {
     let csv_url = google_sheet_csv_url(url, sheet)?;
     let output = std::process::Command::new("curl")
         .args([
@@ -286,7 +294,11 @@ fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    parse_sheet_tasks(&output.stdout)
+    String::from_utf8(output.stdout).map_err(|_| "Google Sheet is not UTF-8".into())
+}
+
+fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
+    parse_sheet_tasks(fetch_google_sheet_csv(url, sheet)?.as_bytes())
 }
 
 fn parse_google_sheet_names(html: &str) -> Vec<String> {
@@ -585,7 +597,7 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
     if dir.exists() {
         for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())? {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            if !is_task_file(&path) {
                 continue;
             }
             let raw =
@@ -676,6 +688,13 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignores_internal_pipeline_json_files() {
+        assert!(!is_task_file(Path::new("_pipeline-current.json")));
+        assert!(is_task_file(Path::new("demo.json")));
+        assert!(!is_task_file(Path::new("_pipeline-runs.jsonl")));
+    }
 
     #[test]
     fn parses_sheet_columns_and_aliases_statuses() {
