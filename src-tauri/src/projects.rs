@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use tauri::Manager;
 
 static CONFIG_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -516,6 +516,59 @@ pub fn resolve_live_dir(cwd: &Path) -> (PathBuf, bool) {
         current = parent;
     }
     (cwd.to_path_buf(), false)
+}
+
+/// GUI-launched apps inherit a minimal env (no ~/.zshrc exports), so spawned agents
+/// would run tokenless while the user's own terminal works fine. Import an allowlist
+/// of credential-adjacent vars from the user's login+interactive shell, once per process.
+/// Explicit process env (terminal launch, CI, launchd) always wins over shell rc.
+/// Values flow only into the child agent process env — never into logs.
+static SHELL_TOKEN_ENV: OnceLock<Vec<(String, String)>> = OnceLock::new();
+
+const TOKEN_ENV_ALLOWLIST: &[&str] = &[
+    "GITLAB_TOKEN",
+    "GLAB_TOKEN",
+    "GITLAB_HOST",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_HOST",
+];
+
+pub fn shell_token_env() -> &'static [(String, String)] {
+    SHELL_TOKEN_ENV.get_or_init(|| {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+        let mut cmd = std::process::Command::new(&shell);
+        if shell.ends_with("fish") {
+            cmd.args(["-l", "-c", "env"]);
+        } else {
+            cmd.args(["-lic", "env"]);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(cmd.output());
+        });
+        // ponytail: slow/hanging rc files must not block spawn; 3s then proceed tokenless.
+        let output = rx
+            .recv_timeout(Duration::from_secs(3))
+            .ok()
+            .and_then(|r| r.ok())
+            .filter(|o| o.status.success());
+        let mut pairs = Vec::new();
+        if let Some(out) = output {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let Some((k, v)) = line.split_once('=') else {
+                    continue;
+                };
+                if TOKEN_ENV_ALLOWLIST.contains(&k)
+                    && !v.is_empty()
+                    && std::env::var_os(k).is_none()
+                {
+                    pairs.push((k.to_string(), v.to_string()));
+                }
+            }
+        }
+        pairs
+    })
 }
 
 /// The sole backend boundary for mutations: a registered, independently verified repository.

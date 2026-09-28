@@ -160,13 +160,17 @@ pub async fn terminal_execute_approved(cwd: String, command: String) -> Result<S
                 live.display()
             ));
         }
-        let output = std::process::Command::new(
+        // `-lc` skips ~/.zshrc, so approved commands get the same shell-token import as agents.
+        let mut approved = std::process::Command::new(
             std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()),
-        )
-        .args(["-lc", &command])
-        .current_dir(&cwd)
-        .output()
-        .map_err(|error| error.to_string())?;
+        );
+        approved.args(["-lc", &command]).current_dir(&cwd);
+        for (k, v) in crate::projects::shell_token_env() {
+            approved.env(k, v);
+        }
+        let output = approved
+            .output()
+            .map_err(|error| error.to_string())?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),

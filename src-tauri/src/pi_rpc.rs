@@ -479,6 +479,12 @@ fn append_graph_report(args: &mut Vec<String>, report: Option<String>) {
 }
 
 #[tauri::command]
+fn apply_user_token_env(command: &mut Command) {
+    for (k, v) in crate::projects::shell_token_env() {
+        command.env(k, v);
+    }
+}
+
 pub fn spawn_pi_rpc(
     app: tauri::AppHandle,
     session_id: String,
@@ -817,6 +823,27 @@ pub fn spawn_pi_rpc(
     }
 
     let mut command = Command::new(&pi_path);
+    apply_user_token_env(&mut command);
+    // Debug aid for "agent says no CLI/token" disputes: report where each token came from.
+    // Presence only — values never logged.
+    for key in [
+        "GITLAB_TOKEN",
+        "GLAB_TOKEN",
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+    ] {
+        let status = if std::env::var_os(key).is_some() {
+            "set(app)"
+        } else if crate::projects::shell_token_env()
+            .iter()
+            .any(|(k, _)| k == key)
+        {
+            "set(shell)"
+        } else {
+            "missing"
+        };
+        eprintln!("crc: spawn env {key}={status}");
+    }
     command
         .args(&args)
         .current_dir(&cwd)
@@ -882,6 +909,7 @@ pub fn spawn_pi_rpc(
                 match ensure_pi_installed_with_repair(Some(&app), &configured_pi_path) {
                     Ok(new_pi) => {
                         command = Command::new(&new_pi);
+                        apply_user_token_env(&mut command);
                         command
                             .args(&args)
                             .current_dir(&cwd)
