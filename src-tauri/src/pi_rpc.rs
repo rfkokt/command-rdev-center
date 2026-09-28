@@ -478,13 +478,13 @@ fn append_graph_report(args: &mut Vec<String>, report: Option<String>) {
     }
 }
 
-#[tauri::command]
 fn apply_user_token_env(command: &mut Command) {
     for (k, v) in crate::projects::shell_token_env() {
         command.env(k, v);
     }
 }
 
+#[tauri::command]
 pub fn spawn_pi_rpc(
     app: tauri::AppHandle,
     session_id: String,
@@ -826,12 +826,7 @@ pub fn spawn_pi_rpc(
     apply_user_token_env(&mut command);
     // Debug aid for "agent says no CLI/token" disputes: report where each token came from.
     // Presence only — values never logged.
-    for key in [
-        "GITLAB_TOKEN",
-        "GLAB_TOKEN",
-        "GITHUB_TOKEN",
-        "GH_TOKEN",
-    ] {
+    for key in ["GITLAB_TOKEN", "GLAB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
         let status = if std::env::var_os(key).is_some() {
             "set(app)"
         } else if crate::projects::shell_token_env()

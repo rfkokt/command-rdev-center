@@ -4391,9 +4391,16 @@ export default function ChatView({
               alignItems: "flex-end",
             }}
           >
-            <div className="composer-chips" role="toolbar" aria-label="Quick prompts">
+            <div
+              className="composer-chips"
+              role="toolbar"
+              aria-label="Quick prompts"
+            >
               {[
-                { label: "\uD83D\uDCA1 Brainstorm", insert: "Brainstorm ideas for: " },
+                {
+                  label: "\uD83D\uDCA1 Brainstorm",
+                  insert: "Brainstorm ideas for: ",
+                },
                 { label: "\uD83C\uDF10 Web search", insert: "/research " },
                 { label: "</> Code", insert: "Review this code: " },
                 { label: "\uFF0B Skill", insert: "/skill:" },
@@ -4402,10 +4409,16 @@ export default function ChatView({
                   key={chip.label}
                   className="composer-chip"
                   onClick={() => {
-                    setInput((current) => (current ? `${current} ` : "") + chip.insert);
+                    setInput(
+                      (current) => (current ? `${current} ` : "") + chip.insert,
+                    );
                     inputRef.current?.focus();
                   }}
-                  disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+                  disabled={
+                    driveDetached ||
+                    agentStatus === "stopped" ||
+                    isNewSessionLoading
+                  }
                 >
                   {chip.label}
                 </button>
