@@ -125,8 +125,6 @@
   grid-template-columns: 44px minmax(0, 1fr) auto;
   gap: var(--spacing-sm);
   padding: 0 var(--spacing-md);
-  background: #111210f2;
-  backdrop-filter: blur(10px);
 }
 .sidebar-toggle {
   transition:
@@ -157,7 +155,6 @@
 }
 .live-dot {
   flex: none;
-  box-shadow: 0 0 10px #d7ff5466;
 }
 .toolbar-actions {
   gap: var(--spacing-xs);
@@ -265,7 +262,7 @@
     position: absolute;
     z-index: 30;
     inset: 0 auto 0 0;
-    box-shadow: 16px 0 32px #080906cc;
+    box-shadow: var(--shadow-soft);
   }
   .workspace-title strong {
     font-size: 14px;

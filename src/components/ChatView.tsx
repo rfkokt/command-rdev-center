@@ -4065,8 +4065,9 @@ export default function ChatView({
           </div>
         </div>
 
-        <div style={{ borderTop: "1px solid var(--colors-hairline)" }}>
+        <div className="chat-composer-dock">
           <div
+            className="chat-composer"
             style={{
               maxWidth: 880,
               margin: "0 auto",
