@@ -683,9 +683,10 @@ export default function App() {
                   key={value}
                   className={appearance === value ? "active" : ""}
                   aria-pressed={appearance === value}
+                  title={value === "system" ? "Follow system" : value}
                   onClick={() => chooseAppearance(value)}
                 >
-                  {value}
+                  {value === "system" ? "◐ System" : value === "light" ? "☀ Light" : "☾ Dark"}
                 </button>
               ))}
             </div>

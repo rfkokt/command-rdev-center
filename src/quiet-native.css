@@ -296,6 +296,38 @@ select:hover,
   color: var(--text-primary);
   font: inherit;
 }
+/* Elysium-style quick-prompt chips + try-again (Batch C). */
+.composer-chips {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 0;
+}
+.composer-chip {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  background: var(--surface-solid);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+}
+.composer-chip:hover:not(:disabled) {
+  background: var(--surface-selected);
+  color: var(--accent);
+  border-color: var(--separator-strong);
+}
+.chat-retry-inline {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.chat-retry-inline:hover {
+  color: var(--accent);
+}
 .markdown-body {
   color: var(--text-primary);
 }

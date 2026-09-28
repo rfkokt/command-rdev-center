@@ -3677,6 +3677,22 @@ export default function ChatView({
                     >
                       {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
                     </button>
+                    {!m.isStreaming && (
+                      <button
+                        className="chat-retry-inline"
+                        onClick={() => {
+                          const lastUser = [...messages].reverse().find((item) => item.role === "user");
+                          if (lastUser?.text) {
+                            setInput(lastUser.text);
+                            inputRef.current?.focus();
+                          }
+                        }}
+                        aria-label="Try again with last prompt"
+                        title="Copy last prompt back to composer"
+                      >
+                        ↻ TRY AGAIN
+                      </button>
+                    )}
                     {globalChat && (
                       <details className="chat-save">
                         <summary>
@@ -4057,10 +4073,31 @@ export default function ChatView({
               padding: "var(--spacing-md)",
               position: "relative",
               display: "flex",
+              flexWrap: "wrap",
               gap: "var(--spacing-md)",
               alignItems: "flex-end",
             }}
           >
+            <div className="composer-chips" role="toolbar" aria-label="Quick prompts">
+              {[
+                { label: "\uD83D\uDCA1 Brainstorm", insert: "Brainstorm ideas for: " },
+                { label: "\uD83C\uDF10 Web search", insert: "/research " },
+                { label: "</> Code", insert: "Review this code: " },
+                { label: "\uFF0B Skill", insert: "/skill:" },
+              ].map((chip) => (
+                <button
+                  key={chip.label}
+                  className="composer-chip"
+                  onClick={() => {
+                    setInput((current) => (current ? `${current} ` : "") + chip.insert);
+                    inputRef.current?.focus();
+                  }}
+                  disabled={driveDetached || agentStatus === "stopped" || isNewSessionLoading}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
             {slashCommands.length > 0 && (
               <div className="slash-menu" role="listbox">
                 {slashCommands.map((command, index) => (
