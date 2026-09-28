@@ -496,6 +496,28 @@ pub fn ensure_path_allowed(child: &Path) -> Result<PathBuf, String> {
     ))
 }
 
+/// Worktree directories vanish out from under live sessions (cleanup, eject).
+/// Resolve to the nearest living ancestor instead of failing spawn outright.
+/// Returns (dir_to_use, fell_back). Callers must still confine the result to the project.
+pub fn resolve_live_dir(cwd: &Path) -> (PathBuf, bool) {
+    if cwd.is_dir() {
+        return (cwd.to_path_buf(), false);
+    }
+    let mut current: &Path = cwd;
+    while let Some(parent) = current.parent() {
+        if parent.is_dir() {
+            eprintln!(
+                "crc: cwd {} gone, falling back to {}",
+                cwd.display(),
+                parent.display()
+            );
+            return (parent.to_path_buf(), true);
+        }
+        current = parent;
+    }
+    (cwd.to_path_buf(), false)
+}
+
 /// The sole backend boundary for mutations: a registered, independently verified repository.
 pub(crate) fn ensure_verified_repository(path: &Path) -> Result<PathBuf, String> {
     let root = verified_repository_root(path)?;
@@ -1487,6 +1509,18 @@ pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resolve_live_dir_falls_back_to_nearest_living_ancestor() {
+        let base = std::env::temp_dir().join("crc-resolve-live-dir-test");
+        std::fs::create_dir_all(&base).unwrap();
+        let (live, fell_back) = resolve_live_dir(&base.join("gone-child"));
+        assert!(fell_back);
+        assert_eq!(live, base);
+        let (same, fell_back) = resolve_live_dir(&base);
+        assert!(!fell_back);
+        assert_eq!(same, base);
+        std::fs::remove_dir(&base).ok();
+    }
     #[test]
     fn mtime_no_panic() {
         let _ = dir_mtime_ms(Path::new("/tmp"));

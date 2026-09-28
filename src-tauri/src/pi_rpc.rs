@@ -515,7 +515,17 @@ pub fn spawn_pi_rpc(
     };
 
     if !Path::new(&cwd).exists() {
-        return Err(format!("cwd does not exist (drive detached?): {}", cwd));
+        // Worktree deleted under a live session: fall back to the nearest living
+        // ancestor instead of killing spawn — but never escape the project
+        // (a missing project root still means a detached drive).
+        let (live, _) = crate::projects::resolve_live_dir(Path::new(&cwd));
+        if !live.starts_with(&owning_project) {
+            return Err(format!("cwd does not exist (drive detached?): {}", cwd));
+        }
+        return Err(format!(
+            "cwd deleted, resume the chat to re-anchor (nearest live: {})",
+            live.display()
+        ));
     }
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
