@@ -1138,7 +1138,9 @@ export default function ChatView({
       // message twice; key it so the second delivery can never append a twin.
       const backendId =
         typeof message.id === "string" && message.id ? message.id : null;
-      const fingerprint = `${content.text}\u0000${content.thinking}\u0000${usedTool}`;
+      // Final event variants can disagree on tool metadata and thinking, but
+      // a repeated visible response must never make a second bubble.
+      const fingerprint = content.text || `thinking\u0000${content.thinking}`;
       const alreadyFinalized =
         (backendId !== null && finalizedIdsRef.current.has(backendId)) ||
         finalizedContentRef.current.has(fingerprint);
