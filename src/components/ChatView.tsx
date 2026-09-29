@@ -317,6 +317,30 @@ function buildPhase(tool: ToolCall) {
   return "Building project";
 }
 
+function transcriptEntry(raw: string) {
+  try {
+    const event = JSON.parse(raw) as Record<string, unknown>;
+    const type = typeof event.type === "string" ? event.type : "event";
+    if (
+      ![
+        "agent_start",
+        "agent_end",
+        "agent_settled",
+        "message_update",
+        "tool_execution_start",
+        "tool_execution_update",
+        "tool_execution_end",
+        "auto_retry_end",
+      ].includes(type)
+    )
+      return null;
+    const detail = JSON.stringify(event).slice(0, 2_000);
+    return { id: uid(), type, detail, at: Date.now() };
+  } catch {
+    return null;
+  }
+}
+
 function describeToolActivity(tool: ToolCall): string {
   const name = tool.name.replace(/^functions\./, "");
   const a = tool.args;
@@ -483,6 +507,9 @@ export default function ChatView({
   const [agentStatus, setAgentStatus] = useState<
     "idle" | "running" | "stopped"
   >(initialInterrupted ? "stopped" : "idle");
+  const [agentTranscript, setAgentTranscript] = useState<
+    Array<{ id: string; type: string; detail: string; at: number }>
+  >([]);
   const [driveDetached, setDriveDetached] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
@@ -555,9 +582,10 @@ export default function ChatView({
   const trackedTaskRef = useRef(false);
   // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
   const surfacedErrorRef = useRef<string | null>(null);
-  // Idempotency keys of backend assistant messages already finalized this turn.
-  // message_end/turn_end and agent_end can deliver the same message twice.
+  // message_end/turn_end and agent_end may repeat one completion with a
+  // missing or different backend ID; retain content fingerprints too.
   const finalizedIdsRef = useRef(new Set<string>());
+  const finalizedContentRef = useRef(new Set<string>());
   const pipelineRunRef = useRef<string | null>(null);
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{
@@ -622,8 +650,8 @@ export default function ChatView({
 
   const jumpToBottomRef = useRef(true);
   useEffect(() => {
-    jumpToBottomRef.current = true;
-  }, [chatId]);
+    if (isActive) jumpToBottomRef.current = true;
+  }, [isActive]);
   useEffect(() => {
     if (!isActive) return;
     const anchor = bottomRef.current;
@@ -1110,8 +1138,13 @@ export default function ChatView({
       // message twice; key it so the second delivery can never append a twin.
       const backendId =
         typeof message.id === "string" && message.id ? message.id : null;
+      const fingerprint = `${content.text}\u0000${content.thinking}\u0000${usedTool}`;
       const alreadyFinalized =
-        backendId !== null && finalizedIdsRef.current.has(backendId);
+        (backendId !== null && finalizedIdsRef.current.has(backendId)) ||
+        finalizedContentRef.current.has(fingerprint);
+      if (alreadyFinalized) return;
+      if (backendId) finalizedIdsRef.current.add(backendId);
+      finalizedContentRef.current.add(fingerprint);
       setMessages((prev) => {
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
@@ -1153,11 +1186,9 @@ export default function ChatView({
               text: usedTool ? tail.text : mergedText,
               thinking: mergedThinking,
             };
-            if (backendId) finalizedIdsRef.current.add(backendId);
             return copy;
           }
         }
-        if (backendId) finalizedIdsRef.current.add(backendId);
         return [
           ...copy,
           {
@@ -1176,6 +1207,9 @@ export default function ChatView({
     async function handleRaw(raw: string) {
       if (!mounted) return;
       lastAgentActivityRef.current = Date.now();
+      const entry = transcriptEntry(raw);
+      if (entry)
+        setAgentTranscript((previous) => [...previous, entry].slice(-100));
       try {
         const ev = JSON.parse(raw) as Record<string, unknown>;
         const t = ev.type as string | undefined;
@@ -1397,9 +1431,11 @@ export default function ChatView({
         }
 
         if (t === "agent_start") {
+          setAgentTranscript([]);
           setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
           finalizedIdsRef.current.clear();
+          finalizedContentRef.current.clear();
           setAgentStatus("running");
           onAgentRunning(chatId, true);
           setIsStreaming(true);
@@ -1812,6 +1848,12 @@ export default function ChatView({
           )
             return;
           const line = e.payload.line.slice(0, 2_000);
+          setAgentTranscript((previous) =>
+            [
+              ...previous,
+              { id: uid(), type: "stderr", detail: line, at: Date.now() },
+            ].slice(-100),
+          );
           setMessages((prev) => appendAgentLog(prev, line));
           onToast(`pi stderr: ${line.slice(0, 180)}`);
         },
@@ -4340,73 +4382,96 @@ export default function ChatView({
                 ];
                 const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
                 return (
-                  <div
-                    className={`agent-working activity-${icon} phase-${phase}`}
+                  <section
+                    className="agent-activity"
                     style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
-                    role="status"
-                    aria-live="polite"
+                    aria-label="Agent activity"
                   >
-                    <span className="agent-working-mark" aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <div>
-                      <strong>{title}</strong>
-                      <small className="agent-working-detail" title={detail}>
-                        {detail}
-                      </small>
-                      {apiProgress && (
-                        <div className="api-live-progress">
-                          <span className="api-live-target">
-                            {String(apiProgress.method ?? "API")} ·{" "}
-                            {String(apiProgress.path ?? "Resolving endpoint")}
-                            {apiProgress.httpStatus != null &&
-                              ` · HTTP ${String(apiProgress.httpStatus)}`}
-                          </span>
-                          <span
-                            className="api-live-track"
-                            aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
-                          >
-                            {apiStages.map((stage, index) => (
-                              <i
-                                key={stage}
-                                className={
-                                  index < apiStageIndex
-                                    ? "done"
-                                    : index === apiStageIndex
-                                      ? "active"
-                                      : ""
-                                }
-                                title={stage}
-                              />
-                            ))}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <span className="agent-working-stats">
-                      {icon === "api" && completedApiCount > 0 ? (
-                        <span>
-                          {completedApiCount} API call
-                          {completedApiCount !== 1 ? "s" : ""} done
-                        </span>
-                      ) : completedCount > 0 ? (
-                        <span>
-                          {completedCount} tool{completedCount !== 1 ? "s" : ""}
-                        </span>
-                      ) : null}
-                      <span>
-                        <ElapsedLabel
-                          startedAt={taskStartedAtRef.current ?? Date.now()}
-                          ticking={isActive}
-                        />
+                    <div
+                      className={`agent-working activity-${icon} phase-${phase}`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <span className="agent-working-mark" aria-hidden="true">
+                        <i />
+                        <i />
+                        <i />
                       </span>
-                    </span>
-                    <button onClick={handleAbort} disabled={isAborting}>
-                      {isAborting ? "ABORTING…" : "ABORT"}
-                    </button>
-                  </div>
+                      <div>
+                        <strong>{title}</strong>
+                        <small className="agent-working-detail" title={detail}>
+                          {detail}
+                        </small>
+                        {apiProgress && (
+                          <div className="api-live-progress">
+                            <span className="api-live-target">
+                              {String(apiProgress.method ?? "API")} ·{" "}
+                              {String(apiProgress.path ?? "Resolving endpoint")}
+                              {apiProgress.httpStatus != null &&
+                                ` · HTTP ${String(apiProgress.httpStatus)}`}
+                            </span>
+                            <span
+                              className="api-live-track"
+                              aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
+                            >
+                              {apiStages.map((stage, index) => (
+                                <i
+                                  key={stage}
+                                  className={
+                                    index < apiStageIndex
+                                      ? "done"
+                                      : index === apiStageIndex
+                                        ? "active"
+                                        : ""
+                                  }
+                                  title={stage}
+                                />
+                              ))}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <span className="agent-working-stats">
+                        {icon === "api" && completedApiCount > 0 ? (
+                          <span>
+                            {completedApiCount} API call
+                            {completedApiCount !== 1 ? "s" : ""} done
+                          </span>
+                        ) : completedCount > 0 ? (
+                          <span>
+                            {completedCount} tool
+                            {completedCount !== 1 ? "s" : ""}
+                          </span>
+                        ) : null}
+                        <span>
+                          <ElapsedLabel
+                            startedAt={taskStartedAtRef.current ?? Date.now()}
+                            ticking={isActive}
+                          />
+                        </span>
+                      </span>
+                      <button onClick={handleAbort} disabled={isAborting}>
+                        {isAborting ? "ABORTING…" : "ABORT"}
+                      </button>
+                    </div>
+                    <details className="agent-activity-log" open>
+                      <summary>
+                        Live agent transcript · {agentTranscript.length} event
+                        {agentTranscript.length !== 1 ? "s" : ""}
+                      </summary>
+                      <div className="agent-transcript">
+                        {agentTranscript.length > 0 ? (
+                          agentTranscript.map((entry) => (
+                            <pre key={entry.id}>
+                              <b>{entry.type}</b> {entry.detail}
+                            </pre>
+                          ))
+                        ) : (
+                          <small>Waiting for agent events.</small>
+                        )}
+                      </div>
+                    </details>
+                  </section>
                 );
               })()}
             <div ref={bottomRef} style={{ order: Number.MAX_SAFE_INTEGER }} />

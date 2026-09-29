@@ -277,7 +277,10 @@ select:hover,
 
 /* Solid content and technical surfaces. */
 .chat-bubble-assistant {
-  background: transparent;
+  padding: 12px;
+  background: var(--surface-solid);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-control);
 }
 .chat-bubble-user {
   border: 1px solid var(--separator);
@@ -443,6 +446,50 @@ select:hover,
 }
 .tool-call {
   border-color: var(--separator);
+}
+.agent-activity {
+  margin-top: 12px;
+}
+.agent-activity .agent-working {
+  margin: 0;
+}
+.agent-activity-log {
+  border: 1px solid var(--separator);
+  border-top: 0;
+  border-radius: 0 0 var(--radius-control) var(--radius-control);
+  background: var(--surface-solid);
+}
+.agent-activity-log > summary {
+  padding: 8px 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.agent-activity-log > div {
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--separator);
+}
+.agent-transcript {
+  max-height: 220px;
+  overflow: auto;
+}
+.agent-transcript pre {
+  margin: 0;
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--separator);
+  color: var(--text-secondary);
+  font: 11px/1.45 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-transcript pre:last-child {
+  border-bottom: 0;
+}
+.agent-transcript b {
+  color: var(--text-primary);
+}
+.agent-activity-log .tool-call:last-child {
+  border-bottom: 0;
 }
 .tool-call.running .tool-status,
 .agent-working-mark i,
