@@ -31,6 +31,7 @@ import {
   uid,
   shouldShowChanges,
   preserveStreamedContent,
+  sameAssistantResponse,
   shouldSubmitCommand,
   terminalCommandIsDestructive,
   insertSteerMessage,
@@ -41,6 +42,7 @@ import {
   settleAgentMessages,
   settleWithError,
   shouldOfferRestart,
+  isPiRuntimeIssue,
   clearRestartErrors,
   agentNotification,
   projectTaskIntent,
@@ -320,22 +322,74 @@ function buildPhase(tool: ToolCall) {
 function transcriptEntry(raw: string) {
   try {
     const event = JSON.parse(raw) as Record<string, unknown>;
-    const type = typeof event.type === "string" ? event.type : "event";
-    if (
-      ![
-        "agent_start",
-        "agent_end",
-        "agent_settled",
-        "message_update",
-        "tool_execution_start",
-        "tool_execution_update",
-        "tool_execution_end",
-        "auto_retry_end",
-      ].includes(type)
-    )
-      return null;
-    const detail = JSON.stringify(event).slice(0, 2_000);
-    return { id: uid(), type, detail, at: Date.now() };
+    const type = typeof event.type === "string" ? event.type : "";
+    const toolName =
+      typeof event.toolName === "string"
+        ? event.toolName
+        : typeof (event.toolCall as Record<string, unknown> | undefined)
+              ?.name === "string"
+          ? String((event.toolCall as Record<string, unknown>).name)
+          : "tool";
+    if (type === "agent_start")
+      return { id: uid(), type: "Agent", detail: "Started", at: Date.now() };
+    if (type === "agent_end")
+      return { id: uid(), type: "Agent", detail: "Finished", at: Date.now() };
+    if (type === "agent_settled")
+      return { id: uid(), type: "Agent", detail: "Ready", at: Date.now() };
+    if (type === "tool_execution_start")
+      return {
+        id: uid(),
+        type: "Tool",
+        detail: `Running ${toolName}`,
+        at: Date.now(),
+      };
+    if (type === "tool_execution_end")
+      return {
+        id: uid(),
+        type: "Tool",
+        detail: `Finished ${toolName}`,
+        at: Date.now(),
+      };
+    if (type === "auto_retry_end")
+      return {
+        id: uid(),
+        type: "Retry",
+        detail: event.success === false ? "Failed" : "Completed",
+        at: Date.now(),
+      };
+    if (type !== "message_update") return null;
+
+    const update = event.assistantMessageEvent as
+      | Record<string, unknown>
+      | undefined;
+    if (!update || typeof update.type !== "string") return null;
+    if (update.type === "thinking_delta")
+      return { id: uid(), type: "Agent", detail: "Thinking", at: Date.now() };
+    if (update.type === "toolcall_start") {
+      const name =
+        typeof (update.toolCall as Record<string, unknown> | undefined)
+          ?.name === "string"
+          ? String((update.toolCall as Record<string, unknown>).name)
+          : typeof update.toolName === "string"
+            ? update.toolName
+            : "tool";
+      return {
+        id: uid(),
+        type: "Tool",
+        detail: `Calling ${name}`,
+        at: Date.now(),
+      };
+    }
+    if (update.type === "toolcall_end")
+      return {
+        id: uid(),
+        type: "Tool",
+        detail: `Finished ${toolName}`,
+        at: Date.now(),
+      };
+    // Text is rendered in the assistant message and partial tool-call deltas
+    // are implementation details, so neither belongs in a user-facing log.
+    return null;
   } catch {
     return null;
   }
@@ -488,6 +542,7 @@ export default function ChatView({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [fixingPiIssueId, setFixingPiIssueId] = useState<string | null>(null);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [repositoryStatuses, setRepositoryStatuses] = useState(repositories);
   const [repositoryMapLoaded, setRepositoryMapLoaded] = useState(
@@ -649,9 +704,26 @@ export default function ChatView({
   ).current;
 
   const jumpToBottomRef = useRef(true);
+  const stickToBottomRef = useRef(true);
   useEffect(() => {
-    if (isActive) jumpToBottomRef.current = true;
+    if (isActive) {
+      jumpToBottomRef.current = true;
+      stickToBottomRef.current = true;
+    }
   }, [isActive]);
+  useEffect(() => {
+    const anchor = bottomRef.current;
+    const scroller = anchor?.parentElement?.parentElement;
+    if (!scroller) return;
+    const updateStickiness = () => {
+      stickToBottomRef.current =
+        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <=
+        160;
+    };
+    updateStickiness();
+    scroller.addEventListener("scroll", updateStickiness, { passive: true });
+    return () => scroller.removeEventListener("scroll", updateStickiness);
+  }, []);
   useEffect(() => {
     if (!isActive) return;
     const anchor = bottomRef.current;
@@ -668,19 +740,10 @@ export default function ChatView({
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const jump = jumpToBottomRef.current;
     jumpToBottomRef.current = false;
-    // ponytail: stick-to-bottom only; never yank the user out of history they scrolled to —
-    // except right after opening/switching chats, when we jump straight to the latest.
-    if (!jump) {
-      let scroller: HTMLElement | null = anchor.parentElement;
-      while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
-        scroller = scroller.parentElement;
-      }
-      if (scroller) {
-        const distance =
-          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-        if (distance > 160) return;
-      }
-    }
+    // Measure the user's scroll intent before new content changes scrollHeight.
+    // Checking after a long streamed update falsely treats a pinned reader as
+    // someone reviewing history.
+    if (!jump && !stickToBottomRef.current) return;
     anchor.scrollIntoView({
       behavior: reduceMotion || jump ? "auto" : "smooth",
       block: "end",
@@ -1143,7 +1206,9 @@ export default function ChatView({
       const fingerprint = content.text || `thinking\u0000${content.thinking}`;
       const alreadyFinalized =
         (backendId !== null && finalizedIdsRef.current.has(backendId)) ||
-        finalizedContentRef.current.has(fingerprint);
+        [...finalizedContentRef.current].some((previous) =>
+          sameAssistantResponse(previous, fingerprint),
+        );
       if (alreadyFinalized) return;
       if (backendId) finalizedIdsRef.current.add(backendId);
       finalizedContentRef.current.add(fingerprint);
@@ -1211,7 +1276,12 @@ export default function ChatView({
       lastAgentActivityRef.current = Date.now();
       const entry = transcriptEntry(raw);
       if (entry)
-        setAgentTranscript((previous) => [...previous, entry].slice(-100));
+        setAgentTranscript((previous) => {
+          const last = previous[previous.length - 1];
+          return last?.type === entry.type && last.detail === entry.detail
+            ? previous
+            : [...previous, entry].slice(-100);
+        });
       try {
         const ev = JSON.parse(raw) as Record<string, unknown>;
         const t = ev.type as string | undefined;
@@ -2681,6 +2751,20 @@ export default function ChatView({
     ],
   );
 
+  const handleFixPiIssue = useCallback(
+    async (issue: ChatMessage) => {
+      if (fixingPiIssueId || !isPiRuntimeIssue(issue.text)) return;
+      setFixingPiIssueId(issue.id);
+      const sent = await sendRaw({
+        type: agentStatus === "running" ? "steer" : "prompt",
+        message: `Diagnose and fix this Pi runtime issue. Inspect the relevant Pi configuration or extension package first. Apply only a safe, minimal fix; do not remove extensions or change global configuration unless necessary. Verify the result and summarize the change.\n\n${issue.text}`,
+      });
+      if (sent) onToast("AI is diagnosing the Pi issue");
+      setFixingPiIssueId(null);
+    },
+    [agentStatus, fixingPiIssueId, onToast, sendRaw],
+  );
+
   async function handleOpenTerminal() {
     setTerminalMounted(true);
     setShowTerminal((v) => !v);
@@ -3190,7 +3274,7 @@ export default function ChatView({
       }
     >(),
   );
-  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${globalChat}|${terminalApprovalStatus}`;
+  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${fixingPiIssueId}|${globalChat}|${terminalApprovalStatus}`;
   if (rowCacheRef.current.size > messages.length + 32) {
     const alive = new Set(messages.map((message) => message.id));
     for (const id of rowCacheRef.current.keys())
@@ -4056,6 +4140,17 @@ export default function ChatView({
                       {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
                     </button>
                   )}
+                  {m.role === "system" && isPiRuntimeIssue(m.text) && (
+                    <button
+                      onClick={() => void handleFixPiIssue(m)}
+                      className="chat-restart"
+                      disabled={fixingPiIssueId !== null}
+                    >
+                      {fixingPiIssueId === m.id
+                        ? "AI IS FIXING…"
+                        : "✦ FIX WITH AI"}
+                    </button>
+                  )}
                   {(m.createdAt || m.durationMs) && (
                     <div className="chat-message-meta">
                       {m.createdAt && (
@@ -4458,20 +4553,32 @@ export default function ChatView({
                     </div>
                     <details className="agent-activity-log" open>
                       <summary>
-                        Live agent transcript · {agentTranscript.length} event
-                        {agentTranscript.length !== 1 ? "s" : ""}
+                        {agentTranscript.length
+                          ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
+                          : "Preparing task"}
                       </summary>
-                      <div className="agent-transcript">
+                      <ul className="agent-transcript" aria-label="Agent tasks">
                         {agentTranscript.length > 0 ? (
                           agentTranscript.map((entry) => (
-                            <pre key={entry.id}>
-                              <b>{entry.type}</b> {entry.detail}
-                            </pre>
+                            <li key={entry.id}>
+                              <span
+                                className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
+                                aria-hidden="true"
+                              />
+                              <span>{entry.detail}</span>
+                              <small>{entry.type}</small>
+                            </li>
                           ))
                         ) : (
-                          <small>Waiting for agent events.</small>
+                          <li className="agent-transcript-empty">
+                            <span
+                              className="agent-transcript-mark"
+                              aria-hidden="true"
+                            />
+                            <span>Analyzing request</span>
+                          </li>
                         )}
-                      </div>
+                      </ul>
                     </details>
                   </section>
                 );

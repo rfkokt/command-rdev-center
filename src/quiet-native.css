@@ -460,33 +460,59 @@ select:hover,
   background: var(--surface-solid);
 }
 .agent-activity-log > summary {
-  padding: 8px 12px;
+  padding: 9px 12px;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
 }
-.agent-activity-log > div {
-  padding: 0 8px 8px;
-  border-top: 1px solid var(--separator);
-}
 .agent-transcript {
+  display: grid;
+  gap: 7px;
   max-height: 220px;
-  overflow: auto;
-}
-.agent-transcript pre {
   margin: 0;
-  padding: 7px 4px;
-  border-bottom: 1px solid var(--separator);
-  color: var(--text-secondary);
-  font: 11px/1.45 var(--font-mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  padding: 2px 12px 11px;
+  overflow: auto;
+  list-style: none;
 }
-.agent-transcript pre:last-child {
-  border-bottom: 0;
-}
-.agent-transcript b {
+.agent-transcript li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.agent-transcript li > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-transcript small {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.agent-transcript-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border: 1px solid var(--text-secondary);
+  border-radius: 50%;
+  opacity: 0.75;
+}
+.agent-transcript-mark.tool {
+  border-color: var(--running);
+  background: var(--running);
+  animation: agent-transcript-pulse 1.4s ease-in-out infinite;
+}
+.agent-transcript-empty {
+  color: var(--text-secondary) !important;
+}
+@keyframes agent-transcript-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 .agent-activity-log .tool-call:last-child {
   border-bottom: 0;

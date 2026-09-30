@@ -12,12 +12,14 @@ import {
   formatTokens,
   insertSteerMessage,
   preserveStreamedContent,
+  sameAssistantResponse,
   projectTaskIntent,
   researchQuery,
   recentItems,
   settleAgentMessages,
   settleWithError,
   shouldOfferRestart,
+  isPiRuntimeIssue,
   shouldShowChanges,
   shouldSubmitCommand,
   shouldToastPiStderr,
@@ -163,6 +165,17 @@ describe("appendStreamingText", () => {
   });
 });
 
+describe("sameAssistantResponse", () => {
+  test("recognizes final-event variants with equivalent response text", () => {
+    expect(
+      sameAssistantResponse(
+        "## Fixed\n\nLive transcript no longer prints raw Pi JSON payloads.",
+        "Fixed\n\nLive transcript no longer prints raw JSON payloads.",
+      ),
+    ).toBe(true);
+  });
+});
+
 describe("preserveStreamedContent", () => {
   test("keeps earlier streamed assistant messages when completion only contains the last message", () => {
     expect(preserveStreamedContent("First answer", "Second answer")).toBe(
@@ -182,6 +195,16 @@ describe("preserveStreamedContent", () => {
     const completed =
       "Task Yang Bisa Dikerjakan\n\n| No | Task |\n| 64 | Integrasikan endpoint |";
     expect(preserveStreamedContent(streamed, completed)).toBe(completed);
+  });
+});
+
+describe("isPiRuntimeIssue", () => {
+  test("offers AI repair only for Pi stderr warnings and errors", () => {
+    expect(
+      isPiRuntimeIssue("pi stderr: Warning: Extension package was not loaded"),
+    ).toBe(true);
+    expect(isPiRuntimeIssue("Agent error: provider unavailable")).toBe(false);
+    expect(isPiRuntimeIssue("pi stderr: ready")).toBe(false);
   });
 });
 

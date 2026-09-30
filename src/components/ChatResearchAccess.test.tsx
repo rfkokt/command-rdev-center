@@ -9,9 +9,13 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { invoke, listen } = vi.hoisted(() => ({
+const { invoke, listen, listeners } = vi.hoisted(() => ({
   invoke: vi.fn(),
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: vi.fn((event: string, handler: (payload: unknown) => void) => {
+    listeners.set(event, handler);
+    return Promise.resolve(() => listeners.delete(event));
+  }),
+  listeners: new Map<string, (payload: unknown) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
@@ -110,6 +114,7 @@ function mockBackend(runs: unknown[] = []) {
 afterEach(() => {
   cleanup();
   invoke.mockReset();
+  listeners.clear();
   vi.clearAllMocks();
 });
 
@@ -141,6 +146,36 @@ describe("chat-native Deep Research", () => {
         jsonLine: expect.stringContaining("Investigate this"),
       }),
     );
+  });
+
+  it("renders a human-readable live agent transcript", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() => expect(listeners.get("pi-rpc-event")).toBeDefined());
+    const emit = listeners.get("pi-rpc-event")!;
+    emit({
+      payload: {
+        session_id: "chat-chat-one",
+        raw: JSON.stringify({ type: "agent_start" }),
+      },
+    });
+    emit({
+      payload: {
+        session_id: "chat-chat-one",
+        raw: JSON.stringify({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "toolcall_start",
+            toolCall: { name: "functions.bash" },
+          },
+        }),
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Calling functions.bash")).toBeInTheDocument(),
+    );
+    expect(screen.getByText("1 task active")).toBeInTheDocument();
+    expect(screen.queryByText(/assistantMessageEvent/)).not.toBeInTheDocument();
   });
 
   it("selects /research with a trailing space ready for the query", async () => {

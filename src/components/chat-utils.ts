@@ -54,23 +54,31 @@ export function recentItems<T>(items: T[], maxItems: number) {
   return items.slice(-maxItems);
 }
 
+function responseWords(text: string) {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean),
+  );
+}
+
+export function sameAssistantResponse(left: string, right: string) {
+  const a = left.replace(/\s+/g, " ").trim();
+  const b = right.replace(/\s+/g, " ").trim();
+  if (!a || !b) return false;
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  const wordsA = responseWords(a);
+  const wordsB = responseWords(b);
+  const overlap = [...wordsA].filter((word) => wordsB.has(word)).length;
+  return overlap / Math.max(1, Math.min(wordsA.size, wordsB.size)) >= 0.8;
+}
+
 export function preserveStreamedContent(streamed: string, completed: string) {
   if (!completed || streamed.endsWith(completed)) return streamed;
-  if (!streamed) return completed;
-  const words = (text: string) =>
-    new Set(
-      text
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, " ")
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean),
-    );
-  const left = words(streamed);
-  const right = words(completed);
-  const overlap = [...left].filter((word) => right.has(word)).length;
-  if (overlap / Math.max(1, Math.min(left.size, right.size)) >= 0.8)
-    return completed;
+  if (!streamed || sameAssistantResponse(streamed, completed)) return completed;
   return `${streamed}\n\n${completed}`;
 }
 
@@ -299,6 +307,13 @@ export function formatAgentError(raw: string): string {
 export function shouldOfferRestart(text: string) {
   return /agent error:.*unknown session|agent process stopped unexpectedly/i.test(
     text,
+  );
+}
+
+export function isPiRuntimeIssue(text: string) {
+  return (
+    /^pi stderr:/i.test(text) &&
+    /\b(?:warning|warn|error|failed|exception|cannot|not loaded)\b/i.test(text)
   );
 }
 
