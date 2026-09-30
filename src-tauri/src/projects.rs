@@ -1046,6 +1046,7 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
 pub struct ApiContract {
     id: String,
     origin: String,
+    base_url: String,
     document: serde_json::Value,
 }
 
@@ -1076,13 +1077,14 @@ pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, St
                 .pointer("/servers/0/url")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(&url);
-            let origin = url::Url::parse(server)
-                .map_err(|_| "Swagger server URL must be valid")?
-                .origin()
-                .ascii_serialization();
+            let server = url::Url::parse(server)
+                .map_err(|_| "Swagger server URL must be valid")?;
+            let origin = server.origin().ascii_serialization();
+            let base_url = server.to_string().trim_end_matches('/').to_owned();
             Ok(ApiContract {
                 id,
                 origin,
+                base_url,
                 document,
             })
         })

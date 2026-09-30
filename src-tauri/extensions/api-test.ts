@@ -5,7 +5,12 @@ import { readFile } from "node:fs/promises";
 import { isPublicIp } from "./agent-reach-security";
 
 const contractsPath = process.env.CRC_API_CONTRACTS_PATH || "";
-type Contract = { id: string; origin: string; document: any };
+type Contract = {
+  id: string;
+  origin: string;
+  base_url?: string;
+  document: any;
+};
 const contracts: Contract[] = contractsPath
   ? JSON.parse(await readFile(contractsPath, "utf8"))
   : [];
@@ -21,9 +26,13 @@ const result = (data: unknown, isError = false) => ({
 function privateAddress(address: string) {
   return /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\.|^(fc|fd)/i.test(address);
 }
+function apiUrl(path: string, baseUrl: string) {
+  return new URL(path.replace(/^\/+/, ""), `${baseUrl.replace(/\/?$/, "/")}`);
+}
 async function validateUrl(raw: string, allowedOrigin: string) {
-  const url = new URL(raw, allowedOrigin);
-  if (!allowedOrigin || url.origin !== allowedOrigin)
+  if (!allowedOrigin) throw new Error("api_origin_not_allowed");
+  const url = apiUrl(raw, allowedOrigin);
+  if (url.origin !== new URL(allowedOrigin).origin)
     throw new Error("api_origin_not_allowed");
   if (url.protocol !== "https:" || url.username || url.password)
     throw new Error("api_url_blocked");
@@ -61,7 +70,7 @@ async function request(
         activity,
         stage,
         method: input.method,
-        path: new URL(input.path, input.origin).pathname,
+        path: apiUrl(input.path, input.origin || "").pathname,
         ...(status !== undefined && { httpStatus: status }),
       }),
     );
@@ -168,6 +177,8 @@ export default function (pi: ExtensionAPI) {
   if (!contracts.length) return;
   const contractIds = contracts.map(({ id }) => id);
   const origins = [...new Set(contracts.map(({ origin }) => origin))];
+  const baseUrl = (contract?: Contract) =>
+    contract?.base_url || contract?.origin || "";
   pi.registerTool({
     name: "api_request",
     label: "Test backend API",
@@ -196,7 +207,7 @@ export default function (pi: ExtensionAPI) {
         const contract = contracts.find(({ id }) => id === input.contractId);
         const origin =
           input.origin ||
-          contract?.origin ||
+          baseUrl(contract) ||
           (origins.length === 1 ? origins[0] : "");
         if (!origin)
           return result(
@@ -276,7 +287,7 @@ export default function (pi: ExtensionAPI) {
                     );
                   selected = {
                     contractId: contract.id,
-                    origin: contract.origin,
+                    origin: baseUrl(contract),
                     method: method.toUpperCase(),
                     path,
                     operation,
