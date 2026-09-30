@@ -25,7 +25,6 @@ import type {
 import { parseApprovalRequest } from "../lib/rpc";
 import {
   formatTokens,
-  appendBoundedText,
   appendStreamingText,
   recentItems,
   uid,
@@ -654,6 +653,8 @@ export default function ChatView({
   const activeToolCallsRef = useRef(new Set<string>());
   const abortResponseRef = useRef<(() => void) | null>(null);
   const latestAssistantResponseRef = useRef("");
+  const receivedStreamDeltaRef = useRef(false);
+  const fallbackRevealTimerRef = useRef<number | null>(null);
   const devDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingDevCommand(null),
     Boolean(pendingDevCommand) && !devStarting,
@@ -831,10 +832,9 @@ export default function ChatView({
               : null),
             ...(thinking
               ? {
-                  thinking: appendBoundedText(
+                  thinking: appendStreamingText(
                     copy[i].thinking ?? "",
                     thinking,
-                    200_000,
                   ),
                 }
               : null),
@@ -853,6 +853,8 @@ export default function ChatView({
   useEffect(
     () => () => {
       if (deltaRafRef.current) cancelAnimationFrame(deltaRafRef.current);
+      if (fallbackRevealTimerRef.current)
+        window.clearInterval(fallbackRevealTimerRef.current);
     },
     [],
   );
@@ -1170,6 +1172,65 @@ export default function ChatView({
       };
     }
 
+    function revealFinalAssistant(content: { text: string; thinking: string }) {
+      const chunkSize = 48;
+      let thinkingAt = Math.min(chunkSize, content.thinking.length);
+      let textAt = content.thinking
+        ? 0
+        : Math.min(chunkSize, content.text.length);
+      setMessages((previous) =>
+        previous.map((item) =>
+          item.role === "assistant" && item.isStreaming
+            ? {
+                ...item,
+                thinking: content.thinking.slice(0, thinkingAt),
+                text: content.text.slice(0, textAt),
+              }
+            : item,
+        ),
+      );
+      if (fallbackRevealTimerRef.current)
+        window.clearInterval(fallbackRevealTimerRef.current);
+      fallbackRevealTimerRef.current = window.setInterval(() => {
+        if (thinkingAt < content.thinking.length)
+          thinkingAt = Math.min(
+            thinkingAt + chunkSize,
+            content.thinking.length,
+          );
+        else textAt = Math.min(textAt + chunkSize, content.text.length);
+        setMessages((previous) =>
+          previous.map((item) =>
+            item.role === "assistant" &&
+            (item.isStreaming ||
+              (item.thinking?.length ?? 0) < content.thinking.length ||
+              item.text.length < content.text.length)
+              ? {
+                  ...item,
+                  thinking: content.thinking.slice(0, thinkingAt),
+                  text: content.text.slice(0, textAt),
+                }
+              : item,
+          ),
+        );
+        if (
+          thinkingAt === content.thinking.length &&
+          textAt === content.text.length
+        ) {
+          window.clearInterval(fallbackRevealTimerRef.current!);
+          fallbackRevealTimerRef.current = null;
+          setMessages((previous) =>
+            previous.map((item) =>
+              item.role === "assistant" &&
+              (item.thinking ?? "") === content.thinking &&
+              item.text === content.text
+                ? { ...item, isStreaming: false }
+                : item,
+            ),
+          );
+        }
+      }, 18);
+    }
+
     function finalizeAssistant(message: Record<string, unknown> | undefined) {
       if (message?.role !== "assistant") return;
       const content = messageContent(message);
@@ -1212,6 +1273,14 @@ export default function ChatView({
       if (alreadyFinalized) return;
       if (backendId) finalizedIdsRef.current.add(backendId);
       finalizedContentRef.current.add(fingerprint);
+      if (
+        !usedTool &&
+        !receivedStreamDeltaRef.current &&
+        (content.text.length > 120 || content.thinking.length > 120)
+      ) {
+        revealFinalAssistant(content);
+        return;
+      }
       setMessages((prev) => {
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
@@ -1487,8 +1556,8 @@ export default function ChatView({
               if (mapped.length > 0) {
                 const recent = recentItems(mapped, MAX_HISTORY);
                 setMessages((prev) => (prev.length === 0 ? recent : prev));
-                if (recent[recent.length - 1].role === "user")
-                  setAgentStatus("stopped");
+                // History is a snapshot and may arrive after a retry prompt.
+                // Never let it overwrite lifecycle events such as agent_start.
               }
             }
           }
@@ -1506,6 +1575,7 @@ export default function ChatView({
           setAgentTranscript([]);
           setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
+          receivedStreamDeltaRef.current = false;
           finalizedIdsRef.current.clear();
           finalizedContentRef.current.clear();
           setAgentStatus("running");
@@ -1518,10 +1588,12 @@ export default function ChatView({
           return;
         }
         if (t === "message_end" || t === "turn_end") {
+          flushDeltas();
           finalizeAssistant(ev.message as Record<string, unknown> | undefined);
           return;
         }
         if (t === "agent_end") {
+          flushDeltas();
           const generated = ev.messages as
             | Array<Record<string, unknown>>
             | undefined;
@@ -1532,7 +1604,8 @@ export default function ChatView({
           setAgentStatus("idle");
           setIsStreaming(false);
           onAgentRunning(chatId, false);
-          setMessages((prev) => settleAgentMessages(prev));
+          if (!fallbackRevealTimerRef.current)
+            setMessages((prev) => settleAgentMessages(prev));
           sendRaw({ type: "get_session_stats" });
           return;
         }
@@ -1595,11 +1668,13 @@ export default function ChatView({
             | undefined;
           if (!delta) return;
           const dtype = delta.type as string;
-          if (dtype === "text_delta")
+          if (dtype === "text_delta") {
+            receivedStreamDeltaRef.current = true;
             appendTextDelta(String(delta.delta ?? ""));
-          else if (dtype === "thinking_delta")
+          } else if (dtype === "thinking_delta") {
+            receivedStreamDeltaRef.current = true;
             appendThinkingDelta(String(delta.delta ?? ""));
-          else if (dtype === "toolcall_start") {
+          } else if (dtype === "toolcall_start") {
             const tc = delta.toolCall as
               | {
                   id?: string;
@@ -2118,6 +2193,7 @@ export default function ChatView({
     onUnread,
     appendTextDelta,
     appendThinkingDelta,
+    flushDeltas,
     upsertToolCall,
     refreshGraph,
     updateGraphIfCodeStale,
@@ -3907,7 +3983,11 @@ export default function ChatView({
                   }
                 >
                   {m.role === "system" && <small>PI CONTEXT</small>}
-                  {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
+                  {m.thinking && (
+                    <ThinkingBlock isStreaming={Boolean(m.isStreaming)}>
+                      {m.thinking}
+                    </ThinkingBlock>
+                  )}
                   {m.images && m.images.length > 0 && (
                     <div className="chat-images">
                       {m.images.map((image, index) => (
@@ -4325,7 +4405,7 @@ export default function ChatView({
                 </span>
               </div>
             )}
-            {agentStatus === "running" &&
+            {(agentStatus === "running" || isRestarting) &&
               (() => {
                 const allTools = messages.flatMap(
                   (message) => message.toolCalls,
@@ -4352,6 +4432,12 @@ export default function ChatView({
                   .find((m) => m.role === "assistant" && m.isStreaming);
                 const streamingText = streamingMsg?.text?.trim() || "";
                 const thinkingText = streamingMsg?.thinking?.trim() || "";
+                const activeRequest = [...messages]
+                  .reverse()
+                  .find((m) => m.role === "user" && m.text.trim())
+                  ?.text.replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 90);
 
                 // Multi sub-agent aggregation
                 const activeSubagents = allActive.filter((t) =>
@@ -4371,7 +4457,12 @@ export default function ChatView({
                 let icon: string;
                 let phase: "executing" | "writing" | "thinking";
 
-                if (activeTool) {
+                if (isRestarting) {
+                  phase = "thinking";
+                  title = "RESTARTING PI";
+                  detail = "Starting the agent session";
+                  icon = "meter";
+                } else if (activeTool) {
                   phase = "executing";
                   const build = buildPhase(activeTool);
                   const isMultiSub = activeSubagents.length > 0 && subMeta;
@@ -4450,7 +4541,9 @@ export default function ChatView({
                     detail = describeToolActivity(lastCompleted);
                   } else {
                     title = "THINKING";
-                    detail = "Analyzing request";
+                    detail = activeRequest
+                      ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+                      : "Preparing next step";
                   }
                   icon = "meter";
                 }
@@ -4565,7 +4658,14 @@ export default function ChatView({
                                 className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
                                 aria-hidden="true"
                               />
-                              <span>{entry.detail}</span>
+                              <span>
+                                {entry.type === "Agent" &&
+                                entry.detail === "Thinking"
+                                  ? activeRequest
+                                    ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+                                    : "Preparing next step"
+                                  : entry.detail}
+                              </span>
                               <small>{entry.type}</small>
                             </li>
                           ))
@@ -4633,6 +4733,34 @@ export default function ChatView({
                   {chip.label}
                 </button>
               ))}
+              <label className="thinking-effort">
+                <span>⚡</span>
+                <select
+                  value={currentThinking || "medium"}
+                  onChange={(event) =>
+                    void handleSetThinking(event.target.value)
+                  }
+                  disabled={
+                    driveDetached ||
+                    agentStatus === "stopped" ||
+                    isNewSessionLoading
+                  }
+                  aria-label="Thinking effort"
+                >
+                  {[
+                    ["off", "No thinking"],
+                    ["minimal", "Minimal"],
+                    ["low", "Low"],
+                    ["medium", "Medium"],
+                    ["high", "High"],
+                    ["xhigh", "Extra high"],
+                  ].map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             {slashCommands.length > 0 && (
               <div className="slash-menu" role="listbox">

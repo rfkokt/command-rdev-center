@@ -16,9 +16,15 @@ function formatThinking(value: string) {
   }
 }
 
-export default function ThinkingBlock({ children }: { children: string }) {
+export default function ThinkingBlock({
+  children,
+  isStreaming = false,
+}: {
+  children: string;
+  isStreaming?: boolean;
+}) {
   return (
-    <details className="thinking-block">
+    <details className="thinking-block" open={isStreaming}>
       <summary>
         <span>THINKING</span>
         <small className="thinking-show">SHOW</small>

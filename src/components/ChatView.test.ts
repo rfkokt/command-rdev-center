@@ -163,6 +163,15 @@ describe("appendStreamingText", () => {
       "Test received ✅",
     );
   });
+
+  test("deduplicates cumulative reasoning snapshots", () => {
+    expect(
+      appendStreamingText(
+        "I should inspect the logs.",
+        "I should inspect the logs. Then fix the config.",
+      ),
+    ).toBe("I should inspect the logs. Then fix the config.");
+  });
 });
 
 describe("sameAssistantResponse", () => {

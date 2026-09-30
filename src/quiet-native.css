@@ -340,6 +340,34 @@ select:hover,
   color: var(--accent);
   border-color: var(--separator-strong);
 }
+.thinking-effort {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--separator);
+  border-radius: 999px;
+  background: var(--surface-solid);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.thinking-effort select {
+  min-width: 74px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.thinking-effort:focus-within {
+  border-color: var(--accent);
+}
+.thinking-effort select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .chat-retry-inline {
   color: var(--text-secondary);
   font-size: 11px;
