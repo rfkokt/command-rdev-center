@@ -583,40 +583,6 @@ export default function ChatView({
     [],
   );
 
-  const upsertToolCall = useCallback(
-    (
-      callId: string,
-      patch: Partial<ToolCall> & {
-        name?: string;
-        args?: Record<string, unknown>;
-      },
-    ) => {
-      setMessages((prev) => {
-        const copy = ensureAssistantTurn(prev, createAssistantTurn);
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant") {
-            const tcs = [...copy[i].toolCalls];
-            const idx = tcs.findIndex((t) => t.callId === callId);
-            if (idx >= 0) tcs[idx] = { ...tcs[idx], ...patch } as ToolCall;
-            else
-              tcs.push({
-                callId,
-                name: (patch.name as string) ?? "tool",
-                args: (patch.args as Record<string, unknown>) ?? {},
-                ...patch,
-                phase: (patch.phase as ToolCall["phase"]) ?? "start",
-              } as ToolCall);
-            if (tcs.length > 200) tcs.splice(0, tcs.length - 200);
-            copy[i] = { ...copy[i], toolCalls: tcs };
-            break;
-          }
-        }
-        return copy;
-      });
-    },
-    [createAssistantTurn],
-  );
-
   // ponytail: Tauri streams deltas faster than React can paint; batch per frame.
   const pendingTextRef = useRef("");
   const pendingThinkingRef = useRef("");
@@ -659,9 +625,58 @@ export default function ChatView({
     if (deltaRafRef.current) return;
     deltaRafRef.current = requestAnimationFrame(flushDeltas);
   }, [flushDeltas]);
+  // Same idea for tool calls: a burst of tool events in one frame (start /
+  // progress / end for several calls) becomes a single setMessages.
+  type ToolCallPatch = Partial<ToolCall> & {
+    name?: string;
+    args?: Record<string, unknown>;
+  };
+  const pendingToolPatchesRef = useRef<
+    Array<{ callId: string; patch: ToolCallPatch }>
+  >([]);
+  const toolCallRafRef = useRef(0);
+  const flushToolCalls = useCallback(() => {
+    toolCallRafRef.current = 0;
+    const patches = pendingToolPatchesRef.current;
+    pendingToolPatchesRef.current = [];
+    if (patches.length === 0) return;
+    setMessages((prev) => {
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
+      for (const { callId, patch } of patches) {
+        for (let i = copy.length - 1; i >= 0; i--) {
+          if (copy[i].role === "assistant") {
+            const tcs = [...copy[i].toolCalls];
+            const idx = tcs.findIndex((t) => t.callId === callId);
+            if (idx >= 0) tcs[idx] = { ...tcs[idx], ...patch } as ToolCall;
+            else
+              tcs.push({
+                callId,
+                name: (patch.name as string) ?? "tool",
+                args: (patch.args as Record<string, unknown>) ?? {},
+                ...patch,
+                phase: (patch.phase as ToolCall["phase"]) ?? "start",
+              } as ToolCall);
+            if (tcs.length > 200) tcs.splice(0, tcs.length - 200);
+            copy[i] = { ...copy[i], toolCalls: tcs };
+            break;
+          }
+        }
+      }
+      return copy;
+    });
+  }, [createAssistantTurn]);
+  const upsertToolCall = useCallback(
+    (callId: string, patch: ToolCallPatch) => {
+      pendingToolPatchesRef.current.push({ callId, patch });
+      if (toolCallRafRef.current) return;
+      toolCallRafRef.current = requestAnimationFrame(flushToolCalls);
+    },
+    [flushToolCalls],
+  );
   useEffect(
     () => () => {
       if (deltaRafRef.current) cancelAnimationFrame(deltaRafRef.current);
+      if (toolCallRafRef.current) cancelAnimationFrame(toolCallRafRef.current);
       if (fallbackRevealTimerRef.current)
         window.clearInterval(fallbackRevealTimerRef.current);
     },
