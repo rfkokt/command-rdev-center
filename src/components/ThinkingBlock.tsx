@@ -1,3 +1,5 @@
+import { memo } from "react";
+
 function formatThinking(value: string) {
   const jsonStart = Math.min(
     ...[value.indexOf("{"), value.indexOf("[")].filter((index) => index >= 0),
@@ -16,13 +18,12 @@ function formatThinking(value: string) {
   }
 }
 
-export default function ThinkingBlock({
-  children,
-  isStreaming = false,
-}: {
+type ThinkingBlockProps = {
   children: string;
   isStreaming?: boolean;
-}) {
+};
+
+function ThinkingBlock({ children, isStreaming = false }: ThinkingBlockProps) {
   return (
     <details className="thinking-block" open={isStreaming}>
       <summary>
@@ -34,3 +35,17 @@ export default function ThinkingBlock({
     </details>
   );
 }
+
+// Same rationale as MarkdownMessage: skip re-renders while a sibling message
+// streams, unless the thinking text or streaming flag changed.
+export function areThinkingBlockPropsEqual(
+  prev: ThinkingBlockProps,
+  next: ThinkingBlockProps,
+): boolean {
+  return (
+    prev.children === next.children &&
+    (prev.isStreaming ?? false) === (next.isStreaming ?? false)
+  );
+}
+
+export default memo(ThinkingBlock, areThinkingBlockPropsEqual);

@@ -1,12 +1,18 @@
+// @vitest-environment jsdom
+
 import { describe, expect, test } from "vitest";
-import {
+import { render } from "@testing-library/react";
+import { createElement } from "react";
+import ToolCallView, {
   activityKind,
+  areToolCallPropsEqual,
   browserScreenshotRef,
   browserScreenshotRefFromText,
   getSubagentMeta,
   isSubagentTool,
   isWebSearchTool,
 } from "./ToolCall";
+import type { ToolCall as TC } from "../lib/rpc";
 
 describe("isWebSearchTool", () => {
   test("distinguishes web research from ordinary tools", () => {
@@ -94,5 +100,82 @@ describe("getSubagentMeta", () => {
     expect(getSubagentMeta({ chain: [{}, {}] }).count).toBe(2);
     expect(getSubagentMeta({ chain: [{}, {}] }).mode).toBe("CHAIN");
     expect(getSubagentMeta({ agent: "design" }).detail).toContain("DESIGN");
+  });
+});
+
+const makeTc = (overrides: Partial<TC> = {}): TC => ({
+  callId: "call-1",
+  name: "functions.read",
+  args: { path: "src/index.ts" },
+  phase: "end",
+  ...overrides,
+});
+
+describe("areToolCallPropsEqual", () => {
+  test("treats field-identical tool calls as equal despite new identity", () => {
+    expect(areToolCallPropsEqual({ tc: makeTc() }, { tc: makeTc() })).toBe(
+      true,
+    );
+    // Same object identity is trivially equal.
+    const tc = makeTc();
+    expect(areToolCallPropsEqual({ tc }, { tc })).toBe(true);
+  });
+
+  test("detects phase, error, name, arg, and result changes", () => {
+    const prev = { tc: makeTc() };
+    expect(
+      areToolCallPropsEqual(prev, { tc: makeTc({ phase: "delta" }) }),
+    ).toBe(false);
+    expect(areToolCallPropsEqual(prev, { tc: makeTc({ isError: true }) })).toBe(
+      false,
+    );
+    expect(
+      areToolCallPropsEqual(prev, { tc: makeTc({ name: "functions.bash" }) }),
+    ).toBe(false);
+    expect(
+      areToolCallPropsEqual(prev, {
+        tc: makeTc({ args: { path: "other.ts" } }),
+      }),
+    ).toBe(false);
+    expect(
+      areToolCallPropsEqual(prev, {
+        tc: makeTc({ args: { path: "src/index.ts", extra: 1 } }),
+      }),
+    ).toBe(false);
+  });
+
+  test("compares result by reference so new payloads re-render", () => {
+    const shared = { ok: true };
+    expect(
+      areToolCallPropsEqual(
+        { tc: makeTc({ result: shared }) },
+        { tc: makeTc({ result: shared }) },
+      ),
+    ).toBe(true);
+    expect(
+      areToolCallPropsEqual(
+        { tc: makeTc({ result: { ok: true } }) },
+        { tc: makeTc({ result: { ok: true } }) },
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("ToolCallView memoization", () => {
+  test("default export is a memo component", () => {
+    expect((ToolCallView as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      Symbol.for("react.memo"),
+    );
+  });
+
+  test("rerender with the same tool call keeps rendered output", () => {
+    const tc = makeTc({ result: "done" });
+    const { container, rerender } = render(createElement(ToolCallView, { tc }));
+    const html = container.innerHTML;
+    rerender(createElement(ToolCallView, { tc }));
+    expect(container.innerHTML).toBe(html);
+    expect(container.querySelector("strong")?.textContent).toBe(
+      "functions.read",
+    );
   });
 });

@@ -3,7 +3,11 @@
 import { createElement } from "react";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import MarkdownMessage, { formatChatCode, hasMath } from "./MarkdownMessage";
+import MarkdownMessage, {
+  areMarkdownMessagePropsEqual,
+  formatChatCode,
+  hasMath,
+} from "./MarkdownMessage";
 
 describe("MarkdownMessage", () => {
   test("renders preserved spreadsheet newlines inside table cells", () => {
@@ -117,5 +121,46 @@ curl -X 'POST' \\
   test("leaves existing fenced code untouched", () => {
     const markdown = "```bash\ncurl https://example.test\n```";
     expect(formatChatCode(markdown)).toBe(markdown);
+  });
+});
+
+describe("memoization", () => {
+  test("areMarkdownMessagePropsEqual compares text and streaming flag", () => {
+    expect(
+      areMarkdownMessagePropsEqual({ children: "a" }, { children: "a" }),
+    ).toBe(true);
+    // `isStreaming` defaults to false, so undefined and false are equivalent.
+    expect(
+      areMarkdownMessagePropsEqual(
+        { children: "a", isStreaming: undefined },
+        { children: "a", isStreaming: false },
+      ),
+    ).toBe(true);
+    expect(
+      areMarkdownMessagePropsEqual({ children: "a" }, { children: "b" }),
+    ).toBe(false);
+    expect(
+      areMarkdownMessagePropsEqual(
+        { children: "a", isStreaming: true },
+        { children: "a", isStreaming: false },
+      ),
+    ).toBe(false);
+  });
+
+  test("default export is a memo component", () => {
+    expect((MarkdownMessage as unknown as { $$typeof: symbol }).$$typeof).toBe(
+      Symbol.for("react.memo"),
+    );
+  });
+
+  test("rerender with identical props keeps rendered output", () => {
+    const props = { isStreaming: false, children: "hello **world**" };
+    const { container, rerender } = render(
+      createElement(MarkdownMessage, props),
+    );
+    const html = container.innerHTML;
+    rerender(createElement(MarkdownMessage, props));
+    expect(container.innerHTML).toBe(html);
+    expect(container.querySelector("strong")?.textContent).toBe("world");
   });
 });

@@ -1,6 +1,7 @@
 import {
   Children,
   lazy,
+  memo,
   Suspense,
   useEffect,
   useMemo,
@@ -242,13 +243,15 @@ export function hasMath(source: string): boolean {
   return MATH_PATTERN.test(stripCodeSegments(source));
 }
 
-export default function MarkdownMessage({
-  children,
-  isStreaming = false,
-}: {
+type MarkdownMessageProps = {
   children: string;
   isStreaming?: boolean;
-}) {
+};
+
+function MarkdownMessage({
+  children,
+  isStreaming = false,
+}: MarkdownMessageProps) {
   const [showLargeMessage, setShowLargeMessage] = useState(false);
   // ponytail: format is O(n^2)-ish scanning; skip it per-frame while streaming.
   const formatted = useMemo(
@@ -383,3 +386,18 @@ export default function MarkdownMessage({
     </div>
   );
 }
+
+// The parent re-renders the whole message list on every stream frame; bail
+// out unless the text or the streaming flag actually changed so idle sibling
+// messages don't re-parse markdown + KaTeX every frame.
+export function areMarkdownMessagePropsEqual(
+  prev: MarkdownMessageProps,
+  next: MarkdownMessageProps,
+): boolean {
+  return (
+    prev.children === next.children &&
+    (prev.isStreaming ?? false) === (next.isStreaming ?? false)
+  );
+}
+
+export default memo(MarkdownMessage, areMarkdownMessagePropsEqual);

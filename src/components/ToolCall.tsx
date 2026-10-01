@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ToolCall as TC } from "../lib/rpc";
 import { useModalFocus } from "./useModalFocus";
@@ -300,7 +300,7 @@ function WebSearchView({ tc }: { tc: TC }) {
   );
 }
 
-export default function ToolCallView({ tc }: { tc: TC }) {
+function ToolCallView({ tc }: { tc: TC }) {
   if (isWebSearchTool(tc.name)) return <WebSearchView tc={tc} />;
   const isStreaming = tc.phase !== "end";
   return (
@@ -334,3 +334,38 @@ export default function ToolCallView({ tc }: { tc: TC }) {
     </details>
   );
 }
+
+function argsShallowEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  if (a === b) return true;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  return (
+    aKeys.length === bKeys.length &&
+    aKeys.every((key) => Object.is(a[key], b[key]))
+  );
+}
+
+// Tool-call patches are immutable updates (a new `tc` object per patch), but
+// the parent also re-renders on every stream frame with the *same* object, so
+// compare the semantically relevant fields instead of relying on identity.
+export function areToolCallPropsEqual(
+  prev: { tc: TC },
+  next: { tc: TC },
+): boolean {
+  const a = prev.tc;
+  const b = next.tc;
+  return (
+    a === b ||
+    (a.callId === b.callId &&
+      a.name === b.name &&
+      a.phase === b.phase &&
+      a.isError === b.isError &&
+      argsShallowEqual(a.args, b.args) &&
+      Object.is(a.result, b.result))
+  );
+}
+
+export default memo(ToolCallView, areToolCallPropsEqual);
