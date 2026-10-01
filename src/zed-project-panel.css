@@ -424,6 +424,7 @@
   opacity: 0;
 }
 .pfs-error {
+  word-break: break-word;
   border-color: var(--separator);
   background: color-mix(in srgb, var(--danger) 9%, var(--surface));
   color: var(--danger);
@@ -505,35 +506,6 @@
   color: var(--text-muted);
   font-weight: 500;
 }
-.code-diff-list button {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto auto;
-  gap: 8px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--separator);
-  color: var(--text-secondary);
-  font-size: var(--type-xs);
-  text-align: left;
-}
-.code-diff-list button:hover {
-  background: var(--surface-selected);
-}
-.code-diff-list button strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.code-diff-list button i {
-  color: var(--colors-success);
-  font-style: normal;
-}
-.code-diff-list button b {
-  color: var(--danger);
-  font-weight: 400;
-}
 .pfs-preview {
   border-color: var(--separator);
   background: var(--surface-solid);
@@ -544,6 +516,7 @@
   color: var(--text-primary);
 }
 .file-preview-header {
+  user-select: none;
   padding: 9px 12px;
   border-color: var(--separator);
   background: var(--surface);

@@ -1,8 +1,18 @@
-import { useEffect, useImperativeHandle, useState, type Ref } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { filePickerKey } from "./chat-utils";
 
 type FileEntry = { name: string; path: string; relative: string };
+
+// Keystroke debounce before hitting the backend; the walk + fuzzy match is
+// not free on large projects.
+const SEARCH_DEBOUNCE_MS = 200;
 
 export type FilePickerHandle = { onKeyDown: (key: string) => boolean };
 
@@ -22,30 +32,36 @@ export default function FilePicker({
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [error, setError] = useState("");
   const [selectedIdx, setSelectedIdx] = useState(0);
+  // Monotonic id of the latest search request; an older slow response must
+  // never overwrite newer results.
+  const requestId = useRef(0);
 
   useEffect(() => {
+    const id = ++requestId.current;
     let cancelled = false;
-    async function search() {
-      try {
-        const res = await invoke<FileEntry[]>("search_files", {
-          projectPath,
-          query,
-        });
-        if (!cancelled) {
-          setFiles(res);
-          setError("");
-          setSelectedIdx(0);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await invoke<FileEntry[]>("search_files", {
+            projectPath,
+            query,
+          });
+          if (!cancelled && requestId.current === id) {
+            setFiles(res);
+            setError("");
+            setSelectedIdx(0);
+          }
+        } catch (e) {
+          if (!cancelled && requestId.current === id) {
+            setFiles([]);
+            setError(String(e));
+          }
         }
-      } catch (e) {
-        if (!cancelled) {
-          setFiles([]);
-          setError(String(e));
-        }
-      }
-    }
-    search();
+      })();
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [projectPath, query]);
 

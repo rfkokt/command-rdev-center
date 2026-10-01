@@ -22,7 +22,13 @@ Kern Studio brings project discovery, isolated task worktrees, native agent chat
 
 ## Deep Research
 
-The global **Deep Research** dashboard runs one dedicated Pi session with only `web_search`, `source_check`, `fetch_content`, and `get_search_content`. It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
+The global **Deep Research** dashboard runs one dedicated Pi session with a restricted tool allowlist of 11 tools: `web_search`, `source_check`, `fetch_content`, `get_search_content`, plus the `agent_reach_*` research tools (`agent_reach_status`, `agent_reach_web_read`, `agent_reach_github_search`, `agent_reach_youtube_search`, `agent_reach_youtube_transcript`, `agent_reach_rss_read`, `agent_reach_exa_search`). It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
+
+## Session Branches and Checkpoints
+
+The session tree retains all branches using Pi's flat `get_entries` response. Forking is available on user messages only; it replaces the active transcript with that branch's history and restores the selected prompt as an editable draft.
+
+Git-worktree chats await a best-effort checkpoint before dispatching each user message. Restoring a checkpoint restores the tracked snapshot, including removing tracked files added afterward, without changing HEAD, unrelated untracked files, or conversation history. File-picker results are cached for at most one second so nested file and ignore-rule changes become visible on the next lookup after expiry.
 
 ## Stack
 
@@ -55,6 +61,7 @@ pnpm dev
 pnpm test
 pnpm run check:version  # cargo/tauri conf ↔ package.json sync
 pnpm build              # check:version + tsc + vite build
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib # macOS backend tests
 ```
 
 ## Scripts

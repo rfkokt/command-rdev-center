@@ -1,7 +1,4 @@
 /* Minimal desktop workspace informed by Zed Threads, Linear's 2026 refresh, and Raycast. */
-:root {
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-}
 
 @keyframes ui-fade-in {
   from {
@@ -96,8 +93,6 @@ summary {
 :root {
   --minimal-edge: 8px;
   --minimal-gap: 8px;
-  --minimal-sidebar: 244px;
-  --minimal-header: 48px;
 }
 
 .app-shell {
@@ -126,10 +121,7 @@ summary {
   box-shadow: none;
 }
 .sidebar {
-  width: auto;
   padding: 6px;
-  background: color-mix(in srgb, var(--surface) 94%, var(--canvas));
-  transform-origin: left center;
   transition:
     opacity 160ms var(--ease-out),
     transform 220ms var(--ease-out);
@@ -142,6 +134,7 @@ summary {
   pointer-events: none;
 }
 .workspace {
+  min-width: 0;
   overflow: hidden;
   background: var(--surface-solid);
 }
@@ -157,9 +150,6 @@ summary {
   height: 26px;
   display: block;
   flex: 0 0 26px;
-  border-radius: 7px;
-  background: #111411;
-  object-fit: cover;
 }
 .sidebar-brand strong {
   font-size: var(--type-ui);
@@ -212,6 +202,8 @@ summary {
   font-size: var(--type-ui);
 }
 .conversation-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 31px;
   height: 31px;
   padding: 0 8px 0 32px;
   font-size: var(--type-sm);
@@ -282,12 +274,7 @@ summary {
 .settings-button {
   border-radius: 5px;
 }
-.project-row:hover,
-.conversation-row:hover,
-.settings-button:hover {
-  background: color-mix(in srgb, var(--surface-selected) 70%, transparent);
-  color: var(--text-primary);
-}
+
 .conversation-row.active,
 .settings-button.active {
   background: var(--surface-selected);
@@ -332,14 +319,7 @@ summary {
   font-size: 16px;
   line-height: 1;
 }
-.appearance-control {
-  margin: 3px 4px 6px;
-  padding: 2px;
-}
-.appearance-control button {
-  min-height: 23px;
-  font-size: var(--type-xs);
-}
+
 .app-version {
   color: var(--text-secondary);
   opacity: 0.8;
@@ -360,13 +340,7 @@ summary {
   width: 15px;
   height: 15px;
 }
-.sidebar-resize-handle {
-  z-index: 20;
-  inset: 8px -7px 8px auto;
-  width: 8px;
-  cursor: col-resize;
-  touch-action: none;
-}
+
 .sidebar-resize-handle::after {
   content: "";
   position: absolute;
@@ -393,7 +367,6 @@ summary {
   border: 0;
   border-bottom: 1px solid var(--separator);
   border-radius: 10px 10px 0 0;
-  background: var(--surface-solid);
 }
 .sidebar-toggle {
   width: 28px;
@@ -502,6 +475,8 @@ summary {
 
 @media (max-width: 900px) {
   :root {
+    --layout-edge: 8px;
+    --layout-gap: 8px;
     --minimal-edge: 5px;
     --minimal-gap: 5px;
   }

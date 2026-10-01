@@ -89,6 +89,109 @@ fn sync_env_files(repo_path: &Path, worktree_path: &Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Per-worktree agent memory file (munder-difflin pattern).
+const WORKTREE_MEMORY_FILE: &str = "memory.md";
+
+/// YYYY-MM-DD (UTC) for a unix timestamp — Howard Hinnant's civil-from-days.
+fn unix_date_yyyymmdd(unix_secs: u64) -> String {
+    let z = (unix_secs / 86_400) as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    format!("{:04}-{:02}-{:02}", if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn worktree_memory_template(project_name: &str, created: &str) -> String {
+    format!(
+        "# memory.md — {project_name}\n\
+         \n\
+         Per-worktree agent memory (munder-difflin pattern).\n\
+         Local-only: this file is excluded from git via the repository's `.git/info/exclude` — it never appears in diffs and is never committed.\n\
+         \n\
+         Created: {created}\n\
+         \n\
+         ## Instructions\n\
+         - Read this file at session start.\n\
+         - Append durable learnings here as short bullets: decisions made, gotchas found, user preferences, tool quirks worth remembering.\n\
+         - Keep bullets short and session-transcending; this is not a task log.\n\
+         \n\
+         ## Learnings\n"
+    )
+}
+
+/// Absolute common git dir for a worktree (the main checkout's `.git`).
+/// Linked worktrees read `info/exclude` from the common dir — the
+/// worktree-local `info/exclude` is NOT honored by git (verified on
+/// git 2.43), so the exclusion must live there to take effect.
+fn worktree_common_git_dir(worktree_path: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!dir.is_empty()).then_some(PathBuf::from(dir))
+}
+
+/// Keep `memory.md` out of git entirely: append it to the repository's
+/// `.git/info/exclude` (local-only, never committed; the pattern is
+/// root-anchored so nested `memory.md` files are unaffected). Git reads
+/// excludes for linked worktrees from the common dir, so this keeps
+/// `memory.md` out of `git status`/diffs — and, critically, it never
+/// blocks the "worktree clean → auto-remove" check in
+/// `remove_worktree_if_empty`.
+fn exclude_worktree_memory(worktree_path: &Path) {
+    let Some(git_dir) = worktree_common_git_dir(worktree_path) else {
+        return;
+    };
+    let info_dir = git_dir.join("info");
+    if std::fs::create_dir_all(&info_dir).is_err() {
+        return;
+    }
+    let exclude = info_dir.join("exclude");
+    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|line| line.trim() == "/memory.md" || line.trim() == "memory.md")
+    {
+        return;
+    }
+    let mut contents = existing;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(
+        "# per-worktree agent memory (munder-difflin): local-only, never commit\n/memory.md\n",
+    );
+    let _ = std::fs::write(&exclude, contents);
+}
+
+/// Create `<worktree>/memory.md` from template when absent and keep it
+/// git-local via `.git/info/exclude`. Best-effort: worktree creation must
+/// never fail because memory setup did.
+fn ensure_worktree_memory(worktree_path: &Path, project_name: &str) {
+    let memory = worktree_path.join(WORKTREE_MEMORY_FILE);
+    if !memory.exists() {
+        let created = unix_date_yyyymmdd(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
+        let _ = std::fs::write(&memory, worktree_memory_template(project_name, &created));
+    }
+    exclude_worktree_memory(worktree_path);
+}
+
 fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
     let root = worktree_root(project_root);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -219,6 +322,7 @@ pub fn create_worktree(
             }
         }
         sync_env_files(repo_path, &worktree_path)?;
+        ensure_worktree_memory(&worktree_path, &safe_repo);
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path)?;
         return Ok(worktree_info(
@@ -301,6 +405,7 @@ pub fn create_worktree(
     }
 
     sync_env_files(repo_path, &worktree_path)?;
+    ensure_worktree_memory(&worktree_path, &safe_repo);
 
     Ok(worktree_info(
         repo_path,
@@ -676,6 +781,211 @@ pub async fn force_remove_worktree(repo_path: String, worktree_path: String) -> 
     .map_err(|e| format!("Worktree worker failed: {e}"))?
 }
 
+// ── Checkpoints (Cursor-style: snapshot per user message) ────────────────────
+
+/// A git commit created by `create_checkpoint` (subject prefixed `checkpoint: `).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Checkpoint {
+    pub sha: String,
+    pub timestamp: i64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CheckpointResult {
+    /// "committed" when a snapshot was taken, "clean" when the tree had no changes.
+    pub status: String,
+    pub sha: Option<String>,
+}
+
+/// Keep the checkpoint subject on a single line (git log filtering depends on the prefix).
+fn sanitize_checkpoint_message(message: &str) -> String {
+    message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(160)
+        .collect()
+}
+
+fn is_valid_checkpoint_sha(sha: &str) -> bool {
+    let len = sha.len();
+    (7..=40).contains(&len) && sha.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn checkpoint_repo(worktree_path: &str) -> Result<String, String> {
+    let path = crate::projects::ensure_path_allowed(Path::new(worktree_path))?;
+    let path_str = path.to_string_lossy().to_string();
+    let probe = Command::new("git")
+        .args(["-C", &path_str, "rev-parse", "--git-dir"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !probe.status.success() {
+        return Err(format!("not a git worktree: {worktree_path}"));
+    }
+    Ok(path_str)
+}
+
+#[tauri::command]
+pub fn create_checkpoint(
+    worktree_path: String,
+    message: String,
+) -> Result<CheckpointResult, String> {
+    let path_str = checkpoint_repo(&worktree_path)?;
+    create_checkpoint_in_repo(&path_str, &message)
+}
+
+fn create_checkpoint_in_repo(path_str: &str, message: &str) -> Result<CheckpointResult, String> {
+    let status = Command::new("git")
+        .args(["-C", &path_str, "status", "--porcelain"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !status.status.success() {
+        return Err(String::from_utf8_lossy(&status.stderr).trim().to_string());
+    }
+    if String::from_utf8_lossy(&status.stdout).trim().is_empty() {
+        return Ok(CheckpointResult {
+            status: "clean".to_string(),
+            sha: None,
+        });
+    }
+    let one_line = sanitize_checkpoint_message(&message);
+    let subject = if one_line.is_empty() {
+        "checkpoint".to_string()
+    } else {
+        format!("checkpoint: {one_line}")
+    };
+    // Note: per-worktree memory.md is excluded from git via the repository's
+    // .git/info/exclude, so `git add -A` never snapshots it.
+    let add = Command::new("git")
+        .args(["-C", &path_str, "add", "-A"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !add.status.success() {
+        return Err(format!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&add.stderr).trim()
+        ));
+    }
+    let commit = Command::new("git")
+        .args(["-C", &path_str, "commit", "-m", &subject])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !commit.status.success() {
+        return Err(format!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit.stderr).trim()
+        ));
+    }
+    let sha_out = Command::new("git")
+        .args(["-C", &path_str, "rev-parse", "HEAD"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !sha_out.status.success() {
+        return Err("checkpoint committed but HEAD lookup failed".to_string());
+    }
+    Ok(CheckpointResult {
+        status: "committed".to_string(),
+        sha: Some(String::from_utf8_lossy(&sha_out.stdout).trim().to_string()),
+    })
+}
+
+#[tauri::command]
+pub fn list_checkpoints(worktree_path: String) -> Result<Vec<Checkpoint>, String> {
+    let path_str = checkpoint_repo(&worktree_path)?;
+    list_checkpoints_in_repo(&path_str)
+}
+
+fn list_checkpoints_in_repo(path_str: &str) -> Result<Vec<Checkpoint>, String> {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            &path_str,
+            "log",
+            "--grep=^checkpoint:",
+            "--format=%H%x00%ct%x00%s%x1e",
+            "-n",
+            "100",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let mut checkpoints = Vec::new();
+    for record in String::from_utf8_lossy(&out.stdout).split('\u{1e}') {
+        let record = record.trim();
+        if record.is_empty() {
+            continue;
+        }
+        let mut parts = record.splitn(3, '\0');
+        let (Some(sha), Some(timestamp), Some(subject)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let message = subject
+            .strip_prefix("checkpoint:")
+            .map(str::trim)
+            .unwrap_or(subject)
+            .to_string();
+        checkpoints.push(Checkpoint {
+            sha: sha.to_string(),
+            timestamp: timestamp.parse::<i64>().unwrap_or(0),
+            message,
+        });
+    }
+    Ok(checkpoints)
+}
+
+/// Restore tracked files to a checkpoint commit.
+///
+/// Uses `git restore --source {sha} --staged --worktree -- .`: tracked files
+/// added after the snapshot are removed as well. Untracked
+/// files created after the checkpoint are left alone, and the conversation is
+/// untouched (it lives in the pi session file, not in git).
+#[tauri::command]
+pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, String> {
+    if !is_valid_checkpoint_sha(&sha) {
+        return Err("invalid checkpoint sha".to_string());
+    }
+    let path_str = checkpoint_repo(&worktree_path)?;
+    restore_checkpoint_in_repo(&path_str, &sha)
+}
+
+fn restore_checkpoint_in_repo(path_str: &str, sha: &str) -> Result<String, String> {
+    let kind = Command::new("git")
+        .args(["-C", &path_str, "cat-file", "-t", &sha])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !kind.status.success() || String::from_utf8_lossy(&kind.stdout).trim() != "commit" {
+        return Err("sha does not resolve to a commit".to_string());
+    }
+    let out = Command::new("git")
+        .args([
+            "-C",
+            path_str,
+            "restore",
+            "--source",
+            sha,
+            "--staged",
+            "--worktree",
+            "--",
+            ".",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "restore failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(sha.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,6 +1145,258 @@ mod tests {
         );
         #[cfg(unix)]
         assert!(worktree.join(".env").is_symlink());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unix_date_yyyymmdd_matches_known_dates() {
+        // 2026-10-01 00:00:00 UTC
+        assert_eq!(unix_date_yyyymmdd(1790812800), "2026-10-01");
+        // 1970-01-01 00:00:00 UTC (epoch)
+        assert_eq!(unix_date_yyyymmdd(0), "1970-01-01");
+    }
+
+    #[test]
+    fn worktree_memory_created_with_template_and_excluded_from_git() {
+        let root = std::env::temp_dir().join(format!("crc-mem-test-{}", std::process::id()));
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "branch", "-M", "main"])
+            .output()
+            .unwrap();
+        std::fs::write(repo.join("tracked"), "base").unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "tracked"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "commit", "-m", "base"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "-b",
+                "crc/mem-test",
+            ])
+            .output()
+            .unwrap();
+
+        ensure_worktree_memory(&worktree, "demo-repo");
+        let memory = std::fs::read_to_string(worktree.join("memory.md")).unwrap();
+        assert!(memory.contains("# memory.md — demo-repo"));
+        assert!(memory.contains("Read this file at session start"));
+        assert!(memory.contains("Append durable learnings"));
+
+        // Exclude entry is idempotent across re-ensures (resume path).
+        ensure_worktree_memory(&worktree, "demo-repo");
+        let exclude = std::fs::read_to_string(
+            worktree_common_git_dir(&worktree)
+                .unwrap()
+                .join("info/exclude"),
+        )
+        .unwrap();
+        assert_eq!(
+            exclude
+                .lines()
+                .filter(|line| line.trim() == "/memory.md")
+                .count(),
+            1
+        );
+
+        // User-written learnings are preserved on re-ensure (resume path).
+        std::fs::write(
+            worktree.join("memory.md"),
+            format!("{memory}\n- prefers tabs\n"),
+        )
+        .unwrap();
+        ensure_worktree_memory(&worktree, "demo-repo");
+        assert!(std::fs::read_to_string(worktree.join("memory.md"))
+            .unwrap()
+            .contains("prefers tabs"));
+
+        // Excluded from git: status porcelain stays empty, so the clean →
+        // auto-remove check is unaffected even with a populated memory.md.
+        let status = Command::new("git")
+            .args(["-C", worktree.to_str().unwrap(), "status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
+        let removed =
+            remove_worktree_if_empty(&root, &repo, worktree.to_str().unwrap(), "main").unwrap();
+        assert!(removed);
+        assert!(!worktree.exists());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_sanitize_keeps_single_line() {
+        assert_eq!(
+            sanitize_checkpoint_message("  fix login  \nsecond line"),
+            "fix login"
+        );
+        assert_eq!(sanitize_checkpoint_message(""), "");
+        assert_eq!(sanitize_checkpoint_message("checkpoint"), "checkpoint");
+        assert!(!is_valid_checkpoint_sha("zzzzzzz"));
+        assert!(!is_valid_checkpoint_sha("../escape"));
+        assert!(!is_valid_checkpoint_sha("abc"));
+        assert!(is_valid_checkpoint_sha("abcdef1"));
+        assert!(is_valid_checkpoint_sha(
+            "0123456789abcdef0123456789abcdef01234567"
+        ));
+    }
+
+    /// Minimal temp git repo for checkpoint tests (plain dir, not a worktree).
+    fn init_checkpoint_repo(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("crc-checkpoint-{tag}-{}", std::process::id()));
+        let repo = root.join("repo");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        let repo_str = repo.to_str().unwrap().to_string();
+        for args in [
+            vec!["init".to_string(), repo_str.clone()],
+            vec![
+                "-C".to_string(),
+                repo_str.clone(),
+                "config".to_string(),
+                "user.email".to_string(),
+                "test@example.com".to_string(),
+            ],
+            vec![
+                "-C".to_string(),
+                repo_str.clone(),
+                "config".to_string(),
+                "user.name".to_string(),
+                "Test".to_string(),
+            ],
+        ] {
+            let out = Command::new("git").args(&args).output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::fs::write(repo.join("tracked.txt"), "base").unwrap();
+        for args in [
+            vec!["-C", repo.to_str().unwrap(), "add", "tracked.txt"],
+            vec!["-C", repo.to_str().unwrap(), "commit", "-m", "base"],
+        ] {
+            let out = Command::new("git").args(&args).output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        (root, repo)
+    }
+
+    #[test]
+    fn checkpoint_round_trip() {
+        let (root, repo) = init_checkpoint_repo("roundtrip");
+        let path = repo.to_str().unwrap().to_string();
+
+        // Clean tree -> "clean", no sha.
+        let clean = create_checkpoint_in_repo(&path, "nothing to save").unwrap();
+        assert_eq!(clean.status, "clean");
+        assert!(clean.sha.is_none());
+
+        // Dirty tree -> commit with sanitized single-line subject.
+        std::fs::write(repo.join("tracked.txt"), "changed").unwrap();
+        let made = create_checkpoint_in_repo(&path, "  user asked to tweak login\nmalicious\nline")
+            .unwrap();
+        assert_eq!(made.status, "committed");
+        let sha = made.sha.clone().unwrap();
+        assert!(is_valid_checkpoint_sha(&sha));
+
+        // A non-checkpoint commit is filtered out of the listing.
+        std::fs::write(repo.join("other.txt"), "x").unwrap();
+        Command::new("git")
+            .args(["-C", &path, "add", "other.txt"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", &path, "commit", "-m", "regular commit"])
+            .output()
+            .unwrap();
+
+        let list = list_checkpoints_in_repo(&path).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].sha, sha);
+        assert!(list[0].timestamp > 0);
+        assert_eq!(list[0].message, "user asked to tweak login");
+
+        // Restore: tracked file reverts, untracked file created later is left alone.
+        std::fs::write(repo.join("tracked.txt"), "even newer").unwrap();
+        std::fs::write(repo.join("untracked.txt"), "keep me").unwrap();
+        let restored = restore_checkpoint_in_repo(&path, &sha).unwrap();
+        assert_eq!(restored, sha);
+        assert!(!repo.join("other.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(repo.join("tracked.txt")).unwrap(),
+            "changed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("untracked.txt")).unwrap(),
+            "keep me"
+        );
+
+        // Invalid sha rejected before any git runs.
+        assert!(restore_checkpoint(path.clone(), "../evil".into()).is_err());
+        assert!(restore_checkpoint(path.clone(), "abc".into()).is_err());
+        assert!(restore_checkpoint(path.clone(), "0000000".into()).is_err());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_commands_reject_unregistered_paths() {
+        let (root, repo) = init_checkpoint_repo("unregistered");
+        let path = repo.to_string_lossy().to_string();
+        assert!(create_checkpoint(path.clone(), "test".into())
+            .unwrap_err()
+            .contains("unregistered"));
+        assert!(list_checkpoints(path.clone())
+            .unwrap_err()
+            .contains("unregistered"));
+        let sha = Command::new("git")
+            .args(["-C", &path, "rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(restore_checkpoint(
+            path,
+            String::from_utf8_lossy(&sha.stdout).trim().to_string()
+        )
+        .unwrap_err()
+        .contains("unregistered"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

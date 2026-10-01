@@ -23,6 +23,9 @@ pub struct RpcResponse {
 struct SessionHandle {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
+    /// Awaiting RPC round-trips keyed by request `id`; the stdout reader
+    /// thread delivers `{"type": "response", "id": ...}` lines here.
+    pending: Mutex<HashMap<String, std::sync::mpsc::Sender<serde_json::Value>>>,
 }
 
 type SharedSessionHandle = Arc<SessionHandle>;
@@ -223,6 +226,9 @@ pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
 
 #[tauri::command]
 pub fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
+    // The frontend only invokes this from an explicit "Install/Update" button
+    // in Settings, so the click itself is the user's consent to run the
+    // installer. Automatic paths must use `approve_pi_install` instead.
     install_pi_via_curl()?;
     let status = get_pi_runtime_status()?;
     if status.health != "healthy" {
@@ -255,15 +261,79 @@ fn installer_failure(output: &std::process::Output) -> String {
     )
 }
 
+/// URL of the upstream Pi installer. The script is a moving target (re-published
+/// on every Pi release), so a hardcoded hash pin would rot and wedge installs.
+const PI_INSTALL_URL: &str = "https://pi.dev/install.sh";
+
+/// Optional integrity anchor for the installer above. Intentionally `None`:
+/// the script changes with every upstream release, so a baked-in pin would
+/// fail on the next release. Set the `PI_INSTALL_SHA256` environment variable
+/// to enforce verification in managed deployments.
+const PINNED_PI_INSTALL_SHA256: Option<&str> = None;
+
+fn sha256_hex(path: &Path) -> Option<String> {
+    // Best-effort SHA-256 using OS tooling (avoids pulling in a hashing crate):
+    // macOS ships `shasum`, most Linux distros ship `sha256sum`. Both print
+    // "<hash>  <file>", so the first whitespace-separated token is the digest.
+    for tool in [&["shasum", "-a", "256"][..], &["sha256sum"][..]] {
+        let Ok(output) = Command::new(tool[0]).args(&tool[1..]).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(hash) = text.split_whitespace().next() {
+            if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(hash.to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn verify_installer_checksum(installer: &Path) -> Result<(), String> {
+    let expected = PINNED_PI_INSTALL_SHA256
+        .map(str::to_string)
+        .or_else(|| std::env::var("PI_INSTALL_SHA256").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(expected) = expected else {
+        // No integrity anchor available. The explicit user approval collected
+        // by `approve_pi_install` (or the Settings update button) is the
+        // security boundary here — the user sees the exact source URL and
+        // confirms before anything is downloaded or executed.
+        eprintln!("crc: no PI_INSTALL_SHA256 pin — skipping checksum verification for the Pi installer (user approval is the security boundary)");
+        return Ok(());
+    };
+    let actual = sha256_hex(installer).ok_or_else(|| {
+        "PI_INSTALL_SHA256 is set, but no sha256 tool (shasum/sha256sum) is available to verify the download"
+            .to_string()
+    })?;
+    if actual.eq_ignore_ascii_case(&expected) {
+        Ok(())
+    } else {
+        Err("Pi installer checksum mismatch — refusing to run the downloaded script (possible tampering or upstream update)".into())
+    }
+}
+
 fn install_pi_via_curl() -> Result<(), String> {
+    // SECURITY: the caller must hold explicit user consent before invoking this —
+    // it downloads and executes a remote shell script. See `approve_pi_install`.
     let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
     let download = Command::new("curl")
-        .args(["-fsSL", "https://pi.dev/install.sh", "-o"])
+        .args(["-fsSL", PI_INSTALL_URL, "-o"])
         .arg(&installer)
         .status()
         .map_err(|error| format!("failed to download Pi installer: {error}"))?;
     if !download.success() {
-        return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
+        return Err(format!(
+            "failed to download Pi installer from {PI_INSTALL_URL}"
+        ));
+    }
+    if let Err(error) = verify_installer_checksum(&installer) {
+        let _ = std::fs::remove_file(&installer);
+        return Err(error);
     }
     let pi_path = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -281,24 +351,18 @@ fn install_pi_via_curl() -> Result<(), String> {
     Ok(())
 }
 
+/// Machine-readable prefix the frontend matches on to offer install consent.
+fn pi_install_required_error(configured: &str) -> String {
+    format!(
+        "PI_INSTALL_REQUIRED: Pi CLI is missing or broken (checked {configured} and common install locations). Install it from {PI_INSTALL_URL} to continue."
+    )
+}
+
+/// Pure availability check — never installs. Returns the PI_INSTALL_REQUIRED
+/// error (and callers surface the consent UI) instead of silently running
+/// the remote installer.
 fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
-    if let Some(path) = installed_pi(configured) {
-        return Ok(path);
-    }
-
-    install_pi_via_curl()?;
-
-    // retry after first install
-    if let Some(path) = installed_pi(configured) {
-        return Ok(path);
-    }
-
-    // Some installers place shim that needs PATH refresh, try again with home candidates
-    // Give filesystem a moment
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    installed_pi(configured).ok_or_else(|| {
-        format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi. Please run: curl -fsSL https://pi.dev/install.sh | sh")
-    })
+    installed_pi(configured).ok_or_else(|| pi_install_required_error(configured))
 }
 
 fn ensure_pi_installed_with_repair(
@@ -308,29 +372,64 @@ fn ensure_pi_installed_with_repair(
     if let Some(path) = installed_pi(configured) {
         return Ok(path);
     }
+    // Never auto-install here: executing a remote shell script requires
+    // explicit user consent. Emit an event so the frontend can offer the
+    // install dialog, and return the machine-readable error for the spawn path.
     if let Some(app) = app {
         let _ = app.emit(
-            "pi-rpc-stderr",
+            "pi-install-required",
             serde_json::json!({
                 "session_id": "system",
-                "line": "⚠️ Pi binary not found on this Mac — reinstalling via https://pi.dev/install.sh ..."
+                "url": PI_INSTALL_URL,
+                "reason": format!("Pi binary not found (checked {configured} and common install locations)")
             }),
         );
     }
+    Err(pi_install_required_error(configured))
+}
+
+/// Install (or repair) the Pi CLI **only after explicit user approval**.
+/// The frontend shows a confirmation dialog carrying PI_INSTALL_URL and calls
+/// this command when the user clicks Install. Never invoke the installer from
+/// an automatic path — that would silently execute a remote shell script.
+#[tauri::command]
+pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, String> {
+    let (configured, _) = read_pi_config()?;
+    // If pi appeared since the check (user installed it manually), skip.
+    if installed_pi(&configured).is_some() {
+        return get_pi_runtime_status();
+    }
+    let _ = app.emit(
+        "pi-rpc-stderr",
+        serde_json::json!({
+            "session_id": "system",
+            "line": format!("⬇️ Installing Pi CLI from {PI_INSTALL_URL} (approved by user) ...")
+        }),
+    );
     install_pi_via_curl()?;
-    if let Some(app) = app {
-        let _ = app.emit(
-            "pi-rpc-stderr",
-            serde_json::json!({
-                "session_id": "system",
-                "line": "✅ Pi reinstall finished, retrying spawn..."
-            }),
-        );
+
+    // Retry/verification after install: give the filesystem a moment, then
+    // re-check. Some installers place a shim that needs a PATH refresh before
+    // it resolves, so try once more before giving up.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    if installed_pi(&configured).is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    installed_pi(configured).ok_or_else(|| {
-        format!("Pi still missing after auto-reinstall. Manually run: curl -fsSL https://pi.dev/install.sh | sh (checked: {:?})", candidate_pi_paths(configured))
-    })
+    let status = get_pi_runtime_status()?;
+    if status.health != "healthy" {
+        return Err(format!(
+            "Pi installer finished but the runtime is still not healthy. Manually run: curl -fsSL {PI_INSTALL_URL} | sh (checked: {:?})",
+            candidate_pi_paths(&configured)
+        ));
+    }
+    let _ = app.emit(
+        "pi-rpc-stderr",
+        serde_json::json!({
+            "session_id": "system",
+            "line": "✅ Pi install finished, runtime is healthy."
+        }),
+    );
+    Ok(status)
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
@@ -369,9 +468,10 @@ fn api_documentation_system_prompt(project: &Path) -> String {
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
         format!(
-            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
+            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Session memory: read `{}/memory.md` at session start (per-worktree learnings; local-only file, never commit it). Append durable, session-transcending learnings there as short bullets (decisions, gotchas, user prefs) — keep it short, no play-by-play narration.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
             cwd.display(),
-            project.display()
+            project.display(),
+            cwd.display()
         )
     })
 }
@@ -893,12 +993,14 @@ pub fn spawn_pi_rpc(
         {
             Ok(child) => break child,
             Err(e) if spawn_attempts == 0 && e.kind() == std::io::ErrorKind::NotFound => {
-                // pi vanished mid-flight on macOS (nvm cleanup / brew unlink / spotlight?), auto-repair once
+                // pi vanished mid-flight on macOS (nvm cleanup / brew unlink / spotlight?), retry once.
+                // The repair path no longer auto-installs: ensure_pi_installed_with_repair
+                // surfaces PI_INSTALL_REQUIRED so the user can approve the install first.
                 let _ = app.emit(
                     "pi-rpc-stderr",
                     serde_json::json!({
                         "session_id": session_id,
-                        "line": format!("⚠️ Pi spawn failed (NotFound: {e}) — auto-reinstalling...")
+                        "line": format!("⚠️ Pi spawn failed (NotFound: {e}) — checking for the binary...")
                     }),
                 );
                 match ensure_pi_installed_with_repair(Some(&app), &configured_pi_path) {
@@ -957,6 +1059,7 @@ pub fn spawn_pi_rpc(
     let handle: SharedSessionHandle = Arc::new(SessionHandle {
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(Some(stdin)),
+        pending: Mutex::new(HashMap::new()),
     });
     if let Ok(mut map) = sessions_map().lock() {
         map.insert(session_id.clone(), handle);
@@ -975,6 +1078,9 @@ pub fn spawn_pi_rpc(
                     if line.trim().is_empty() {
                         continue;
                     }
+                    // Route command responses carrying an `id` to awaiting
+                    // rpc_roundtrip callers before fanning out to the UI.
+                    route_rpc_response(&sid, &line);
                     // forward as pi-rpc-event
                     // distinguish responses from events: both are JSON lines
                     // We'll emit raw; frontend can discriminate by "type": "response" vs "extension_ui_request" etc
@@ -1055,19 +1161,14 @@ pub fn spawn_pi_rpc(
     Ok(session_id)
 }
 
-#[tauri::command]
-pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
-    if json_line.trim().is_empty() {
-        return Err("empty command".to_string());
-    }
-    // Validate it's JSON (quick)
-    serde_json::from_str::<serde_json::Value>(&json_line)
-        .map_err(|e| format!("invalid JSON: {}", e))?;
-
+/// Look up the session, drop it if the pi process already exited, and write one
+/// JSONL frame to its stdin. Shared by fire-and-forget `send_pi_command` and
+/// the awaiting `rpc_roundtrip`.
+fn write_session_line(session_id: &str, json_line: &str) -> Result<(), String> {
     let h = sessions_map()
         .lock()
         .map_err(|_| "poisoned sessions lock".to_string())?
-        .get(&session_id)
+        .get(session_id)
         .cloned()
         .ok_or_else(|| {
             format!(
@@ -1084,7 +1185,7 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         sessions_map()
             .lock()
             .map_err(|_| "poisoned sessions lock".to_string())?
-            .remove(&session_id);
+            .remove(session_id);
         return Err("Pi process exited before receiving the command. Restart the chat session and send again.".into());
     }
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
@@ -1101,7 +1202,7 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         sessions_map()
             .lock()
             .map_err(|_| "poisoned sessions lock".to_string())?
-            .remove(&session_id);
+            .remove(session_id);
         return Err(if error.kind() == std::io::ErrorKind::BrokenPipe {
             "Pi process stopped unexpectedly. Restart the chat session and send again.".into()
         } else {
@@ -1109,6 +1210,144 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         });
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
+    if json_line.trim().is_empty() {
+        return Err("empty command".to_string());
+    }
+    // Validate it's JSON (quick)
+    serde_json::from_str::<serde_json::Value>(&json_line)
+        .map_err(|e| format!("invalid JSON: {}", e))?;
+    write_session_line(&session_id, &json_line)
+}
+
+/// Session/node ids are app-generated; reject anything outside a safe alphabet
+/// before it reaches the pi process.
+fn validate_rpc_id(value: &str, what: &str) -> Result<(), String> {
+    if !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Ok(())
+    } else {
+        Err(format!("invalid {}", what))
+    }
+}
+
+static RPC_REQ_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Deliver a `{"type": "response", "id": ...}` line to the matching pending RPC
+/// round-trip, if any. All lines are still emitted as pi-rpc-event afterwards.
+fn route_rpc_response(session_id: &str, line: &str) {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    if value.get("type").and_then(|t| t.as_str()) != Some("response") {
+        return;
+    }
+    let Some(id) = value.get("id").and_then(|i| i.as_str()) else {
+        return;
+    };
+    let sender = sessions_map()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(session_id).cloned())
+        .and_then(|handle| {
+            handle
+                .pending
+                .lock()
+                .ok()
+                .and_then(|mut pending| pending.remove(id))
+        });
+    if let Some(tx) = sender {
+        let _ = tx.send(value);
+    }
+}
+
+/// Send one JSON-RPC command to the pi process and await its `response`
+/// (correlated by `id`). Returns the response's `data` payload.
+async fn rpc_roundtrip(
+    session_id: String,
+    command: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    validate_rpc_id(&session_id, "session_id")?;
+    let handle = sessions_map()
+        .lock()
+        .map_err(|_| "poisoned sessions lock".to_string())?
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| format!("unknown session {}", session_id))?;
+    let req_id = format!(
+        "crc-{}",
+        RPC_REQ_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let mut command = command;
+    if let Some(obj) = command.as_object_mut() {
+        obj.insert("id".to_string(), serde_json::Value::String(req_id.clone()));
+    }
+    let line = serde_json::to_string(&command).map_err(|e| e.to_string())?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    handle
+        .pending
+        .lock()
+        .map_err(|_| "poisoned pending".to_string())?
+        .insert(req_id.clone(), tx);
+    if let Err(error) = write_session_line(&session_id, &line) {
+        handle
+            .pending
+            .lock()
+            .ok()
+            .map(|mut pending| pending.remove(&req_id));
+        return Err(error);
+    }
+    let response = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(20))
+    })
+    .await
+    .map_err(|e| format!("RPC worker failed: {}", e))?
+    .map_err(|_| "timed out waiting for pi response (is the agent still starting?)".to_string())?;
+    if response.get("success").and_then(|s| s.as_bool()) != Some(true) {
+        let detail = response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .or_else(|| response.get("data").and_then(|d| d.as_str()))
+            .unwrap_or("unknown pi error");
+        return Err(format!("pi error: {}", detail));
+    }
+    Ok(response
+        .get("data")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+/// Flat pi entries retain all branches without exceeding JSON nesting limits
+/// on long sessions. The frontend reconstructs the tree using parentId.
+#[tauri::command]
+pub async fn get_session_tree(session_id: String) -> Result<serde_json::Value, String> {
+    rpc_roundtrip(session_id, serde_json::json!({ "type": "get_entries" })).await
+}
+
+/// pi RPC `fork`: `{"type": "fork", "entryId": node_id}` forks from a previous
+/// user message on the active branch and *replaces the active session in place*
+/// with the fork (per pi semantics). The response returns `{ text, cancelled }`,
+/// not a new session id — the frontend refreshes the current tab from the
+/// forked session afterwards via get_state/get_messages.
+#[tauri::command]
+pub async fn fork_session(
+    session_id: String,
+    node_id: String,
+) -> Result<serde_json::Value, String> {
+    validate_rpc_id(&node_id, "node_id")?;
+    rpc_roundtrip(
+        session_id,
+        serde_json::json!({ "type": "fork", "entryId": node_id }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1209,6 +1448,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn install_required_error_is_machine_readable() {
+        let error = pi_install_required_error("/tmp/pi");
+        assert!(error.starts_with("PI_INSTALL_REQUIRED:"));
+        assert!(error.contains("https://pi.dev/install.sh"));
+    }
+
+    #[test]
+    fn checksum_verification_is_skipped_without_pin() {
+        // No PI_INSTALL_SHA256 / pinned constant in the test env: verification
+        // must pass (best-effort) so installs are not blocked, with the
+        // explicit user approval as the security boundary.
+        std::env::remove_var("PI_INSTALL_SHA256");
+        let installer =
+            std::env::temp_dir().join(format!("crc-pi-checksum-{}", std::process::id()));
+        std::fs::write(&installer, "#!/bin/sh\necho hi\n").unwrap();
+        assert!(verify_installer_checksum(&installer).is_ok());
+        let _ = std::fs::remove_file(&installer);
+    }
+
     #[cfg(unix)]
     #[test]
     fn installer_failure_includes_captured_diagnostics() {
@@ -1278,10 +1537,8 @@ mod tests {
 
     #[test]
     fn api_documentation_prompt_requires_saved_contract_before_browser() {
-        assert!(
-            API_DOCUMENTATION_WORKFLOW_PROMPT
-                .contains("inspect its `paths` and `components` directly")
-        );
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("inspect its `paths` and `components` directly"));
         assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not use `web_search`"));
         assert!(
             API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser")
@@ -1302,6 +1559,8 @@ mod tests {
         assert!(prompt.contains("points out of the filesystem root"));
         assert!(prompt.contains("local dependency install"));
         assert!(prompt.contains("then rerun the build"));
+        assert!(prompt.contains("memory.md"));
+        assert!(prompt.contains("at session start"));
         assert!(
             worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
                 .is_none()
@@ -1359,5 +1618,47 @@ mod tests {
             return;
         };
         assert!(String::from_utf8_lossy(&output.stdout).contains("--session <path|id>"));
+    }
+
+    #[test]
+    fn rpc_id_validation_rejects_unsafe_values() {
+        assert!(validate_rpc_id("chat-abc_123", "session_id").is_ok());
+        assert!(validate_rpc_id("research-1", "session_id").is_ok());
+        assert!(validate_rpc_id("abcdef0123456789", "node_id").is_ok());
+        assert!(validate_rpc_id("", "session_id").is_err());
+        assert!(validate_rpc_id("chat/abc", "session_id").is_err());
+        assert!(validate_rpc_id("a b", "node_id").is_err());
+        assert!(validate_rpc_id("$(rm -rf /)", "node_id").is_err());
+        assert!(validate_rpc_id("a".repeat(129).as_str(), "session_id").is_err());
+        assert!(validate_rpc_id("a".repeat(128).as_str(), "session_id").is_ok());
+    }
+
+    #[test]
+    fn routes_long_session_entries_response() {
+        let id = "long-session-entries";
+        let request = "entries-request";
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut pending = HashMap::new();
+        pending.insert(request.to_string(), tx);
+        sessions_map().lock().unwrap().insert(
+            id.to_string(),
+            Arc::new(SessionHandle {
+                child: Mutex::new(None),
+                stdin: Mutex::new(None),
+                pending: Mutex::new(pending),
+            }),
+        );
+        let entries: Vec<_> = (0..3000).map(|index| serde_json::json!({
+            "type": "message", "id": format!("entry-{index}"),
+            "parentId": if index == 0 { None } else { Some(format!("entry-{}", index - 1)) },
+            "message": { "role": "user", "content": "prompt" }
+        })).collect();
+        let response = serde_json::json!({ "type": "response", "id": request, "success": true, "data": { "entries": entries, "leafId": "entry-2999" } });
+        route_rpc_response(id, &response.to_string());
+        sessions_map().lock().unwrap().remove(id);
+        let received = rx
+            .try_recv()
+            .expect("long session entries should reach the pending RPC");
+        assert_eq!(received["data"]["entries"].as_array().unwrap().len(), 3000);
     }
 }

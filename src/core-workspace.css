@@ -1,10 +1,4 @@
 /* Core workspace polish: shell-only overrides. */
-:root {
-  --shell-sidebar: 272px;
-  --shell-toolbar: 64px;
-  --shell-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --z-skip-link: 130;
-}
 
 .skip-link {
   position: fixed;
@@ -25,29 +19,10 @@
   transform: translateY(0);
 }
 
-.app-shell {
-  background: var(--colors-canvas);
-}
 .sidebar {
-  width: var(--shell-sidebar);
-  padding: var(--spacing-md) var(--spacing-sm) var(--spacing-xs);
-  background: var(--colors-surface-soft);
   border-right-color: var(--colors-hairline);
-  transition: transform 180ms var(--shell-ease);
 }
-.sidebar-brand {
-  height: 48px;
-  margin: 0 var(--spacing-xxs) var(--spacing-lg);
-  padding: 0 var(--spacing-xs);
-}
-.brand-mark {
-  width: 32px;
-  height: 32px;
-}
-.sidebar-brand strong {
-  font-size: 14px;
-  letter-spacing: 0.1em;
-}
+
 .sidebar-brand small,
 .workspace-title small {
   font-size: 12px;
@@ -62,16 +37,10 @@
   letter-spacing: 0.04em;
 }
 .projects-heading {
-  height: 36px;
-  padding-inline: var(--spacing-sm);
-  font-size: 13px;
   letter-spacing: 0.04em;
   text-transform: none;
 }
-.projects-heading button {
-  width: 32px;
-  height: 32px;
-}
+
 .sidebar-error {
   margin: var(--spacing-xs);
   padding: var(--spacing-xs);
@@ -97,57 +66,32 @@
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xxs);
-  margin: auto var(--spacing-xxs) 0;
-  padding-top: var(--spacing-sm);
   border-top: 1px solid var(--colors-hairline);
 }
 .settings-button {
-  min-height: 40px;
   margin-top: 0;
   letter-spacing: 0.02em;
 }
-.settings-button .settings-icon {
-  width: 20px;
-  height: 20px;
-}
+
 .app-version {
-  padding: var(--spacing-xs) var(--spacing-sm) 0;
   font: 11px/1.5 var(--font-mono);
 }
 
-.workspace {
-  background: var(--colors-canvas);
-}
 .app-toolbar {
-  height: var(--shell-toolbar);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
-  gap: var(--spacing-sm);
-  padding: 0 var(--spacing-md);
 }
 .sidebar-toggle {
   transition:
     color 150ms ease,
     background 150ms ease;
 }
-.sidebar-toggle:hover {
-  background: var(--colors-surface-card);
-}
-.workspace-title {
-  gap: var(--spacing-sm);
-  min-width: 0;
-}
+
 .workspace-title div {
   min-width: 0;
 }
 .workspace-title strong {
-  overflow: hidden;
   color: var(--colors-on-dark);
-  font-size: 16px;
   letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   text-transform: none;
 }
 .workspace-title small {
@@ -156,18 +100,12 @@
 .live-dot {
   flex: none;
 }
-.toolbar-actions {
-  gap: var(--spacing-xs);
-}
+
 .toolbar-button {
-  min-height: 40px;
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
-  padding: 0 var(--spacing-sm);
   border: 1px solid var(--colors-hairline-strong);
-  font-size: 13px;
-  font-weight: 700;
   transition:
     border-color 150ms ease,
     background 150ms ease,
@@ -185,23 +123,14 @@
   background: var(--colors-surface-card);
   color: var(--colors-on-dark);
 }
-.toolbar-button-primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--colors-canvas);
-}
-.toolbar-button-primary:hover {
-  background: #e3ff82;
-}
+
 .workspace-body:focus {
   outline: none;
 }
 
 .empty-state {
-  width: min(420px, calc(100% - 48px));
   padding: var(--spacing-lg);
   gap: var(--spacing-sm);
-  border: 1px solid var(--colors-hairline-strong);
   background: var(--colors-surface-soft);
 }
 .empty-status {
@@ -261,8 +190,6 @@
   .app-shell:not(.sidebar-hidden) .sidebar {
     position: absolute;
     z-index: 30;
-    inset: 0 auto 0 0;
-    box-shadow: var(--shadow-soft);
   }
   .workspace-title strong {
     font-size: 14px;
@@ -272,6 +199,5 @@
   }
   .app-toolbar {
     grid-template-columns: 44px minmax(0, 1fr) auto;
-    padding-inline: var(--spacing-xs);
   }
 }

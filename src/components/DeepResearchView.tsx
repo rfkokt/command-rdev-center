@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import MarkdownMessage from "./MarkdownMessage";
 import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
@@ -14,6 +15,27 @@ import {
   type ResearchRun,
   type TocEntry,
 } from "../lib/deep-research";
+
+// Trailing debounce window for coalescing rapid "deep-research-changed"
+// events (pi stdout can emit several per second while streaming).
+const RESEARCH_REFRESH_DEBOUNCE_MS = 400;
+
+// Payload shapes emitted by the Rust backend for "deep-research-changed":
+// {"run_id","generation","state"} on progress, {"run_id","state":"deleted"} on delete.
+type DeepResearchChangedPayload = {
+  run_id: string;
+  state?: string;
+  generation?: number;
+};
+
+// Mirrors isActiveResearch in ../lib/deep-research: anything not actively
+// running is a terminal (stream-end) event that must flush immediately.
+function isTerminalResearchEvent(state: string | undefined): boolean {
+  return (
+    typeof state === "string" &&
+    !["creating", "running", "cancelling"].includes(state)
+  );
+}
 
 function TocBlock({ entries }: { entries: TocEntry[] }) {
   if (!entries.length) return null;
@@ -141,26 +163,69 @@ export default function DeepResearchView({
       setError(String(e));
     }
   }, []);
+  // Trailing debounce: pi stdout can emit "deep-research-changed" several
+  // times a second while streaming; coalesce those into a single invoke.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshPending = useRef(false);
+  const cancelScheduledRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) {
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    }
+    refreshPending.current = false;
+  }, []);
+  const loadNow = useCallback(() => {
+    cancelScheduledRefresh();
+    void load();
+  }, [cancelScheduledRefresh, load]);
+  const scheduleLoad = useCallback(() => {
+    refreshPending.current = true;
+    if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      refreshPending.current = false;
+      void load();
+    }, RESEARCH_REFRESH_DEBOUNCE_MS);
+  }, [load]);
+  const flushScheduledLoad = useCallback(() => {
+    // Never silently drop a trailing refresh (e.g. on unmount): the final
+    // state must always reach the UI.
+    if (refreshPending.current) loadNow();
+  }, [loadNow]);
   useEffect(() => {
     void load();
     const onVisible = () => {
-      if (!document.hidden) void load();
+      if (!document.hidden) loadNow();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
-    const unlisten = listen("deep-research-changed", () => void load());
+    const unlisten = listen<DeepResearchChangedPayload>(
+      "deep-research-changed",
+      (event) => {
+        // Stream end (terminal state or deletion): flush immediately so the
+        // final state is never stuck behind the debounce window.
+        if (isTerminalResearchEvent(event.payload?.state)) loadNow();
+        else scheduleLoad();
+      },
+    );
     return () => {
+      flushScheduledLoad();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       void unlisten.then((fn) => fn());
     };
-  }, [load]);
+  }, [flushScheduledLoad, load, loadNow, scheduleLoad]);
   useEffect(() => {
     if (initialRunId) setSelected(initialRunId);
   }, [initialRunId]);
   const runs = sortResearchRuns(data.runs);
   const current = runs.find((run) => run.id === selected) ?? runs[0];
   const hasActive = runs.some(isActiveResearch);
+  // Library search: filter by query text as the local report collection grows.
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const visibleRuns = runs.filter((run) =>
+    run.query.toLowerCase().includes(libraryQuery.trim().toLowerCase()),
+  );
   useEffect(() => {
     const completed = data.runs.find(
       (run) =>
@@ -179,6 +244,7 @@ export default function DeepResearchView({
       const next = await invoke<ResearchRun>(command, { runId: run.id });
       setSelected(next.id);
       setCancel(null);
+      cancelScheduledRefresh();
       await load();
     } catch (x) {
       setError(String(x));
@@ -201,6 +267,7 @@ export default function DeepResearchView({
           originSessionId,
         },
       );
+      cancelScheduledRefresh();
       await load();
       onContinueInChat?.(attached);
     } catch (x) {
@@ -224,7 +291,48 @@ export default function DeepResearchView({
     try {
       await invoke("delete_deep_research", { runId: run.id });
       setSelected(null);
+      cancelScheduledRefresh();
       await load();
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function copyMarkdown(run: ResearchRun) {
+    setBusy(true);
+    try {
+      const md = await invoke<string>("get_deep_research_markdown", {
+        runId: run.id,
+      });
+      await navigator.clipboard.writeText(md);
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Filename from the research question: lowercase, dash-separated, bounded.
+  function markdownFilename(run: ResearchRun): string {
+    const slug = run.query
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60);
+    return `${slug || "research"}.md`;
+  }
+  async function exportMarkdown(run: ResearchRun) {
+    setBusy(true);
+    try {
+      const dest = await save({
+        defaultPath: markdownFilename(run),
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!dest) return;
+      await invoke("export_deep_research_markdown", {
+        runId: run.id,
+        dest,
+      });
     } catch (x) {
       setError(String(x));
     } finally {
@@ -266,7 +374,15 @@ export default function DeepResearchView({
       ) : (
         <div className="research-layout">
           <nav id="research-library" aria-label="Research runs">
-            {runs.map((run) => (
+            <input
+              type="search"
+              className="research-library-search"
+              placeholder="Filter reports…"
+              aria-label="Filter research reports"
+              value={libraryQuery}
+              onChange={(event) => setLibraryQuery(event.target.value)}
+            />
+            {visibleRuns.map((run) => (
               <button
                 key={run.id}
                 className={run.id === current?.id ? "active" : ""}
@@ -279,6 +395,11 @@ export default function DeepResearchView({
                 </span>
               </button>
             ))}
+            {!visibleRuns.length && (
+              <p className="research-library-empty" role="status">
+                No reports match “{libraryQuery.trim()}”.
+              </p>
+            )}
           </nav>
           {current && (
             <div className="research-detail">
@@ -345,6 +466,20 @@ export default function DeepResearchView({
                       Delete
                     </button>
                   )}
+                  <button
+                    onClick={() => void copyMarkdown(current)}
+                    disabled={busy}
+                    title="Copy this report as a Markdown document"
+                  >
+                    Copy .md
+                  </button>
+                  <button
+                    onClick={() => void exportMarkdown(current)}
+                    disabled={busy}
+                    title="Save this report as a Markdown file"
+                  >
+                    Export .md
+                  </button>
                 </div>
               </header>
               <section

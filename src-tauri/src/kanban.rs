@@ -568,10 +568,10 @@ fn attach_references(tasks: &mut [KanbanTask], all_tasks: &[KanbanTask]) {
             })
             .collect::<Vec<_>>();
         if !referenced.is_empty() {
-            task.extra.insert(
-                "references".into(),
-                serde_json::to_value(referenced).expect("tasks are serializable"),
-            );
+            // `to_value` only fails for non-serializable shapes; degrade to
+            // Null instead of panicking the Tauri command.
+            let value = serde_json::to_value(referenced).unwrap_or(Value::Null);
+            task.extra.insert("references".into(), value);
         }
     }
 }

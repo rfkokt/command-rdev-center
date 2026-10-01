@@ -1077,8 +1077,7 @@ pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, St
                 .pointer("/servers/0/url")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or(&url);
-            let server = url::Url::parse(server)
-                .map_err(|_| "Swagger server URL must be valid")?;
+            let server = url::Url::parse(server).map_err(|_| "Swagger server URL must be valid")?;
             let origin = server.origin().ascii_serialization();
             let base_url = server.to_string().trim_end_matches('/').to_owned();
             Ok(ApiContract {

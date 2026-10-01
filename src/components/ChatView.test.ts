@@ -4,6 +4,7 @@ import {
   appendAgentLog,
   appendBoundedText,
   appendStreamingText,
+  applyPlanModePrefix,
   backgroundAgentWork,
   clearRestartErrors,
   ensureAssistantTurn,
@@ -11,6 +12,9 @@ import {
   formatAgentError,
   formatTokens,
   insertSteerMessage,
+  planApprovalPending,
+  PLAN_APPROVAL_MARKER,
+  PLAN_MODE_PREFIX,
   preserveStreamedContent,
   sameAssistantResponse,
   projectTaskIntent,
@@ -525,5 +529,73 @@ describe("formatAgentError", () => {
   test("handles empty input", () => {
     expect(formatAgentError("")).toBe("Unknown agent error");
     expect(formatAgentError("   ")).toBe("Unknown agent error");
+  });
+});
+
+describe("plan mode", () => {
+  test("applyPlanModePrefix leaves build-mode messages untouched", () => {
+    expect(applyPlanModePrefix("add login", false)).toBe("add login");
+  });
+
+  test("applyPlanModePrefix prepends the plan instruction in plan mode", () => {
+    const out = applyPlanModePrefix("add login", true);
+    expect(out.startsWith(PLAN_MODE_PREFIX)).toBe(true);
+    expect(out).toContain("add login");
+    expect(out.endsWith("add login")).toBe(true);
+  });
+
+  const msg = (role: string, text: string) => ({ role, text }) as ChatMessage;
+
+  test("consumes plan approval when the user replies", () => {
+    expect(
+      planApprovalPending([
+        msg("assistant", `plan\n${PLAN_APPROVAL_MARKER}`),
+        msg("user", "Plan approved. Proceed with implementation."),
+      ]),
+    ).toBe(false);
+  });
+
+  test("waits until a streaming plan finishes", () => {
+    expect(
+      planApprovalPending([
+        { ...msg("assistant", PLAN_APPROVAL_MARKER), isStreaming: true },
+      ]),
+    ).toBe(false);
+  });
+
+  test("planApprovalPending detects the marker on the latest assistant message", () => {
+    expect(
+      planApprovalPending([
+        msg("user", "plan it"),
+        msg("assistant", `1. do thing\n${PLAN_APPROVAL_MARKER}`),
+      ]),
+    ).toBe(true);
+  });
+
+  test("planApprovalPending ignores trailing whitespace after the marker", () => {
+    expect(
+      planApprovalPending([msg("assistant", `${PLAN_APPROVAL_MARKER}\n\n`)]),
+    ).toBe(true);
+  });
+
+  test("planApprovalPending is false without the marker", () => {
+    expect(
+      planApprovalPending([
+        msg("user", "plan it"),
+        msg("assistant", "here is the plan"),
+      ]),
+    ).toBe(false);
+    expect(planApprovalPending([])).toBe(false);
+    expect(planApprovalPending([msg("user", "hello")])).toBe(false);
+  });
+
+  test("planApprovalPending uses the latest assistant message only", () => {
+    expect(
+      planApprovalPending([
+        msg("assistant", `old plan\n${PLAN_APPROVAL_MARKER}`),
+        msg("user", "looks good"),
+        msg("assistant", "building now"),
+      ]),
+    ).toBe(false);
   });
 });

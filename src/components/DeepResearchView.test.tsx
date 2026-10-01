@@ -7,16 +7,31 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listenHandlers } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listenHandlers: [] as Array<(event: { payload?: unknown }) => void>,
+}));
+const { saveDialog } = vi.hoisted(() => ({ saveDialog: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: vi
+    .fn()
+    .mockImplementation(
+      (_event: string, handler: (event: { payload?: unknown }) => void) => {
+        listenHandlers.push(handler);
+        return Promise.resolve(() => {});
+      },
+    ),
 }));
 import DeepResearchView from "./DeepResearchView";
 afterEach(() => {
   cleanup();
   invoke.mockReset();
+  saveDialog.mockReset();
+  listenHandlers.length = 0;
 });
 describe("DeepResearchView", () => {
   it("is a read-only library and starts research through chat", async () => {
@@ -335,6 +350,27 @@ describe("DeepResearchView", () => {
       ),
     );
   });
+  it("coalesces rapid deep-research-changed events into a single refresh", async () => {
+    invoke.mockResolvedValue({ runs: [], warnings: [] });
+    render(<DeepResearchView />);
+    await screen.findByText("No research reports yet");
+    const refreshCount = () =>
+      invoke.mock.calls.filter(([cmd]) => cmd === "get_deep_research_data")
+        .length;
+    expect(refreshCount()).toBe(1);
+    const handler = listenHandlers[listenHandlers.length - 1];
+    // Burst of progress events while pi streams: no immediate refresh.
+    handler({ payload: { run_id: "r1", state: "running", generation: 3 } });
+    handler({ payload: { run_id: "r1", state: "running", generation: 4 } });
+    handler({ payload: { run_id: "r1", state: "running", generation: 5 } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(refreshCount()).toBe(1);
+    // After the debounce window the burst collapses into exactly one refresh.
+    await waitFor(() => expect(refreshCount()).toBe(2), { timeout: 2000 });
+    // A terminal (stream-end) event flushes immediately, not debounced.
+    handler({ payload: { run_id: "r1", state: "completed", generation: 6 } });
+    await waitFor(() => expect(refreshCount()).toBe(3), { timeout: 2000 });
+  });
   it("resumes the selected run using its stable run id", async () => {
     const interrupted = {
       version: 1,
@@ -376,5 +412,119 @@ describe("DeepResearchView", () => {
         runId: "one",
       }),
     );
+  });
+
+  const completedRun = (id: string, query: string) => ({
+    version: 1,
+    id,
+    query,
+    state: "completed",
+    generation: 2,
+    created_at: 1,
+    updated_at: 2,
+    session_id: `research-${id}`,
+    progress: {
+      phase: "finalizing",
+      activity: "Complete",
+      searches: 1,
+      reads: 1,
+      checks: 1,
+      active_calls: [],
+    },
+    final_report: `# ${query}\n\nDone.`,
+    partial_report: "",
+    sources: [],
+    cancellation_requested: false,
+    resume_count: 0,
+  });
+
+  it("copies the report as Markdown to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    invoke
+      .mockResolvedValueOnce({
+        runs: [completedRun("r1", "Rust async")],
+        warnings: [],
+      })
+      .mockResolvedValueOnce("# Rust async\n\nDone.");
+    render(<DeepResearchView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy .md" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_deep_research_markdown", {
+        runId: "r1",
+      }),
+    );
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("# Rust async\n\nDone."),
+    );
+  });
+
+  it("exports the report through the save dialog", async () => {
+    saveDialog.mockResolvedValue("/tmp/rust-async.md");
+    invoke.mockResolvedValue({
+      runs: [completedRun("r1", "Rust async")],
+      warnings: [],
+    });
+    render(<DeepResearchView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Export .md" }));
+    await waitFor(() => expect(saveDialog).toHaveBeenCalled());
+    const [options] = saveDialog.mock.calls[0] as [
+      { defaultPath: string; filters: unknown },
+    ];
+    expect(options.defaultPath).toBe("rust-async.md");
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("export_deep_research_markdown", {
+        runId: "r1",
+        dest: "/tmp/rust-async.md",
+      }),
+    );
+  });
+
+  it("does nothing when the save dialog is cancelled", async () => {
+    saveDialog.mockResolvedValue(null);
+    invoke.mockResolvedValue({
+      runs: [completedRun("r1", "Rust async")],
+      warnings: [],
+    });
+    render(<DeepResearchView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Export .md" }));
+    await waitFor(() => expect(saveDialog).toHaveBeenCalled());
+    expect(invoke).not.toHaveBeenCalledWith(
+      "export_deep_research_markdown",
+      expect.anything(),
+    );
+  });
+
+  it("filters the research library by query text", async () => {
+    invoke.mockResolvedValue({
+      runs: [
+        completedRun("r1", "Rust async runtimes"),
+        completedRun("r2", "Sourdough starter guide"),
+      ],
+      warnings: [],
+    });
+    render(<DeepResearchView />);
+    const library = await screen.findByRole("navigation", {
+      name: "Research runs",
+    });
+    await within(library).findByText("Rust async runtimes");
+    await within(library).findByText("Sourdough starter guide");
+    fireEvent.change(screen.getByLabelText("Filter research reports"), {
+      target: { value: "sourdough" },
+    });
+    expect(
+      within(library).queryByText("Rust async runtimes"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(library).getByText("Sourdough starter guide"),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filter research reports"), {
+      target: { value: "zzz-no-match" },
+    });
+    const status = await within(library).findByRole("status");
+    expect(status.textContent).toBe("No reports match “zzz-no-match”.");
   });
 });

@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
+  act,
   fireEvent,
   render,
   screen,
@@ -27,6 +28,25 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./ProjectFilesSidebar", () => ({ default: () => null }));
 vi.mock("./FilePicker", () => ({ default: () => null }));
+// react-virtuoso renders nothing in jsdom (no layout engine), so virtualized
+// feed items are invisible to tests. Render every row synchronously instead.
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  return {
+    Virtuoso: React.forwardRef(function VirtuosoMock(props: any) {
+      const { data = [], computeItemKey, itemContent } = props;
+      return (
+        <div data-testid="virtuoso-mock">
+          {data.map((item: any, index: number) => (
+            <div key={computeItemKey ? computeItemKey(index, item) : index}>
+              {itemContent(index, item)}
+            </div>
+          ))}
+        </div>
+      );
+    }),
+  };
+});
 
 import ChatView from "./ChatView";
 
@@ -103,6 +123,9 @@ function mockBackend(runs: unknown[] = []) {
         docs_stale: false,
       });
     if (command === "get_dev_server") return Promise.resolve(null);
+    if (command === "get_worktree_diff")
+      return Promise.resolve({ merge_base: "base", files: [] });
+    if (command === "list_projects") return Promise.resolve([]);
     if (command === "start_deep_research") {
       current = [run("creating")];
       return Promise.resolve(current[0]);
@@ -119,6 +142,187 @@ afterEach(() => {
 });
 
 describe("chat-native Deep Research", () => {
+  it.each(["history", "empty", "reload", "pending-reload"])(
+    "replaces fork history and supports Pi reload (%s)",
+    async (mode) => {
+      const emptyHistory = mode !== "history";
+      mockBackend();
+      const original = invoke.getMockImplementation()!;
+      invoke.mockImplementation((command: string, args: any) => {
+        if (command === "get_session_tree")
+          return Promise.resolve({
+            entries: [
+              {
+                type: "message",
+                id: "old-user",
+                parentId: null,
+                message: { role: "user", content: "Old prompt" },
+              },
+              {
+                type: "message",
+                id: "old-answer",
+                parentId: "old-user",
+                message: { role: "assistant", content: "Abandoned answer" },
+              },
+            ],
+          });
+        if (command === "fork_session")
+          return Promise.resolve({ text: "Old prompt", cancelled: false });
+        return original(command, args);
+      });
+      render(<ChatView {...baseProps} />);
+      await waitFor(() => expect(listeners.get("pi-rpc-event")).toBeDefined());
+      const emit = (data: unknown) =>
+        listeners.get("pi-rpc-event")!({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(data) },
+        });
+      await act(async () =>
+        emit({
+          type: "response",
+          command: "get_messages",
+          success: true,
+          data: {
+            messages: [
+              { role: "user", id: "old-user", content: "Old prompt" },
+              {
+                role: "assistant",
+                id: "old-answer",
+                content: "Abandoned answer",
+              },
+            ],
+          },
+        }),
+      );
+      expect(screen.getByText("Abandoned answer")).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open session tree" }),
+      );
+      const forkButton = await screen.findByRole("button", { name: "FORK" });
+      expect(screen.getAllByRole("button", { name: "FORK" })).toHaveLength(1);
+      fireEvent.click(forkButton);
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("fork_session", {
+          sessionId: "chat-chat-one",
+          nodeId: "old-user",
+        }),
+      );
+      await waitFor(() =>
+        expect(screen.getByRole("textbox")).toHaveValue("Old prompt"),
+      );
+      const historyCalls = invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "send_pi_command" &&
+          JSON.parse(args.jsonLine).type === "get_messages",
+      );
+      const historyCall = historyCalls[historyCalls.length - 1]!;
+      const requestId = JSON.parse(historyCall[1].jsonLine).id;
+      expect(typeof requestId).toBe("string");
+      const staleHistory = {
+        type: "response",
+        id: "old-request",
+        command: "get_messages",
+        success: true,
+        data: {
+          messages: [{ role: "assistant", content: "Stale transcript" }],
+        },
+      };
+      await act(async () => emit(staleHistory));
+      expect(screen.queryByText("Stale transcript")).not.toBeInTheDocument();
+      if (mode !== "pending-reload")
+        await act(async () =>
+          emit({
+            type: "response",
+            id: requestId,
+            command: "get_messages",
+            success: true,
+            data: {
+              messages: emptyHistory
+                ? []
+                : [{ role: "user", id: "prior-user", content: "Fork history" }],
+            },
+          }),
+        );
+      await act(async () => emit(staleHistory));
+      expect(screen.queryByText("Stale transcript")).not.toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.queryByText("Abandoned answer")).not.toBeInTheDocument(),
+      );
+      if (!emptyHistory)
+        expect(screen.getByText("Fork history")).toBeInTheDocument();
+      expect(screen.getByRole("textbox")).toHaveValue("Old prompt");
+      if (mode === "reload" || mode === "pending-reload") {
+        const callsBeforeReload = invoke.mock.calls.filter(
+          ([command, args]) =>
+            command === "send_pi_command" &&
+            JSON.parse(args.jsonLine).type === "get_messages",
+        ).length;
+        fireEvent.click(screen.getByRole("button", { name: "RELOAD PI" }));
+        await waitFor(() =>
+          expect(
+            invoke.mock.calls.filter(
+              ([command, args]) =>
+                command === "send_pi_command" &&
+                JSON.parse(args.jsonLine).type === "get_messages",
+            ).length,
+          ).toBeGreaterThan(callsBeforeReload),
+        );
+        await act(async () =>
+          emit({
+            type: "response",
+            command: "get_messages",
+            success: true,
+            data: {
+              messages: [{ role: "user", content: "Reloaded fork history" }],
+            },
+          }),
+        );
+        expect(screen.getByText("Reloaded fork history")).toBeInTheDocument();
+      }
+      expect(screen.getByRole("button", { name: "SEND" })).toBeEnabled();
+    },
+  );
+
+  it.each([false, true])(
+    "waits for the checkpoint attempt before sending (failure: %s)",
+    async (failed) => {
+      mockBackend();
+      const original = invoke.getMockImplementation()!;
+      let finishCheckpoint!: () => void;
+      invoke.mockImplementation((command: string, args: any) => {
+        if (command === "ensure_worktree")
+          return Promise.resolve({
+            worktree_path: "/tmp/demo-tree",
+            branch: "crc/test",
+            parent_ref: "main",
+          });
+        if (command === "create_checkpoint")
+          return new Promise<void>((resolve, reject) => {
+            finishCheckpoint = () =>
+              failed ? reject(new Error("checkpoint unavailable")) : resolve();
+          });
+        return original(command, args);
+      });
+      render(<ChatView {...baseProps} isGit />);
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+      );
+      fireEvent.change(screen.getByRole("textbox"), {
+        target: { value: "Update login" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "SEND" }));
+      await waitFor(() => expect(finishCheckpoint).toBeDefined());
+      const prompts = () =>
+        invoke.mock.calls.filter(
+          ([command, args]) =>
+            command === "send_pi_command" &&
+            JSON.parse(args.jsonLine).type === "prompt",
+        );
+      expect(prompts()).toHaveLength(0);
+      await act(async () => finishCheckpoint());
+      await waitFor(() => expect(prompts()).toHaveLength(1));
+    },
+  );
+
   it("has no mode toggle and starts only through /research", async () => {
     mockBackend();
     render(<ChatView {...baseProps} />);
@@ -247,11 +451,13 @@ describe("chat-native Deep Research", () => {
     render(<ChatView {...baseProps} />);
     const request = await screen.findByText("/research Investigate this");
     const report = screen.getByRole("article");
+    // Feed order is DOM order now (virtualized list); the request must precede its report.
     expect(
-      Number(request.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
-    ).toBeLessThan(
-      Number(report.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
-    );
+      Boolean(
+        request.compareDocumentPosition(report) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
   });
 
   it("renders the complete Markdown report inline without an empty-state claim", async () => {
