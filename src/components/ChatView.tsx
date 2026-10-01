@@ -74,6 +74,7 @@ import {
 } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
 import { splitPatch } from "./chat-diff-utils";
+import ModelPickerDialog from "./ModelPickerDialog";
 import {
   buildPhase,
   transcriptEntry,
@@ -366,8 +367,6 @@ export default function ChatView({
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [resumePickerOpen, setResumePickerOpen] = useState(false);
-  const [modelQuery, setModelQuery] = useState("");
-  const [modelIndex, setModelIndex] = useState(0);
   const [currentThinking, setCurrentThinking] = useState(initialThinking ?? "");
   const [filePickerQuery, setFilePickerQuery] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
@@ -425,7 +424,6 @@ export default function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const filePickerRef = useRef<FilePickerHandle>(null);
-  const modelSearchRef = useRef<HTMLInputElement>(null);
   const sessionFileRef = useRef(sessionFile);
   const modelRef = useRef(initialModel ?? "");
   const thinkingRef = useRef(initialThinking ?? "");
@@ -2777,8 +2775,6 @@ export default function ChatView({
       modelId,
     });
     setModelPickerOpen(false);
-    setModelQuery("");
-    setModelIndex(0);
   }
 
   async function handleSetThinking(lvl: string) {
@@ -2794,15 +2790,8 @@ export default function ChatView({
     filePickerQuery !== null
       ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.`
       : "";
-  const filteredModels = models.filter((model) =>
-    model.toLowerCase().includes(modelQuery.trim().toLowerCase()),
-  );
-
   function openModelPicker() {
     setModelPickerOpen(true);
-    setModelQuery("");
-    setModelIndex(Math.max(0, models.indexOf(currentModel)));
-    requestAnimationFrame(() => modelSearchRef.current?.focus());
   }
   const slashQuery =
     input.startsWith("/") && !input.includes(" ")
@@ -3451,100 +3440,13 @@ export default function ChatView({
       )}
 
       {modelPickerOpen && (
-        <div
-          className="model-picker-backdrop"
-          onMouseDown={() => setModelPickerOpen(false)}
-        >
-          <section
-            ref={modelDialogRef}
-            className="model-picker"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Select model"
-            tabIndex={-1}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <span>MODEL CATALOG</span>
-              <button
-                onClick={() => setModelPickerOpen(false)}
-                aria-label="Close model picker"
-              >
-                ESC
-              </button>
-            </header>
-            <div className="model-search">
-              <span>›</span>
-              <input
-                ref={modelSearchRef}
-                value={modelQuery}
-                onChange={(event) => {
-                  setModelQuery(event.target.value);
-                  setModelIndex(0);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setModelPickerOpen(false);
-                  else if (
-                    event.key === "ArrowDown" ||
-                    event.key === "ArrowUp"
-                  ) {
-                    event.preventDefault();
-                    setModelIndex(
-                      (index) =>
-                        (index +
-                          (event.key === "ArrowDown" ? 1 : -1) +
-                          filteredModels.length) %
-                        filteredModels.length,
-                    );
-                  } else if (
-                    event.key === "Enter" &&
-                    filteredModels[modelIndex]
-                  ) {
-                    event.preventDefault();
-                    handleSetModel(filteredModels[modelIndex]);
-                  }
-                }}
-                placeholder="FILTER PROVIDER OR MODEL…"
-              />
-            </div>
-            <div className="model-list" role="listbox">
-              {filteredModels.map((model, index) => {
-                const slash = model.indexOf("/");
-                const provider =
-                  slash === -1 ? "default" : model.slice(0, slash);
-                const name = slash === -1 ? model : model.slice(slash + 1);
-                return (
-                  <button
-                    key={model}
-                    className={index === modelIndex ? "active" : ""}
-                    onMouseEnter={() => setModelIndex(index)}
-                    onClick={() => handleSetModel(model)}
-                    role="option"
-                    aria-selected={model === currentModel}
-                  >
-                    <span className="model-arrow">
-                      {index === modelIndex ? "→" : ""}
-                    </span>
-                    <strong>{name}</strong>
-                    <small>[{provider}]</small>
-                    <b>{model === currentModel ? "✓" : ""}</b>
-                  </button>
-                );
-              })}
-              {filteredModels.length === 0 && (
-                <div className="model-empty">NO MATCHING MODELS</div>
-              )}
-            </div>
-            <footer>
-              <span>
-                {filteredModels.length
-                  ? `${modelIndex + 1}/${filteredModels.length}`
-                  : "0/0"}
-              </span>
-              <span>↑↓ NAVIGATE · ENTER SELECT</span>
-            </footer>
-          </section>
-        </div>
+        <ModelPickerDialog
+          models={models}
+          currentModel={currentModel}
+          dialogRef={modelDialogRef}
+          onClose={() => setModelPickerOpen(false)}
+          onSelect={(model) => void handleSetModel(model)}
+        />
       )}
 
       {resumePickerOpen && (
