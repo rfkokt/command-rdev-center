@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import MarkdownMessage from "./MarkdownMessage";
@@ -14,6 +14,27 @@ import {
   type ResearchRun,
   type TocEntry,
 } from "../lib/deep-research";
+
+// Trailing debounce window for coalescing rapid "deep-research-changed"
+// events (pi stdout can emit several per second while streaming).
+const RESEARCH_REFRESH_DEBOUNCE_MS = 400;
+
+// Payload shapes emitted by the Rust backend for "deep-research-changed":
+// {"run_id","generation","state"} on progress, {"run_id","state":"deleted"} on delete.
+type DeepResearchChangedPayload = {
+  run_id: string;
+  state?: string;
+  generation?: number;
+};
+
+// Mirrors isActiveResearch in ../lib/deep-research: anything not actively
+// running is a terminal (stream-end) event that must flush immediately.
+function isTerminalResearchEvent(state: string | undefined): boolean {
+  return (
+    typeof state === "string" &&
+    !["creating", "running", "cancelling"].includes(state)
+  );
+}
 
 function TocBlock({ entries }: { entries: TocEntry[] }) {
   if (!entries.length) return null;
@@ -141,20 +162,58 @@ export default function DeepResearchView({
       setError(String(e));
     }
   }, []);
+  // Trailing debounce: pi stdout can emit "deep-research-changed" several
+  // times a second while streaming; coalesce those into a single invoke.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshPending = useRef(false);
+  const cancelScheduledRefresh = useCallback(() => {
+    if (refreshTimer.current !== null) {
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = null;
+    }
+    refreshPending.current = false;
+  }, []);
+  const loadNow = useCallback(() => {
+    cancelScheduledRefresh();
+    void load();
+  }, [cancelScheduledRefresh, load]);
+  const scheduleLoad = useCallback(() => {
+    refreshPending.current = true;
+    if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      refreshPending.current = false;
+      void load();
+    }, RESEARCH_REFRESH_DEBOUNCE_MS);
+  }, [load]);
+  const flushScheduledLoad = useCallback(() => {
+    // Never silently drop a trailing refresh (e.g. on unmount): the final
+    // state must always reach the UI.
+    if (refreshPending.current) loadNow();
+  }, [loadNow]);
   useEffect(() => {
     void load();
     const onVisible = () => {
-      if (!document.hidden) void load();
+      if (!document.hidden) loadNow();
     };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
-    const unlisten = listen("deep-research-changed", () => void load());
+    const unlisten = listen<DeepResearchChangedPayload>(
+      "deep-research-changed",
+      (event) => {
+        // Stream end (terminal state or deletion): flush immediately so the
+        // final state is never stuck behind the debounce window.
+        if (isTerminalResearchEvent(event.payload?.state)) loadNow();
+        else scheduleLoad();
+      },
+    );
     return () => {
+      flushScheduledLoad();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       void unlisten.then((fn) => fn());
     };
-  }, [load]);
+  }, [flushScheduledLoad, load, loadNow, scheduleLoad]);
   useEffect(() => {
     if (initialRunId) setSelected(initialRunId);
   }, [initialRunId]);
@@ -179,6 +238,7 @@ export default function DeepResearchView({
       const next = await invoke<ResearchRun>(command, { runId: run.id });
       setSelected(next.id);
       setCancel(null);
+      cancelScheduledRefresh();
       await load();
     } catch (x) {
       setError(String(x));
@@ -201,6 +261,7 @@ export default function DeepResearchView({
           originSessionId,
         },
       );
+      cancelScheduledRefresh();
       await load();
       onContinueInChat?.(attached);
     } catch (x) {
@@ -224,6 +285,7 @@ export default function DeepResearchView({
     try {
       await invoke("delete_deep_research", { runId: run.id });
       setSelected(null);
+      cancelScheduledRefresh();
       await load();
     } catch (x) {
       setError(String(x));

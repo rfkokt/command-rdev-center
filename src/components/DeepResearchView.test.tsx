@@ -8,15 +8,26 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+const { invoke, listenHandlers } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  listenHandlers: [] as Array<(event: { payload?: unknown }) => void>,
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
+  listen: vi
+    .fn()
+    .mockImplementation(
+      (_event: string, handler: (event: { payload?: unknown }) => void) => {
+        listenHandlers.push(handler);
+        return Promise.resolve(() => {});
+      },
+    ),
 }));
 import DeepResearchView from "./DeepResearchView";
 afterEach(() => {
   cleanup();
   invoke.mockReset();
+  listenHandlers.length = 0;
 });
 describe("DeepResearchView", () => {
   it("is a read-only library and starts research through chat", async () => {
@@ -334,6 +345,27 @@ describe("DeepResearchView", () => {
         "partial report and source list remain",
       ),
     );
+  });
+  it("coalesces rapid deep-research-changed events into a single refresh", async () => {
+    invoke.mockResolvedValue({ runs: [], warnings: [] });
+    render(<DeepResearchView />);
+    await screen.findByText("No research reports yet");
+    const refreshCount = () =>
+      invoke.mock.calls.filter(([cmd]) => cmd === "get_deep_research_data")
+        .length;
+    expect(refreshCount()).toBe(1);
+    const handler = listenHandlers[listenHandlers.length - 1];
+    // Burst of progress events while pi streams: no immediate refresh.
+    handler({ payload: { run_id: "r1", state: "running", generation: 3 } });
+    handler({ payload: { run_id: "r1", state: "running", generation: 4 } });
+    handler({ payload: { run_id: "r1", state: "running", generation: 5 } });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(refreshCount()).toBe(1);
+    // After the debounce window the burst collapses into exactly one refresh.
+    await waitFor(() => expect(refreshCount()).toBe(2), { timeout: 2000 });
+    // A terminal (stream-end) event flushes immediately, not debounced.
+    handler({ payload: { run_id: "r1", state: "completed", generation: 6 } });
+    await waitFor(() => expect(refreshCount()).toBe(3), { timeout: 2000 });
   });
   it("resumes the selected run using its stable run id", async () => {
     const interrupted = {

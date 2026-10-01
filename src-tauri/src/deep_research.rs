@@ -6,7 +6,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::Emitter;
 
@@ -260,6 +260,37 @@ fn emit(app: &tauri::AppHandle, run: &ResearchRun) {
         "deep-research-changed",
         serde_json::json!({"run_id":run.id,"generation":run.generation,"state":run.state}),
     );
+}
+
+// Minimum gap between "deep-research-changed" emissions for the streaming hot
+// path (observe_rpc). Intermediate progress events are coalesced; stream-end
+// events and terminal states always emit so the final state is never dropped.
+// All other call sites (cancel/resume/delete/handoff/...) keep emitting
+// unconditionally.
+const EMIT_THROTTLE: Duration = Duration::from_millis(500);
+static LAST_EMIT: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+fn last_emit() -> &'static Mutex<HashMap<String, Instant>> {
+    LAST_EMIT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn emit_throttled(app: &tauri::AppHandle, run: &ResearchRun, force: bool) {
+    if !force {
+        let now = Instant::now();
+        let Ok(mut guard) = last_emit().lock() else {
+            emit(app, run);
+            return;
+        };
+        if guard
+            .get(&run.id)
+            .is_some_and(|last| now.duration_since(*last) < EMIT_THROTTLE)
+        {
+            return;
+        }
+        guard.insert(run.id.clone(), now);
+    } else if let Ok(mut guard) = last_emit().lock() {
+        // The stream ended: forget the marker so a later run starts fresh.
+        guard.remove(&run.id);
+    }
+    emit(app, run);
 }
 
 fn recover_interrupted_handoff(run: &mut ResearchRun) -> bool {
@@ -535,6 +566,10 @@ pub(crate) fn observe_rpc(app: &tauri::AppHandle, session_id: &str, raw: &str) {
         id.clone()
     };
     let mut trailing_delta = None;
+    let is_stream_end = matches!(
+        event.get("type").and_then(Value::as_str),
+        Some("message_end" | "turn_end" | "agent_end" | "agent_settled")
+    );
     if event.get("type").and_then(Value::as_str) == Some("message_update") {
         if let Some(delta) = event
             .get("assistantMessageEvent")
@@ -572,7 +607,7 @@ pub(crate) fn observe_rpc(app: &tauri::AppHandle, session_id: &str, raw: &str) {
         if run.state.terminal() {
             clear_active(&id)
         }
-        emit(app, &run)
+        emit_throttled(app, &run, is_stream_end || run.state.terminal())
     }
 }
 pub(crate) fn observe_end(app: &tauri::AppHandle, session_id: &str) {
