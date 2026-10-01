@@ -187,6 +187,8 @@ pub fn run() {
             skills::install_git_skills,
             pi_rpc::spawn_pi_rpc,
             pi_rpc::send_pi_command,
+            pi_rpc::get_session_tree,
+            pi_rpc::fork_session,
             pi_rpc::is_pi_session_running,
             pi_rpc::kill_pi_session,
             pi_rpc::list_pi_sessions,

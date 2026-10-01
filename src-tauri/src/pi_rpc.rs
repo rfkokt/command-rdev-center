@@ -23,6 +23,9 @@ pub struct RpcResponse {
 struct SessionHandle {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
+    /// Awaiting RPC round-trips keyed by request `id`; the stdout reader
+    /// thread delivers `{"type": "response", "id": ...}` lines here.
+    pending: Mutex<HashMap<String, std::sync::mpsc::Sender<serde_json::Value>>>,
 }
 
 type SharedSessionHandle = Arc<SessionHandle>;
@@ -1056,6 +1059,7 @@ pub fn spawn_pi_rpc(
     let handle: SharedSessionHandle = Arc::new(SessionHandle {
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(Some(stdin)),
+        pending: Mutex::new(HashMap::new()),
     });
     if let Ok(mut map) = sessions_map().lock() {
         map.insert(session_id.clone(), handle);
@@ -1074,6 +1078,9 @@ pub fn spawn_pi_rpc(
                     if line.trim().is_empty() {
                         continue;
                     }
+                    // Route command responses carrying an `id` to awaiting
+                    // rpc_roundtrip callers before fanning out to the UI.
+                    route_rpc_response(&sid, &line);
                     // forward as pi-rpc-event
                     // distinguish responses from events: both are JSON lines
                     // We'll emit raw; frontend can discriminate by "type": "response" vs "extension_ui_request" etc
@@ -1154,19 +1161,14 @@ pub fn spawn_pi_rpc(
     Ok(session_id)
 }
 
-#[tauri::command]
-pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
-    if json_line.trim().is_empty() {
-        return Err("empty command".to_string());
-    }
-    // Validate it's JSON (quick)
-    serde_json::from_str::<serde_json::Value>(&json_line)
-        .map_err(|e| format!("invalid JSON: {}", e))?;
-
+/// Look up the session, drop it if the pi process already exited, and write one
+/// JSONL frame to its stdin. Shared by fire-and-forget `send_pi_command` and
+/// the awaiting `rpc_roundtrip`.
+fn write_session_line(session_id: &str, json_line: &str) -> Result<(), String> {
     let h = sessions_map()
         .lock()
         .map_err(|_| "poisoned sessions lock".to_string())?
-        .get(&session_id)
+        .get(session_id)
         .cloned()
         .ok_or_else(|| {
             format!(
@@ -1183,7 +1185,7 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         sessions_map()
             .lock()
             .map_err(|_| "poisoned sessions lock".to_string())?
-            .remove(&session_id);
+            .remove(session_id);
         return Err("Pi process exited before receiving the command. Restart the chat session and send again.".into());
     }
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
@@ -1200,7 +1202,7 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         sessions_map()
             .lock()
             .map_err(|_| "poisoned sessions lock".to_string())?
-            .remove(&session_id);
+            .remove(session_id);
         return Err(if error.kind() == std::io::ErrorKind::BrokenPipe {
             "Pi process stopped unexpectedly. Restart the chat session and send again.".into()
         } else {
@@ -1208,6 +1210,145 @@ pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), Stri
         });
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
+    if json_line.trim().is_empty() {
+        return Err("empty command".to_string());
+    }
+    // Validate it's JSON (quick)
+    serde_json::from_str::<serde_json::Value>(&json_line)
+        .map_err(|e| format!("invalid JSON: {}", e))?;
+    write_session_line(&session_id, &json_line)
+}
+
+/// Session/node ids are app-generated; reject anything outside a safe alphabet
+/// before it reaches the pi process.
+fn validate_rpc_id(value: &str, what: &str) -> Result<(), String> {
+    if !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Ok(())
+    } else {
+        Err(format!("invalid {}", what))
+    }
+}
+
+static RPC_REQ_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Deliver a `{"type": "response", "id": ...}` line to the matching pending RPC
+/// round-trip, if any. All lines are still emitted as pi-rpc-event afterwards.
+fn route_rpc_response(session_id: &str, line: &str) {
+    let value: serde_json::Value = match serde_json::from_str(line) {
+        Ok(value) => value,
+        Err(_) => return,
+    };
+    if value.get("type").and_then(|t| t.as_str()) != Some("response") {
+        return;
+    }
+    let Some(id) = value.get("id").and_then(|i| i.as_str()) else {
+        return;
+    };
+    let sender = sessions_map()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(session_id).cloned())
+        .and_then(|handle| {
+            handle
+                .pending
+                .lock()
+                .ok()
+                .and_then(|mut pending| pending.remove(id))
+        });
+    if let Some(tx) = sender {
+        let _ = tx.send(value);
+    }
+}
+
+/// Send one JSON-RPC command to the pi process and await its `response`
+/// (correlated by `id`). Returns the response's `data` payload.
+async fn rpc_roundtrip(
+    session_id: String,
+    command: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    validate_rpc_id(&session_id, "session_id")?;
+    let handle = sessions_map()
+        .lock()
+        .map_err(|_| "poisoned sessions lock".to_string())?
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| format!("unknown session {}", session_id))?;
+    let req_id = format!(
+        "crc-{}",
+        RPC_REQ_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let mut command = command;
+    if let Some(obj) = command.as_object_mut() {
+        obj.insert("id".to_string(), serde_json::Value::String(req_id.clone()));
+    }
+    let line = serde_json::to_string(&command).map_err(|e| e.to_string())?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    handle
+        .pending
+        .lock()
+        .map_err(|_| "poisoned pending".to_string())?
+        .insert(req_id.clone(), tx);
+    if let Err(error) = write_session_line(&session_id, &line) {
+        handle
+            .pending
+            .lock()
+            .ok()
+            .map(|mut pending| pending.remove(&req_id));
+        return Err(error);
+    }
+    let response = tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(std::time::Duration::from_secs(20))
+    })
+    .await
+    .map_err(|e| format!("RPC worker failed: {}", e))?
+    .map_err(|_| "timed out waiting for pi response (is the agent still starting?)".to_string())?;
+    if response.get("success").and_then(|s| s.as_bool()) != Some(true) {
+        let detail = response
+            .get("error")
+            .and_then(|e| e.as_str())
+            .or_else(|| response.get("data").and_then(|d| d.as_str()))
+            .unwrap_or("unknown pi error");
+        return Err(format!("pi error: {}", detail));
+    }
+    Ok(response
+        .get("data")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null))
+}
+
+/// pi RPC `get_tree`: returns `{ tree: [...], leafId }` where each node is
+/// `{ entry, children, label?, labelTimestamp? }` and each entry carries
+/// `{ type, id, parentId, ... }`.
+#[tauri::command]
+pub async fn get_session_tree(session_id: String) -> Result<serde_json::Value, String> {
+    rpc_roundtrip(session_id, serde_json::json!({ "type": "get_tree" })).await
+}
+
+/// pi RPC `fork`: `{"type": "fork", "entryId": node_id}` forks from a previous
+/// user message on the active branch and *replaces the active session in place*
+/// with the fork (per pi semantics). The response returns `{ text, cancelled }`,
+/// not a new session id — the frontend refreshes the current tab from the
+/// forked session afterwards via get_state/get_messages.
+#[tauri::command]
+pub async fn fork_session(
+    session_id: String,
+    node_id: String,
+) -> Result<serde_json::Value, String> {
+    validate_rpc_id(&node_id, "node_id")?;
+    rpc_roundtrip(
+        session_id,
+        serde_json::json!({ "type": "fork", "entryId": node_id }),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1478,5 +1619,18 @@ mod tests {
             return;
         };
         assert!(String::from_utf8_lossy(&output.stdout).contains("--session <path|id>"));
+    }
+
+    #[test]
+    fn rpc_id_validation_rejects_unsafe_values() {
+        assert!(validate_rpc_id("chat-abc_123", "session_id").is_ok());
+        assert!(validate_rpc_id("research-1", "session_id").is_ok());
+        assert!(validate_rpc_id("abcdef0123456789", "node_id").is_ok());
+        assert!(validate_rpc_id("", "session_id").is_err());
+        assert!(validate_rpc_id("chat/abc", "session_id").is_err());
+        assert!(validate_rpc_id("a b", "node_id").is_err());
+        assert!(validate_rpc_id("$(rm -rf /)", "node_id").is_err());
+        assert!(validate_rpc_id("a".repeat(129).as_str(), "session_id").is_err());
+        assert!(validate_rpc_id("a".repeat(128).as_str(), "session_id").is_ok());
     }
 }

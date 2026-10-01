@@ -81,6 +81,7 @@ import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar from "./ChatRightSidebar";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
+import SessionTreePanel from "./SessionTreePanel";
 import {
   buildPhase,
   transcriptEntry,
@@ -385,6 +386,7 @@ export default function ChatView({
   // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
   // pi; the displayed user message stays raw.
   const [planMode, setPlanMode] = useState(false);
+  const [sessionTreeOpen, setSessionTreeOpen] = useState(false);
   const [images, setImages] = useState<ChatImage[]>([]);
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
@@ -941,6 +943,15 @@ export default function ChatView({
     },
     [sessionId, onToast],
   );
+
+  // pi `fork` replaces the active session in place with the forked branch: the
+  // frontend must re-read the session state (updates the tracked session file)
+  // and reload messages from the forked history.
+  const handleSessionForked = useCallback(() => {
+    setSessionTreeOpen(false);
+    void sendRaw({ type: "get_state" });
+    void sendRaw({ type: "get_messages" });
+  }, [sendRaw]);
 
   useEffect(() => {
     if (agentStatus !== "running") return;
@@ -4311,6 +4322,14 @@ export default function ChatView({
           >
             ⌘ TERMINAL
           </button>
+          <button
+            onClick={() => setSessionTreeOpen(true)}
+            className="dev-control"
+            title="Session tree — fork a new branch from any past message"
+            aria-label="Open session tree"
+          >
+            ⑂ TREE
+          </button>
           {!globalChat && devRunner && (
             <>
               <button onClick={handleStopDev} className="dev-control stop">
@@ -4787,6 +4806,15 @@ export default function ChatView({
             onClick={(event) => event.stopPropagation()}
           />
         </div>
+      )}
+      {sessionTreeOpen && (
+        <SessionTreePanel
+          sessionId={sessionId}
+          agentRunning={agentStatus === "running"}
+          onToast={onToast}
+          onForked={handleSessionForked}
+          onClose={() => setSessionTreeOpen(false)}
+        />
       )}
       {expandedDiff &&
         worktreeDiff?.files.find(
