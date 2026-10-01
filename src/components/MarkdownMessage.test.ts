@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
 import { createElement } from "react";
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import MarkdownMessage, { formatChatCode } from "./MarkdownMessage";
+import MarkdownMessage, { formatChatCode, hasMath } from "./MarkdownMessage";
 
 describe("MarkdownMessage", () => {
   test("renders preserved spreadsheet newlines inside table cells", () => {
@@ -40,7 +40,8 @@ describe("MarkdownMessage", () => {
     expect(container.querySelector(".markdown-body")).toBeNull();
   });
 
-  test("renders KaTeX math and sanitizes unsafe HTML", () => {
+  test("renders KaTeX math and sanitizes unsafe HTML", async () => {
+    // KaTeX loads lazily via dynamic import only when math is detected.
     const { container } = render(
       createElement(
         MarkdownMessage,
@@ -48,7 +49,9 @@ describe("MarkdownMessage", () => {
         "$x^2$ <script>alert(1)</script><b>safe</b>",
       ),
     );
-    expect(container.querySelector(".katex")).not.toBeNull();
+    await waitFor(() =>
+      expect(container.querySelector(".katex")).not.toBeNull(),
+    );
     expect(container.querySelector("script")).toBeNull();
     expect(container.querySelector("b")?.textContent).toBe("safe");
   });
@@ -58,6 +61,29 @@ describe("MarkdownMessage", () => {
       createElement(MarkdownMessage, null, "```mermaid\ngraph TD; A-->B;\n```"),
     );
     expect(getByRole("button", { name: "PREVIEW DIAGRAM" })).toBeTruthy();
+  });
+});
+
+describe("hasMath", () => {
+  test("detects inline, display, and escaped math delimiters", () => {
+    expect(hasMath("solve $x^2$ now")).toBe(true);
+    expect(hasMath("$$\nx^2\n$$")).toBe(true);
+    expect(hasMath("see \\(x+1\\) here")).toBe(true);
+    expect(hasMath("see \\[x+1\\] here")).toBe(true);
+  });
+
+  test("ignores dollar signs inside code", () => {
+    expect(hasMath("```js\nconst price = `$5`;\n```")).toBe(false);
+    expect(hasMath("use `$HOME` here")).toBe(false);
+    expect(hasMath("it costs $5 total")).toBe(false);
+  });
+
+  test("renders identically without math and without KaTeX loaded", () => {
+    const { container } = render(
+      createElement(MarkdownMessage, null, "plain **bold** text"),
+    );
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container.querySelector("strong")?.textContent).toBe("bold");
   });
 });
 
