@@ -189,6 +189,19 @@ fn text_file(path: &Path) -> Result<String, String> {
     String::from_utf8(fs::read(path).map_err(|e| e.to_string())?)
         .map_err(|_| "Text documents must be UTF-8".into())
 }
+/// Bounded UTF-8 probe: read at most the first 8 KiB to decide text vs
+/// binary, without reading the whole file.
+fn is_text_prefix(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 8192];
+    let Ok(n) = file.read(&mut buf) else {
+        return false;
+    };
+    std::str::from_utf8(&buf[..n]).is_ok()
+}
 #[derive(Clone, Serialize)]
 pub struct RagSourceDetail {
     pub id: String,
@@ -296,9 +309,13 @@ pub fn list_project_files(project_path: String) -> Result<Vec<ProjectFile>, Stri
             if relative.is_empty() {
                 continue;
             }
-            let chars = match text_file(&p) {
-                Ok(t) => t.chars().count(),
-                Err(_) => 0,
+            // Cheap size for the sidebar: byte length from metadata, with a
+            // bounded UTF-8 probe so binary files still report 0 (shown as
+            // "bin" in the UI). Never reads the full file contents.
+            let chars = if is_text_prefix(&p) {
+                meta.len() as usize
+            } else {
+                0
             };
             let modified_ms = meta
                 .modified()
