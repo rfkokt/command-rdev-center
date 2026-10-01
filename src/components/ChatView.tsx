@@ -381,6 +381,8 @@ export default function ChatView({
     Boolean(sessionFile),
   );
   const historyLoadedRef = useRef(!sessionFile);
+  const forkHistoryRequestRef = useRef<string | null>(null);
+  const forkHistoryLoadingRef = useRef(false);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
   // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
@@ -947,11 +949,35 @@ export default function ChatView({
   // pi `fork` replaces the active session in place with the forked branch: the
   // frontend must re-read the session state (updates the tracked session file)
   // and reload messages from the forked history.
-  const handleSessionForked = useCallback(() => {
-    setSessionTreeOpen(false);
-    void sendRaw({ type: "get_state" });
-    void sendRaw({ type: "get_messages" });
-  }, [sendRaw]);
+  const handleSessionForked = useCallback(
+    (text: string) => {
+      setSessionTreeOpen(false);
+      setInput(text);
+      setMessages([]);
+      setPendingMessageCount(0);
+      trackedTaskRef.current = false;
+      finalizedIdsRef.current.clear();
+      finalizedContentRef.current.clear();
+      pendingTextRef.current = "";
+      pendingThinkingRef.current = "";
+      historyLoadedRef.current = false;
+      setIsHistoryLoading(true);
+      setIsNewSessionLoading(true);
+      const requestId = uid();
+      forkHistoryRequestRef.current = requestId;
+      forkHistoryLoadingRef.current = true;
+      void sendRaw({ type: "get_state" });
+      void sendRaw({ type: "get_messages", id: requestId }).then((sent) => {
+        if (!sent && forkHistoryRequestRef.current === requestId) {
+          forkHistoryLoadingRef.current = false;
+          historyLoadedRef.current = true;
+          setIsHistoryLoading(false);
+          setIsNewSessionLoading(false);
+        }
+      });
+    },
+    [sendRaw],
+  );
 
   useEffect(() => {
     if (agentStatus !== "running") return;
@@ -1220,11 +1246,36 @@ export default function ChatView({
             abortResponseRef.current = null;
             return;
           }
+          const replacesForkHistory =
+            cmd === "get_messages" &&
+            forkHistoryRequestRef.current !== null &&
+            ev.id === forkHistoryRequestRef.current;
+          if (
+            cmd === "get_messages" &&
+            forkHistoryRequestRef.current &&
+            !replacesForkHistory
+          )
+            return;
+          if (replacesForkHistory) {
+            if (!forkHistoryLoadingRef.current) return;
+            forkHistoryLoadingRef.current = false;
+            historyLoadedRef.current = true;
+            setIsHistoryLoading(false);
+            setIsNewSessionLoading(false);
+            if (ev.success === false) {
+              onToast(
+                `Fork history: ${String(ev.error ?? "Could not reload messages")}`,
+              );
+              return;
+            }
+          }
           const data = ev.data as Record<string, unknown> | undefined;
           if (!data) return;
           if (cmd === "get_commands") {
             setCommands((data.commands as SlashCommand[]) ?? []);
           } else if (cmd === "new_session") {
+            forkHistoryRequestRef.current = null;
+            forkHistoryLoadingRef.current = false;
             setIsNewSessionLoading(false);
             if (data.cancelled !== true) {
               setMessages([]);
@@ -1234,6 +1285,8 @@ export default function ChatView({
               onToast("New context started — dev server unchanged");
             }
           } else if (cmd === "switch_session" && data.cancelled !== true) {
+            forkHistoryRequestRef.current = null;
+            forkHistoryLoadingRef.current = false;
             setMessages([]);
             historyLoadedRef.current = false;
             setIsHistoryLoading(true);
@@ -1395,7 +1448,9 @@ export default function ChatView({
                 .filter(Boolean) as ChatMessage[];
               if (mapped.length > 0) {
                 const recent = recentItems(mapped, MAX_HISTORY);
-                setMessages((prev) => (prev.length === 0 ? recent : prev));
+                setMessages((prev) =>
+                  replacesForkHistory || prev.length === 0 ? recent : prev,
+                );
                 // History is a snapshot and may arrive after a retry prompt.
                 // Never let it overwrite lifecycle events such as agent_start.
               }
@@ -2157,6 +2212,7 @@ export default function ChatView({
   async function sendPrompt(text: string) {
     if (
       !chatReady ||
+      forkHistoryLoadingRef.current ||
       !text.trim() ||
       driveDetached ||
       agentStatus === "stopped"
@@ -2179,12 +2235,12 @@ export default function ChatView({
       ].slice(-MAX_HISTORY),
     );
     pendingTaskPromptRef.current = text;
+    await maybeCreateCheckpoint(text);
     await sendRaw({
       type: "prompt",
       message: `${text}${await taskContext(text)}`,
       images: [],
     });
-    maybeCreateCheckpoint(text);
     return true;
   }
 
@@ -2204,13 +2260,13 @@ export default function ChatView({
     });
   }
 
-  // Fire-and-forget git checkpoint before a user message (best-effort: never
-  // blocks or fails the send). Only user messages — never agent turns.
-  const maybeCreateCheckpoint = (preview: string) => {
+  // Finish the best-effort checkpoint before dispatching the next prompt so
+  // its snapshot cannot include edits made by that prompt's agent turn.
+  const maybeCreateCheckpoint = async (preview: string) => {
     const path = worktree?.worktree_path;
     if (!path) return;
     const message = preview.replace(/\s+/g, " ").slice(0, 120);
-    void invoke("create_checkpoint", {
+    await invoke("create_checkpoint", {
       worktreePath: path,
       message: message || "user message",
     }).catch((error) => {
@@ -2234,6 +2290,7 @@ export default function ChatView({
     const text = input.trim();
     if (
       !chatReady ||
+      forkHistoryLoadingRef.current ||
       (!text && images.length === 0 && files.length === 0) ||
       driveDetached ||
       agentStatus === "stopped"
@@ -2271,7 +2328,7 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
-    maybeCreateCheckpoint(text || visibleMessage);
+    await maybeCreateCheckpoint(text || visibleMessage);
     await sendWithSkill(message);
   }
 
@@ -2970,6 +3027,7 @@ export default function ChatView({
   async function submitInput(
     submitMode: "prompt" | "follow_up" | "steer" = "prompt",
   ) {
+    if (forkHistoryLoadingRef.current) return;
     const text = input.trim();
     const query = researchQuery(text);
     if (query !== null) {
@@ -3100,7 +3158,7 @@ export default function ChatView({
       setImages([]);
       setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
-      maybeCreateCheckpoint(messageText);
+      await maybeCreateCheckpoint(messageText);
       await sendRaw({ type, message: messageText, images });
       onToast(
         type === "steer"
@@ -4325,7 +4383,7 @@ export default function ChatView({
           <button
             onClick={() => setSessionTreeOpen(true)}
             className="dev-control"
-            title="Session tree — fork a new branch from any past message"
+            title="Session tree — fork a new branch from a past user message"
             aria-label="Open session tree"
           >
             ⑂ TREE
@@ -4544,7 +4602,7 @@ export default function ChatView({
           itemContent={renderFeedItem}
         />
 
-        {planApprovalPending(messages) && (
+        {agentStatus !== "running" && planApprovalPending(messages) && (
           <div
             role="status"
             aria-live="polite"

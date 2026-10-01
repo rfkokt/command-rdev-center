@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createElement } from "react";
+import { createElement, StrictMode } from "react";
 import { fireEvent, render, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 import MarkdownMessage, {
@@ -10,6 +10,34 @@ import MarkdownMessage, {
 } from "./MarkdownMessage";
 
 describe("MarkdownMessage", () => {
+  test("renders math after StrictMode replays effects", async () => {
+    const { container } = render(
+      createElement(
+        StrictMode,
+        null,
+        createElement(MarkdownMessage, null, "$x^2$"),
+      ),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".katex")).not.toBeNull(),
+    );
+  });
+
+  test("keeps loading math when streamed text changes", async () => {
+    const { container, rerender } = render(
+      createElement(MarkdownMessage, { isStreaming: true, children: "$x^2$" }),
+    );
+    rerender(
+      createElement(MarkdownMessage, {
+        isStreaming: true,
+        children: "$x^2$ more text",
+      }),
+    );
+    await waitFor(() =>
+      expect(container.querySelector(".katex")).not.toBeNull(),
+    );
+  });
+
   test("renders preserved spreadsheet newlines inside table cells", () => {
     const { container } = render(
       createElement(

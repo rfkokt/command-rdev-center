@@ -1,5 +1,74 @@
 import { describe, expect, test } from "vitest";
-import { entryPreview, flattenTree } from "./SessionTreePanel";
+import {
+  canForkNode,
+  entryPreview,
+  flattenEntries,
+  flattenTree,
+} from "./SessionTreePanel";
+
+describe("flat session entries", () => {
+  test("preserves branches, orphan roots, and labels", () => {
+    const nodes = flattenEntries([
+      {
+        type: "message",
+        id: "root",
+        parentId: null,
+        message: { role: "user", content: "root" },
+      },
+      {
+        type: "message",
+        id: "left",
+        parentId: "root",
+        message: { role: "assistant", content: "left" },
+      },
+      {
+        type: "message",
+        id: "right",
+        parentId: "root",
+        message: { role: "user", content: "right" },
+      },
+      {
+        type: "label",
+        id: "label",
+        parentId: "right",
+        targetId: "left",
+        label: "checkpoint",
+      },
+      {
+        type: "message",
+        id: "orphan",
+        parentId: "missing",
+        message: { role: "user", content: "orphan" },
+      },
+    ]);
+    expect(nodes.map((node) => node.id)).toEqual([
+      "root",
+      "left",
+      "right",
+      "label",
+      "orphan",
+    ]);
+    expect(nodes.map((node) => node.depth)).toEqual([0, 1, 1, 2, 0]);
+    expect(nodes[1].label).toBe("checkpoint");
+    expect(canForkNode(nodes[0])).toBe(true);
+    expect(canForkNode(nodes[1])).toBe(false);
+    expect(canForkNode(nodes[3])).toBe(false);
+  });
+
+  test("handles a long session without recursive traversal", () => {
+    const entries = Array.from({ length: 3000 }, (_, index) => ({
+      type: "message",
+      id: String(index),
+      parentId: index ? String(index - 1) : null,
+      message: { role: "user", content: `message ${index}` },
+    }));
+    const nodes = flattenEntries(entries);
+    expect(nodes).toHaveLength(3000);
+    expect(nodes[nodes.length - 1]?.depth).toBe(2999);
+    expect(nodes[nodes.length - 1]?.preview).toBe("message 2999");
+    expect(canForkNode({ ...nodes[0], id: "" })).toBe(false);
+  });
+});
 
 describe("entryPreview", () => {
   test("extracts string content", () => {

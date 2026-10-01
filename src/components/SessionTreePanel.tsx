@@ -20,13 +20,16 @@ export type SessionTreePanelProps = {
   agentRunning: boolean;
   onToast: (message: string) => void;
   /** After a successful fork: refresh state/messages from the forked session. */
-  onForked: () => void;
+  onForked: (text: string) => void;
   onClose: () => void;
 };
 
 type RawEntry = {
   type?: unknown;
   id?: unknown;
+  parentId?: unknown;
+  targetId?: unknown;
+  label?: unknown;
   message?: { role?: unknown; content?: unknown };
   text?: unknown;
 };
@@ -68,7 +71,12 @@ export function entryPreview(entry: RawEntry | undefined): string {
 /** Depth-first flatten of pi's recursive `{ entry, children }` tree nodes. */
 export function flattenTree(tree: RawNode[], depth = 0): SessionTreeNode[] {
   const out: SessionTreeNode[] = [];
-  for (const node of tree) {
+  const stack = tree.map((node) => ({ node, depth })).reverse();
+  const visited = new Set<RawNode>();
+  while (stack.length > 0) {
+    const { node, depth } = stack.pop()!;
+    if (visited.has(node)) continue;
+    visited.add(node);
     const entry = node.entry;
     const id = typeof entry?.id === "string" ? entry.id : "";
     const children = Array.isArray(node.children) ? node.children : [];
@@ -84,9 +92,39 @@ export function flattenTree(tree: RawNode[], depth = 0): SessionTreeNode[] {
       depth,
       isLeaf: children.length === 0,
     });
-    out.push(...flattenTree(children, depth + 1));
+    for (let index = children.length - 1; index >= 0; index--) {
+      stack.push({ node: children[index], depth: depth + 1 });
+    }
   }
   return out;
+}
+
+/** Rebuild branches from flat entries without a deeply nested RPC payload. */
+export function flattenEntries(entries: RawEntry[]): SessionTreeNode[] {
+  const nodes = new Map<string, RawNode>();
+  for (const entry of entries) {
+    if (typeof entry.id === "string")
+      nodes.set(entry.id, { entry, children: [] });
+  }
+  const roots: RawNode[] = [];
+  for (const node of nodes.values()) {
+    const entry = node.entry!;
+    const parent =
+      typeof entry.parentId === "string"
+        ? nodes.get(entry.parentId)
+        : undefined;
+    if (parent && parent !== node) parent.children!.push(node);
+    else roots.push(node);
+    if (entry.type === "label" && typeof entry.targetId === "string") {
+      const target = nodes.get(entry.targetId);
+      if (target) target.label = entry.label;
+    }
+  }
+  return flattenTree(roots);
+}
+
+export function canForkNode(node: SessionTreeNode): boolean {
+  return Boolean(node.id) && node.kind === "message" && node.role === "user";
 }
 
 export default function SessionTreePanel({
@@ -103,11 +141,11 @@ export default function SessionTreePanel({
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await invoke<{ tree?: RawNode[]; leafId?: string }>(
+      const data = await invoke<{ entries?: RawEntry[]; leafId?: string }>(
         "get_session_tree",
         { sessionId },
       );
-      setNodes(flattenTree(data.tree ?? []));
+      setNodes(flattenEntries(data.entries ?? []));
     } catch (error) {
       onToast(`Session tree: ${String(error)}`);
     } finally {
@@ -120,7 +158,7 @@ export default function SessionTreePanel({
   }, [refresh]);
 
   const handleFork = async (node: SessionTreeNode) => {
-    if (!node.id) return;
+    if (!canForkNode(node) || agentRunning || forking !== null) return;
     setForking(node.id);
     try {
       const data = await invoke<{ text?: string; cancelled?: boolean }>(
@@ -137,7 +175,7 @@ export default function SessionTreePanel({
           ? `Forked from "${text}" — this chat now continues the fork`
           : "Forked — this chat now continues the fork",
       );
-      onForked();
+      onForked(data.text ?? "");
     } catch (error) {
       onToast(`Fork failed: ${String(error)}`);
     } finally {
@@ -189,7 +227,8 @@ export default function SessionTreePanel({
                   alignItems: "center",
                   gap: 8,
                   padding: "6px 12px",
-                  paddingLeft: 12 + node.depth * 16,
+                  paddingLeft: 12 + Math.min(node.depth, 6) * 12,
+                  minWidth: 0,
                 }}
               >
                 <span
@@ -224,19 +263,21 @@ export default function SessionTreePanel({
                   {node.preview || node.id || "(empty)"}
                   {node.isLeaf ? " ●" : ""}
                 </span>
-                <button
-                  className="composer-chip"
-                  style={{ minHeight: 24, fontSize: 11, flexShrink: 0 }}
-                  disabled={agentRunning || forking !== null}
-                  title={
-                    agentRunning
-                      ? "Wait for the agent to finish before forking"
-                      : `Fork a new branch from ${node.id.slice(0, 8)}`
-                  }
-                  onClick={() => void handleFork(node)}
-                >
-                  {forking === node.id ? "FORKING…" : "FORK"}
-                </button>
+                {canForkNode(node) && (
+                  <button
+                    className="composer-chip"
+                    style={{ minHeight: 24, fontSize: 11, flexShrink: 0 }}
+                    disabled={agentRunning || forking !== null}
+                    title={
+                      agentRunning
+                        ? "Wait for the agent to finish before forking"
+                        : `Fork a new branch from ${node.id.slice(0, 8)}`
+                    }
+                    onClick={() => void handleFork(node)}
+                  >
+                    {forking === node.id ? "FORKING…" : "FORK"}
+                  </button>
+                )}
               </div>
             ))
           )}

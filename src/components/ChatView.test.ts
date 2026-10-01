@@ -546,6 +546,23 @@ describe("plan mode", () => {
 
   const msg = (role: string, text: string) => ({ role, text }) as ChatMessage;
 
+  test("consumes plan approval when the user replies", () => {
+    expect(
+      planApprovalPending([
+        msg("assistant", `plan\n${PLAN_APPROVAL_MARKER}`),
+        msg("user", "Plan approved. Proceed with implementation."),
+      ]),
+    ).toBe(false);
+  });
+
+  test("waits until a streaming plan finishes", () => {
+    expect(
+      planApprovalPending([
+        { ...msg("assistant", PLAN_APPROVAL_MARKER), isStreaming: true },
+      ]),
+    ).toBe(false);
+  });
+
   test("planApprovalPending detects the marker on the latest assistant message", () => {
     expect(
       planApprovalPending([

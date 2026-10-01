@@ -834,6 +834,10 @@ pub fn create_checkpoint(
     message: String,
 ) -> Result<CheckpointResult, String> {
     let path_str = checkpoint_repo(&worktree_path)?;
+    create_checkpoint_in_repo(&path_str, &message)
+}
+
+fn create_checkpoint_in_repo(path_str: &str, message: &str) -> Result<CheckpointResult, String> {
     let status = Command::new("git")
         .args(["-C", &path_str, "status", "--porcelain"])
         .output()
@@ -891,6 +895,10 @@ pub fn create_checkpoint(
 #[tauri::command]
 pub fn list_checkpoints(worktree_path: String) -> Result<Vec<Checkpoint>, String> {
     let path_str = checkpoint_repo(&worktree_path)?;
+    list_checkpoints_in_repo(&path_str)
+}
+
+fn list_checkpoints_in_repo(path_str: &str) -> Result<Vec<Checkpoint>, String> {
     let out = Command::new("git")
         .args([
             "-C",
@@ -934,7 +942,8 @@ pub fn list_checkpoints(worktree_path: String) -> Result<Vec<Checkpoint>, String
 
 /// Restore tracked files to a checkpoint commit.
 ///
-/// Uses `git checkout {sha} -- .`: only tracked files are restored. Untracked
+/// Uses `git restore --source {sha} --staged --worktree -- .`: tracked files
+/// added after the snapshot are removed as well. Untracked
 /// files created after the checkpoint are left alone, and the conversation is
 /// untouched (it lives in the pi session file, not in git).
 #[tauri::command]
@@ -943,6 +952,10 @@ pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, 
         return Err("invalid checkpoint sha".to_string());
     }
     let path_str = checkpoint_repo(&worktree_path)?;
+    restore_checkpoint_in_repo(&path_str, &sha)
+}
+
+fn restore_checkpoint_in_repo(path_str: &str, sha: &str) -> Result<String, String> {
     let kind = Command::new("git")
         .args(["-C", &path_str, "cat-file", "-t", &sha])
         .output()
@@ -951,7 +964,17 @@ pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, 
         return Err("sha does not resolve to a commit".to_string());
     }
     let out = Command::new("git")
-        .args(["-C", &path_str, "checkout", &sha, "--", "."])
+        .args([
+            "-C",
+            path_str,
+            "restore",
+            "--source",
+            sha,
+            "--staged",
+            "--worktree",
+            "--",
+            ".",
+        ])
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
@@ -960,7 +983,7 @@ pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, 
             String::from_utf8_lossy(&out.stderr).trim()
         ));
     }
-    Ok(sha)
+    Ok(sha.to_string())
 }
 
 #[cfg(test)]
@@ -1302,17 +1325,14 @@ mod tests {
         let path = repo.to_str().unwrap().to_string();
 
         // Clean tree -> "clean", no sha.
-        let clean = create_checkpoint(path.clone(), "nothing to save".into()).unwrap();
+        let clean = create_checkpoint_in_repo(&path, "nothing to save").unwrap();
         assert_eq!(clean.status, "clean");
         assert!(clean.sha.is_none());
 
         // Dirty tree -> commit with sanitized single-line subject.
         std::fs::write(repo.join("tracked.txt"), "changed").unwrap();
-        let made = create_checkpoint(
-            path.clone(),
-            "  user asked to tweak login\nmalicious\nline".into(),
-        )
-        .unwrap();
+        let made = create_checkpoint_in_repo(&path, "  user asked to tweak login\nmalicious\nline")
+            .unwrap();
         assert_eq!(made.status, "committed");
         let sha = made.sha.clone().unwrap();
         assert!(is_valid_checkpoint_sha(&sha));
@@ -1328,7 +1348,7 @@ mod tests {
             .output()
             .unwrap();
 
-        let list = list_checkpoints(path.clone()).unwrap();
+        let list = list_checkpoints_in_repo(&path).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].sha, sha);
         assert!(list[0].timestamp > 0);
@@ -1337,8 +1357,9 @@ mod tests {
         // Restore: tracked file reverts, untracked file created later is left alone.
         std::fs::write(repo.join("tracked.txt"), "even newer").unwrap();
         std::fs::write(repo.join("untracked.txt"), "keep me").unwrap();
-        let restored = restore_checkpoint(path.clone(), sha.clone()).unwrap();
+        let restored = restore_checkpoint_in_repo(&path, &sha).unwrap();
         assert_eq!(restored, sha);
+        assert!(!repo.join("other.txt").exists());
         assert_eq!(
             std::fs::read_to_string(repo.join("tracked.txt")).unwrap(),
             "changed"
@@ -1353,6 +1374,29 @@ mod tests {
         assert!(restore_checkpoint(path.clone(), "abc".into()).is_err());
         assert!(restore_checkpoint(path.clone(), "0000000".into()).is_err());
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_commands_reject_unregistered_paths() {
+        let (root, repo) = init_checkpoint_repo("unregistered");
+        let path = repo.to_string_lossy().to_string();
+        assert!(create_checkpoint(path.clone(), "test".into())
+            .unwrap_err()
+            .contains("unregistered"));
+        assert!(list_checkpoints(path.clone())
+            .unwrap_err()
+            .contains("unregistered"));
+        let sha = Command::new("git")
+            .args(["-C", &path, "rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(restore_checkpoint(
+            path,
+            String::from_utf8_lossy(&sha.stdout).trim().to_string()
+        )
+        .unwrap_err()
+        .contains("unregistered"));
         std::fs::remove_dir_all(root).unwrap();
     }
 }

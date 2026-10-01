@@ -468,8 +468,11 @@ export function applyPlanModePrefix(text: string, planMode: boolean): string {
 export function planApprovalPending(messages: ChatMessage[]): boolean {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
+    if (message.role === "user") return false;
     if (message.role !== "assistant") continue;
-    return message.text.trim().endsWith(PLAN_APPROVAL_MARKER);
+    return (
+      !message.isStreaming && message.text.trim().endsWith(PLAN_APPROVAL_MARKER)
+    );
   }
   return false;
 }

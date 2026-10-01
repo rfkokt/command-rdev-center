@@ -1,6 +1,24 @@
 import { describe, expect, test } from "vitest";
 import { buildHunkPatch, flattenHunks, parseDiffSections } from "./diff-hunks";
 
+test("preserves header-like content inside a hunk", () => {
+  const patch = [
+    "diff --git a/doc.md b/doc.md",
+    "--- a/doc.md",
+    "+++ b/doc.md",
+    "@@ -1 +1 @@",
+    "--- old separator",
+    "+++ new separator",
+    "",
+  ].join("\n");
+  const [section] = parseDiffSections(patch);
+  expect(section.hunks[0].lines).toEqual([
+    "--- old separator",
+    "+++ new separator",
+  ]);
+  expect(buildHunkPatch(section.fileHeader, section.hunks[0])).toBe(patch);
+});
+
 const SINGLE = `diff --git a/src/a.ts b/src/a.ts
 index 1111111..2222222 100644
 --- a/src/a.ts

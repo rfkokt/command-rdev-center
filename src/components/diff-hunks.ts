@@ -53,8 +53,7 @@ export function parseDiffSections(patch: string): DiffSection[] {
       continue;
     }
     if (!current) continue;
-    if (isFileHeader(line)) {
-      pushHunk();
+    if (!currentHunk && isFileHeader(line)) {
       current.fileHeader.push(line);
       continue;
     }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 const MAX_TEXT_ATTACHMENT_BYTES: u64 = 512 * 1024;
 const MAX_PDF_ATTACHMENT_BYTES: u64 = 20 * 1024 * 1024;
@@ -86,17 +86,17 @@ fn walk_collect(base: &Path, results: &mut Vec<(PathBuf, PathBuf)>) {
 }
 
 /// Cached directory-walk results, one entry per project root. An entry is
-/// reused while the root directory's mtime is unchanged; when the mtime
-/// changes the tree is walked again. Bounded to a few roots so memory stays
-/// small. A stale entry can at worst miss a nested change until the root
-/// mtime changes — acceptable for a file picker's fuzzy listing.
+/// reused briefly while the root mtime is unchanged. The TTL also detects
+/// nested changes, which do not update the root mtime.
 struct WalkCacheEntry {
     fingerprint: Option<SystemTime>,
+    scanned_at: Instant,
     files: Vec<(PathBuf, PathBuf)>,
 }
 
 static WALK_CACHE: OnceLock<Mutex<HashMap<String, WalkCacheEntry>>> = OnceLock::new();
 const WALK_CACHE_MAX_ROOTS: usize = 8;
+const WALK_CACHE_TTL: Duration = Duration::from_secs(1);
 
 fn walk_cache() -> &'static Mutex<HashMap<String, WalkCacheEntry>> {
     WALK_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -107,7 +107,7 @@ fn walk_collect_cached(base: &Path) -> Vec<(PathBuf, PathBuf)> {
     let fingerprint = std::fs::metadata(base).ok().and_then(|m| m.modified().ok());
     if let Ok(guard) = walk_cache().lock() {
         if let Some(entry) = guard.get(&key) {
-            if entry.fingerprint == fingerprint {
+            if entry.fingerprint == fingerprint && entry.scanned_at.elapsed() < WALK_CACHE_TTL {
                 return entry.files.clone();
             }
         }
@@ -124,6 +124,7 @@ fn walk_collect_cached(base: &Path) -> Vec<(PathBuf, PathBuf)> {
             key,
             WalkCacheEntry {
                 fingerprint,
+                scanned_at: Instant::now(),
                 files: results.clone(),
             },
         );
@@ -317,6 +318,39 @@ mod tests {
         assert!(relative.contains(&PathBuf::from("nested/included.txt")));
         assert!(!relative.contains(&PathBuf::from("nested/ignored.txt")));
         assert!(!relative.iter().any(|path| path.starts_with("nested/.git")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn walk_cache_expires_after_nested_files_or_ignore_rules_change() {
+        let root = std::env::temp_dir().join(format!("crc-nested-cache-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join(".gitignore"), "").unwrap();
+        walk_collect_cached(&root);
+        let fingerprint = std::fs::metadata(&root).unwrap().modified().unwrap();
+        std::fs::write(root.join("src/new.ts"), "new").unwrap();
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().modified().unwrap(),
+            fingerprint
+        );
+        let expire = || {
+            if let Some(entry) = walk_cache()
+                .lock()
+                .unwrap()
+                .get_mut(&root.to_string_lossy().to_string())
+            {
+                entry.scanned_at = Instant::now() - WALK_CACHE_TTL;
+            }
+        };
+        expire();
+        assert!(walk_collect_cached(&root)
+            .iter()
+            .any(|(_, rel)| rel == &PathBuf::from("src/new.ts")));
+        std::fs::write(root.join(".gitignore"), "src/new.ts\n").unwrap();
+        expire();
+        assert!(!walk_collect_cached(&root)
+            .iter()
+            .any(|(_, rel)| rel == &PathBuf::from("src/new.ts")));
         std::fs::remove_dir_all(root).unwrap();
     }
 

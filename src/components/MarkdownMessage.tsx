@@ -5,7 +5,6 @@ import {
   Suspense,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import type { ComponentProps } from "react";
@@ -263,20 +262,16 @@ function MarkdownMessage({
   // mermaid import in MermaidBlock. Messages without math render through the
   // exact same pipeline as before, minus the no-op plugin.
   const [katexPlugin, setKatexPlugin] = useState<RehypePlugin | null>(null);
-  const katexLoad = useRef<"idle" | "loading" | "ready">("idle");
+  const containsMath = useMemo(() => hasMath(formatted), [formatted]);
   useEffect(() => {
-    if (!hasMath(formatted)) {
-      katexLoad.current = "idle";
+    if (!containsMath) {
       setKatexPlugin(null);
       return;
     }
-    if (katexLoad.current !== "idle") return;
-    katexLoad.current = "loading";
     let cancelled = false;
     Promise.all([import("rehype-katex"), import("katex/dist/katex.min.css")])
       .then(([katexModule]) => {
         if (cancelled) return;
-        katexLoad.current = "ready";
         // The package's index.d.ts re-export hides `default` from type
         // queries, but the runtime ESM module does export it (see
         // rehype-katex/index.js -> lib/index.js).
@@ -286,13 +281,11 @@ function MarkdownMessage({
         // otherwise mistake for an updater.
         setKatexPlugin(() => plugin);
       })
-      .catch(() => {
-        if (!cancelled) katexLoad.current = "idle";
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [formatted]);
+  }, [containsMath]);
   const rehypePlugins = useMemo(
     (): ComponentProps<typeof ReactMarkdown>["rehypePlugins"] => [
       rehypeRaw,

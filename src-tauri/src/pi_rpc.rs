@@ -1325,12 +1325,11 @@ async fn rpc_roundtrip(
         .unwrap_or(serde_json::Value::Null))
 }
 
-/// pi RPC `get_tree`: returns `{ tree: [...], leafId }` where each node is
-/// `{ entry, children, label?, labelTimestamp? }` and each entry carries
-/// `{ type, id, parentId, ... }`.
+/// Flat pi entries retain all branches without exceeding JSON nesting limits
+/// on long sessions. The frontend reconstructs the tree using parentId.
 #[tauri::command]
 pub async fn get_session_tree(session_id: String) -> Result<serde_json::Value, String> {
-    rpc_roundtrip(session_id, serde_json::json!({ "type": "get_tree" })).await
+    rpc_roundtrip(session_id, serde_json::json!({ "type": "get_entries" })).await
 }
 
 /// pi RPC `fork`: `{"type": "fork", "entryId": node_id}` forks from a previous
@@ -1632,5 +1631,34 @@ mod tests {
         assert!(validate_rpc_id("$(rm -rf /)", "node_id").is_err());
         assert!(validate_rpc_id("a".repeat(129).as_str(), "session_id").is_err());
         assert!(validate_rpc_id("a".repeat(128).as_str(), "session_id").is_ok());
+    }
+
+    #[test]
+    fn routes_long_session_entries_response() {
+        let id = "long-session-entries";
+        let request = "entries-request";
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut pending = HashMap::new();
+        pending.insert(request.to_string(), tx);
+        sessions_map().lock().unwrap().insert(
+            id.to_string(),
+            Arc::new(SessionHandle {
+                child: Mutex::new(None),
+                stdin: Mutex::new(None),
+                pending: Mutex::new(pending),
+            }),
+        );
+        let entries: Vec<_> = (0..3000).map(|index| serde_json::json!({
+            "type": "message", "id": format!("entry-{index}"),
+            "parentId": if index == 0 { None } else { Some(format!("entry-{}", index - 1)) },
+            "message": { "role": "user", "content": "prompt" }
+        })).collect();
+        let response = serde_json::json!({ "type": "response", "id": request, "success": true, "data": { "entries": entries, "leafId": "entry-2999" } });
+        route_rpc_response(id, &response.to_string());
+        sessions_map().lock().unwrap().remove(id);
+        let received = rx
+            .try_recv()
+            .expect("long session entries should reach the pending RPC");
+        assert_eq!(received["data"]["entries"].as_array().unwrap().len(), 3000);
     }
 }
