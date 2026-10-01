@@ -16,6 +16,8 @@ import {
 } from "./diff-hunks";
 import type { WorktreeDiff } from "./ChatView";
 
+import CheckpointTimeline from "./CheckpointTimeline";
+
 export type ExpandedDiffPanelProps = {
   diffKey: string;
   worktreeDiff: WorktreeDiff;
@@ -28,6 +30,8 @@ export type ExpandedDiffPanelProps = {
   /** Workspace mode: repository name -> repo root path. */
   repositoryRoots?: Record<string, string>;
   onToast: (message: string) => void;
+  /** Called after a checkpoint restore so the host can refresh its diff. */
+  onDiffInvalidated?: () => void;
 };
 
 const buttonStyle = (
@@ -65,6 +69,7 @@ export default function ExpandedDiffPanel({
   worktreePath,
   repositoryRoots,
   onToast,
+  onDiffInvalidated,
 }: ExpandedDiffPanelProps) {
   const dragRef = useRef<{
     startX: number;
@@ -93,6 +98,8 @@ export default function ExpandedDiffPanel({
   const [accepted, setAccepted] = useState<string[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
   const [busy, setBusy] = useState<string[]>([]);
+  // Checkpoint timeline section (top, collapsible).
+  const [checkpointsOpen, setCheckpointsOpen] = useState(false);
   // A fresh diff means a fresh review.
   useEffect(() => {
     setAccepted([]);
@@ -289,6 +296,31 @@ export default function ExpandedDiffPanel({
         </div>
 
         <div style={{ flex: 1, overflow: "auto", background: "#0e0f0c" }}>
+          <div
+            style={{
+              borderBottom: "1px solid var(--colors-hairline)",
+              padding: "8px 20px",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={() => setCheckpointsOpen((open) => !open)}
+              className="composer-chip"
+              style={{ minHeight: 26, fontSize: 11 }}
+              aria-expanded={checkpointsOpen}
+            >
+              {checkpointsOpen ? "▾" : "▸"} CHECKPOINTS
+            </button>
+            {checkpointsOpen && (
+              <div style={{ marginTop: 8 }}>
+                <CheckpointTimeline
+                  worktreePath={repoRoot ?? null}
+                  onToast={onToast}
+                  onRestored={onDiffInvalidated}
+                />
+              </div>
+            )}
+          </div>
           {!file || !file.patch ? (
             <p className="code-empty" style={{ padding: 20 }}>
               Binary or untracked — no textual diff.

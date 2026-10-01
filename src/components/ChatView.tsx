@@ -2168,6 +2168,7 @@ export default function ChatView({
       message: `${text}${await taskContext(text)}`,
       images: [],
     });
+    maybeCreateCheckpoint(text);
     return true;
   }
 
@@ -2182,6 +2183,20 @@ export default function ChatView({
       : await taskContext(text);
     await sendRaw({ type: "prompt", message: `${text}${context}`, images });
   }
+
+  // Fire-and-forget git checkpoint before a user message (best-effort: never
+  // blocks or fails the send). Only user messages — never agent turns.
+  const maybeCreateCheckpoint = (preview: string) => {
+    const path = worktree?.worktree_path;
+    if (!path) return;
+    const message = preview.replace(/\s+/g, " ").slice(0, 120);
+    void invoke("create_checkpoint", {
+      worktreePath: path,
+      message: message || "user message",
+    }).catch((error) => {
+      console.debug("checkpoint skipped:", error);
+    });
+  };
 
   async function handleSend() {
     const text = input.trim();
@@ -2224,6 +2239,7 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
+    maybeCreateCheckpoint(text || visibleMessage);
     await sendWithSkill(message);
   }
 
@@ -3052,6 +3068,7 @@ export default function ChatView({
       setImages([]);
       setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
+      maybeCreateCheckpoint(messageText);
       await sendRaw({ type, message: messageText, images });
       onToast(
         type === "steer"
@@ -4727,6 +4744,7 @@ export default function ChatView({
               ]),
             )}
             onToast={onToast}
+            onDiffInvalidated={refreshDiff}
           />
         )}
       {approval && (
