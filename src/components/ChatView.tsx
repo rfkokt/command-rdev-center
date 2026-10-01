@@ -565,6 +565,8 @@ export default function ChatView({
     Array<{ id: string; type: string; detail: string; at: number }>
   >([]);
   const [driveDetached, setDriveDetached] = useState(false);
+  // Bumped after the user approves the Pi install so the spawn effect re-runs.
+  const [piInstallRetry, setPiInstallRetry] = useState(0);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -2157,6 +2159,37 @@ export default function ChatView({
         const msg = String(e);
         historyLoadedRef.current = true;
         setIsHistoryLoading(false);
+        if (msg.includes("PI_INSTALL_REQUIRED:")) {
+          // Pi CLI is missing: never auto-install a remote script — ask for
+          // explicit consent first, then retry the spawn after approval.
+          const install = await confirm({
+            title: "Install Pi CLI?",
+            message:
+              "Pi CLI not found. Download and install from https://pi.dev/install.sh?",
+            confirmLabel: "Install",
+            cancelLabel: "Cancel",
+            danger: true,
+          });
+          if (install && mounted) {
+            try {
+              await invoke("approve_pi_install");
+              onToast("Pi installed — restarting chat session.");
+              setPiInstallRetry((n) => n + 1);
+            } catch (installError) {
+              const installMsg = String(installError);
+              setMessages((prev) => settleWithError(prev, installMsg));
+              onToast(installMsg);
+            }
+          } else if (mounted) {
+            setMessages((prev) =>
+              settleWithError(
+                prev,
+                "Pi CLI is required to start this chat session.",
+              ),
+            );
+          }
+          return;
+        }
         if (
           msg.includes("detached") ||
           msg.includes("not found") ||
@@ -2198,6 +2231,7 @@ export default function ChatView({
     refreshGraph,
     updateGraphIfCodeStale,
     syncKanbanTask,
+    piInstallRetry,
   ]);
 
   useEffect(() => {

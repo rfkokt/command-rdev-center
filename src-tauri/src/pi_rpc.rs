@@ -223,6 +223,9 @@ pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
 
 #[tauri::command]
 pub fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
+    // The frontend only invokes this from an explicit "Install/Update" button
+    // in Settings, so the click itself is the user's consent to run the
+    // installer. Automatic paths must use `approve_pi_install` instead.
     install_pi_via_curl()?;
     let status = get_pi_runtime_status()?;
     if status.health != "healthy" {
@@ -255,15 +258,77 @@ fn installer_failure(output: &std::process::Output) -> String {
     )
 }
 
+/// URL of the upstream Pi installer. The script is a moving target (re-published
+/// on every Pi release), so a hardcoded hash pin would rot and wedge installs.
+const PI_INSTALL_URL: &str = "https://pi.dev/install.sh";
+
+/// Optional integrity anchor for the installer above. Intentionally `None`:
+/// the script changes with every upstream release, so a baked-in pin would
+/// fail on the next release. Set the `PI_INSTALL_SHA256` environment variable
+/// to enforce verification in managed deployments.
+const PINNED_PI_INSTALL_SHA256: Option<&str> = None;
+
+fn sha256_hex(path: &Path) -> Option<String> {
+    // Best-effort SHA-256 using OS tooling (avoids pulling in a hashing crate):
+    // macOS ships `shasum`, most Linux distros ship `sha256sum`. Both print
+    // "<hash>  <file>", so the first whitespace-separated token is the digest.
+    for tool in [&["shasum", "-a", "256"][..], &["sha256sum"][..]] {
+        let Ok(output) = Command::new(tool[0]).args(&tool[1..]).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if let Some(hash) = text.split_whitespace().next() {
+            if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(hash.to_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn verify_installer_checksum(installer: &Path) -> Result<(), String> {
+    let expected = PINNED_PI_INSTALL_SHA256
+        .map(str::to_string)
+        .or_else(|| std::env::var("PI_INSTALL_SHA256").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Some(expected) = expected else {
+        // No integrity anchor available. The explicit user approval collected
+        // by `approve_pi_install` (or the Settings update button) is the
+        // security boundary here — the user sees the exact source URL and
+        // confirms before anything is downloaded or executed.
+        eprintln!("crc: no PI_INSTALL_SHA256 pin — skipping checksum verification for the Pi installer (user approval is the security boundary)");
+        return Ok(());
+    };
+    let actual = sha256_hex(installer).ok_or_else(|| {
+        "PI_INSTALL_SHA256 is set, but no sha256 tool (shasum/sha256sum) is available to verify the download"
+            .to_string()
+    })?;
+    if actual.eq_ignore_ascii_case(&expected) {
+        Ok(())
+    } else {
+        Err("Pi installer checksum mismatch — refusing to run the downloaded script (possible tampering or upstream update)".into())
+    }
+}
+
 fn install_pi_via_curl() -> Result<(), String> {
+    // SECURITY: the caller must hold explicit user consent before invoking this —
+    // it downloads and executes a remote shell script. See `approve_pi_install`.
     let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
     let download = Command::new("curl")
-        .args(["-fsSL", "https://pi.dev/install.sh", "-o"])
+        .args(["-fsSL", PI_INSTALL_URL, "-o"])
         .arg(&installer)
         .status()
         .map_err(|error| format!("failed to download Pi installer: {error}"))?;
     if !download.success() {
-        return Err("failed to download Pi installer from https://pi.dev/install.sh".into());
+        return Err(format!("failed to download Pi installer from {PI_INSTALL_URL}"));
+    }
+    if let Err(error) = verify_installer_checksum(&installer) {
+        let _ = std::fs::remove_file(&installer);
+        return Err(error);
     }
     let pi_path = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -281,24 +346,18 @@ fn install_pi_via_curl() -> Result<(), String> {
     Ok(())
 }
 
+/// Machine-readable prefix the frontend matches on to offer install consent.
+fn pi_install_required_error(configured: &str) -> String {
+    format!(
+        "PI_INSTALL_REQUIRED: Pi CLI is missing or broken (checked {configured} and common install locations). Install it from {PI_INSTALL_URL} to continue."
+    )
+}
+
+/// Pure availability check — never installs. Returns the PI_INSTALL_REQUIRED
+/// error (and callers surface the consent UI) instead of silently running
+/// the remote installer.
 fn ensure_pi_installed(configured: &str) -> Result<PathBuf, String> {
-    if let Some(path) = installed_pi(configured) {
-        return Ok(path);
-    }
-
-    install_pi_via_curl()?;
-
-    // retry after first install
-    if let Some(path) = installed_pi(configured) {
-        return Ok(path);
-    }
-
-    // Some installers place shim that needs PATH refresh, try again with home candidates
-    // Give filesystem a moment
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    installed_pi(configured).ok_or_else(|| {
-        format!("Pi installed, but binary was not found at {configured} or ~/.local/bin/pi. Please run: curl -fsSL https://pi.dev/install.sh | sh")
-    })
+    installed_pi(configured).ok_or_else(|| pi_install_required_error(configured))
 }
 
 fn ensure_pi_installed_with_repair(
@@ -308,29 +367,64 @@ fn ensure_pi_installed_with_repair(
     if let Some(path) = installed_pi(configured) {
         return Ok(path);
     }
+    // Never auto-install here: executing a remote shell script requires
+    // explicit user consent. Emit an event so the frontend can offer the
+    // install dialog, and return the machine-readable error for the spawn path.
     if let Some(app) = app {
         let _ = app.emit(
-            "pi-rpc-stderr",
+            "pi-install-required",
             serde_json::json!({
                 "session_id": "system",
-                "line": "⚠️ Pi binary not found on this Mac — reinstalling via https://pi.dev/install.sh ..."
+                "url": PI_INSTALL_URL,
+                "reason": format!("Pi binary not found (checked {configured} and common install locations)")
             }),
         );
     }
+    Err(pi_install_required_error(configured))
+}
+
+/// Install (or repair) the Pi CLI **only after explicit user approval**.
+/// The frontend shows a confirmation dialog carrying PI_INSTALL_URL and calls
+/// this command when the user clicks Install. Never invoke the installer from
+/// an automatic path — that would silently execute a remote shell script.
+#[tauri::command]
+pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, String> {
+    let (configured, _) = read_pi_config()?;
+    // If pi appeared since the check (user installed it manually), skip.
+    if installed_pi(&configured).is_some() {
+        return get_pi_runtime_status();
+    }
+    let _ = app.emit(
+        "pi-rpc-stderr",
+        serde_json::json!({
+            "session_id": "system",
+            "line": format!("⬇️ Installing Pi CLI from {PI_INSTALL_URL} (approved by user) ...")
+        }),
+    );
     install_pi_via_curl()?;
-    if let Some(app) = app {
-        let _ = app.emit(
-            "pi-rpc-stderr",
-            serde_json::json!({
-                "session_id": "system",
-                "line": "✅ Pi reinstall finished, retrying spawn..."
-            }),
-        );
+
+    // Retry/verification after install: give the filesystem a moment, then
+    // re-check. Some installers place a shim that needs a PATH refresh before
+    // it resolves, so try once more before giving up.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    if installed_pi(&configured).is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    installed_pi(configured).ok_or_else(|| {
-        format!("Pi still missing after auto-reinstall. Manually run: curl -fsSL https://pi.dev/install.sh | sh (checked: {:?})", candidate_pi_paths(configured))
-    })
+    let status = get_pi_runtime_status()?;
+    if status.health != "healthy" {
+        return Err(format!(
+            "Pi installer finished but the runtime is still not healthy. Manually run: curl -fsSL {PI_INSTALL_URL} | sh (checked: {:?})",
+            candidate_pi_paths(&configured)
+        ));
+    }
+    let _ = app.emit(
+        "pi-rpc-stderr",
+        serde_json::json!({
+            "session_id": "system",
+            "line": "✅ Pi install finished, runtime is healthy."
+        }),
+    );
+    Ok(status)
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
@@ -893,12 +987,14 @@ pub fn spawn_pi_rpc(
         {
             Ok(child) => break child,
             Err(e) if spawn_attempts == 0 && e.kind() == std::io::ErrorKind::NotFound => {
-                // pi vanished mid-flight on macOS (nvm cleanup / brew unlink / spotlight?), auto-repair once
+                // pi vanished mid-flight on macOS (nvm cleanup / brew unlink / spotlight?), retry once.
+                // The repair path no longer auto-installs: ensure_pi_installed_with_repair
+                // surfaces PI_INSTALL_REQUIRED so the user can approve the install first.
                 let _ = app.emit(
                     "pi-rpc-stderr",
                     serde_json::json!({
                         "session_id": session_id,
-                        "line": format!("⚠️ Pi spawn failed (NotFound: {e}) — auto-reinstalling...")
+                        "line": format!("⚠️ Pi spawn failed (NotFound: {e}) — checking for the binary...")
                     }),
                 );
                 match ensure_pi_installed_with_repair(Some(&app), &configured_pi_path) {
@@ -1207,6 +1303,26 @@ mod tests {
             std::env::split_paths(&path).next().unwrap(),
             Path::new("/opt/pi/bin")
         );
+    }
+
+    #[test]
+    fn install_required_error_is_machine_readable() {
+        let error = pi_install_required_error("/tmp/pi");
+        assert!(error.starts_with("PI_INSTALL_REQUIRED:"));
+        assert!(error.contains("https://pi.dev/install.sh"));
+    }
+
+    #[test]
+    fn checksum_verification_is_skipped_without_pin() {
+        // No PI_INSTALL_SHA256 / pinned constant in the test env: verification
+        // must pass (best-effort) so installs are not blocked, with the
+        // explicit user approval as the security boundary.
+        std::env::remove_var("PI_INSTALL_SHA256");
+        let installer = std::env::temp_dir()
+            .join(format!("crc-pi-checksum-{}", std::process::id()));
+        std::fs::write(&installer, "#!/bin/sh\necho hi\n").unwrap();
+        assert!(verify_installer_checksum(&installer).is_ok());
+        let _ = std::fs::remove_file(&installer);
     }
 
     #[cfg(unix)]

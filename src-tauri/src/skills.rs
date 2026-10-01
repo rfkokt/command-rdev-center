@@ -573,11 +573,14 @@ pub fn install_git_skills(request: GitSkillRequest) -> Result<SkillInstallResult
                     skill.name,
                     SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .map_err(|e| e.to_string())?
                         .as_secs()
                 ));
             if destination.exists() {
-                std::fs::create_dir_all(backup.parent().unwrap()).map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(
+                    backup.parent().ok_or("skill backup path has no parent")?,
+                )
+                .map_err(|e| e.to_string())?;
                 std::fs::rename(&destination, &backup).map_err(|e| e.to_string())?;
             }
             let copy = Command::new("cp")
@@ -598,10 +601,10 @@ pub fn install_git_skills(request: GitSkillRequest) -> Result<SkillInstallResult
                     })
                     .is_some_and(|(name, description)| name.is_some() && description.is_some())
             {
-                let provenance = serde_json::json!({"installedAt": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(), "sourceType": request.source_type.clone().unwrap_or_else(|| "git".into()), "repository": url.clone(), "ref": commit.clone(), "sourceSubpath": selected});
+                let provenance = serde_json::json!({"installedAt": SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs(), "sourceType": request.source_type.clone().unwrap_or_else(|| "git".into()), "repository": url.clone(), "ref": commit.clone(), "sourceSubpath": selected});
                 std::fs::write(
                     destination.join(".crc-provenance.json"),
-                    serde_json::to_vec_pretty(&provenance).unwrap(),
+                    serde_json::to_vec_pretty(&provenance).map_err(|e| e.to_string())?,
                 )
                 .map_err(|e| e.to_string())?;
                 installed.push(skill.name.clone());

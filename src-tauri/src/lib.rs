@@ -159,6 +159,7 @@ pub fn run() {
             settings::save_pi_settings,
             pi_rpc::get_pi_runtime_status,
             pi_rpc::update_pi_runtime,
+            pi_rpc::approve_pi_install,
             pi_rpc::sync_pi_extensions,
             settings::get_figma_mcp_settings,
             settings::save_figma_mcp_settings,

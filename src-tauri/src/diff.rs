@@ -104,10 +104,28 @@ fn file_patch(cwd: &str, merge_base: &str, path: &str) -> Result<String, String>
         .join("\n"))
 }
 
+/// Frontend-controlled git ref used with `git fetch` / `rev-parse` / `merge-base`.
+/// The value is passed as a argv element (no shell), so the main hazard is
+/// leading-dash flag injection (e.g. `--upload-pack=...` executing a command
+/// via `git fetch`). Two-dot `A..B` / three-dot `A...B` ranges are legitimate
+/// git syntax used by the merge-base logic, so dots stay allowed — but the
+/// value must not start with `-` and must contain no whitespace, control
+/// characters, or shell metacharacters.
+fn valid_parent_ref(value: &str) -> bool {
+    !value.is_empty()
+        && !value.starts_with('-')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+}
+
 fn get_worktree_diff_blocking(
     worktree_path: String,
     parent_ref: String,
 ) -> Result<WorktreeDiff, String> {
+    if !valid_parent_ref(&parent_ref) {
+        return Err("invalid parent_ref".to_string());
+    }
     if !Path::new(&worktree_path).is_dir() {
         return Err("worktree not found".to_string());
     }
@@ -189,6 +207,7 @@ pub async fn get_worktree_diff(
     parent_ref: String,
 ) -> Result<WorktreeDiff, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        crate::projects::ensure_path_allowed(Path::new(&worktree_path))?;
         get_worktree_diff_blocking(worktree_path, parent_ref)
     })
     .await
@@ -227,6 +246,44 @@ mod tests {
                 ("new.rs".into(), "R100".into())
             ]
         );
+    }
+
+    #[test]
+    fn accepts_legitimate_git_refs() {
+        for value in [
+            "main",
+            "origin/main",
+            "feature/my-branch_2.0",
+            "v1.2.3",
+            "HEAD",
+            "abc123",
+            "abc123...def456", // three-dot range syntax used by merge-base logic
+            "abc123..def456",  // two-dot range syntax
+        ] {
+            assert!(valid_parent_ref(value), "should accept {value}");
+        }
+    }
+
+    #[test]
+    fn rejects_ref_flag_injection_and_metacharacters() {
+        for value in [
+            "",
+            "-main",               // leading dash: parsed as a flag by git
+            "--upload-pack=evil",  // classic git flag-injection payload
+            "main; rm -rf /",
+            "main\nfoo",
+            "main`id`",
+            "main$(id)",
+            "main|cat",
+            "main && id",
+            "main'quote",
+            "main\"quote",
+            "main\\path",
+            "main foo",
+            "main~1", // not in the conservative allowlist
+        ] {
+            assert!(!valid_parent_ref(value), "should reject {value:?}");
+        }
     }
 
     #[test]
