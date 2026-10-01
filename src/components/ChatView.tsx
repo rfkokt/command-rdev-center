@@ -58,12 +58,9 @@ import ToolCallView, {
 } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
-import { ChangesIcon, ExplorerIcon } from "./Icons";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
-import ProjectFilesSidebar from "./ProjectFilesSidebar";
-import SourceControlPanel from "./SourceControlPanel";
 import TerminalPanel from "./TerminalPanel";
 import {
   canResumeResearch,
@@ -75,6 +72,7 @@ import { useModalFocus } from "./useModalFocus";
 import { splitPatch } from "./chat-diff-utils";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
+import ChatRightSidebar from "./ChatRightSidebar";
 import {
   buildPhase,
   transcriptEntry,
@@ -82,7 +80,7 @@ import {
 } from "./chat-activity-text";
 
 type PiEventPayload = { session_id: string; raw: string };
-type WorktreeInfo = {
+export type WorktreeInfo = {
   worktree_path: string;
   branch: string;
   repo_name: string;
@@ -107,7 +105,18 @@ type GraphProgress = {
   total: number;
   activity: string;
 };
-type WorktreeDiff = {
+export type ChatRepository = {
+  name: string;
+  path: string;
+  base_branch?: string;
+  branch?: string;
+  tracking_branch?: string;
+  remote_url?: string;
+  ahead?: number;
+  behind?: number;
+  dirty_files?: string[];
+};
+export type WorktreeDiff = {
   merge_base: string;
   files: Array<{
     repository?: string;
@@ -283,17 +292,7 @@ export default function ChatView({
   projectPath: string;
   projectName: string;
   isGit: boolean;
-  repositories: Array<{
-    name: string;
-    path: string;
-    base_branch?: string;
-    branch?: string;
-    tracking_branch?: string;
-    remote_url?: string;
-    ahead?: number;
-    behind?: number;
-    dirty_files?: string[];
-  }>;
+  repositories: ChatRepository[];
   pipelineType: string;
   chatId: string;
   sessionFile?: string;
@@ -4524,144 +4523,23 @@ export default function ChatView({
         ))}
       {/* VSCode right sidebar: activity rail + explorer + diff, now with proper hide toggle */}
       {!globalChat && (
-        <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}`}>
-          <div className="activity-rail vscode-rail">
-            <button
-              className={
-                rightSidebarOpen && rightActivity === "explorer" ? "active" : ""
-              }
-              onClick={() => {
-                if (rightSidebarOpen && rightActivity === "explorer")
-                  setRightSidebarOpen(false);
-                else {
-                  setRightSidebarOpen(true);
-                  setRightActivity("explorer");
-                }
-              }}
-              title={
-                rightSidebarOpen && rightActivity === "explorer"
-                  ? "Hide Explorer"
-                  : "Explorer · Project files"
-              }
-              aria-label="Explorer"
-              aria-expanded={rightSidebarOpen && rightActivity === "explorer"}
-            >
-              <ExplorerIcon />
-            </button>
-            {(worktree || isWorkspace) && (
-              <button
-                className={
-                  rightSidebarOpen && rightActivity === "scm" ? "active" : ""
-                }
-                onClick={() => {
-                  if (rightSidebarOpen && rightActivity === "scm")
-                    setRightSidebarOpen(false);
-                  else {
-                    setRightSidebarOpen(true);
-                    setRightActivity("scm");
-                  }
-                }}
-                title={
-                  rightSidebarOpen && rightActivity === "scm"
-                    ? "Hide Changes"
-                    : "Source Control · Changes"
-                }
-                aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
-                aria-expanded={rightSidebarOpen && rightActivity === "scm"}
-              >
-                <ChangesIcon />
-                {Boolean(worktreeDiff?.files.length) && (
-                  <span className="activity-badge">
-                    {worktreeDiff?.files.length}
-                  </span>
-                )}
-              </button>
-            )}
-          </div>
-          <div
-            className="code-sidebar-panel"
-            hidden={!rightSidebarOpen}
-            style={{
-              width: rightSidebarOpen ? rightPanelWidth : 0,
-              position: "relative",
-            }}
-          >
-            <div
-              className="code-sidebar-resize-handle"
-              role="separator"
-              aria-label="Resize code sidebar"
-              aria-orientation="vertical"
-              aria-valuemin={240}
-              aria-valuemax={480}
-              aria-valuenow={rightPanelWidth}
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft")
-                  setRightPanelWidth((width) => Math.min(480, width + 10));
-                if (e.key === "ArrowRight")
-                  setRightPanelWidth((width) => Math.max(240, width - 10));
-              }}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                const startX = e.clientX;
-                const startWidth = rightPanelWidth;
-                const target = e.currentTarget;
-                target.onpointermove = (ev) =>
-                  setRightPanelWidth(
-                    Math.max(
-                      240,
-                      Math.min(480, startWidth + (startX - ev.clientX)),
-                    ),
-                  );
-                target.onpointerup = () => {
-                  target.onpointermove = null;
-                  target.onpointerup = null;
-                  target.releasePointerCapture(e.pointerId);
-                };
-              }}
-            />
-            {rightActivity === "explorer" ? (
-              <section className="code-sidebar-section">
-                <div className="code-section-toggle">
-                  <small>Explorer</small>
-                  <strong>{projectName}</strong>
-                </div>
-                <div className="code-section-body">
-                  <ProjectFilesSidebar
-                    projectPath={cwd}
-                    projectName={projectName}
-                    refreshKey={worktreeDiff?.files.length ?? 0}
-                    onOpenAt={setExpandedDiff}
-                  />
-                </div>
-              </section>
-            ) : (
-              <section className="code-sidebar-section">
-                <SourceControlPanel
-                  cwd={isWorkspace ? cwd : (worktree?.worktree_path ?? cwd)}
-                  repositories={isWorkspace ? repositoryStatuses : []}
-                  onDiff={(repository, path) =>
-                    setExpandedDiff(
-                      isWorkspace ? `${repository}:${path}` : path,
-                    )
-                  }
-                  onCommitDiff={(repository, file) => {
-                    const key = isWorkspace
-                      ? `${repository}:${file.path}`
-                      : file.path;
-                    setWorktreeDiff({
-                      merge_base: "",
-                      files: [{ ...file, repository }],
-                    });
-                    setExpandedDiff(key);
-                  }}
-                  confirm={confirm}
-                  toast={onToast}
-                />
-              </section>
-            )}
-          </div>
-        </div>
+        <ChatRightSidebar
+          open={rightSidebarOpen}
+          activity={rightActivity}
+          panelWidth={rightPanelWidth}
+          worktree={worktree}
+          isWorkspace={isWorkspace}
+          worktreeDiff={worktreeDiff}
+          cwd={cwd}
+          projectName={projectName}
+          repositoryStatuses={repositoryStatuses}
+          onOpenChange={setRightSidebarOpen}
+          onActivityChange={setRightActivity}
+          onPanelWidthChange={setRightPanelWidth}
+          onOpenDiff={setExpandedDiff}
+          onWorktreeDiffChange={setWorktreeDiff}
+          onToast={onToast}
+        />
       )}
       <footer className="chat-status">
         <span>
