@@ -852,6 +852,118 @@ pub fn get_deep_research_data() -> Result<ResearchData, String> {
     Ok(load_at(&runs_dir()?))
 }
 
+/// Unix seconds -> `YYYY-MM-DD HH:MM:SS UTC` without extra date crates
+/// (Howard Hinnant's days-to-civil-date algorithm).
+fn unix_to_utc_string(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let time = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        year,
+        m,
+        d,
+        time / 3_600,
+        (time % 3_600) / 60,
+        time % 60
+    )
+}
+
+fn state_label(state: &RunState) -> &'static str {
+    match state {
+        RunState::Creating => "creating",
+        RunState::Running => "running",
+        RunState::Cancelling => "cancelling",
+        RunState::Interrupted => "interrupted",
+        RunState::Completed => "completed",
+        RunState::Cancelled => "cancelled",
+        RunState::Failed => "failed",
+    }
+}
+
+/// Render a research run as a self-contained Markdown document. Pure function
+/// so it is unit-testable; both the "Copy .md" and "Export .md" commands go
+/// through it, keeping the two outputs identical.
+fn render_run_markdown(run: &ResearchRun) -> String {
+    let mut md = String::new();
+    md.push_str(&format!("# {}\n\n", run.query.trim()));
+    md.push_str(&format!(
+        "_Exported from Kern Studio Deep Research · {} · state: {} · {} searches, {} reads, {} checks, {} sources_\n\n",
+        unix_to_utc_string(run.updated_at),
+        state_label(&run.state),
+        run.progress.searches,
+        run.progress.reads,
+        run.progress.checks,
+        run.sources.len(),
+    ));
+    let body = run
+        .final_report
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            if run.partial_report.trim().is_empty() {
+                None
+            } else {
+                Some(run.partial_report.as_str())
+            }
+        });
+    match body {
+        Some(report) => {
+            md.push_str("## Report\n\n");
+            md.push_str(report.trim());
+            md.push_str("\n\n");
+        }
+        None => md.push_str("_No report content yet._\n\n"),
+    }
+    if !run.sources.is_empty() {
+        md.push_str("## Sources\n\n");
+        for (i, source) in run.sources.iter().enumerate() {
+            let title = source.title.trim();
+            let label = if title.is_empty() {
+                source.url.as_str()
+            } else {
+                title
+            };
+            md.push_str(&format!("{}. [{}]({})\n", i + 1, label, source.url));
+            if !source.canonical_url.trim().is_empty() && source.canonical_url != source.url {
+                md.push_str(&format!("   <{}>\n", source.canonical_url.trim()));
+            }
+        }
+    }
+    md
+}
+
+/// Markdown source for "Copy .md" in the UI.
+#[tauri::command]
+pub fn get_deep_research_markdown(run_id: String) -> Result<String, String> {
+    let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
+    let run = read_one(&run_path(&runs_dir()?, &run_id)?)?;
+    Ok(render_run_markdown(&run))
+}
+
+/// Write the rendered Markdown to a user-chosen file ("Export .md"). The
+/// destination comes from the save dialog, i.e. the user's explicit choice.
+#[tauri::command]
+pub fn export_deep_research_markdown(run_id: String, dest: String) -> Result<(), String> {
+    let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
+    let run = read_one(&run_path(&runs_dir()?, &run_id)?)?;
+    let dest = PathBuf::from(dest.trim());
+    if dest.as_os_str().is_empty() {
+        return Err("no destination selected".into());
+    }
+    std::fs::write(&dest, render_run_markdown(&run)).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn attach_origin(run: &mut ResearchRun, chat_id: &str, session_id: &str) -> bool {
     if chat_id.trim().is_empty() || session_id != format!("chat-{chat_id}") {
         return false;
@@ -1243,5 +1355,63 @@ mod tests {
             canonical_url("https://x.test/a?q=1"),
             canonical_url("https://x.test/a?q=2")
         )
+    }
+    #[test]
+    fn unix_to_utc_string_formats_known_timestamps() {
+        assert_eq!(unix_to_utc_string(0), "1970-01-01 00:00:00 UTC");
+        // 2026-10-01 00:00:00 UTC
+        assert_eq!(unix_to_utc_string(1_790_812_800), "2026-10-01 00:00:00 UTC");
+    }
+    #[test]
+    fn valid_run_id_rejects_path_traversal() {
+        assert!(valid_run_id("1759219200-123"));
+        assert!(valid_run_id("abc_XYZ-09"));
+        assert!(!valid_run_id(""));
+        assert!(!valid_run_id("../evil"));
+        assert!(!valid_run_id("a/b"));
+        assert!(!valid_run_id("a.json"));
+        assert!(!valid_run_id("a b"));
+        assert!(!valid_run_id(&"a".repeat(129)));
+    }
+    #[test]
+    fn run_path_rejects_traversal_before_touching_disk() {
+        let dir = std::env::temp_dir();
+        assert!(run_path(&dir, "../../etc/passwd").is_err());
+        assert!(run_path(&dir, "1759219200-1").is_ok());
+    }
+    #[test]
+    fn render_run_markdown_prefers_final_report_and_lists_sources() {
+        let mut run = sample("md");
+        run.query = "What is Rust?".into();
+        run.state = RunState::Completed;
+        run.final_report = Some("# Done\n\nDetails here.".into());
+        run.sources = vec![
+            Source {
+                url: "https://rust.test".into(),
+                canonical_url: "https://rust.test".into(),
+                title: "Rust Lang".into(),
+                cited: true,
+            },
+            Source {
+                url: "https://example.test/x".into(),
+                canonical_url: "".into(),
+                title: "".into(),
+                cited: false,
+            },
+        ];
+        let md = render_run_markdown(&run);
+        assert!(md.starts_with("# What is Rust?\n"));
+        assert!(md.contains("state: completed"));
+        assert!(md.contains("## Report\n\n# Done"));
+        assert!(!md.contains("partial"));
+        assert!(md.contains("1. [Rust Lang](https://rust.test)"));
+        assert!(md.contains("2. [https://example.test/x](https://example.test/x)"));
+    }
+    #[test]
+    fn render_run_markdown_falls_back_to_partial_report() {
+        let run = sample("md-partial");
+        let md = render_run_markdown(&run);
+        assert!(md.contains("partial"));
+        assert!(!md.contains("## Sources"));
     }
 }

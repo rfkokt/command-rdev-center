@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { save } from "@tauri-apps/plugin-dialog";
 import MarkdownMessage from "./MarkdownMessage";
 import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
@@ -220,6 +221,11 @@ export default function DeepResearchView({
   const runs = sortResearchRuns(data.runs);
   const current = runs.find((run) => run.id === selected) ?? runs[0];
   const hasActive = runs.some(isActiveResearch);
+  // Library search: filter by query text as the local report collection grows.
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const visibleRuns = runs.filter((run) =>
+    run.query.toLowerCase().includes(libraryQuery.trim().toLowerCase()),
+  );
   useEffect(() => {
     const completed = data.runs.find(
       (run) =>
@@ -293,6 +299,46 @@ export default function DeepResearchView({
       setBusy(false);
     }
   }
+  async function copyMarkdown(run: ResearchRun) {
+    setBusy(true);
+    try {
+      const md = await invoke<string>("get_deep_research_markdown", {
+        runId: run.id,
+      });
+      await navigator.clipboard.writeText(md);
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
+  // Filename from the research question: lowercase, dash-separated, bounded.
+  function markdownFilename(run: ResearchRun): string {
+    const slug = run.query
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60);
+    return `${slug || "research"}.md`;
+  }
+  async function exportMarkdown(run: ResearchRun) {
+    setBusy(true);
+    try {
+      const dest = await save({
+        defaultPath: markdownFilename(run),
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!dest) return;
+      await invoke("export_deep_research_markdown", {
+        runId: run.id,
+        dest,
+      });
+    } catch (x) {
+      setError(String(x));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <section className={`deep-research-view${embedded ? " embedded" : ""}`}>
       <header className="deep-research-header">
@@ -328,7 +374,15 @@ export default function DeepResearchView({
       ) : (
         <div className="research-layout">
           <nav id="research-library" aria-label="Research runs">
-            {runs.map((run) => (
+            <input
+              type="search"
+              className="research-library-search"
+              placeholder="Filter reports…"
+              aria-label="Filter research reports"
+              value={libraryQuery}
+              onChange={(event) => setLibraryQuery(event.target.value)}
+            />
+            {visibleRuns.map((run) => (
               <button
                 key={run.id}
                 className={run.id === current?.id ? "active" : ""}
@@ -341,6 +395,11 @@ export default function DeepResearchView({
                 </span>
               </button>
             ))}
+            {!visibleRuns.length && (
+              <p className="research-library-empty" role="status">
+                No reports match “{libraryQuery.trim()}”.
+              </p>
+            )}
           </nav>
           {current && (
             <div className="research-detail">
@@ -407,6 +466,20 @@ export default function DeepResearchView({
                       Delete
                     </button>
                   )}
+                  <button
+                    onClick={() => void copyMarkdown(current)}
+                    disabled={busy}
+                    title="Copy this report as a Markdown document"
+                  >
+                    Copy .md
+                  </button>
+                  <button
+                    onClick={() => void exportMarkdown(current)}
+                    disabled={busy}
+                    title="Save this report as a Markdown file"
+                  >
+                    Export .md
+                  </button>
                 </div>
               </header>
               <section
