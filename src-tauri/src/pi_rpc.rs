@@ -465,9 +465,10 @@ fn api_documentation_system_prompt(project: &Path) -> String {
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
         format!(
-            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
+            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Session memory: read `{}/memory.md` at session start (per-worktree learnings; local-only file, never commit it). Append durable, session-transcending learnings there as short bullets (decisions, gotchas, user prefs) — keep it short, no play-by-play narration.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
             cwd.display(),
-            project.display()
+            project.display(),
+            cwd.display()
         )
     })
 }
@@ -1418,6 +1419,8 @@ mod tests {
         assert!(prompt.contains("points out of the filesystem root"));
         assert!(prompt.contains("local dependency install"));
         assert!(prompt.contains("then rerun the build"));
+        assert!(prompt.contains("memory.md"));
+        assert!(prompt.contains("at session start"));
         assert!(
             worktree_system_prompt(Path::new("/projects/app"), Path::new("/projects/app"))
                 .is_none()

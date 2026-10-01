@@ -89,6 +89,109 @@ fn sync_env_files(repo_path: &Path, worktree_path: &Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Per-worktree agent memory file (munder-difflin pattern).
+const WORKTREE_MEMORY_FILE: &str = "memory.md";
+
+/// YYYY-MM-DD (UTC) for a unix timestamp — Howard Hinnant's civil-from-days.
+fn unix_date_yyyymmdd(unix_secs: u64) -> String {
+    let z = (unix_secs / 86_400) as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    format!("{:04}-{:02}-{:02}", if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn worktree_memory_template(project_name: &str, created: &str) -> String {
+    format!(
+        "# memory.md — {project_name}\n\
+         \n\
+         Per-worktree agent memory (munder-difflin pattern).\n\
+         Local-only: this file is excluded from git via the repository's `.git/info/exclude` — it never appears in diffs and is never committed.\n\
+         \n\
+         Created: {created}\n\
+         \n\
+         ## Instructions\n\
+         - Read this file at session start.\n\
+         - Append durable learnings here as short bullets: decisions made, gotchas found, user preferences, tool quirks worth remembering.\n\
+         - Keep bullets short and session-transcending; this is not a task log.\n\
+         \n\
+         ## Learnings\n"
+    )
+}
+
+/// Absolute common git dir for a worktree (the main checkout's `.git`).
+/// Linked worktrees read `info/exclude` from the common dir — the
+/// worktree-local `info/exclude` is NOT honored by git (verified on
+/// git 2.43), so the exclusion must live there to take effect.
+fn worktree_common_git_dir(worktree_path: &Path) -> Option<PathBuf> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!dir.is_empty()).then_some(PathBuf::from(dir))
+}
+
+/// Keep `memory.md` out of git entirely: append it to the repository's
+/// `.git/info/exclude` (local-only, never committed; the pattern is
+/// root-anchored so nested `memory.md` files are unaffected). Git reads
+/// excludes for linked worktrees from the common dir, so this keeps
+/// `memory.md` out of `git status`/diffs — and, critically, it never
+/// blocks the "worktree clean → auto-remove" check in
+/// `remove_worktree_if_empty`.
+fn exclude_worktree_memory(worktree_path: &Path) {
+    let Some(git_dir) = worktree_common_git_dir(worktree_path) else {
+        return;
+    };
+    let info_dir = git_dir.join("info");
+    if std::fs::create_dir_all(&info_dir).is_err() {
+        return;
+    }
+    let exclude = info_dir.join("exclude");
+    let existing = std::fs::read_to_string(&exclude).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|line| line.trim() == "/memory.md" || line.trim() == "memory.md")
+    {
+        return;
+    }
+    let mut contents = existing;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(
+        "# per-worktree agent memory (munder-difflin): local-only, never commit\n/memory.md\n",
+    );
+    let _ = std::fs::write(&exclude, contents);
+}
+
+/// Create `<worktree>/memory.md` from template when absent and keep it
+/// git-local via `.git/info/exclude`. Best-effort: worktree creation must
+/// never fail because memory setup did.
+fn ensure_worktree_memory(worktree_path: &Path, project_name: &str) {
+    let memory = worktree_path.join(WORKTREE_MEMORY_FILE);
+    if !memory.exists() {
+        let created = unix_date_yyyymmdd(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
+        let _ = std::fs::write(&memory, worktree_memory_template(project_name, &created));
+    }
+    exclude_worktree_memory(worktree_path);
+}
+
 fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
     let root = worktree_root(project_root);
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
@@ -219,6 +322,7 @@ pub fn create_worktree(
             }
         }
         sync_env_files(repo_path, &worktree_path)?;
+        ensure_worktree_memory(&worktree_path, &safe_repo);
         let branch = format!("crc/{}", safe_slug);
         let parent = resolve_parent_ref(repo_path)?;
         return Ok(worktree_info(
@@ -301,6 +405,7 @@ pub fn create_worktree(
     }
 
     sync_env_files(repo_path, &worktree_path)?;
+    ensure_worktree_memory(&worktree_path, &safe_repo);
 
     Ok(worktree_info(
         repo_path,
@@ -835,6 +940,113 @@ mod tests {
         );
         #[cfg(unix)]
         assert!(worktree.join(".env").is_symlink());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unix_date_yyyymmdd_matches_known_dates() {
+        // 2026-10-01 00:00:00 UTC
+        assert_eq!(unix_date_yyyymmdd(1790812800), "2026-10-01");
+        // 1970-01-01 00:00:00 UTC (epoch)
+        assert_eq!(unix_date_yyyymmdd(0), "1970-01-01");
+    }
+
+    #[test]
+    fn worktree_memory_created_with_template_and_excluded_from_git() {
+        let root = std::env::temp_dir().join(format!("crc-mem-test-{}", std::process::id()));
+        let repo = root.join("repo");
+        let worktree = root.join("worktree");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "config",
+                "user.email",
+                "test@example.com",
+            ])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "config", "user.name", "Test"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "branch", "-M", "main"])
+            .output()
+            .unwrap();
+        std::fs::write(repo.join("tracked"), "base").unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "tracked"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "commit", "-m", "base"])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "-b",
+                "crc/mem-test",
+            ])
+            .output()
+            .unwrap();
+
+        ensure_worktree_memory(&worktree, "demo-repo");
+        let memory = std::fs::read_to_string(worktree.join("memory.md")).unwrap();
+        assert!(memory.contains("# memory.md — demo-repo"));
+        assert!(memory.contains("Read this file at session start"));
+        assert!(memory.contains("Append durable learnings"));
+
+        // Exclude entry is idempotent across re-ensures (resume path).
+        ensure_worktree_memory(&worktree, "demo-repo");
+        let exclude = std::fs::read_to_string(
+            worktree_common_git_dir(&worktree)
+                .unwrap()
+                .join("info/exclude"),
+        )
+        .unwrap();
+        assert_eq!(
+            exclude
+                .lines()
+                .filter(|line| line.trim() == "/memory.md")
+                .count(),
+            1
+        );
+
+        // User-written learnings are preserved on re-ensure (resume path).
+        std::fs::write(
+            worktree.join("memory.md"),
+            format!("{memory}\n- prefers tabs\n"),
+        )
+        .unwrap();
+        ensure_worktree_memory(&worktree, "demo-repo");
+        assert!(std::fs::read_to_string(worktree.join("memory.md"))
+            .unwrap()
+            .contains("prefers tabs"));
+
+        // Excluded from git: status porcelain stays empty, so the clean →
+        // auto-remove check is unaffected even with a populated memory.md.
+        let status = Command::new("git")
+            .args(["-C", worktree.to_str().unwrap(), "status", "--porcelain"])
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&status.stdout).trim().is_empty());
+        let removed =
+            remove_worktree_if_empty(&root, &repo, worktree.to_str().unwrap(), "main").unwrap();
+        assert!(removed);
+        assert!(!worktree.exists());
+
         std::fs::remove_dir_all(root).unwrap();
     }
 }
