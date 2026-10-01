@@ -22,7 +22,7 @@ Kern Studio brings project discovery, isolated task worktrees, native agent chat
 
 ## Deep Research
 
-The global **Deep Research** dashboard runs one dedicated Pi session with only `web_search`, `source_check`, `fetch_content`, and `get_search_content`. It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
+The global **Deep Research** dashboard runs one dedicated Pi session with a restricted tool allowlist of 11 tools: `web_search`, `source_check`, `fetch_content`, `get_search_content`, plus the `agent_reach_*` research tools (`agent_reach_status`, `agent_reach_web_read`, `agent_reach_github_search`, `agent_reach_youtube_search`, `agent_reach_youtube_transcript`, `agent_reach_rss_read`, `agent_reach_exa_search`). It cannot read projects, run shell commands, or mutate files. Progress, partial Markdown, source metadata, and completed reports are stored locally under the app's Application Support directory; queries and reports may contain sensitive information. Cancellation retains partial work. Runs interrupted by an app/process restart can resume from the exact Pi session when available, otherwise from a disclosed bounded checkpoint.
 
 ## Stack
 
