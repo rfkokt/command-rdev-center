@@ -324,7 +324,9 @@ fn install_pi_via_curl() -> Result<(), String> {
         .status()
         .map_err(|error| format!("failed to download Pi installer: {error}"))?;
     if !download.success() {
-        return Err(format!("failed to download Pi installer from {PI_INSTALL_URL}"));
+        return Err(format!(
+            "failed to download Pi installer from {PI_INSTALL_URL}"
+        ));
     }
     if let Err(error) = verify_installer_checksum(&installer) {
         let _ = std::fs::remove_file(&installer);
@@ -1318,8 +1320,8 @@ mod tests {
         // must pass (best-effort) so installs are not blocked, with the
         // explicit user approval as the security boundary.
         std::env::remove_var("PI_INSTALL_SHA256");
-        let installer = std::env::temp_dir()
-            .join(format!("crc-pi-checksum-{}", std::process::id()));
+        let installer =
+            std::env::temp_dir().join(format!("crc-pi-checksum-{}", std::process::id()));
         std::fs::write(&installer, "#!/bin/sh\necho hi\n").unwrap();
         assert!(verify_installer_checksum(&installer).is_ok());
         let _ = std::fs::remove_file(&installer);
@@ -1394,10 +1396,8 @@ mod tests {
 
     #[test]
     fn api_documentation_prompt_requires_saved_contract_before_browser() {
-        assert!(
-            API_DOCUMENTATION_WORKFLOW_PROMPT
-                .contains("inspect its `paths` and `components` directly")
-        );
+        assert!(API_DOCUMENTATION_WORKFLOW_PROMPT
+            .contains("inspect its `paths` and `components` directly"));
         assert!(API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not use `web_search`"));
         assert!(
             API_DOCUMENTATION_WORKFLOW_PROMPT.contains("Do not open a Swagger URL in the browser")

@@ -93,8 +93,8 @@ pub fn terminal_open(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-il"); // interactive login shell: sources .zprofile + .zshrc so nvm/aliases/PATH match Terminal.app
-    // Interactive shell: a human is in the loop and sees the prompt, so a deleted
-    // worktree falls back to the nearest living ancestor instead of dying.
+                    // Interactive shell: a human is in the loop and sees the prompt, so a deleted
+                    // worktree falls back to the nearest living ancestor instead of dying.
     let (live_cwd, _) = crate::projects::resolve_live_dir(Path::new(&cwd));
     cmd.cwd(&live_cwd);
     // no PATH override: an interactive login shell rebuilds it from the user's rc files
@@ -168,9 +168,7 @@ pub async fn terminal_execute_approved(cwd: String, command: String) -> Result<S
         for (k, v) in crate::projects::shell_token_env() {
             approved.env(k, v);
         }
-        let output = approved
-            .output()
-            .map_err(|error| error.to_string())?;
+        let output = approved.output().map_err(|error| error.to_string())?;
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&output.stdout),

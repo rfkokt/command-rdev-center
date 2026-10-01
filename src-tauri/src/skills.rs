@@ -577,10 +577,8 @@ pub fn install_git_skills(request: GitSkillRequest) -> Result<SkillInstallResult
                         .as_secs()
                 ));
             if destination.exists() {
-                std::fs::create_dir_all(
-                    backup.parent().ok_or("skill backup path has no parent")?,
-                )
-                .map_err(|e| e.to_string())?;
+                std::fs::create_dir_all(backup.parent().ok_or("skill backup path has no parent")?)
+                    .map_err(|e| e.to_string())?;
                 std::fs::rename(&destination, &backup).map_err(|e| e.to_string())?;
             }
             let copy = Command::new("cp")

@@ -268,8 +268,8 @@ mod tests {
     fn rejects_ref_flag_injection_and_metacharacters() {
         for value in [
             "",
-            "-main",               // leading dash: parsed as a flag by git
-            "--upload-pack=evil",  // classic git flag-injection payload
+            "-main",              // leading dash: parsed as a flag by git
+            "--upload-pack=evil", // classic git flag-injection payload
             "main; rm -rf /",
             "main\nfoo",
             "main`id`",

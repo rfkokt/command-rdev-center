@@ -341,8 +341,8 @@ mod tests {
 
         // Distinct roots stay bounded.
         for i in 0..WALK_CACHE_MAX_ROOTS + 4 {
-            let other = std::env::temp_dir()
-                .join(format!("crc-walk-cache-{i}-{}", std::process::id()));
+            let other =
+                std::env::temp_dir().join(format!("crc-walk-cache-{i}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&other);
             std::fs::create_dir_all(&other).unwrap();
             walk_collect_cached(&other);
