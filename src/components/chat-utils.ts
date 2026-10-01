@@ -446,3 +446,30 @@ export function tsvToMarkdown(text: string): string | null {
     md += `\n| ${padded[i].join(" | ")} |`;
   return md;
 }
+
+// ── Plan mode (Cursor-style) ────────────────────────────────────────────────
+
+/** Instruction prepended to the message *sent to pi* when Plan mode is on. */
+export const PLAN_MODE_PREFIX =
+  "You are in PLAN MODE. Write your implementation plan as a numbered markdown list. Do NOT write code, run edits, or modify files. End your response with the exact line: AWAITING PLAN APPROVAL";
+
+/** Marker the agent appends when its plan is ready for review. */
+export const PLAN_APPROVAL_MARKER = "AWAITING PLAN APPROVAL";
+
+/** Prepend the plan instruction to the outgoing pi message; display text stays raw. */
+export function applyPlanModePrefix(text: string, planMode: boolean): string {
+  return planMode ? `${PLAN_MODE_PREFIX}\n\n${text}` : text;
+}
+
+/**
+ * True when the latest assistant message ends with the plan-approval marker,
+ * i.e. the agent finished a plan and is waiting for Approve / Reject.
+ */
+export function planApprovalPending(messages: ChatMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "assistant") continue;
+    return message.text.trim().endsWith(PLAN_APPROVAL_MARKER);
+  }
+  return false;
+}

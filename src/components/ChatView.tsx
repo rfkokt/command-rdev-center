@@ -49,6 +49,8 @@ import {
   projectTaskIntent,
   researchQuery,
   tsvToMarkdown,
+  applyPlanModePrefix,
+  planApprovalPending,
 } from "./chat-utils";
 import ToolCallView, {
   BrowserScreenshot,
@@ -380,6 +382,9 @@ export default function ChatView({
   const historyLoadedRef = useRef(!sessionFile);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
+  // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
+  // pi; the displayed user message stays raw.
+  const [planMode, setPlanMode] = useState(false);
   const [images, setImages] = useState<ChatImage[]>([]);
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
@@ -2181,7 +2186,11 @@ export default function ChatView({
           },
         )
       : await taskContext(text);
-    await sendRaw({ type: "prompt", message: `${text}${context}`, images });
+    await sendRaw({
+      type: "prompt",
+      message: `${applyPlanModePrefix(text, planMode)}${context}`,
+      images,
+    });
   }
 
   // Fire-and-forget git checkpoint before a user message (best-effort: never
@@ -2196,6 +2205,18 @@ export default function ChatView({
     }).catch((error) => {
       console.debug("checkpoint skipped:", error);
     });
+  };
+
+  // Plan-mode approval: the agent ended its plan with AWAITING PLAN APPROVAL.
+  const approvePlan = async () => {
+    setPlanMode(false);
+    await sendPrompt("Plan approved. Proceed with implementation.");
+  };
+
+  const rejectPlan = () => {
+    setPlanMode(true);
+    setInput("Plan rejected: ");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   async function handleSend() {
@@ -4504,8 +4525,52 @@ export default function ChatView({
           itemContent={renderFeedItem}
         />
 
+        {planApprovalPending(messages) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="caption-uppercase"
+            style={{
+              maxWidth: 880,
+              margin: "0 auto",
+              padding: "8px var(--spacing-md)",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              border: "1px solid var(--accent)",
+              borderRadius: 8,
+              background: "var(--surface-solid)",
+            }}
+          >
+            <span style={{ flex: 1 }}>PLAN READY — APPROVE TO BUILD</span>
+            <button
+              onClick={() => void approvePlan()}
+              className="composer-chip"
+              style={{
+                borderColor: "#7bc98a",
+                color: "#9fe0ab",
+                letterSpacing: "0.08em",
+              }}
+            >
+              ✓ APPROVE
+            </button>
+            <button
+              onClick={rejectPlan}
+              className="composer-chip"
+              style={{
+                borderColor: "#ff7069",
+                color: "#ff9b96",
+                letterSpacing: "0.08em",
+              }}
+            >
+              ✕ REJECT
+            </button>
+          </div>
+        )}
         <ChatComposer
           globalChat={globalChat}
+          planMode={planMode}
+          onPlanModeChange={setPlanMode}
           driveDetached={driveDetached}
           agentStatus={agentStatus}
           isNewSessionLoading={isNewSessionLoading}

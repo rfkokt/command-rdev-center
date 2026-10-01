@@ -43,6 +43,9 @@ export type ChatComposerProps = {
   onFilePick: (file: { name: string; path: string; relative: string }) => void;
   onRemoveTable: () => void;
   onSetThinking: (level: string) => Promise<void>;
+  /** Cursor-style Plan/Build mode. Plan mode prefixes the pi-bound message. */
+  planMode: boolean;
+  onPlanModeChange: (value: boolean) => void;
 };
 
 export default function ChatComposer({
@@ -82,6 +85,8 @@ export default function ChatComposer({
   onFilePick,
   onRemoveTable,
   onSetThinking,
+  planMode,
+  onPlanModeChange,
 }: ChatComposerProps) {
   return (
     <div className="chat-composer-dock">
@@ -395,6 +400,48 @@ export default function ChatComposer({
         >
           📎
         </button>
+        <div
+          role="group"
+          aria-label="Plan or build mode"
+          title={
+            planMode
+              ? "Plan mode: the agent writes a plan, no code or edits"
+              : "Build mode: the agent implements directly"
+          }
+          style={{ display: "flex", gap: 4 }}
+        >
+          {(
+            [
+              { value: false, label: "BUILD" },
+              { value: true, label: "PLAN" },
+            ] as const
+          ).map((option) => {
+            const active = planMode === option.value;
+            return (
+              <button
+                key={option.label}
+                onClick={() => onPlanModeChange(option.value)}
+                disabled={
+                  driveDetached ||
+                  agentStatus === "stopped" ||
+                  isNewSessionLoading
+                }
+                className="composer-chip"
+                aria-pressed={active}
+                style={{
+                  minHeight: 30,
+                  fontSize: 11,
+                  letterSpacing: "0.08em",
+                  borderColor: active ? "var(--accent)" : undefined,
+                  color: active ? "var(--accent)" : undefined,
+                  background: active ? "var(--surface-selected)" : undefined,
+                }}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
         <button
           onClick={() => onSubmit()}
           disabled={
