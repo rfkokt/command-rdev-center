@@ -69,10 +69,10 @@ import {
   type ResearchRun,
 } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
-import { splitPatch } from "./chat-diff-utils";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar from "./ChatRightSidebar";
+import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import {
   buildPhase,
   transcriptEntry,
@@ -381,16 +381,6 @@ export default function ChatView({
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{
-    startX: number;
-    startY: number;
-    initX: number;
-    initY: number;
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-  } | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
@@ -4689,169 +4679,14 @@ export default function ChatView({
             `${f.repository ? `${f.repository}:` : ""}${f.path}` ===
               expandedDiff || f.path === expandedDiff,
         ) && (
-          <div
-            onPointerDown={() => setExpandedDiff(null)}
-            style={{
-              position: "fixed",
-              top: 62,
-              left: 0,
-              bottom: 0,
-              right: 432,
-              zIndex: 80,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "auto",
-              padding: 20,
-            }}
-          >
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              ref={expandedDiffRef}
-              className="diff-panel"
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Diff preview for ${expandedDiff}`}
-              tabIndex={-1}
-              style={{
-                maxWidth: "calc(100vw - 480px)",
-                maxHeight: "85vh",
-                pointerEvents: "auto",
-                boxShadow: "0 24px 60px #000c",
-                border: "1px solid var(--accent)",
-                transform: `translate(${diffPos.x}px, ${diffPos.y}px)`,
-                transition: dragRef.current
-                  ? "none"
-                  : "transform 160ms var(--ease-out)",
-                resize: "both",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 20px",
-                  borderBottom: "1px solid var(--colors-hairline)",
-                  background: "#1a1b18",
-                  cursor: "grab",
-                  userSelect: "none",
-                  flexShrink: 0,
-                }}
-                onPointerDown={(e) => {
-                  if ((e.target as HTMLElement).closest("button")) return;
-                  e.preventDefault();
-                  const rect = (
-                    e.currentTarget as HTMLElement
-                  ).parentElement!.getBoundingClientRect();
-                  dragRef.current = {
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    initX: diffPos.x,
-                    initY: diffPos.y,
-                    minX: -rect.left + 24,
-                    maxX: window.innerWidth - rect.right - 24,
-                    minY: -rect.top + 62,
-                    maxY: window.innerHeight - rect.bottom - 24,
-                  };
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grabbing";
-                }}
-                onPointerMove={(e) => {
-                  if (!dragRef.current) return;
-                  const {
-                    startX,
-                    startY,
-                    initX,
-                    initY,
-                    minX,
-                    maxX,
-                    minY,
-                    maxY,
-                  } = dragRef.current;
-                  setDiffPos({
-                    x: Math.max(
-                      minX,
-                      Math.min(maxX, initX + e.clientX - startX),
-                    ),
-                    y: Math.max(
-                      minY,
-                      Math.min(maxY, initY + e.clientY - startY),
-                    ),
-                  });
-                }}
-                onPointerUp={(e) => {
-                  dragRef.current = null;
-                  e.currentTarget.releasePointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grab";
-                }}
-                onPointerCancel={(e) => {
-                  dragRef.current = null;
-                  e.currentTarget.releasePointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grab";
-                }}
-              >
-                <div style={{ display: "grid", gap: 4 }}>
-                  <small
-                    style={{
-                      color: "var(--accent)",
-                      fontSize: 10,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    DIFF PREVIEW (READONLY)
-                  </small>
-                  <strong style={{ fontSize: 14 }}>{expandedDiff}</strong>
-                </div>
-                <button
-                  onClick={() => setExpandedDiff(null)}
-                  title="Close preview"
-                  style={{
-                    padding: "6px 12px",
-                    border: "1px solid #ff7069",
-                    color: "#ff9b96",
-                    fontSize: 10,
-                    letterSpacing: "0.1em",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    background: "transparent",
-                  }}
-                >
-                  ✕ CLOSE
-                </button>
-              </div>
-
-              <div style={{ flex: 1, overflow: "auto", background: "#0e0f0c" }}>
-                {(() => {
-                  const file = worktreeDiff.files.find(
-                    (f) =>
-                      `${f.repository ? `${f.repository}:` : ""}${f.path}` ===
-                        expandedDiff || f.path === expandedDiff,
-                  );
-                  if (!file || !file.patch)
-                    return (
-                      <p className="code-empty" style={{ padding: 20 }}>
-                        Binary or untracked — no textual diff.
-                      </p>
-                    );
-                  return (
-                    <div
-                      className="split-diff vscode-split"
-                      style={{ maxHeight: "none" }}
-                    >
-                      <header>
-                        <span>BEFORE</span>
-                        <span>AFTER</span>
-                      </header>
-                      {splitPatch(file.patch)}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
+          <ExpandedDiffPanel
+            diffKey={expandedDiff}
+            worktreeDiff={worktreeDiff}
+            position={diffPos}
+            dialogRef={expandedDiffRef}
+            onPositionChange={setDiffPos}
+            onClose={() => setExpandedDiff(null)}
+          />
         )}
       {approval && (
         <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />
