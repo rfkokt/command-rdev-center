@@ -5,6 +5,7 @@ import {
   useState,
   useCallback,
   useMemo,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -69,6 +70,7 @@ import {
   type ResearchRun,
 } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar from "./ChatRightSidebar";
@@ -78,6 +80,46 @@ import {
   transcriptEntry,
   describeToolActivity,
 } from "./chat-activity-text";
+
+// One chronological feed row for the virtualized message list. Message and
+// research rows interleave by their original flex `order` keys so the virtual
+// list renders in exactly the same visual order the CSS flexbox used before.
+type FeedItem =
+  | { kind: "session-loading"; order: number }
+  | { kind: "history-state"; order: number }
+  | { kind: "research-request"; run: ResearchRun; order: number }
+  | { kind: "research-report"; run: ResearchRun; order: number }
+  | { kind: "message"; message: ChatMessage; order: number }
+  | { kind: "background-work"; order: number }
+  | { kind: "agent-activity"; order: number };
+
+// Stable identity for virtualized rows; must match the keys the old
+// non-virtualized list used (message ids and research run ids).
+function feedItemKey(_index: number, item: FeedItem): string {
+  switch (item.kind) {
+    case "message":
+      return item.message.id;
+    case "research-request":
+      return `${item.run.id}-request`;
+    case "research-report":
+      return item.run.id;
+    case "session-loading":
+      return "session-loading";
+    case "history-state":
+      return "history-state";
+    case "background-work":
+      return "background-work";
+    case "agent-activity":
+      return "agent-activity";
+  }
+}
+
+const FEED_ITEM_STYLE: CSSProperties = {
+  maxWidth: 880,
+  width: "100%",
+  margin: "0 auto",
+  padding: "0 var(--spacing-md) var(--spacing-xl)",
+};
 
 type PiEventPayload = { session_id: string; raw: string };
 export type WorktreeInfo = {
@@ -414,7 +456,6 @@ export default function ChatView({
     total: number;
   } | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const filePickerRef = useRef<FilePickerHandle>(null);
   const sessionFileRef = useRef(sessionFile);
@@ -492,52 +533,28 @@ export default function ChatView({
       .slice(0, 32),
   ).current;
 
-  const jumpToBottomRef = useRef(true);
-  const stickToBottomRef = useRef(true);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const atBottomRef = useRef(true);
   useEffect(() => {
     if (isActive) {
-      jumpToBottomRef.current = true;
-      stickToBottomRef.current = true;
+      atBottomRef.current = true;
     }
   }, [isActive]);
-  useEffect(() => {
-    const anchor = bottomRef.current;
-    const scroller = anchor?.parentElement?.parentElement;
-    if (!scroller) return;
-    const updateStickiness = () => {
-      stickToBottomRef.current =
-        scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <=
-        160;
-    };
-    updateStickiness();
-    scroller.addEventListener("scroll", updateStickiness, { passive: true });
-    return () => scroller.removeEventListener("scroll", updateStickiness);
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    atBottomRef.current = atBottom;
   }, []);
+  // Jump the virtualized list to the latest output when the chat tab becomes
+  // active or its history finishes loading. followOutput="auto" takes over
+  // from there: it keeps the list pinned while the user sits at the bottom
+  // and leaves their scroll position alone while they review history.
   useEffect(() => {
-    if (!isActive) return;
-    const anchor = bottomRef.current;
-    if (!anchor) return;
-    // Don't consume the initial jump while history is still on its way:
-    // messages are [] on mount and real content lands async via get_messages.
-    if (
-      isHistoryLoading ||
-      (messages.length === 0 && researchResults.length === 0)
-    )
-      return;
-    const reduceMotion =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const jump = jumpToBottomRef.current;
-    jumpToBottomRef.current = false;
-    // Measure the user's scroll intent before new content changes scrollHeight.
-    // Checking after a long streamed update falsely treats a pinned reader as
-    // someone reviewing history.
-    if (!jump && !stickToBottomRef.current) return;
-    anchor.scrollIntoView({
-      behavior: reduceMotion || jump ? "auto" : "smooth",
-      block: "end",
+    if (!isActive || isHistoryLoading) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
     });
-  }, [isActive, messages, researchResults, isHistoryLoading]);
+  }, [isActive, isHistoryLoading]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -3211,6 +3228,873 @@ export default function ChatView({
       if (!alive.has(id)) rowCacheRef.current.delete(id);
   }
 
+  // Chronological feed driving the virtualized message list. Message and
+  // research rows interleave by their original flex `order` keys so the
+  // virtual list renders in exactly the same visual order as before.
+  const feedItems = useMemo<FeedItem[]>(() => {
+    const items: FeedItem[] = [];
+    if (isNewSessionLoading) items.push({ kind: "session-loading", order: -2 });
+    if (
+      messages.length === 0 &&
+      researchResults.length === 0 &&
+      !isNewSessionLoading
+    )
+      items.push({ kind: "history-state", order: -1 });
+    for (const run of [...researchResults].reverse()) {
+      items.push(
+        { kind: "research-request", run, order: run.created_at * 1000 },
+        { kind: "research-report", run, order: run.created_at * 1000 + 1 },
+      );
+    }
+    for (const message of messages)
+      items.push({ kind: "message", message, order: message.createdAt ?? 0 });
+    if (backgroundWork && agentStatus !== "running")
+      items.push({
+        kind: "background-work",
+        order: Number.MAX_SAFE_INTEGER - 1,
+      });
+    if (agentStatus === "running" || isRestarting)
+      items.push({
+        kind: "agent-activity",
+        order: Number.MAX_SAFE_INTEGER - 1,
+      });
+    // Stable sort: equal order keys keep insertion order, matching the old
+    // CSS flexbox behavior for research pairs and trailing indicators.
+    items.sort((a, b) => a.order - b.order);
+    return items;
+  }, [
+    isNewSessionLoading,
+    messages,
+    researchResults,
+    backgroundWork,
+    agentStatus,
+    isRestarting,
+  ]);
+
+  // Renders one virtualized feed row. Unchanged message rows are served from
+  // rowCacheRef so streamed tokens only re-render the active row.
+  const renderFeedItemInner = (item: FeedItem): ReactNode => {
+    if (item.kind === "session-loading") {
+      return (
+        <div className="session-loading" role="status" aria-live="polite">
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>STARTING NEW CONTEXT</strong>
+            <small>KEEPING WORKTREE AND DEV SERVER</small>
+          </div>
+        </div>
+      );
+    }
+    if (item.kind === "history-state") {
+      return isHistoryLoading ? (
+        <div className="session-loading" role="status" aria-live="polite">
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>LOADING SESSION</strong>
+            <small>RESTORING CHAT HISTORY</small>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="display-sm"
+          style={{
+            color: "var(--colors-muted)",
+            marginTop: "var(--spacing-xl)",
+          }}
+        >
+          AGENT IDLE. SEND PROMPT.
+        </div>
+      );
+    }
+    if (item.kind === "research-request") {
+      const run = item.run;
+      return (
+        <div className="chat-bubble-user body-md">/research {run.query}</div>
+      );
+    }
+    if (item.kind === "research-report") {
+      const run = item.run;
+      const report = run.final_report ?? run.partial_report;
+      return (
+        <article
+          className={`research-result-card${isActiveResearch(run) ? " is-active" : ""}`}
+          aria-live={isActiveResearch(run) ? "polite" : undefined}
+        >
+          <small>
+            {isActiveResearch(run) && (
+              <span className="research-live-mark" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            )}
+            Deep Research · {run.progress.phase || run.state} ·{" "}
+            {elapsedResearch(run.created_at)}
+          </small>
+          <h3>{run.query}</h3>
+          {isActiveResearch(run) ? (
+            <p>{run.progress.activity || "Preparing research…"}</p>
+          ) : report ? (
+            <div className="research-inline-report">
+              <MarkdownMessage>{report}</MarkdownMessage>
+            </div>
+          ) : null}
+          {run.error && <p className="research-run-error">{run.error}</p>}
+          {researchHandoffError &&
+            run.state === "completed" &&
+            !run.handoff_delivered && (
+              <p className="research-run-error" role="alert">
+                Context handoff failed: {researchHandoffError}
+              </p>
+            )}
+          <footer>
+            <span>
+              {run.progress.searches} searches · {run.progress.reads} reads ·{" "}
+              {run.progress.checks} checks · {run.sources.length} sources
+            </span>
+            <div>
+              {isActiveResearch(run) && (
+                <button
+                  disabled={researchBusy}
+                  onClick={() =>
+                    void researchAction("cancel_deep_research", run)
+                  }
+                >
+                  Cancel
+                </button>
+              )}
+              {canResumeResearch(run) && (
+                <button
+                  disabled={researchBusy}
+                  onClick={() =>
+                    void researchAction("resume_deep_research", run)
+                  }
+                >
+                  Resume
+                </button>
+              )}
+              {researchHandoffError &&
+                run.state === "completed" &&
+                !run.handoff_delivered && (
+                  <button onClick={() => void handleResearchCompleted(run)}>
+                    Retry context handoff
+                  </button>
+                )}
+              <button onClick={() => onOpenResearch(run.id)}>
+                Open full report
+              </button>
+            </div>
+          </footer>
+        </article>
+      );
+    }
+    if (item.kind === "message") {
+      const m = item.message;
+      const cachedRow = rowCacheRef.current.get(m.id);
+      if (
+        cachedRow &&
+        cachedRow.message === m &&
+        cachedRow.diff === worktreeDiff &&
+        cachedRow.approval === terminalApproval &&
+        cachedRow.restart === handleRestart &&
+        cachedRow.refresh === refreshDiff &&
+        cachedRow.send === sendRaw &&
+        cachedRow.toast === onToast &&
+        cachedRow.flags === rowFlags
+      )
+        return cachedRow.node;
+      const node = (
+        <div
+          key={m.id}
+          className={
+            m.role === "user"
+              ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
+              : m.role === "system"
+                ? "chat-notice body-sm"
+                : "chat-bubble-assistant body-md"
+          }
+        >
+          {m.role === "system" && <small>PI CONTEXT</small>}
+          {m.thinking && (
+            <ThinkingBlock isStreaming={Boolean(m.isStreaming)}>
+              {m.thinking}
+            </ThinkingBlock>
+          )}
+          {m.images && m.images.length > 0 && (
+            <div className="chat-images">
+              {m.images.map((image, index) => (
+                <button
+                  key={index}
+                  onClick={() => setPreviewImage(image)}
+                  aria-label={`Preview attachment ${index + 1}`}
+                >
+                  <img
+                    src={`data:${image.mimeType};base64,${image.data}`}
+                    alt="Pasted attachment"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+          {m.toolCalls
+            .filter((tool) => tool.name === "recommend_global_skills")
+            .map((tool) => {
+              const skills = Array.isArray(tool.args.skills)
+                ? tool.args.skills.filter(
+                    (name): name is string => typeof name === "string",
+                  )
+                : [];
+              return skills.length ? (
+                <section
+                  className="skill-recommendation"
+                  key={tool.callId}
+                  role="status"
+                >
+                  <div>
+                    <small>SKILL RECOMMENDATION</small>
+                    <strong>{skills.join(" · ")}</strong>
+                    <span>
+                      {typeof tool.args.reason === "string"
+                        ? tool.args.reason
+                        : "Recommended by the agent."}
+                    </span>
+                  </div>
+                  <div>
+                    {skills.map((name) => (
+                      <button
+                        key={name}
+                        onClick={() => {
+                          setInput(`/skill:${name}`);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        Use {name}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null;
+            })}
+          {m.toolCalls
+            .filter((tool) => isWebSearchTool(tool.name))
+            .map((tool) => (
+              <ToolCallView key={tool.callId} tc={tool} />
+            ))}
+          {m.toolCalls.some(
+            (tool) =>
+              !isWebSearchTool(tool.name) &&
+              tool.name !== "recommend_global_skills",
+          ) &&
+            (() => {
+              const tools = m.toolCalls.filter(
+                (tool) =>
+                  !isWebSearchTool(tool.name) &&
+                  tool.name !== "recommend_global_skills",
+              );
+              return (
+                <details className="tool-stack">
+                  <summary>
+                    <span className="tool-stack-icon">
+                      {tools.some((tool) => tool.phase !== "end") ? "◌" : "✓"}
+                    </span>
+                    <strong>
+                      {tools.length} TOOL{" "}
+                      {tools.length === 1 ? "CALL" : "CALLS"}
+                    </strong>
+                    <span>
+                      {tools
+                        .map((tool) => tool.name)
+                        .filter(
+                          (name, index, all) => all.indexOf(name) === index,
+                        )
+                        .join(" · ")}
+                    </span>
+                    <small>DETAILS</small>
+                  </summary>
+                  <div className="tool-stack-items">
+                    {tools.map((tool) => (
+                      <ToolCallView key={tool.callId} tc={tool} />
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
+          {m.toolCalls
+            .filter((tool) => browserScreenshotRef(tool))
+            .map((tool) => (
+              <BrowserScreenshot key={`screenshot-${tool.callId}`} tc={tool} />
+            ))}
+          {m.toolCalls.length === 0 && browserScreenshotRefFromText(m.text) && (
+            <BrowserScreenshot
+              tc={{
+                callId: `restored-${m.id}`,
+                name: "browser_screenshot",
+                args: {},
+                phase: "end",
+                result: {
+                  data: {
+                    artifactRef: browserScreenshotRefFromText(m.text),
+                  },
+                },
+              }}
+            />
+          )}
+          {m.text && (
+            <MarkdownMessage isStreaming={m.isStreaming}>
+              {m.text}
+            </MarkdownMessage>
+          )}
+          {m.role === "assistant" && m.text && !m.isStreaming && (
+            <div className="chat-actions">
+              <button
+                className="chat-copy"
+                onClick={() =>
+                  navigator.clipboard
+                    .writeText(m.text)
+                    .then(() => {
+                      setCopiedMessageId(m.id);
+                      window.setTimeout(
+                        () =>
+                          setCopiedMessageId((id) => (id === m.id ? null : id)),
+                        1600,
+                      );
+                    })
+                    .catch((error) => onToast(`Copy failed: ${String(error)}`))
+                }
+                aria-label="Copy assistant response"
+                title="Copy response"
+              >
+                {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
+              </button>
+              <button
+                className="chat-retry-inline"
+                onClick={() => {
+                  const lastUser = [...messages]
+                    .reverse()
+                    .find((item) => item.role === "user");
+                  if (lastUser?.text) {
+                    setInput(lastUser.text);
+                    inputRef.current?.focus();
+                  }
+                }}
+                aria-label="Try again with last prompt"
+                title="Copy last prompt back to composer"
+              >
+                ↻ TRY AGAIN
+              </button>
+              {globalChat && (
+                <details className="chat-save">
+                  <summary>
+                    {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
+                  </summary>
+                  <div
+                    className="chat-save-options"
+                    aria-label="Save response as"
+                  >
+                    {["knowledge", "memory", "context", "skill"].map((kind) => (
+                      <button
+                        key={kind}
+                        disabled={savingMessageId === m.id}
+                        onClick={async (event) => {
+                          const details =
+                            event.currentTarget.closest("details");
+                          setSavingMessageId(m.id);
+                          try {
+                            await invoke("save_rag_chat_response", {
+                              text: m.text,
+                              kind,
+                            });
+                            onToast(`Saved as ${kind}.`);
+                            details?.removeAttribute("open");
+                          } catch (error) {
+                            onToast(`Save failed: ${String(error)}`);
+                          } finally {
+                            setSavingMessageId(null);
+                          }
+                        }}
+                      >
+                        {kind}
+                        <small>
+                          {kind === "knowledge"
+                            ? "Reusable answer"
+                            : kind === "context"
+                              ? "Chat reference"
+                              : kind === "memory"
+                                ? "Stored preference"
+                                : "Reusable procedure"}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+          {m.role === "system" && shouldOfferRestart(m.text) && (
+            <button
+              onClick={() => handleRestart(true)}
+              className="chat-restart"
+              disabled={isRestarting}
+            >
+              {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
+            </button>
+          )}
+          {m.role === "system" && isPiRuntimeIssue(m.text) && (
+            <button
+              onClick={() => void handleFixPiIssue(m)}
+              className="chat-restart"
+              disabled={fixingPiIssueId !== null}
+            >
+              {fixingPiIssueId === m.id ? "AI IS FIXING…" : "✦ FIX WITH AI"}
+            </button>
+          )}
+          {(m.createdAt || m.durationMs) && (
+            <div className="chat-message-meta">
+              {m.createdAt && (
+                <time dateTime={new Date(m.createdAt).toISOString()}>
+                  {formatMessageTime(m.createdAt)}
+                </time>
+              )}
+              {m.role === "assistant" && m.durationMs && (
+                <span title="Task completion time">
+                  SELESAI DALAM {formatTaskDuration(m.durationMs)}
+                </span>
+              )}
+            </div>
+          )}
+          {agentStatus === "stopped" &&
+            m.role === "user" &&
+            m.id === messages[messages.length - 1]?.id && (
+              <button
+                onClick={() => handleRestart(true)}
+                className="chat-retry"
+                title="Retry interrupted task"
+                aria-label="Retry interrupted task"
+              >
+                ↻
+              </button>
+            )}
+          {worktreeDiff &&
+            shouldShowChanges(
+              m,
+              lastAssistantId,
+              worktreeDiff.files.length,
+            ) && (
+              <details className="chat-changes">
+                <summary>
+                  <strong>FILES CHANGED</strong>
+                  <span>{worktreeDiff.files.length}</span>
+                </summary>
+                {worktreeDiff.files.map((file) => (
+                  <button
+                    key={`${file.repository ?? ""}:${file.path}`}
+                    onClick={() => setExpandedDiff(file.path)}
+                  >
+                    <span>{file.status}</span>
+                    <b>
+                      {file.repository && <small>{file.repository}</small>}
+                      {file.path}
+                    </b>
+                    <i>+{file.added}</i>
+                    <em>-{file.removed}</em>
+                  </button>
+                ))}
+              </details>
+            )}
+          {m.id === lastAssistantId && terminalApproval && (
+            <section className="terminal-command-approval" role="alert">
+              <small>AGENT REQUEST · TERMINAL COMMAND</small>
+              <pre>{terminalApproval.data}</pre>
+              <div>
+                <button
+                  className="approval-primary"
+                  onClick={() => {
+                    const request = terminalApproval;
+                    setTerminalApprovalStatus("executing");
+                    const approved = request.pane
+                      ? invoke("terminal_write", {
+                          chatId: `${chatId}__${request.pane}`,
+                          data: request.data,
+                        }).then(
+                          () =>
+                            `Command sent to pane ${request.pane}. Read its output now.`,
+                        )
+                      : invoke<string>("terminal_execute_approved", {
+                          cwd: cwdRef.current,
+                          command: request.data,
+                        });
+                    void approved
+                      .then(async (output) => {
+                        setTerminalApprovalStatus("refreshing");
+                        await refreshDiff();
+                        setTerminalApproval(null);
+                        return sendRaw({
+                          type: agentStatus === "running" ? "steer" : "prompt",
+                          message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
+                        });
+                      })
+                      .catch((error) => {
+                        const message = `Approved terminal command failed: ${String(error)}`;
+                        onToast(message);
+                        void sendRaw({
+                          type: agentStatus === "running" ? "steer" : "prompt",
+                          message,
+                        });
+                      })
+                      .finally(() => setTerminalApprovalStatus(null));
+                  }}
+                  disabled={terminalApprovalStatus !== null}
+                >
+                  {terminalApprovalStatus === "executing"
+                    ? "EXECUTING…"
+                    : terminalApprovalStatus === "refreshing"
+                      ? "REFRESHING CHANGES…"
+                      : "✅ Approve"}
+                </button>
+                <button
+                  disabled={terminalApprovalStatus !== null}
+                  onClick={() => {
+                    setTerminalApproval(null);
+                    void sendRaw({
+                      type: agentStatus === "running" ? "steer" : "prompt",
+                      message:
+                        "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
+                    });
+                    onToast("Terminal command denied");
+                  }}
+                >
+                  ❌ Deny
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      );
+      rowCacheRef.current.set(m.id, {
+        message: m,
+        diff: worktreeDiff,
+        approval: terminalApproval,
+        restart: handleRestart,
+        refresh: refreshDiff,
+        send: sendRaw,
+        toast: onToast,
+        flags: rowFlags,
+        node,
+      });
+      return node;
+    }
+    if (item.kind === "background-work") {
+      // Guarded by the feedItems condition; narrows the type here.
+      if (!backgroundWork) return null;
+      return (
+        <div
+          className="agent-working activity-nodes phase-executing"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>BACKGROUND AGENT WORKING</strong>
+            <small className="agent-working-detail">
+              {backgroundWork.runId
+                ? `Run ${backgroundWork.runId}`
+                : "Detached task in progress"}
+            </small>
+          </div>
+          <span className="agent-working-stats">
+            <span>
+              <ElapsedLabel
+                startedAt={backgroundWork.startedAt}
+                ticking={isActive}
+              />
+            </span>
+          </span>
+        </div>
+      );
+    }
+    if (item.kind === "agent-activity") {
+      return (() => {
+        const allTools = messages.flatMap((message) => message.toolCalls);
+        const allActive = allTools.filter((tool) => tool.phase !== "end");
+        const activeTool = [...allActive].reverse()[0];
+        const completedCount = allTools.filter(
+          (tool) => tool.phase === "end",
+        ).length;
+        const completedApiCount = allTools.filter(
+          (tool) =>
+            tool.phase === "end" &&
+            /(?:^|\.)(?:api_request|api_contract_test)$/.test(tool.name),
+        ).length;
+        const lastCompleted = [...allTools]
+          .reverse()
+          .find((tool) => tool.phase === "end");
+        const streamingMsg = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.isStreaming);
+        const streamingText = streamingMsg?.text?.trim() || "";
+        const thinkingText = streamingMsg?.thinking?.trim() || "";
+        const activeRequest = [...messages]
+          .reverse()
+          .find((m) => m.role === "user" && m.text.trim())
+          ?.text.replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 90);
+
+        // Multi sub-agent aggregation
+        const activeSubagents = allActive.filter((t) => isSubagentTool(t.name));
+        const primarySubagent = [...activeSubagents].reverse()[0];
+        const subMeta = primarySubagent
+          ? getSubagentMeta(primarySubagent.args)
+          : null;
+        const totalSubagentTasks = activeSubagents.reduce(
+          (acc, t) => acc + getSubagentMeta(t.args).count,
+          0,
+        );
+
+        let title: string;
+        let detail: string;
+        let icon: string;
+        let phase: "executing" | "writing" | "thinking";
+
+        if (isRestarting) {
+          phase = "thinking";
+          title = "RESTARTING PI";
+          detail = "Starting the agent session";
+          icon = "meter";
+        } else if (activeTool) {
+          phase = "executing";
+          const build = buildPhase(activeTool);
+          const isMultiSub = activeSubagents.length > 0 && subMeta;
+          if (build) {
+            title = "BUILDING";
+            detail = build;
+            icon = "build";
+          } else if (isMultiSub && subMeta) {
+            title =
+              totalSubagentTasks > 1 || activeSubagents.length > 1
+                ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)`
+                : "SUB-AGENT WORKING";
+            detail =
+              totalSubagentTasks > 1
+                ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}`
+                : subMeta.detail;
+            icon = "nodes";
+          } else if (isWebSearchTool(activeTool.name)) {
+            title = "SEARCHING WEB";
+            detail = describeToolActivity(activeTool);
+            icon = "search";
+          } else if (
+            /(?:^|\.)(?:api_request|api_contract_test)$/.test(activeTool.name)
+          ) {
+            title = "TESTING API";
+            detail = describeToolActivity(activeTool);
+            icon = "api";
+          } else {
+            const kind = activityKind(activeTool.name);
+            if (kind === "process") {
+              title = "RUNNING SESSION";
+              detail = "Interactive shell";
+              icon = "terminal";
+            } else if (kind === "index") {
+              title = "INDEXING";
+              detail = "Building knowledge graph";
+              icon = "graph";
+            } else if (kind === "loop") {
+              title = "ITERATING";
+              detail = "Autonomous pass";
+              icon = "loop";
+            } else {
+              title = "EXECUTING";
+              detail = describeToolActivity(activeTool);
+              icon = "meter";
+            }
+          }
+        } else if (streamingText) {
+          phase = "writing";
+          const lastLine =
+            streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+          title = "RESPONDING";
+          detail = lastLine
+            ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}`
+            : "Writing response";
+          icon = "meter";
+        } else {
+          phase = "thinking";
+          const lastLine =
+            thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+          if (lastLine) {
+            title = "REASONING";
+            detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
+          } else if (lastCompleted) {
+            title = "PLANNING NEXT";
+            detail = describeToolActivity(lastCompleted);
+          } else {
+            title = "THINKING";
+            detail = activeRequest
+              ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+              : "Preparing next step";
+          }
+          icon = "meter";
+        }
+
+        const apiProgress =
+          icon === "api"
+            ? ((
+                activeTool?.result as {
+                  details?: {
+                    stage?: unknown;
+                    method?: unknown;
+                    path?: unknown;
+                    httpStatus?: unknown;
+                  };
+                }
+              )?.details ?? null)
+            : null;
+        const apiStage = String(apiProgress?.stage ?? "request");
+        const apiStages = [
+          "contract",
+          "destination",
+          "authentication",
+          "request",
+          "response",
+          "validation",
+        ];
+        const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
+        return (
+          <section className="agent-activity" aria-label="Agent activity">
+            <div
+              className={`agent-working activity-${icon} phase-${phase}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="agent-working-mark" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <div>
+                <strong>{title}</strong>
+                <small className="agent-working-detail" title={detail}>
+                  {detail}
+                </small>
+                {apiProgress && (
+                  <div className="api-live-progress">
+                    <span className="api-live-target">
+                      {String(apiProgress.method ?? "API")} ·{" "}
+                      {String(apiProgress.path ?? "Resolving endpoint")}
+                      {apiProgress.httpStatus != null &&
+                        ` · HTTP ${String(apiProgress.httpStatus)}`}
+                    </span>
+                    <span
+                      className="api-live-track"
+                      aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
+                    >
+                      {apiStages.map((stage, index) => (
+                        <i
+                          key={stage}
+                          className={
+                            index < apiStageIndex
+                              ? "done"
+                              : index === apiStageIndex
+                                ? "active"
+                                : ""
+                          }
+                          title={stage}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <span className="agent-working-stats">
+                {icon === "api" && completedApiCount > 0 ? (
+                  <span>
+                    {completedApiCount} API call
+                    {completedApiCount !== 1 ? "s" : ""} done
+                  </span>
+                ) : completedCount > 0 ? (
+                  <span>
+                    {completedCount} tool
+                    {completedCount !== 1 ? "s" : ""}
+                  </span>
+                ) : null}
+                <span>
+                  <ElapsedLabel
+                    startedAt={taskStartedAtRef.current ?? Date.now()}
+                    ticking={isActive}
+                  />
+                </span>
+              </span>
+              <button onClick={handleAbort} disabled={isAborting}>
+                {isAborting ? "ABORTING…" : "ABORT"}
+              </button>
+            </div>
+            <details className="agent-activity-log" open>
+              <summary>
+                {agentTranscript.length
+                  ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
+                  : "Preparing task"}
+              </summary>
+              <ul className="agent-transcript" aria-label="Agent tasks">
+                {agentTranscript.length > 0 ? (
+                  agentTranscript.map((entry) => (
+                    <li key={entry.id}>
+                      <span
+                        className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {entry.type === "Agent" && entry.detail === "Thinking"
+                          ? activeRequest
+                            ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+                            : "Preparing next step"
+                          : entry.detail}
+                      </span>
+                      <small>{entry.type}</small>
+                    </li>
+                  ))
+                ) : (
+                  <li className="agent-transcript-empty">
+                    <span
+                      className="agent-transcript-mark"
+                      aria-hidden="true"
+                    />
+                    <span>Analyzing request</span>
+                  </li>
+                )}
+              </ul>
+            </details>
+          </section>
+        );
+      })();
+    }
+    return null;
+  };
+
+  const renderFeedItem = (index: number, item: FeedItem): ReactNode => (
+    <div
+      style={
+        index === 0
+          ? { ...FEED_ITEM_STYLE, paddingTop: "var(--spacing-xl)" }
+          : FEED_ITEM_STYLE
+      }
+    >
+      {renderFeedItemInner(item)}
+    </div>
+  );
+
   if (!isActive) return null;
 
   return (
@@ -3571,888 +4455,16 @@ export default function ChatView({
             : undefined
         }
       >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div
-            style={{
-              maxWidth: 880,
-              width: "100%",
-              margin: "0 auto",
-              padding: "var(--spacing-xl) var(--spacing-md)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--spacing-xl)",
-            }}
-          >
-            {isNewSessionLoading && (
-              <div className="session-loading" role="status" aria-live="polite">
-                <span className="agent-working-mark" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <div>
-                  <strong>STARTING NEW CONTEXT</strong>
-                  <small>KEEPING WORKTREE AND DEV SERVER</small>
-                </div>
-              </div>
-            )}
-            {messages.length === 0 &&
-              researchResults.length === 0 &&
-              !isNewSessionLoading &&
-              (isHistoryLoading ? (
-                <div
-                  className="session-loading"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <span className="agent-working-mark" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                  <div>
-                    <strong>LOADING SESSION</strong>
-                    <small>RESTORING CHAT HISTORY</small>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="display-sm"
-                  style={{
-                    color: "var(--colors-muted)",
-                    marginTop: "var(--spacing-xl)",
-                  }}
-                >
-                  AGENT IDLE. SEND PROMPT.
-                </div>
-              ))}
-            {[...researchResults].reverse().map((run) => {
-              const report = run.final_report ?? run.partial_report;
-              return [
-                <div
-                  key={`${run.id}-request`}
-                  className="chat-bubble-user body-md"
-                  style={{ order: run.created_at * 1000 }}
-                >
-                  /research {run.query}
-                </div>,
-                <article
-                  className={`research-result-card${isActiveResearch(run) ? " is-active" : ""}`}
-                  key={run.id}
-                  style={{ order: run.created_at * 1000 + 1 }}
-                  aria-live={isActiveResearch(run) ? "polite" : undefined}
-                >
-                  <small>
-                    {isActiveResearch(run) && (
-                      <span className="research-live-mark" aria-hidden="true">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                    )}
-                    Deep Research · {run.progress.phase || run.state} ·{" "}
-                    {elapsedResearch(run.created_at)}
-                  </small>
-                  <h3>{run.query}</h3>
-                  {isActiveResearch(run) ? (
-                    <p>{run.progress.activity || "Preparing research…"}</p>
-                  ) : report ? (
-                    <div className="research-inline-report">
-                      <MarkdownMessage>{report}</MarkdownMessage>
-                    </div>
-                  ) : null}
-                  {run.error && (
-                    <p className="research-run-error">{run.error}</p>
-                  )}
-                  {researchHandoffError &&
-                    run.state === "completed" &&
-                    !run.handoff_delivered && (
-                      <p className="research-run-error" role="alert">
-                        Context handoff failed: {researchHandoffError}
-                      </p>
-                    )}
-                  <footer>
-                    <span>
-                      {run.progress.searches} searches · {run.progress.reads}{" "}
-                      reads · {run.progress.checks} checks ·{" "}
-                      {run.sources.length} sources
-                    </span>
-                    <div>
-                      {isActiveResearch(run) && (
-                        <button
-                          disabled={researchBusy}
-                          onClick={() =>
-                            void researchAction("cancel_deep_research", run)
-                          }
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      {canResumeResearch(run) && (
-                        <button
-                          disabled={researchBusy}
-                          onClick={() =>
-                            void researchAction("resume_deep_research", run)
-                          }
-                        >
-                          Resume
-                        </button>
-                      )}
-                      {researchHandoffError &&
-                        run.state === "completed" &&
-                        !run.handoff_delivered && (
-                          <button
-                            onClick={() => void handleResearchCompleted(run)}
-                          >
-                            Retry context handoff
-                          </button>
-                        )}
-                      <button onClick={() => onOpenResearch(run.id)}>
-                        Open full report
-                      </button>
-                    </div>
-                  </footer>
-                </article>,
-              ];
-            })}
-            {messages.map((m) => {
-              const cachedRow = rowCacheRef.current.get(m.id);
-              if (
-                cachedRow &&
-                cachedRow.message === m &&
-                cachedRow.diff === worktreeDiff &&
-                cachedRow.approval === terminalApproval &&
-                cachedRow.restart === handleRestart &&
-                cachedRow.refresh === refreshDiff &&
-                cachedRow.send === sendRaw &&
-                cachedRow.toast === onToast &&
-                cachedRow.flags === rowFlags
-              )
-                return cachedRow.node;
-              const node = (
-                <div
-                  key={m.id}
-                  style={{ order: m.createdAt ?? 0 }}
-                  className={
-                    m.role === "user"
-                      ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
-                      : m.role === "system"
-                        ? "chat-notice body-sm"
-                        : "chat-bubble-assistant body-md"
-                  }
-                >
-                  {m.role === "system" && <small>PI CONTEXT</small>}
-                  {m.thinking && (
-                    <ThinkingBlock isStreaming={Boolean(m.isStreaming)}>
-                      {m.thinking}
-                    </ThinkingBlock>
-                  )}
-                  {m.images && m.images.length > 0 && (
-                    <div className="chat-images">
-                      {m.images.map((image, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setPreviewImage(image)}
-                          aria-label={`Preview attachment ${index + 1}`}
-                        >
-                          <img
-                            src={`data:${image.mimeType};base64,${image.data}`}
-                            alt="Pasted attachment"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {m.toolCalls
-                    .filter((tool) => tool.name === "recommend_global_skills")
-                    .map((tool) => {
-                      const skills = Array.isArray(tool.args.skills)
-                        ? tool.args.skills.filter(
-                            (name): name is string => typeof name === "string",
-                          )
-                        : [];
-                      return skills.length ? (
-                        <section
-                          className="skill-recommendation"
-                          key={tool.callId}
-                          role="status"
-                        >
-                          <div>
-                            <small>SKILL RECOMMENDATION</small>
-                            <strong>{skills.join(" · ")}</strong>
-                            <span>
-                              {typeof tool.args.reason === "string"
-                                ? tool.args.reason
-                                : "Recommended by the agent."}
-                            </span>
-                          </div>
-                          <div>
-                            {skills.map((name) => (
-                              <button
-                                key={name}
-                                onClick={() => {
-                                  setInput(`/skill:${name}`);
-                                  inputRef.current?.focus();
-                                }}
-                              >
-                                Use {name}
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      ) : null;
-                    })}
-                  {m.toolCalls
-                    .filter((tool) => isWebSearchTool(tool.name))
-                    .map((tool) => (
-                      <ToolCallView key={tool.callId} tc={tool} />
-                    ))}
-                  {m.toolCalls.some(
-                    (tool) =>
-                      !isWebSearchTool(tool.name) &&
-                      tool.name !== "recommend_global_skills",
-                  ) &&
-                    (() => {
-                      const tools = m.toolCalls.filter(
-                        (tool) =>
-                          !isWebSearchTool(tool.name) &&
-                          tool.name !== "recommend_global_skills",
-                      );
-                      return (
-                        <details className="tool-stack">
-                          <summary>
-                            <span className="tool-stack-icon">
-                              {tools.some((tool) => tool.phase !== "end")
-                                ? "◌"
-                                : "✓"}
-                            </span>
-                            <strong>
-                              {tools.length} TOOL{" "}
-                              {tools.length === 1 ? "CALL" : "CALLS"}
-                            </strong>
-                            <span>
-                              {tools
-                                .map((tool) => tool.name)
-                                .filter(
-                                  (name, index, all) =>
-                                    all.indexOf(name) === index,
-                                )
-                                .join(" · ")}
-                            </span>
-                            <small>DETAILS</small>
-                          </summary>
-                          <div className="tool-stack-items">
-                            {tools.map((tool) => (
-                              <ToolCallView key={tool.callId} tc={tool} />
-                            ))}
-                          </div>
-                        </details>
-                      );
-                    })()}
-                  {m.toolCalls
-                    .filter((tool) => browserScreenshotRef(tool))
-                    .map((tool) => (
-                      <BrowserScreenshot
-                        key={`screenshot-${tool.callId}`}
-                        tc={tool}
-                      />
-                    ))}
-                  {m.toolCalls.length === 0 &&
-                    browserScreenshotRefFromText(m.text) && (
-                      <BrowserScreenshot
-                        tc={{
-                          callId: `restored-${m.id}`,
-                          name: "browser_screenshot",
-                          args: {},
-                          phase: "end",
-                          result: {
-                            data: {
-                              artifactRef: browserScreenshotRefFromText(m.text),
-                            },
-                          },
-                        }}
-                      />
-                    )}
-                  {m.text && (
-                    <MarkdownMessage isStreaming={m.isStreaming}>
-                      {m.text}
-                    </MarkdownMessage>
-                  )}
-                  {m.role === "assistant" && m.text && !m.isStreaming && (
-                    <div className="chat-actions">
-                      <button
-                        className="chat-copy"
-                        onClick={() =>
-                          navigator.clipboard
-                            .writeText(m.text)
-                            .then(() => {
-                              setCopiedMessageId(m.id);
-                              window.setTimeout(
-                                () =>
-                                  setCopiedMessageId((id) =>
-                                    id === m.id ? null : id,
-                                  ),
-                                1600,
-                              );
-                            })
-                            .catch((error) =>
-                              onToast(`Copy failed: ${String(error)}`),
-                            )
-                        }
-                        aria-label="Copy assistant response"
-                        title="Copy response"
-                      >
-                        {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
-                      </button>
-                      <button
-                        className="chat-retry-inline"
-                        onClick={() => {
-                          const lastUser = [...messages]
-                            .reverse()
-                            .find((item) => item.role === "user");
-                          if (lastUser?.text) {
-                            setInput(lastUser.text);
-                            inputRef.current?.focus();
-                          }
-                        }}
-                        aria-label="Try again with last prompt"
-                        title="Copy last prompt back to composer"
-                      >
-                        ↻ TRY AGAIN
-                      </button>
-                      {globalChat && (
-                        <details className="chat-save">
-                          <summary>
-                            {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
-                          </summary>
-                          <div
-                            className="chat-save-options"
-                            aria-label="Save response as"
-                          >
-                            {["knowledge", "memory", "context", "skill"].map(
-                              (kind) => (
-                                <button
-                                  key={kind}
-                                  disabled={savingMessageId === m.id}
-                                  onClick={async (event) => {
-                                    const details =
-                                      event.currentTarget.closest("details");
-                                    setSavingMessageId(m.id);
-                                    try {
-                                      await invoke("save_rag_chat_response", {
-                                        text: m.text,
-                                        kind,
-                                      });
-                                      onToast(`Saved as ${kind}.`);
-                                      details?.removeAttribute("open");
-                                    } catch (error) {
-                                      onToast(`Save failed: ${String(error)}`);
-                                    } finally {
-                                      setSavingMessageId(null);
-                                    }
-                                  }}
-                                >
-                                  {kind}
-                                  <small>
-                                    {kind === "knowledge"
-                                      ? "Reusable answer"
-                                      : kind === "context"
-                                        ? "Chat reference"
-                                        : kind === "memory"
-                                          ? "Stored preference"
-                                          : "Reusable procedure"}
-                                  </small>
-                                </button>
-                              ),
-                            )}
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  )}
-                  {m.role === "system" && shouldOfferRestart(m.text) && (
-                    <button
-                      onClick={() => handleRestart(true)}
-                      className="chat-restart"
-                      disabled={isRestarting}
-                    >
-                      {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
-                    </button>
-                  )}
-                  {m.role === "system" && isPiRuntimeIssue(m.text) && (
-                    <button
-                      onClick={() => void handleFixPiIssue(m)}
-                      className="chat-restart"
-                      disabled={fixingPiIssueId !== null}
-                    >
-                      {fixingPiIssueId === m.id
-                        ? "AI IS FIXING…"
-                        : "✦ FIX WITH AI"}
-                    </button>
-                  )}
-                  {(m.createdAt || m.durationMs) && (
-                    <div className="chat-message-meta">
-                      {m.createdAt && (
-                        <time dateTime={new Date(m.createdAt).toISOString()}>
-                          {formatMessageTime(m.createdAt)}
-                        </time>
-                      )}
-                      {m.role === "assistant" && m.durationMs && (
-                        <span title="Task completion time">
-                          SELESAI DALAM {formatTaskDuration(m.durationMs)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {agentStatus === "stopped" &&
-                    m.role === "user" &&
-                    m.id === messages[messages.length - 1]?.id && (
-                      <button
-                        onClick={() => handleRestart(true)}
-                        className="chat-retry"
-                        title="Retry interrupted task"
-                        aria-label="Retry interrupted task"
-                      >
-                        ↻
-                      </button>
-                    )}
-                  {worktreeDiff &&
-                    shouldShowChanges(
-                      m,
-                      lastAssistantId,
-                      worktreeDiff.files.length,
-                    ) && (
-                      <details className="chat-changes">
-                        <summary>
-                          <strong>FILES CHANGED</strong>
-                          <span>{worktreeDiff.files.length}</span>
-                        </summary>
-                        {worktreeDiff.files.map((file) => (
-                          <button
-                            key={`${file.repository ?? ""}:${file.path}`}
-                            onClick={() => setExpandedDiff(file.path)}
-                          >
-                            <span>{file.status}</span>
-                            <b>
-                              {file.repository && (
-                                <small>{file.repository}</small>
-                              )}
-                              {file.path}
-                            </b>
-                            <i>+{file.added}</i>
-                            <em>-{file.removed}</em>
-                          </button>
-                        ))}
-                      </details>
-                    )}
-                  {m.id === lastAssistantId && terminalApproval && (
-                    <section className="terminal-command-approval" role="alert">
-                      <small>AGENT REQUEST · TERMINAL COMMAND</small>
-                      <pre>{terminalApproval.data}</pre>
-                      <div>
-                        <button
-                          className="approval-primary"
-                          onClick={() => {
-                            const request = terminalApproval;
-                            setTerminalApprovalStatus("executing");
-                            const approved = request.pane
-                              ? invoke("terminal_write", {
-                                  chatId: `${chatId}__${request.pane}`,
-                                  data: request.data,
-                                }).then(
-                                  () =>
-                                    `Command sent to pane ${request.pane}. Read its output now.`,
-                                )
-                              : invoke<string>("terminal_execute_approved", {
-                                  cwd: cwdRef.current,
-                                  command: request.data,
-                                });
-                            void approved
-                              .then(async (output) => {
-                                setTerminalApprovalStatus("refreshing");
-                                await refreshDiff();
-                                setTerminalApproval(null);
-                                return sendRaw({
-                                  type:
-                                    agentStatus === "running"
-                                      ? "steer"
-                                      : "prompt",
-                                  message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
-                                });
-                              })
-                              .catch((error) => {
-                                const message = `Approved terminal command failed: ${String(error)}`;
-                                onToast(message);
-                                void sendRaw({
-                                  type:
-                                    agentStatus === "running"
-                                      ? "steer"
-                                      : "prompt",
-                                  message,
-                                });
-                              })
-                              .finally(() => setTerminalApprovalStatus(null));
-                          }}
-                          disabled={terminalApprovalStatus !== null}
-                        >
-                          {terminalApprovalStatus === "executing"
-                            ? "EXECUTING…"
-                            : terminalApprovalStatus === "refreshing"
-                              ? "REFRESHING CHANGES…"
-                              : "✅ Approve"}
-                        </button>
-                        <button
-                          disabled={terminalApprovalStatus !== null}
-                          onClick={() => {
-                            setTerminalApproval(null);
-                            void sendRaw({
-                              type:
-                                agentStatus === "running" ? "steer" : "prompt",
-                              message:
-                                "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
-                            });
-                            onToast("Terminal command denied");
-                          }}
-                        >
-                          ❌ Deny
-                        </button>
-                      </div>
-                    </section>
-                  )}
-                </div>
-              );
-              rowCacheRef.current.set(m.id, {
-                message: m,
-                diff: worktreeDiff,
-                approval: terminalApproval,
-                restart: handleRestart,
-                refresh: refreshDiff,
-                send: sendRaw,
-                toast: onToast,
-                flags: rowFlags,
-                node,
-              });
-              return node;
-            })}
-            {backgroundWork && agentStatus !== "running" && (
-              <div
-                className="agent-working activity-nodes phase-executing"
-                style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
-                role="status"
-                aria-live="polite"
-              >
-                <span className="agent-working-mark" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <div>
-                  <strong>BACKGROUND AGENT WORKING</strong>
-                  <small className="agent-working-detail">
-                    {backgroundWork.runId
-                      ? `Run ${backgroundWork.runId}`
-                      : "Detached task in progress"}
-                  </small>
-                </div>
-                <span className="agent-working-stats">
-                  <span>
-                    <ElapsedLabel
-                      startedAt={backgroundWork.startedAt}
-                      ticking={isActive}
-                    />
-                  </span>
-                </span>
-              </div>
-            )}
-            {(agentStatus === "running" || isRestarting) &&
-              (() => {
-                const allTools = messages.flatMap(
-                  (message) => message.toolCalls,
-                );
-                const allActive = allTools.filter(
-                  (tool) => tool.phase !== "end",
-                );
-                const activeTool = [...allActive].reverse()[0];
-                const completedCount = allTools.filter(
-                  (tool) => tool.phase === "end",
-                ).length;
-                const completedApiCount = allTools.filter(
-                  (tool) =>
-                    tool.phase === "end" &&
-                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
-                      tool.name,
-                    ),
-                ).length;
-                const lastCompleted = [...allTools]
-                  .reverse()
-                  .find((tool) => tool.phase === "end");
-                const streamingMsg = [...messages]
-                  .reverse()
-                  .find((m) => m.role === "assistant" && m.isStreaming);
-                const streamingText = streamingMsg?.text?.trim() || "";
-                const thinkingText = streamingMsg?.thinking?.trim() || "";
-                const activeRequest = [...messages]
-                  .reverse()
-                  .find((m) => m.role === "user" && m.text.trim())
-                  ?.text.replace(/\s+/g, " ")
-                  .trim()
-                  .slice(0, 90);
-
-                // Multi sub-agent aggregation
-                const activeSubagents = allActive.filter((t) =>
-                  isSubagentTool(t.name),
-                );
-                const primarySubagent = [...activeSubagents].reverse()[0];
-                const subMeta = primarySubagent
-                  ? getSubagentMeta(primarySubagent.args)
-                  : null;
-                const totalSubagentTasks = activeSubagents.reduce(
-                  (acc, t) => acc + getSubagentMeta(t.args).count,
-                  0,
-                );
-
-                let title: string;
-                let detail: string;
-                let icon: string;
-                let phase: "executing" | "writing" | "thinking";
-
-                if (isRestarting) {
-                  phase = "thinking";
-                  title = "RESTARTING PI";
-                  detail = "Starting the agent session";
-                  icon = "meter";
-                } else if (activeTool) {
-                  phase = "executing";
-                  const build = buildPhase(activeTool);
-                  const isMultiSub = activeSubagents.length > 0 && subMeta;
-                  if (build) {
-                    title = "BUILDING";
-                    detail = build;
-                    icon = "build";
-                  } else if (isMultiSub && subMeta) {
-                    title =
-                      totalSubagentTasks > 1 || activeSubagents.length > 1
-                        ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)`
-                        : "SUB-AGENT WORKING";
-                    detail =
-                      totalSubagentTasks > 1
-                        ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}`
-                        : subMeta.detail;
-                    icon = "nodes";
-                  } else if (isWebSearchTool(activeTool.name)) {
-                    title = "SEARCHING WEB";
-                    detail = describeToolActivity(activeTool);
-                    icon = "search";
-                  } else if (
-                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
-                      activeTool.name,
-                    )
-                  ) {
-                    title = "TESTING API";
-                    detail = describeToolActivity(activeTool);
-                    icon = "api";
-                  } else {
-                    const kind = activityKind(activeTool.name);
-                    if (kind === "process") {
-                      title = "RUNNING SESSION";
-                      detail = "Interactive shell";
-                      icon = "terminal";
-                    } else if (kind === "index") {
-                      title = "INDEXING";
-                      detail = "Building knowledge graph";
-                      icon = "graph";
-                    } else if (kind === "loop") {
-                      title = "ITERATING";
-                      detail = "Autonomous pass";
-                      icon = "loop";
-                    } else {
-                      title = "EXECUTING";
-                      detail = describeToolActivity(activeTool);
-                      icon = "meter";
-                    }
-                  }
-                } else if (streamingText) {
-                  phase = "writing";
-                  const lastLine =
-                    streamingText
-                      .split("\n")
-                      .filter(Boolean)
-                      .pop()
-                      ?.slice(0, 55) || "";
-                  title = "RESPONDING";
-                  detail = lastLine
-                    ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}`
-                    : "Writing response";
-                  icon = "meter";
-                } else {
-                  phase = "thinking";
-                  const lastLine =
-                    thinkingText
-                      .split("\n")
-                      .filter(Boolean)
-                      .pop()
-                      ?.slice(0, 55) || "";
-                  if (lastLine) {
-                    title = "REASONING";
-                    detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
-                  } else if (lastCompleted) {
-                    title = "PLANNING NEXT";
-                    detail = describeToolActivity(lastCompleted);
-                  } else {
-                    title = "THINKING";
-                    detail = activeRequest
-                      ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
-                      : "Preparing next step";
-                  }
-                  icon = "meter";
-                }
-
-                const apiProgress =
-                  icon === "api"
-                    ? ((
-                        activeTool?.result as {
-                          details?: {
-                            stage?: unknown;
-                            method?: unknown;
-                            path?: unknown;
-                            httpStatus?: unknown;
-                          };
-                        }
-                      )?.details ?? null)
-                    : null;
-                const apiStage = String(apiProgress?.stage ?? "request");
-                const apiStages = [
-                  "contract",
-                  "destination",
-                  "authentication",
-                  "request",
-                  "response",
-                  "validation",
-                ];
-                const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
-                return (
-                  <section
-                    className="agent-activity"
-                    style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
-                    aria-label="Agent activity"
-                  >
-                    <div
-                      className={`agent-working activity-${icon} phase-${phase}`}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <span className="agent-working-mark" aria-hidden="true">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                      <div>
-                        <strong>{title}</strong>
-                        <small className="agent-working-detail" title={detail}>
-                          {detail}
-                        </small>
-                        {apiProgress && (
-                          <div className="api-live-progress">
-                            <span className="api-live-target">
-                              {String(apiProgress.method ?? "API")} ·{" "}
-                              {String(apiProgress.path ?? "Resolving endpoint")}
-                              {apiProgress.httpStatus != null &&
-                                ` · HTTP ${String(apiProgress.httpStatus)}`}
-                            </span>
-                            <span
-                              className="api-live-track"
-                              aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
-                            >
-                              {apiStages.map((stage, index) => (
-                                <i
-                                  key={stage}
-                                  className={
-                                    index < apiStageIndex
-                                      ? "done"
-                                      : index === apiStageIndex
-                                        ? "active"
-                                        : ""
-                                  }
-                                  title={stage}
-                                />
-                              ))}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      <span className="agent-working-stats">
-                        {icon === "api" && completedApiCount > 0 ? (
-                          <span>
-                            {completedApiCount} API call
-                            {completedApiCount !== 1 ? "s" : ""} done
-                          </span>
-                        ) : completedCount > 0 ? (
-                          <span>
-                            {completedCount} tool
-                            {completedCount !== 1 ? "s" : ""}
-                          </span>
-                        ) : null}
-                        <span>
-                          <ElapsedLabel
-                            startedAt={taskStartedAtRef.current ?? Date.now()}
-                            ticking={isActive}
-                          />
-                        </span>
-                      </span>
-                      <button onClick={handleAbort} disabled={isAborting}>
-                        {isAborting ? "ABORTING…" : "ABORT"}
-                      </button>
-                    </div>
-                    <details className="agent-activity-log" open>
-                      <summary>
-                        {agentTranscript.length
-                          ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
-                          : "Preparing task"}
-                      </summary>
-                      <ul className="agent-transcript" aria-label="Agent tasks">
-                        {agentTranscript.length > 0 ? (
-                          agentTranscript.map((entry) => (
-                            <li key={entry.id}>
-                              <span
-                                className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
-                                aria-hidden="true"
-                              />
-                              <span>
-                                {entry.type === "Agent" &&
-                                entry.detail === "Thinking"
-                                  ? activeRequest
-                                    ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
-                                    : "Preparing next step"
-                                  : entry.detail}
-                              </span>
-                              <small>{entry.type}</small>
-                            </li>
-                          ))
-                        ) : (
-                          <li className="agent-transcript-empty">
-                            <span
-                              className="agent-transcript-mark"
-                              aria-hidden="true"
-                            />
-                            <span>Analyzing request</span>
-                          </li>
-                        )}
-                      </ul>
-                    </details>
-                  </section>
-                );
-              })()}
-            <div ref={bottomRef} style={{ order: Number.MAX_SAFE_INTEGER }} />
-          </div>
-        </div>
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ flex: 1, minHeight: 0 }}
+          data={feedItems}
+          computeItemKey={feedItemKey}
+          followOutput="auto"
+          alignToBottom
+          atBottomStateChange={handleAtBottomStateChange}
+          itemContent={renderFeedItem}
+        />
 
         <ChatComposer
           globalChat={globalChat}
