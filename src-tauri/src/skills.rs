@@ -62,7 +62,8 @@ fn bundled_root(home: &Path) -> Result<PathBuf, String> {
     let path = root.join("screenshot-to-existing-ui/SKILL.md");
     let content = include_str!("../skills/screenshot-to-existing-ui/SKILL.md");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(content) {
-        std::fs::create_dir_all(path.parent().unwrap()).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(path.parent().ok_or("bundled skill path has no parent")?)
+            .map_err(|error| error.to_string())?;
         std::fs::write(&path, content).map_err(|error| error.to_string())?;
     }
     Ok(root)
@@ -141,11 +142,13 @@ fn value(frontmatter: &str, key: &str) -> Option<String> {
             if raw == ">" || raw == "|" || raw.is_empty() {
                 let mut text = Vec::new();
                 while let Some(next) = lines.peek() {
-                    if next.starts_with(' ') {
-                        text.push(lines.next().unwrap().trim());
-                    } else {
+                    if !next.starts_with(' ') {
                         break;
                     }
+                    // `peek()` just returned `Some`, so `next()` is `Some`;
+                    // let-else keeps that provable instead of `unwrap()`.
+                    let Some(indented) = lines.next() else { break };
+                    text.push(indented.trim());
                 }
                 return Some(if raw == ">" {
                     text.join(" ")
@@ -436,13 +439,16 @@ fn safe_subpath(value: &str) -> Result<&Path, String> {
     Ok(path)
 }
 fn temp_clone() -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "crc-skill-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ))
+    static CLONE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    // `unwrap_or_default` instead of `unwrap()`: a system clock before the
+    // Unix epoch must not panic the skill installer. The counter suffix keeps
+    // names unique even if two calls land in the same nanosecond.
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let n = CLONE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("crc-skill-{nanos}-{n}"))
 }
 fn clone_repo(url: &str, reference: Option<&str>) -> Result<(PathBuf, String), String> {
     let dir = temp_clone();
@@ -475,13 +481,7 @@ fn clone_repo(url: &str, reference: Option<&str>) -> Result<(PathBuf, String), S
             return Err("invalid Git reference".into());
         }
         let output = Command::new("git")
-            .args([
-                "-C",
-                dir.to_str().unwrap(),
-                "checkout",
-                "--detach",
-                reference,
-            ])
+            .args(["-C", dir_text, "checkout", "--detach", reference])
             .stdin(Stdio::null())
             .output()
             .map_err(|e| e.to_string())?;
@@ -494,7 +494,7 @@ fn clone_repo(url: &str, reference: Option<&str>) -> Result<(PathBuf, String), S
         }
     }
     let output = Command::new("git")
-        .args(["-C", dir.to_str().unwrap(), "rev-parse", "HEAD"])
+        .args(["-C", dir_text, "rev-parse", "HEAD"])
         .output()
         .map_err(|e| e.to_string())?;
     Ok((dir, String::from_utf8_lossy(&output.stdout).trim().into()))
