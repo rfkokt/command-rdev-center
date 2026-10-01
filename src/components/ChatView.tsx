@@ -4719,6 +4719,14 @@ export default function ChatView({
             dialogRef={expandedDiffRef}
             onPositionChange={setDiffPos}
             onClose={() => setExpandedDiff(null)}
+            worktreePath={worktree?.worktree_path ?? null}
+            repositoryRoots={Object.fromEntries(
+              repositoryStatuses.map((repository) => [
+                repository.name,
+                `${cwdRef.current}/${repository.name}`,
+              ]),
+            )}
+            onToast={onToast}
           />
         )}
       {approval && (
