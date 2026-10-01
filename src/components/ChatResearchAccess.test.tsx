@@ -142,9 +142,10 @@ afterEach(() => {
 });
 
 describe("chat-native Deep Research", () => {
-  it.each([false, true])(
-    "replaces fork history, including an empty branch (%s)",
-    async (emptyHistory) => {
+  it.each(["history", "empty", "reload", "pending-reload"])(
+    "replaces fork history and supports Pi reload (%s)",
+    async (mode) => {
+      const emptyHistory = mode !== "history";
       mockBackend();
       const original = invoke.getMockImplementation()!;
       invoke.mockImplementation((command: string, args: any) => {
@@ -227,19 +228,20 @@ describe("chat-native Deep Research", () => {
       };
       await act(async () => emit(staleHistory));
       expect(screen.queryByText("Stale transcript")).not.toBeInTheDocument();
-      await act(async () =>
-        emit({
-          type: "response",
-          id: requestId,
-          command: "get_messages",
-          success: true,
-          data: {
-            messages: emptyHistory
-              ? []
-              : [{ role: "user", id: "prior-user", content: "Fork history" }],
-          },
-        }),
-      );
+      if (mode !== "pending-reload")
+        await act(async () =>
+          emit({
+            type: "response",
+            id: requestId,
+            command: "get_messages",
+            success: true,
+            data: {
+              messages: emptyHistory
+                ? []
+                : [{ role: "user", id: "prior-user", content: "Fork history" }],
+            },
+          }),
+        );
       await act(async () => emit(staleHistory));
       expect(screen.queryByText("Stale transcript")).not.toBeInTheDocument();
       await waitFor(() =>
@@ -248,6 +250,34 @@ describe("chat-native Deep Research", () => {
       if (!emptyHistory)
         expect(screen.getByText("Fork history")).toBeInTheDocument();
       expect(screen.getByRole("textbox")).toHaveValue("Old prompt");
+      if (mode === "reload" || mode === "pending-reload") {
+        const callsBeforeReload = invoke.mock.calls.filter(
+          ([command, args]) =>
+            command === "send_pi_command" &&
+            JSON.parse(args.jsonLine).type === "get_messages",
+        ).length;
+        fireEvent.click(screen.getByRole("button", { name: "RELOAD PI" }));
+        await waitFor(() =>
+          expect(
+            invoke.mock.calls.filter(
+              ([command, args]) =>
+                command === "send_pi_command" &&
+                JSON.parse(args.jsonLine).type === "get_messages",
+            ).length,
+          ).toBeGreaterThan(callsBeforeReload),
+        );
+        await act(async () =>
+          emit({
+            type: "response",
+            command: "get_messages",
+            success: true,
+            data: {
+              messages: [{ role: "user", content: "Reloaded fork history" }],
+            },
+          }),
+        );
+        expect(screen.getByText("Reloaded fork history")).toBeInTheDocument();
+      }
       expect(screen.getByRole("button", { name: "SEND" })).toBeEnabled();
     },
   );

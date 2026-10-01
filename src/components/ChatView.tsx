@@ -2752,6 +2752,11 @@ export default function ChatView({
           customSystemPrompt,
           projectName,
         });
+        // The old process's fork request must not filter the new process's history.
+        forkHistoryRequestRef.current = null;
+        forkHistoryLoadingRef.current = false;
+        setIsHistoryLoading(false);
+        setIsNewSessionLoading(false);
         setAgentStatus("idle");
         setMessages(clearRestartErrors);
         onToast(retry ? "Agent retrying" : "Pi agent reloaded");
