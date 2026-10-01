@@ -27,6 +27,25 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./ProjectFilesSidebar", () => ({ default: () => null }));
 vi.mock("./FilePicker", () => ({ default: () => null }));
+// react-virtuoso renders nothing in jsdom (no layout engine), so virtualized
+// feed items are invisible to tests. Render every row synchronously instead.
+vi.mock("react-virtuoso", async () => {
+  const React = await import("react");
+  return {
+    Virtuoso: React.forwardRef(function VirtuosoMock(props: any) {
+      const { data = [], computeItemKey, itemContent } = props;
+      return (
+        <div data-testid="virtuoso-mock">
+          {data.map((item: any, index: number) => (
+            <div key={computeItemKey ? computeItemKey(index, item) : index}>
+              {itemContent(index, item)}
+            </div>
+          ))}
+        </div>
+      );
+    }),
+  };
+});
 
 import ChatView from "./ChatView";
 
@@ -247,11 +266,13 @@ describe("chat-native Deep Research", () => {
     render(<ChatView {...baseProps} />);
     const request = await screen.findByText("/research Investigate this");
     const report = screen.getByRole("article");
+    // Feed order is DOM order now (virtualized list); the request must precede its report.
     expect(
-      Number(request.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
-    ).toBeLessThan(
-      Number(report.getAttribute("style")?.match(/order: (\d+)/)?.[1]),
-    );
+      Boolean(
+        request.compareDocumentPosition(report) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
   });
 
   it("renders the complete Markdown report inline without an empty-state claim", async () => {
