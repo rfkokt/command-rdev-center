@@ -35,6 +35,33 @@ export function appendBoundedText(
   return (current + delta).slice(-maxLength);
 }
 
+// Longest prefix of `incoming` that is also a suffix of `current`, computed
+// in O(|incoming| + overlap window) with the KMP prefix function. The naive
+// scan — `current.endsWith(incoming.slice(0, k))` for k = min(n, m) down to
+// 0 — is O(n·m) and stalls a frame on ~200K-char streams.
+function overlapPrefixSuffix(current: string, incoming: string): number {
+  const pattern = incoming;
+  const n = pattern.length;
+  if (n === 0) return 0;
+  const prefix = new Array<number>(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    let j = prefix[i - 1];
+    while (j > 0 && pattern[i] !== pattern[j]) j = prefix[j - 1];
+    if (pattern[i] === pattern[j]) j += 1;
+    prefix[i] = j;
+  }
+  // An overlap longer than |incoming| is impossible, so only the last n chars
+  // of `current` can participate: each call costs O(|incoming|), making the
+  // whole stream O(total chars) instead of O(n·m) per frame.
+  const tail = current.length > n ? current.slice(-n) : current;
+  let j = 0;
+  for (let i = 0; i < tail.length; i++) {
+    while (j > 0 && (j === n || tail[i] !== pattern[j])) j = prefix[j - 1];
+    if (tail[i] === pattern[j]) j += 1;
+  }
+  return j;
+}
+
 export function appendStreamingText(
   current: string,
   incoming: string,
@@ -43,10 +70,7 @@ export function appendStreamingText(
   if (!incoming || current.endsWith(incoming)) return current;
   if (!current || incoming.startsWith(current))
     return incoming.slice(-maxLength);
-  const limit = Math.min(current.length, incoming.length);
-  let overlap = limit;
-  while (overlap > 0 && !current.endsWith(incoming.slice(0, overlap)))
-    overlap--;
+  const overlap = overlapPrefixSuffix(current, incoming);
   return (current + incoming.slice(overlap)).slice(-maxLength);
 }
 
