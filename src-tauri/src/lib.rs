@@ -114,6 +114,8 @@ pub fn run() {
             prompt_engines::delete_prompt_engine,
             diff::get_worktree_diff,
             diff::get_workspace_diff,
+            diff::reject_hunks,
+            diff::apply_hunks,
             scm::scm_status,
             scm::scm_paths,
             scm::scm_all,
