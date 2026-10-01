@@ -1,28 +1,7 @@
 /* Unified application redesign. Loaded last; behavior remains in existing components. */
-:root {
-  --app-canvas: var(--colors-canvas);
-  --app-sidebar: var(--colors-surface-soft);
-  --app-panel: var(--colors-surface-card);
-  --app-panel-raised: var(--colors-surface-elevated);
-  --app-hover: var(--colors-surface-elevated);
-  --app-line: var(--colors-hairline);
-  --app-line-strong: var(--colors-hairline-strong);
-  --app-ink: var(--colors-on-dark);
-  --app-body: var(--colors-body);
-  --app-muted: var(--colors-muted);
-  --app-faint: var(--colors-muted-soft);
-  --app-accent: var(--colors-link);
-  --app-danger: var(--colors-danger);
-  --app-success: var(--colors-success);
-  --app-info: var(--colors-info);
-  --app-radius: 6px;
-  --app-fast: 150ms;
-}
 
 body {
   background: var(--app-canvas);
-  color: var(--app-body);
-  font-kerning: normal;
 }
 .app-shell button,
 .app-shell input,
@@ -48,9 +27,7 @@ body {
 }
 
 /* Native macOS typography: sentence case for human-facing UI; tracking stays on machine data only. */
-.sidebar-brand strong {
-  letter-spacing: 0.04em;
-}
+
 .sidebar-brand small,
 .workspace-title small,
 .sidebar-label,
@@ -100,9 +77,7 @@ body {
 }
 
 /* Navigation topology */
-.sidebar {
-  background: var(--app-sidebar);
-}
+
 .sidebar-brand {
   border-bottom: 1px solid var(--app-line);
 }
@@ -112,14 +87,7 @@ body {
 .projects-panel {
   scrollbar-color: var(--app-line-strong) transparent;
 }
-.sidebar-nav-label {
-  padding: 10px 12px 5px;
-  color: var(--app-faint);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
+
 .sidebar-nav-label:not(:first-child) {
   margin-top: 4px;
   border-top: 1px solid var(--app-line);
@@ -128,16 +96,6 @@ body {
   background: var(--app-panel-raised);
   color: var(--app-accent);
   box-shadow: inset 2px 0 0 var(--app-accent);
-}
-.project-row,
-.conversation-row,
-.settings-button {
-  border-radius: 4px;
-}
-.project-row:hover,
-.conversation-row:hover,
-.settings-button:hover {
-  background: var(--app-hover);
 }
 
 /* Consistent destination frame */
@@ -150,10 +108,7 @@ body {
 .kanban-board > header,
 .pipeline-view > header,
 .pipeline-header {
-  min-height: 72px;
   align-items: center;
-  margin-bottom: 20px;
-  padding-bottom: 16px;
   border-bottom: 1px solid var(--app-line);
 }
 .kanban-board > header > div:first-child,
@@ -191,24 +146,14 @@ body {
 .project-workspace-nav {
   display: flex;
   align-items: center;
-  padding: 3px;
-  border: 1px solid var(--app-line-strong);
-  background: var(--app-sidebar);
 }
 .project-workspace-nav button {
-  min-height: 32px;
   padding: 0 13px;
   color: var(--app-muted);
-  font-size: 13px;
-  font-weight: 700;
 }
 .project-workspace-nav button:hover {
   color: var(--app-ink);
   background: var(--app-hover);
-}
-.project-workspace-nav button.active {
-  background: var(--app-accent);
-  color: var(--app-canvas);
 }
 
 /* Controls */
@@ -272,7 +217,6 @@ body {
 .kanban-column {
   border: 1px solid color-mix(in srgb, var(--kanban-color) 35%, var(--app-line));
   border-top: 3px solid var(--kanban-color);
-  background: color-mix(in srgb, var(--kanban-color) 6%, var(--app-sidebar));
 }
 .kanban-column > header {
   min-height: 58px;
@@ -285,7 +229,6 @@ body {
     var(--kanban-color) 35%,
     var(--app-line)
   );
-  background: color-mix(in srgb, var(--kanban-color) 10%, var(--app-panel));
   color: var(--kanban-color);
 }
 .kanban-column > header strong {
@@ -296,11 +239,10 @@ body {
   text-align: center;
   text-transform: none;
 }
+
 .kanban-column > header span {
   grid-column: 3;
   justify-self: end;
-}
-.kanban-column > header span {
   min-width: 24px;
   height: 24px;
   display: grid;
@@ -330,6 +272,8 @@ body {
   text-transform: none;
 }
 .kanban-card > strong {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   color: var(--app-ink);
   font-size: 14px;
   font-weight: 600;
@@ -983,6 +927,7 @@ body {
   color: var(--app-accent);
 }
 .rag-preview-link {
+  text-underline-offset: 3px;
   color: var(--app-ink);
   text-decoration-color: var(--app-line-strong);
 }
@@ -992,6 +937,7 @@ body {
 
 /* Settings: configuration is a full workbench surface, not a floating card */
 .settings-backdrop {
+  backdrop-filter: blur(4px);
   padding: 0;
 }
 .settings-panel {
@@ -1052,7 +998,6 @@ body {
 }
 .settings-content nav {
   padding: 8px;
-  background: #121310;
 }
 .settings-content nav > button {
   gap: 4px;
@@ -1100,9 +1045,7 @@ body {
 }
 
 /* Chat workbench: conversation + contextual inspector */
-.chat-content {
-  background: var(--app-canvas);
-}
+
 .chat-content > header {
   border-bottom-color: var(--app-line) !important;
   background: var(--app-sidebar) !important;
@@ -1112,13 +1055,8 @@ body {
 }
 .chat-bubble-user {
   max-width: min(72ch, 76%);
-  border: 1px solid var(--app-line);
-  border-radius: var(--app-radius);
-  background: var(--app-panel-raised);
 }
-.markdown-body {
-  color: var(--app-body);
-}
+
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3 {
@@ -1155,20 +1093,9 @@ body {
   background: var(--app-sidebar);
   border-color: var(--app-line);
 }
-.code-section-toggle {
-  min-height: 40px;
-  color: var(--app-muted);
-  letter-spacing: 0.02em;
-}
-.code-section-toggle:hover {
-  background: var(--app-panel-raised);
-}
-.code-section-toggle strong {
-  color: var(--app-body);
-}
+
 .activity-rail button {
   border-left-width: 2px;
-  font-size: 24px;
 }
 .pfs-filter {
   min-height: 32px;
@@ -1177,10 +1104,6 @@ body {
 .pfs-folder {
   min-height: 28px;
   border-left: 0;
-}
-.pfs-file.active {
-  background: var(--app-panel-raised);
-  box-shadow: inset 2px 0 0 var(--app-accent);
 }
 
 .file-preview-backdrop {
@@ -1204,50 +1127,28 @@ body {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 12px 20px;
   border-bottom: 1px solid var(--colors-hairline);
-  background: var(--app-panel);
   cursor: grab;
-  user-select: none;
 }
 .file-preview-title {
   min-width: 0;
   display: grid;
-  gap: 4px;
 }
-.file-preview-title small {
-  color: var(--accent);
-  font-size: var(--type-sm);
-}
+
 .file-preview-title strong {
   overflow: hidden;
-  font-size: var(--type-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .file-preview-actions {
   flex: none;
   display: flex;
-  gap: 8px;
 }
-.file-preview-actions button {
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px solid var(--colors-hairline-strong);
-  color: var(--colors-body);
-  font-size: var(--type-sm);
-}
-.file-preview-actions .file-preview-close {
-  border-color: var(--colors-danger);
-  color: var(--colors-danger);
-}
+
 .file-preview-content {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 20px 30px;
-  background: #0e0f0c;
-  color: #dcded2;
 }
 .pfs-image-preview {
   display: grid;
@@ -1260,11 +1161,7 @@ body {
   object-fit: contain;
 }
 .file-preview-footer {
-  padding: 8px 20px;
   border-top: 1px solid var(--colors-hairline);
-  background: var(--app-panel);
-  color: var(--colors-muted-soft);
-  font-size: var(--type-sm);
 }
 
 /* One overlay vocabulary */
@@ -1294,7 +1191,6 @@ body {
 }
 .approval-dialog {
   width: min(720px, calc(100vw - 32px));
-  border-top: 1px solid var(--app-line-strong);
 }
 .approval-dialog header {
   padding: 18px 20px;
@@ -1318,7 +1214,6 @@ body {
 }
 .approval-options button {
   min-height: 56px;
-  background: var(--app-sidebar);
 }
 .approval-options button:hover {
   background: var(--app-panel-raised);
@@ -1333,26 +1228,6 @@ body {
   background: var(--app-panel-raised);
 }
 
-.chat-mode-toggle {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--app-line);
-  border-radius: 4px;
-  background: var(--app-canvas);
-}
-.chat-mode-toggle button {
-  min-height: 28px;
-  padding: 0 9px;
-  border-radius: 3px;
-  color: var(--app-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-.chat-mode-toggle button.active {
-  background: var(--app-panel-raised);
-  color: var(--app-info);
-}
 .deep-research-view {
   min-height: 0;
   flex: 1;
@@ -1565,7 +1440,6 @@ body {
   max-width: 980px;
   margin: 42px auto 0;
   padding: 0 72px 88px;
-  color: #d8d8d2;
 }
 .research-article-header {
   max-width: 760px;
