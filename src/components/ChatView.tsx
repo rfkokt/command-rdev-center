@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useRef,
   useState,
@@ -62,7 +64,9 @@ import ThinkingBlock from "./ThinkingBlock";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
-import TerminalPanel from "./TerminalPanel";
+// Split the xterm bundle out of the main chunk; it only loads when the
+// terminal is first mounted.
+const TerminalPanel = lazy(() => import("./TerminalPanel"));
 import {
   canResumeResearch,
   elapsedResearch,
@@ -4298,12 +4302,14 @@ export default function ChatView({
       </div>
 
       {terminalMounted && (
-        <TerminalPanel
-          chatId={chatId}
-          cwd={cwd}
-          hidden={!showTerminal}
-          onClose={() => setShowTerminal(false)}
-        />
+        <Suspense fallback={null}>
+          <TerminalPanel
+            chatId={chatId}
+            cwd={cwd}
+            hidden={!showTerminal}
+            onClose={() => setShowTerminal(false)}
+          />
+        </Suspense>
       )}
 
       {pendingDevCommand && (
