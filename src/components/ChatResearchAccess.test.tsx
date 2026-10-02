@@ -323,6 +323,41 @@ describe("chat-native Deep Research", () => {
     },
   );
 
+  it("starts coding without Graphify scans when integration is off", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    expect(
+      invoke.mock.calls.some(
+        ([command]) =>
+          command === "get_graph_status" ||
+          command === "build_graph" ||
+          command === "get_git_fingerprint",
+      ),
+    ).toBe(false);
+  });
+
+  it("continues startup if an opted-in Graphify status check fails", async () => {
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: any) => {
+      if (command === "get_graphify_settings")
+        return Promise.resolve({ enabled: true });
+      if (command === "get_graph_status")
+        return Promise.reject(new Error("graph unavailable"));
+      return original(command, args);
+    });
+    render(<ChatView {...baseProps} />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    expect(
+      invoke.mock.calls.some(([command]) => command === "build_graph"),
+    ).toBe(false);
+  });
+
   it("has no mode toggle and starts only through /research", async () => {
     mockBackend();
     render(<ChatView {...baseProps} />);

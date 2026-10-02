@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
-type GraphifyConfig = { base_url: string; model: string; has_api_key: boolean };
+type GraphifyConfig = {
+  enabled: boolean;
+  base_url: string;
+  model: string;
+  has_api_key: boolean;
+};
 
 export default function GraphifySettings({
   onToast,
@@ -9,6 +14,7 @@ export default function GraphifySettings({
   onToast: (message: string) => void;
 }) {
   const [config, setConfig] = useState<GraphifyConfig>({
+    enabled: false,
     base_url: "",
     model: "",
     has_api_key: false,
@@ -56,13 +62,15 @@ export default function GraphifySettings({
     setSuccess("");
     try {
       const next = await invoke<GraphifyConfig>("save_graphify_settings", {
+        enabled: config.enabled,
         baseUrl: config.base_url,
         model: config.model,
         apiKey: apiKey || null,
       });
       setConfig(next);
       setApiKey("");
-      const message = "Graphify settings saved securely.";
+      const message =
+        "Graphify settings saved. Restart project chats to apply.";
       setSuccess(message);
       onToast(message);
     } catch (e) {
@@ -74,9 +82,19 @@ export default function GraphifySettings({
 
   return (
     <main className="graphify-settings">
+      <label className="settings-toggle">
+        <input
+          type="checkbox"
+          checked={config.enabled}
+          onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
+        />
+        Enable Graphify integration (optional)
+      </label>
       <div className="settings-notice">
-        OpenAI-compatible provider for semantic document extraction. API key is
-        stored in macOS Keychain, never in this repo or settings JSON.
+        Off by default: no automatic graph builds, updates, or context injection
+        during coding chats. Provider settings below are only used while
+        enabled. API key is stored in macOS Keychain, never in this repo or
+        settings JSON.
       </div>
       <label>
         BASE URL
@@ -183,12 +201,7 @@ export default function GraphifySettings({
       <button
         className="save-settings"
         onClick={save}
-        disabled={
-          saving ||
-          !config.base_url.trim() ||
-          !config.model.trim() ||
-          (!apiKey && !config.has_api_key)
-        }
+        disabled={saving}
         aria-busy={saving}
       >
         {saving && <span className="button-spinner" aria-hidden="true" />}

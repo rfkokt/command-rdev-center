@@ -123,6 +123,16 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+test("never deletes worktrees as startup housekeeping", async () => {
+  render(<App />);
+  await screen.findByText("v1.2.3");
+  expect(
+    invokeMock.mock.calls.some(
+      ([command]) => command === "cleanup_orphaned_worktrees",
+    ),
+  ).toBe(false);
+});
+
 test("persists explicit appearance and removes storage for system mode", () => {
   render(<App />);
 

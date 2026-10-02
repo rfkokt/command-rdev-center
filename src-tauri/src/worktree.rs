@@ -715,6 +715,23 @@ fn cleanup_orphaned_worktrees_blocking(active_slugs: Vec<String>) -> Result<usiz
             if active.contains(slug) || !worktree.is_dir() {
                 continue;
             }
+            // ponytail: plain `git worktree remove` (no --force) — dirty or
+            // in-use worktrees make git itself refuse, so uncommitted work and
+            // live sessions survive cleanup. Force removal stays an explicit
+            // user action (force_remove_worktree).
+            let wt = worktree.to_string_lossy().to_string();
+            let branch = String::from_utf8_lossy(
+                &Command::new("git")
+                    .args(["-C", &wt, "branch", "--show-current"])
+                    .output()
+                    .map_err(|e| e.to_string())?
+                    .stdout,
+            )
+            .trim()
+            .to_string();
+            if !branch.starts_with("crc/") {
+                continue;
+            }
             let common = Command::new("git")
                 .args([
                     "-C",
@@ -732,23 +749,27 @@ fn cleanup_orphaned_worktrees_blocking(active_slugs: Vec<String>) -> Result<usiz
             let Some(repository) = common.parent() else {
                 continue;
             };
-            force_remove_registered_worktree(repository, &worktree.to_string_lossy())?;
+            let removed_wt = Command::new("git")
+                .args([
+                    "-C",
+                    &repository.to_string_lossy(),
+                    "worktree",
+                    "remove",
+                    &wt,
+                ])
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !removed_wt.status.success() {
+                continue; // dirty, locked, or live — never force here
+            }
+            let _ = Command::new("git")
+                .args(["-C", &repository.to_string_lossy(), "branch", "-D", &branch])
+                .output();
             removed += 1;
         }
     }
-    let sessions = root.join("workspace-sessions");
-    if sessions.exists() {
-        for entry in std::fs::read_dir(sessions).map_err(|e| e.to_string())? {
-            let path = entry.map_err(|e| e.to_string())?.path();
-            let slug = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if !active.contains(slug) {
-                std::fs::remove_dir_all(path).map_err(|e| e.to_string())?;
-            }
-        }
-    }
+    // ponytail: workspace-sessions dirs are no longer auto-deleted here —
+    // local tabs cannot prove another instance's session is dead.
     Ok(removed)
 }
 

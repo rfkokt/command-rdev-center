@@ -188,10 +188,20 @@ pub fn apply_jev_env(command: &mut Command) -> Option<String> {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct GraphifySettings {
+    #[serde(default)]
+    pub enabled: bool,
     pub base_url: String,
     pub model: String,
     #[serde(default)]
     pub has_api_key: bool,
+}
+
+/// Opt-in: Graphify integration only activates when the user enables it.
+pub fn graphify_enabled() -> bool {
+    std::fs::read_to_string(graphify_settings_path().unwrap_or_default())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<GraphifySettings>(&raw).ok())
+        .is_some_and(|s| s.enabled)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -282,6 +292,9 @@ pub fn graphify_env() -> Option<(String, String, String)> {
     let settings: GraphifySettings =
         serde_json::from_str(&std::fs::read_to_string(graphify_settings_path().ok()?).ok()?)
             .ok()?;
+    if !settings.enabled {
+        return None;
+    }
     let key = keychain_key().ok()?;
     (!key.is_empty() && validate_graphify_settings(&settings).is_ok())
         .then(|| (settings.base_url, settings.model, key))
@@ -356,6 +369,7 @@ fn fetch_graphify_models_blocking(
     api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
     let settings = GraphifySettings {
+        enabled: true,
         base_url: base_url.trim().trim_end_matches('/').to_string(),
         model: "placeholder".into(),
         has_api_key: false,
@@ -421,16 +435,21 @@ pub async fn fetch_graphify_models(
 }
 
 fn save_graphify_settings_blocking(
+    enabled: bool,
     base_url: String,
     model: String,
     api_key: Option<String>,
 ) -> Result<GraphifySettings, String> {
     let settings = GraphifySettings {
+        enabled,
         base_url: base_url.trim().trim_end_matches('/').to_string(),
         model: model.trim().to_string(),
         has_api_key: false,
     };
-    validate_graphify_settings(&settings)?;
+    if enabled && (!settings.base_url.is_empty() || !settings.model.is_empty() || api_key.is_some())
+    {
+        validate_graphify_settings(&settings)?;
+    }
     if let Some(key) = api_key.filter(|key| !key.trim().is_empty()) {
         security_framework::passwords::set_generic_password(
             GRAPHIFY_KEYCHAIN_SERVICE,
@@ -438,7 +457,7 @@ fn save_graphify_settings_blocking(
             key.trim().as_bytes(),
         )
         .map_err(|e| format!("Failed to save API key to macOS Keychain: {e}"))?;
-    } else if keychain_key().is_err() {
+    } else if enabled && keychain_key().is_err() {
         return Err("API key is required".into());
     }
     let path = graphify_settings_path()?;
@@ -452,12 +471,13 @@ fn save_graphify_settings_blocking(
 
 #[tauri::command]
 pub async fn save_graphify_settings(
+    enabled: bool,
     base_url: String,
     model: String,
     api_key: Option<String>,
 ) -> Result<GraphifySettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        save_graphify_settings_blocking(base_url, model, api_key)
+        save_graphify_settings_blocking(enabled, base_url, model, api_key)
     })
     .await
     .map_err(|e| format!("Failed to save Graphify settings: {e}"))?
@@ -466,6 +486,23 @@ pub async fn save_graphify_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn graphify_is_opt_in_for_new_and_legacy_settings() {
+        let defaults = GraphifySettings::default();
+        assert!(!defaults.enabled);
+        assert!(!graphify_enabled());
+        // Legacy settings written before `enabled` existed deserialize as off.
+        let legacy: GraphifySettings = serde_json::from_str(
+            r#"{"base_url":"https://x.example","model":"m","has_api_key":true}"#,
+        )
+        .unwrap();
+        assert!(!legacy.enabled);
+        assert_eq!(legacy.base_url, "https://x.example");
+        assert!(!serde_json::to_string(&defaults)
+            .unwrap()
+            .contains("\"enabled\":true"));
+    }
+
     #[test]
     fn rejects_unknown_scope() {
         assert!(settings_path("other", None).is_err());
@@ -537,6 +574,7 @@ mod tests {
     #[test]
     fn graphify_url_requires_https_or_localhost() {
         let valid = GraphifySettings {
+            enabled: true,
             base_url: "https://router.example/v1".into(),
             model: "model".into(),
             has_api_key: false,

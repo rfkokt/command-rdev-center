@@ -181,16 +181,8 @@ export default function App() {
 
   useEffect(() => {
     fetchConfig();
-    invoke<number>("cleanup_orphaned_worktrees", {
-      activeSlugs: savedTabs()
-        .filter((tab) => !tab.global)
-        .map((tab) => chatSlug(tab.id)),
-    })
-      .then((removed) => {
-        if (typeof removed === "number" && removed > 0)
-          addToast(`Cleaned up ${removed} orphaned worktree(s)`);
-      })
-      .catch((error) => addToast(`Worktree cleanup: ${String(error)}`));
+    // Tabs are instance-local: they cannot authorize deleting another instance's worktrees.
+    // Worktree removal is an explicit user action, never startup housekeeping.
     getVersion()
       .then(setAppVersion)
       .catch(() => {});
