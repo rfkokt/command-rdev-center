@@ -5,6 +5,186 @@ use std::process::{Command, Stdio};
 
 const GRAPHIFY_KEYCHAIN_SERVICE: &str = "command-rdev-center.graphify";
 const GRAPHIFY_KEYCHAIN_ACCOUNT: &str = "openai-api-key";
+const JEV_KEYCHAIN_SERVICE: &str = "command-rdev-center.jev";
+const JEV_KEYCHAIN_ACCOUNT: &str = "api-key";
+static JEV_SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct JevSettings {
+    pub mode: String,
+    pub endpoint: String,
+    pub model: String,
+    pub timeout_ms: u64,
+    pub generation: String,
+    #[serde(skip_deserializing)]
+    pub has_api_key: bool,
+}
+
+impl Default for JevSettings {
+    fn default() -> Self {
+        Self {
+            mode: "off".into(),
+            endpoint: "https://api.typesafe.ai/v1/systemone".into(),
+            model: "jev-1.13.0".into(),
+            timeout_ms: 2500,
+            generation: String::new(),
+            has_api_key: false,
+        }
+    }
+}
+
+fn jev_settings_path() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    Ok(PathBuf::from(home).join("Library/Application Support/command-rdev-center/jev.json"))
+}
+
+fn validate_jev_settings(settings: &JevSettings) -> Result<(), String> {
+    if !["off", "shadow", "advisory"].contains(&settings.mode.as_str()) {
+        return Err("Jev mode must be off, shadow, or advisory".into());
+    }
+    if settings.model.trim().is_empty() || !(100..=30_000).contains(&settings.timeout_ms) {
+        return Err("Jev requires a model and timeout between 100 and 30000 ms".into());
+    }
+    let url = url::Url::parse(&settings.endpoint).map_err(|_| "Invalid Jev endpoint")?;
+    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !(url.scheme() == "https" || (url.scheme() == "http" && local))
+    {
+        return Err("Jev endpoint requires HTTPS or exact loopback HTTP, without credentials, query, or fragment".into());
+    }
+    Ok(())
+}
+
+fn jev_key() -> Result<String, String> {
+    let bytes = security_framework::passwords::get_generic_password(
+        JEV_KEYCHAIN_SERVICE,
+        JEV_KEYCHAIN_ACCOUNT,
+    )
+    .map_err(|_| "Jev API key not configured")?;
+    let key = String::from_utf8(bytes).map_err(|_| "Invalid Jev API key")?;
+    if key.trim().is_empty() || key.contains(['\r', '\n']) {
+        return Err("Invalid Jev API key".into());
+    }
+    Ok(key)
+}
+
+#[tauri::command]
+pub fn get_jev_settings() -> Result<JevSettings, String> {
+    let path = jev_settings_path()?;
+    let mut settings = if path.exists() {
+        serde_json::from_str::<JevSettings>(
+            &std::fs::read_to_string(path).map_err(|_| "Cannot read Jev settings")?,
+        )
+        .map_err(|_| "Invalid Jev settings JSON")?
+    } else {
+        JevSettings::default()
+    };
+    validate_jev_settings(&settings)?;
+    settings.has_api_key = jev_key().is_ok();
+    Ok(settings)
+}
+
+#[tauri::command]
+pub async fn save_jev_settings(
+    mut settings: JevSettings,
+    api_key: Option<String>,
+) -> Result<JevSettings, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = JEV_SETTINGS_LOCK
+            .lock()
+            .map_err(|_| "Jev settings lock unavailable")?;
+        validate_jev_settings(&settings)?;
+        if let Some(key) = api_key.filter(|key| !key.trim().is_empty()) {
+            if key.contains(['\r', '\n']) {
+                return Err("Invalid Jev API key".into());
+            }
+            security_framework::passwords::set_generic_password(
+                JEV_KEYCHAIN_SERVICE,
+                JEV_KEYCHAIN_ACCOUNT,
+                key.trim().as_bytes(),
+            )
+            .map_err(|_| "Cannot save Jev API key to macOS Keychain")?;
+        }
+        if settings.mode != "off" && jev_key().is_err() {
+            return Err("Set a Jev API key before enabling routing".into());
+        }
+        let path = jev_settings_path()?;
+        std::fs::create_dir_all(path.parent().ok_or("Invalid Jev settings directory")?)
+            .map_err(|_| "Cannot create Jev settings directory")?;
+        let mut generation = [0u8; 16];
+        getrandom::fill(&mut generation)
+            .map_err(|_| "Cannot create Jev configuration generation")?;
+        settings.generation = generation
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        write_jev_settings(&path, &settings)?;
+        get_jev_settings()
+    })
+    .await
+    .map_err(|_| "Jev settings worker failed")?
+}
+
+fn write_jev_settings(path: &Path, settings: &JevSettings) -> Result<(), String> {
+    let raw = serde_json::to_string_pretty(settings).map_err(|_| "Cannot encode Jev settings")?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, format!("{raw}\n")).map_err(|_| "Cannot write Jev settings")?;
+    std::fs::rename(temp, path).map_err(|_| "Cannot save Jev settings".to_string())
+}
+
+fn disable_jev_at_path(path: &Path, expected_generation: &str) -> Result<bool, String> {
+    let mut settings: JevSettings = serde_json::from_str(
+        &std::fs::read_to_string(path).map_err(|_| "Cannot read Jev settings")?,
+    )
+    .map_err(|_| "Invalid Jev settings JSON")?;
+    // A stale chat must not turn off settings the user has saved since that chat started.
+    if settings.generation != expected_generation || settings.mode == "off" {
+        return Ok(false);
+    }
+    settings.mode = "off".into();
+    write_jev_settings(path, &settings)?;
+    Ok(true)
+}
+
+pub fn disable_jev_for_billing(expected_generation: &str) -> Result<bool, String> {
+    let _guard = JEV_SETTINGS_LOCK
+        .lock()
+        .map_err(|_| "Jev settings lock unavailable")?;
+    disable_jev_at_path(&jev_settings_path()?, expected_generation)
+}
+
+/// Applied to project sessions only, including runtime-repair respawns.
+pub fn apply_jev_env(command: &mut Command) -> Option<String> {
+    // Do not inherit shell configuration accidentally: opt-in is app-owned.
+    for name in [
+        "CRC_JEV_API_KEY",
+        "CRC_JEV_ENDPOINT",
+        "CRC_JEV_MODEL",
+        "CRC_JEV_TIMEOUT_MS",
+        "CRC_JEV_SETTINGS_PATH",
+    ] {
+        command.env_remove(name);
+    }
+    command.env("CRC_JEV_MODE", "off");
+    let settings = get_jev_settings().ok()?;
+    if settings.mode == "off" {
+        return None;
+    }
+    command
+        .env("CRC_JEV_MODE", settings.mode)
+        .env("CRC_JEV_ENDPOINT", settings.endpoint)
+        .env("CRC_JEV_MODEL", settings.model)
+        .env("CRC_JEV_TIMEOUT_MS", settings.timeout_ms.to_string())
+        .env("CRC_JEV_SETTINGS_PATH", jev_settings_path().ok()?);
+    if let Ok(key) = jev_key() {
+        command.env("CRC_JEV_API_KEY", key);
+    }
+    Some(settings.generation)
+}
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct GraphifySettings {
@@ -289,6 +469,69 @@ mod tests {
     #[test]
     fn rejects_unknown_scope() {
         assert!(settings_path("other", None).is_err());
+    }
+
+    #[test]
+    fn jev_defaults_are_opt_in_and_do_not_deserialize_key_presence() {
+        let defaults = JevSettings::default();
+        assert_eq!(defaults.mode, "off");
+        assert!(validate_jev_settings(&defaults).is_ok());
+        let stored: JevSettings = serde_json::from_str(r#"{"has_api_key":true}"#).unwrap();
+        assert!(!stored.has_api_key);
+        assert_eq!(stored.mode, "off");
+        assert!(!serde_json::to_string(&defaults).unwrap().contains("apiKey"));
+    }
+
+    #[test]
+    fn jev_rejects_credential_urls_and_loopback_prefix_lookalikes() {
+        for endpoint in [
+            "http://localhost.evil.test/v1/systemone",
+            "http://127.0.0.1.evil.test",
+            "https://secret@example.com",
+            "https://example.com/?key=secret",
+            "https://example.com/#secret",
+            "file:///tmp/key",
+        ] {
+            assert!(
+                validate_jev_settings(&JevSettings {
+                    endpoint: endpoint.into(),
+                    ..JevSettings::default()
+                })
+                .is_err(),
+                "{endpoint}"
+            );
+        }
+        for endpoint in [
+            "https://api.typesafe.ai/v1/systemone",
+            "http://localhost:1234/v1/systemone",
+            "http://127.0.0.1:1234/v1/systemone",
+            "http://[::1]:1234/v1/systemone",
+        ] {
+            assert!(
+                validate_jev_settings(&JevSettings {
+                    endpoint: endpoint.into(),
+                    ..JevSettings::default()
+                })
+                .is_ok(),
+                "{endpoint}"
+            );
+        }
+    }
+
+    #[test]
+    fn jev_requires_supported_mode_and_bounded_timeout() {
+        assert!(validate_jev_settings(&JevSettings {
+            mode: "automatic".into(),
+            ..JevSettings::default()
+        })
+        .is_err());
+        for timeout_ms in [0, 99, 30_001] {
+            assert!(validate_jev_settings(&JevSettings {
+                timeout_ms,
+                ..JevSettings::default()
+            })
+            .is_err());
+        }
     }
 
     #[test]

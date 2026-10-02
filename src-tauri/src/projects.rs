@@ -18,6 +18,8 @@ const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts")
 const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
 const BROWSER_TOOLS_EXTENSION: &str = include_str!("../extensions/browser-tools.ts");
 const API_TEST_EXTENSION: &str = include_str!("../extensions/api-test.ts");
+const JEV_ROUTING_EXTENSION: &str = include_str!("../extensions/jev-routing.ts");
+const JEV_CLIENT: &str = include_str!("../extensions/jev-client.ts");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -272,6 +274,8 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("agent-reach-security.ts", AGENT_REACH_SECURITY),
         ("browser-tools.ts", BROWSER_TOOLS_EXTENSION),
         ("api-test.ts", API_TEST_EXTENSION),
+        ("jev-routing.ts", JEV_ROUTING_EXTENSION),
+        ("jev-client.ts", JEV_CLIENT),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }

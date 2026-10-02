@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "status": "seed_labels_not_live_evaluated",
+  "purpose": "Initial human-authored fixtures; neither semantic accuracy nor rollout thresholds have been measured.",
+  "evaluation_policy": {
+    "routing": "Measure relevant choice and no-match accuracy against labels; ambiguous fixtures require human review.",
+    "file_search": "Measure recall of labelled relevant files and access to uncertain candidates.",
+    "project_rules": "Measure false positives/negatives; user authorization must be respected.",
+    "compaction": "Resume sessions and verify required facts plus retrieval; retained keyword strings alone are insufficient."
+  },
+  "cases": [
+    {
+      "id": "route-01",
+      "feature": "tool-skill",
+      "request": "Perbaiki modal React supaya focus kembali ke tombol pemicu setelah ditutup.",
+      "candidates": {
+        "tools": [
+          "read",
+          "edit"
+        ],
+        "skills": [
+          "frontend-design",
+          "pdf"
+        ]
+      },
+      "expected": {
+        "skill": "frontend-design",
+        "excluded_skills": [
+          "pdf"
+        ]
+      },
+      "label": "positive"
+    },
+    {
+      "id": "route-02",
+      "feature": "tool-skill",
+      "request": "Halo, apa kabar?",
+      "candidates": {
+        "tools": [
+          "read",
+          "edit"
+        ],
+        "skills": [
+          "frontend-design",
+          "pdf"
+        ]
+      },
+      "expected": {
+        "tool": "none",
+        "skill": "none"
+      },
+      "label": "negative"
+    },
+    {
+      "id": "route-03",
+      "feature": "tool-skill",
+      "request": "Jelaskan alur login lalu perbaiki layout login kalau perlu.",
+      "candidates": {
+        "tools": [
+          "read",
+          "edit"
+        ],
+        "skills": [
+          "frontend-design",
+          "supabase"
+        ]
+      },
+      "expected": {
+        "allowed_skills": [
+          "none",
+          "frontend-design",
+          "supabase"
+        ],
+        "human_review": true
+      },
+      "label": "ambiguous"
+    },
+    {
+      "id": "file-01",
+      "feature": "file-search",
+      "request": "Temukan fungsi yang menyimpan settings Pi.",
+      "candidates": [
+        "src-tauri/src/settings.rs",
+        "src/components/MarkdownMessage.tsx"
+      ],
+      "expected": {
+        "relevant_files": [
+          "src-tauri/src/settings.rs"
+        ]
+      },
+      "label": "positive"
+    },
+    {
+      "id": "file-02",
+      "feature": "file-search",
+      "request": "Temukan implementasi export video.",
+      "candidates": [
+        "src-tauri/src/settings.rs"
+      ],
+      "expected": {
+        "no_relevant_candidate": true
+      },
+      "label": "negative"
+    },
+    {
+      "id": "file-03",
+      "feature": "file-search",
+      "request": "Perbaiki skill rekomendasi di chat.",
+      "candidates": [
+        "src/lib/skill-recommendations.ts",
+        "src/components/ChatView.tsx",
+        "src-tauri/extensions/kanban-task.ts"
+      ],
+      "expected": {
+        "retain_uncertain_candidates": true,
+        "human_review": true
+      },
+      "label": "ambiguous"
+    },
+    {
+      "id": "rule-01",
+      "feature": "project-rules",
+      "request": "Tambahkan fitur tanpa mengubah API publik.",
+      "rule": "Jangan ubah nama export publik.",
+      "proposal": "Rename exported function loadSettings to getSettings.",
+      "expected": {
+        "violation": true,
+        "requires_rule_quote": true
+      },
+      "label": "positive"
+    },
+    {
+      "id": "rule-02",
+      "feature": "project-rules",
+      "request": "Untuk task ini, ubah nama export loadSettings menjadi getSettings dan update pemanggilnya.",
+      "rule": "Prefer existing exported names unless the user explicitly requests a rename.",
+      "proposal": "Rename loadSettings to getSettings and update callers.",
+      "expected": {
+        "violation": false,
+        "explicit_user_authorization": true
+      },
+      "label": "negative"
+    },
+    {
+      "id": "rule-03",
+      "feature": "project-rules",
+      "request": "Perbaiki formatting.",
+      "rule": "Hindari perubahan perilaku.",
+      "proposal": "Rewrite condition with missing surrounding source context.",
+      "expected": {
+        "uncertain": true,
+        "no_probability_only_block": true
+      },
+      "label": "ambiguous"
+    },
+    {
+      "id": "compact-01",
+      "feature": "compaction",
+      "session_facts": [
+        "User requires backwards compatibility.",
+        "auth.ts changed.",
+        "Last login regression test failed.",
+        "Agent proposes checking cookie expiry next."
+      ],
+      "expected": {
+        "must_retain": [
+          "backwards compatibility",
+          "auth.ts changed",
+          "test failed",
+          "cookie expiry"
+        ],
+        "resume_check_required": true
+      },
+      "label": "positive"
+    },
+    {
+      "id": "compact-02",
+      "feature": "compaction",
+      "session_facts": [
+        "Identical successful install output repeated five times; full output stored at an artifact reference."
+      ],
+      "expected": {
+        "can_discard_duplicate_body": true,
+        "must_retain_retrieval_reference": true
+      },
+      "label": "negative"
+    },
+    {
+      "id": "compact-03",
+      "feature": "compaction",
+      "session_facts": [
+        "Tool output might contain the only reproduction detail for an unresolved intermittent failure."
+      ],
+      "expected": {
+        "retain_uncertain_information": true
+      },
+      "label": "ambiguous"
+    }
+  ]
+}

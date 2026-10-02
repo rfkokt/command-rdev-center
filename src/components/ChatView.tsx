@@ -1,10 +1,13 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useRef,
   useState,
   useCallback,
   useMemo,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,13 +28,12 @@ import type {
 import { parseApprovalRequest } from "../lib/rpc";
 import {
   formatTokens,
-  appendBoundedText,
   appendStreamingText,
   recentItems,
   uid,
   shouldShowChanges,
   preserveStreamedContent,
-  shouldSubmitCommand,
+  sameAssistantResponse,
   terminalCommandIsDestructive,
   insertSteerMessage,
   ensureAssistantTurn,
@@ -41,11 +43,14 @@ import {
   settleAgentMessages,
   settleWithError,
   shouldOfferRestart,
+  isPiRuntimeIssue,
   clearRestartErrors,
   agentNotification,
   projectTaskIntent,
   researchQuery,
   tsvToMarkdown,
+  applyPlanModePrefix,
+  planApprovalPending,
 } from "./chat-utils";
 import ToolCallView, {
   BrowserScreenshot,
@@ -58,13 +63,12 @@ import ToolCallView, {
 } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
-import { ChangesIcon, ExplorerIcon } from "./Icons";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
-import FilePicker, { type FilePickerHandle } from "./FilePicker";
-import ProjectFilesSidebar from "./ProjectFilesSidebar";
-import SourceControlPanel from "./SourceControlPanel";
-import TerminalPanel from "./TerminalPanel";
+import { type FilePickerHandle } from "./FilePicker";
+// Split the xterm bundle out of the main chunk; it only loads when the
+// terminal is first mounted.
+const TerminalPanel = lazy(() => import("./TerminalPanel"));
 import {
   canResumeResearch,
   elapsedResearch,
@@ -72,16 +76,71 @@ import {
   type ResearchRun,
 } from "../lib/deep-research";
 import { useModalFocus } from "./useModalFocus";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import ModelPickerDialog from "./ModelPickerDialog";
+import ChatComposer from "./ChatComposer";
+import ChatRightSidebar from "./ChatRightSidebar";
+import ExpandedDiffPanel from "./ExpandedDiffPanel";
+import SessionTreePanel from "./SessionTreePanel";
+import {
+  buildPhase,
+  transcriptEntry,
+  describeToolActivity,
+} from "./chat-activity-text";
+
+// One chronological feed row for the virtualized message list. Message and
+// research rows interleave by their original flex `order` keys so the virtual
+// list renders in exactly the same visual order the CSS flexbox used before.
+type FeedItem =
+  | { kind: "session-loading"; order: number }
+  | { kind: "history-state"; order: number }
+  | { kind: "research-request"; run: ResearchRun; order: number }
+  | { kind: "research-report"; run: ResearchRun; order: number }
+  | { kind: "message"; message: ChatMessage; order: number }
+  | { kind: "background-work"; order: number }
+  | { kind: "agent-activity"; order: number };
+
+// Stable identity for virtualized rows; must match the keys the old
+// non-virtualized list used (message ids and research run ids).
+function feedItemKey(_index: number, item: FeedItem): string {
+  switch (item.kind) {
+    case "message":
+      return item.message.id;
+    case "research-request":
+      return `${item.run.id}-request`;
+    case "research-report":
+      return item.run.id;
+    case "session-loading":
+      return "session-loading";
+    case "history-state":
+      return "history-state";
+    case "background-work":
+      return "background-work";
+    case "agent-activity":
+      return "agent-activity";
+  }
+}
+
+const FEED_ITEM_STYLE: CSSProperties = {
+  maxWidth: 880,
+  width: "100%",
+  margin: "0 auto",
+  padding: "0 var(--spacing-md) var(--spacing-xl)",
+};
 
 type PiEventPayload = { session_id: string; raw: string };
-type WorktreeInfo = {
+export type WorktreeInfo = {
   worktree_path: string;
   branch: string;
   repo_name: string;
   slug: string;
   parent_ref: string;
 };
-type SlashCommand = { name: string; description?: string; source: string };
+export type SlashCommand = {
+  name: string;
+  description?: string;
+  source: string;
+};
 type GraphStatus = {
   state: "none" | "fresh" | "stale-code" | "stale-docs";
   code_stale: boolean;
@@ -95,7 +154,18 @@ type GraphProgress = {
   total: number;
   activity: string;
 };
-type WorktreeDiff = {
+export type ChatRepository = {
+  name: string;
+  path: string;
+  base_branch?: string;
+  branch?: string;
+  tracking_branch?: string;
+  remote_url?: string;
+  ahead?: number;
+  behind?: number;
+  dirty_files?: string[];
+};
+export type WorktreeDiff = {
   merge_base: string;
   files: Array<{
     repository?: string;
@@ -126,7 +196,7 @@ type SessionStats = {
     percent: number | null;
   };
 };
-type ChatFile = { name: string; path: string };
+export type ChatFile = { name: string; path: string };
 type ChatAttachment = ChatFile & { content: string };
 
 function attachmentContext(attachments: ChatAttachment[]) {
@@ -155,69 +225,6 @@ const ElapsedLabel = memo(function ElapsedLabel({
   return <>{s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`}</>;
 });
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
-type DiffSide = {
-  number?: number;
-  text: string;
-  kind: "same" | "removed" | "added" | "empty";
-};
-type DiffRow = { before: DiffSide; after: DiffSide };
-function sideBySide(patch: string): DiffRow[] {
-  const rows: DiffRow[] = [];
-  let oldLine = 0,
-    newLine = 0;
-  const removed: DiffSide[] = [],
-    added: DiffSide[] = [];
-  const flush = () => {
-    const count = Math.max(removed.length, added.length);
-    for (let i = 0; i < count; i++)
-      rows.push({
-        before: removed[i] ?? { text: "", kind: "empty" },
-        after: added[i] ?? { text: "", kind: "empty" },
-      });
-    removed.length = added.length = 0;
-  };
-  for (const line of patch.split("\n")) {
-    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-    if (hunk) {
-      flush();
-      oldLine = Number(hunk[1]);
-      newLine = Number(hunk[2]);
-      continue;
-    }
-    if (
-      /^(diff --git|index |--- |\+\+\+ )/.test(line) ||
-      (!oldLine && !newLine)
-    )
-      continue;
-    if (line.startsWith("-"))
-      removed.push({ number: oldLine++, text: line.slice(1), kind: "removed" });
-    else if (line.startsWith("+"))
-      added.push({ number: newLine++, text: line.slice(1), kind: "added" });
-    else {
-      flush();
-      const text = line.startsWith(" ") ? line.slice(1) : line;
-      rows.push({
-        before: { number: oldLine++, text, kind: "same" },
-        after: { number: newLine++, text, kind: "same" },
-      });
-    }
-  }
-  flush();
-  return rows;
-}
-function splitPatch(patch: string) {
-  const rows = sideBySide(patch);
-  return rows.map((row, index) => (
-    <div className="split-row" key={index}>
-      {[row.before, row.after].map((side, si) => (
-        <div className={`diff-line ${side.kind}`} key={si}>
-          <span>{side.number ?? ""}</span>
-          <code>{side.text || " "}</code>
-        </div>
-      ))}
-    </div>
-  ));
-}
 
 function formatTaskDuration(ms: number) {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -299,78 +306,6 @@ function deriveAtQuery(text: string): string | null {
   return q;
 }
 
-function buildPhase(tool: ToolCall) {
-  if (tool.phase === "end" || !["bash", "functions.bash"].includes(tool.name))
-    return null;
-  const command = String(tool.args.command ?? "").toLowerCase();
-  if (
-    !/(npm|pnpm|yarn|bun|cargo|gradle|mvn|make).*(build|package|compile)|tauri build|vite build|tsc/.test(
-      command,
-    )
-  )
-    return null;
-  if (command.includes("check:version")) return "Checking app version";
-  if (command.includes("tsc")) return "Compiling TypeScript";
-  if (command.includes("vite build")) return "Bundling frontend assets";
-  if (command.includes("cargo") || command.includes("tauri build"))
-    return "Compiling desktop application";
-  return "Building project";
-}
-
-function describeToolActivity(tool: ToolCall): string {
-  const name = tool.name.replace(/^functions\./, "");
-  const a = tool.args;
-  if (name === "bash" || name === "functions.bash") {
-    const cmd = String(a.command ?? "")
-      .replace(/\s+/g, " ")
-      .trim();
-    return cmd.length > 60 ? cmd.slice(0, 57) + "…" : cmd || "Running command";
-  }
-  if (
-    name === "edit" ||
-    name === "write" ||
-    name === "read" ||
-    name === "view"
-  ) {
-    const p = String(a.path ?? a.file ?? a.target ?? "");
-    const base = p.split("/").pop() || p;
-    const verb =
-      name === "edit" ? "Editing" : name === "write" ? "Writing" : "Reading";
-    return base ? `${verb} ${base}` : `${verb} file`;
-  }
-  if (name === "search" || name === "grep" || name === "ripgrep") {
-    const q = String(a.query ?? a.pattern ?? "").slice(0, 40);
-    return q ? `Searching "${q}"` : "Searching codebase";
-  }
-  if (name === "web_search" || name === "fetch_content") {
-    const q = String(a.query ?? a.url ?? "").slice(0, 40);
-    return q ? `Web: ${q}` : "Searching web";
-  }
-  if (name === "api_contract_test" || name === "api_request") {
-    const partial = tool.result as
-      | { details?: { activity?: unknown }; activity?: unknown }
-      | undefined;
-    const activity = partial?.details?.activity ?? partial?.activity;
-    if (typeof activity === "string" && activity) return activity;
-    const method = String(a.method ?? "").toUpperCase();
-    const path = String(a.path ?? "");
-    const operation = String(a.operationId ?? "")
-      .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-      .replace(/[_-]+/g, " ")
-      .replace(/^./, (letter) => letter.toUpperCase());
-    const target = path || operation;
-    const bounded = target.length > 48 ? `${target.slice(0, 45)}…` : target;
-    return name === "api_contract_test"
-      ? `Swagger operation · ${bounded || "Resolving operation"}`
-      : `${method || "API"} ${bounded || "request"}`;
-  }
-  if (name === "subagent" || name === "subagent_wait") {
-    const task = String(a.task ?? a.description ?? "").slice(0, 50);
-    return task || "Delegating task";
-  }
-  return name.replace(/_/g, " ");
-}
-
 const surfacedPipelineFailures = new Set<string>();
 
 export default function ChatView({
@@ -406,17 +341,7 @@ export default function ChatView({
   projectPath: string;
   projectName: string;
   isGit: boolean;
-  repositories: Array<{
-    name: string;
-    path: string;
-    base_branch?: string;
-    branch?: string;
-    tracking_branch?: string;
-    remote_url?: string;
-    ahead?: number;
-    behind?: number;
-    dirty_files?: string[];
-  }>;
+  repositories: ChatRepository[];
   pipelineType: string;
   chatId: string;
   sessionFile?: string;
@@ -456,14 +381,21 @@ export default function ChatView({
     Boolean(sessionFile),
   );
   const historyLoadedRef = useRef(!sessionFile);
+  const forkHistoryRequestRef = useRef<string | null>(null);
+  const forkHistoryLoadingRef = useRef(false);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
   const [input, setInput] = useState("");
+  // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
+  // pi; the displayed user message stays raw.
+  const [planMode, setPlanMode] = useState(false);
+  const [sessionTreeOpen, setSessionTreeOpen] = useState(false);
   const [images, setImages] = useState<ChatImage[]>([]);
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
+  const [fixingPiIssueId, setFixingPiIssueId] = useState<string | null>(null);
   const [worktree, setWorktree] = useState<WorktreeInfo | null>(null);
   const [repositoryStatuses, setRepositoryStatuses] = useState(repositories);
   const [repositoryMapLoaded, setRepositoryMapLoaded] = useState(
@@ -483,13 +415,16 @@ export default function ChatView({
   const [agentStatus, setAgentStatus] = useState<
     "idle" | "running" | "stopped"
   >(initialInterrupted ? "stopped" : "idle");
+  const [agentTranscript, setAgentTranscript] = useState<
+    Array<{ id: string; type: string; detail: string; at: number }>
+  >([]);
   const [driveDetached, setDriveDetached] = useState(false);
+  // Bumped after the user approves the Pi install so the spawn effect re-runs.
+  const [piInstallRetry, setPiInstallRetry] = useState(0);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [resumePickerOpen, setResumePickerOpen] = useState(false);
-  const [modelQuery, setModelQuery] = useState("");
-  const [modelIndex, setModelIndex] = useState(0);
   const [currentThinking, setCurrentThinking] = useState(initialThinking ?? "");
   const [filePickerQuery, setFilePickerQuery] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
@@ -501,16 +436,6 @@ export default function ChatView({
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
-  const dragRef = useRef<{
-    startX: number;
-    startY: number;
-    initX: number;
-    initY: number;
-    minX: number;
-    maxX: number;
-    minY: number;
-    maxY: number;
-  } | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [graphStatus, setGraphStatus] = useState<GraphStatus | null>(null);
   const [graphBusy, setGraphBusy] = useState(false);
@@ -544,10 +469,8 @@ export default function ChatView({
     total: number;
   } | null>(null);
   const graphReportRef = useRef<string | undefined>(undefined);
-  const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const filePickerRef = useRef<FilePickerHandle>(null);
-  const modelSearchRef = useRef<HTMLInputElement>(null);
   const sessionFileRef = useRef(sessionFile);
   const modelRef = useRef(initialModel ?? "");
   const thinkingRef = useRef(initialThinking ?? "");
@@ -555,9 +478,10 @@ export default function ChatView({
   const trackedTaskRef = useRef(false);
   // Dedup provider/connection errors surfaced via finalizeAssistant vs auto_retry_end within one turn.
   const surfacedErrorRef = useRef<string | null>(null);
-  // Idempotency keys of backend assistant messages already finalized this turn.
-  // message_end/turn_end and agent_end can deliver the same message twice.
+  // message_end/turn_end and agent_end may repeat one completion with a
+  // missing or different backend ID; retain content fingerprints too.
   const finalizedIdsRef = useRef(new Set<string>());
+  const finalizedContentRef = useRef(new Set<string>());
   const pipelineRunRef = useRef<string | null>(null);
   const surfacedPipelineFailureRef = useRef("");
   const pendingPipelineRetryRef = useRef<{
@@ -571,6 +495,8 @@ export default function ChatView({
   const activeToolCallsRef = useRef(new Set<string>());
   const abortResponseRef = useRef<(() => void) | null>(null);
   const latestAssistantResponseRef = useRef("");
+  const receivedStreamDeltaRef = useRef(false);
+  const fallbackRevealTimerRef = useRef<number | null>(null);
   const devDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingDevCommand(null),
     Boolean(pendingDevCommand) && !devStarting,
@@ -620,44 +546,28 @@ export default function ChatView({
       .slice(0, 32),
   ).current;
 
-  const jumpToBottomRef = useRef(true);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const atBottomRef = useRef(true);
   useEffect(() => {
-    jumpToBottomRef.current = true;
-  }, [chatId]);
-  useEffect(() => {
-    if (!isActive) return;
-    const anchor = bottomRef.current;
-    if (!anchor) return;
-    // Don't consume the initial jump while history is still on its way:
-    // messages are [] on mount and real content lands async via get_messages.
-    if (
-      isHistoryLoading ||
-      (messages.length === 0 && researchResults.length === 0)
-    )
-      return;
-    const reduceMotion =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const jump = jumpToBottomRef.current;
-    jumpToBottomRef.current = false;
-    // ponytail: stick-to-bottom only; never yank the user out of history they scrolled to —
-    // except right after opening/switching chats, when we jump straight to the latest.
-    if (!jump) {
-      let scroller: HTMLElement | null = anchor.parentElement;
-      while (scroller && scroller.scrollHeight <= scroller.clientHeight + 1) {
-        scroller = scroller.parentElement;
-      }
-      if (scroller) {
-        const distance =
-          scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-        if (distance > 160) return;
-      }
+    if (isActive) {
+      atBottomRef.current = true;
     }
-    anchor.scrollIntoView({
-      behavior: reduceMotion || jump ? "auto" : "smooth",
-      block: "end",
+  }, [isActive]);
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    atBottomRef.current = atBottom;
+  }, []);
+  // Jump the virtualized list to the latest output when the chat tab becomes
+  // active or its history finishes loading. followOutput="auto" takes over
+  // from there: it keeps the list pinned while the user sits at the bottom
+  // and leaves their scroll position alone while they review history.
+  useEffect(() => {
+    if (!isActive || isHistoryLoading) return;
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
     });
-  }, [isActive, messages, researchResults, isHistoryLoading]);
+  }, [isActive, isHistoryLoading]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -680,40 +590,6 @@ export default function ChatView({
       isStreaming: true,
     }),
     [],
-  );
-
-  const upsertToolCall = useCallback(
-    (
-      callId: string,
-      patch: Partial<ToolCall> & {
-        name?: string;
-        args?: Record<string, unknown>;
-      },
-    ) => {
-      setMessages((prev) => {
-        const copy = ensureAssistantTurn(prev, createAssistantTurn);
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant") {
-            const tcs = [...copy[i].toolCalls];
-            const idx = tcs.findIndex((t) => t.callId === callId);
-            if (idx >= 0) tcs[idx] = { ...tcs[idx], ...patch } as ToolCall;
-            else
-              tcs.push({
-                callId,
-                name: (patch.name as string) ?? "tool",
-                args: (patch.args as Record<string, unknown>) ?? {},
-                ...patch,
-                phase: (patch.phase as ToolCall["phase"]) ?? "start",
-              } as ToolCall);
-            if (tcs.length > 200) tcs.splice(0, tcs.length - 200);
-            copy[i] = { ...copy[i], toolCalls: tcs };
-            break;
-          }
-        }
-        return copy;
-      });
-    },
-    [createAssistantTurn],
   );
 
   // ponytail: Tauri streams deltas faster than React can paint; batch per frame.
@@ -740,10 +616,9 @@ export default function ChatView({
               : null),
             ...(thinking
               ? {
-                  thinking: appendBoundedText(
+                  thinking: appendStreamingText(
                     copy[i].thinking ?? "",
                     thinking,
-                    200_000,
                   ),
                 }
               : null),
@@ -759,9 +634,60 @@ export default function ChatView({
     if (deltaRafRef.current) return;
     deltaRafRef.current = requestAnimationFrame(flushDeltas);
   }, [flushDeltas]);
+  // Same idea for tool calls: a burst of tool events in one frame (start /
+  // progress / end for several calls) becomes a single setMessages.
+  type ToolCallPatch = Partial<ToolCall> & {
+    name?: string;
+    args?: Record<string, unknown>;
+  };
+  const pendingToolPatchesRef = useRef<
+    Array<{ callId: string; patch: ToolCallPatch }>
+  >([]);
+  const toolCallRafRef = useRef(0);
+  const flushToolCalls = useCallback(() => {
+    toolCallRafRef.current = 0;
+    const patches = pendingToolPatchesRef.current;
+    pendingToolPatchesRef.current = [];
+    if (patches.length === 0) return;
+    setMessages((prev) => {
+      const copy = ensureAssistantTurn(prev, createAssistantTurn);
+      for (const { callId, patch } of patches) {
+        for (let i = copy.length - 1; i >= 0; i--) {
+          if (copy[i].role === "assistant") {
+            const tcs = [...copy[i].toolCalls];
+            const idx = tcs.findIndex((t) => t.callId === callId);
+            if (idx >= 0) tcs[idx] = { ...tcs[idx], ...patch } as ToolCall;
+            else
+              tcs.push({
+                callId,
+                name: (patch.name as string) ?? "tool",
+                args: (patch.args as Record<string, unknown>) ?? {},
+                ...patch,
+                phase: (patch.phase as ToolCall["phase"]) ?? "start",
+              } as ToolCall);
+            if (tcs.length > 200) tcs.splice(0, tcs.length - 200);
+            copy[i] = { ...copy[i], toolCalls: tcs };
+            break;
+          }
+        }
+      }
+      return copy;
+    });
+  }, [createAssistantTurn]);
+  const upsertToolCall = useCallback(
+    (callId: string, patch: ToolCallPatch) => {
+      pendingToolPatchesRef.current.push({ callId, patch });
+      if (toolCallRafRef.current) return;
+      toolCallRafRef.current = requestAnimationFrame(flushToolCalls);
+    },
+    [flushToolCalls],
+  );
   useEffect(
     () => () => {
       if (deltaRafRef.current) cancelAnimationFrame(deltaRafRef.current);
+      if (toolCallRafRef.current) cancelAnimationFrame(toolCallRafRef.current);
+      if (fallbackRevealTimerRef.current)
+        window.clearInterval(fallbackRevealTimerRef.current);
     },
     [],
   );
@@ -1020,6 +946,39 @@ export default function ChatView({
     [sessionId, onToast],
   );
 
+  // pi `fork` replaces the active session in place with the forked branch: the
+  // frontend must re-read the session state (updates the tracked session file)
+  // and reload messages from the forked history.
+  const handleSessionForked = useCallback(
+    (text: string) => {
+      setSessionTreeOpen(false);
+      setInput(text);
+      setMessages([]);
+      setPendingMessageCount(0);
+      trackedTaskRef.current = false;
+      finalizedIdsRef.current.clear();
+      finalizedContentRef.current.clear();
+      pendingTextRef.current = "";
+      pendingThinkingRef.current = "";
+      historyLoadedRef.current = false;
+      setIsHistoryLoading(true);
+      setIsNewSessionLoading(true);
+      const requestId = uid();
+      forkHistoryRequestRef.current = requestId;
+      forkHistoryLoadingRef.current = true;
+      void sendRaw({ type: "get_state" });
+      void sendRaw({ type: "get_messages", id: requestId }).then((sent) => {
+        if (!sent && forkHistoryRequestRef.current === requestId) {
+          forkHistoryLoadingRef.current = false;
+          historyLoadedRef.current = true;
+          setIsHistoryLoading(false);
+          setIsNewSessionLoading(false);
+        }
+      });
+    },
+    [sendRaw],
+  );
+
   useEffect(() => {
     if (agentStatus !== "running") return;
     const id = window.setInterval(() => {
@@ -1079,6 +1038,65 @@ export default function ChatView({
       };
     }
 
+    function revealFinalAssistant(content: { text: string; thinking: string }) {
+      const chunkSize = 48;
+      let thinkingAt = Math.min(chunkSize, content.thinking.length);
+      let textAt = content.thinking
+        ? 0
+        : Math.min(chunkSize, content.text.length);
+      setMessages((previous) =>
+        previous.map((item) =>
+          item.role === "assistant" && item.isStreaming
+            ? {
+                ...item,
+                thinking: content.thinking.slice(0, thinkingAt),
+                text: content.text.slice(0, textAt),
+              }
+            : item,
+        ),
+      );
+      if (fallbackRevealTimerRef.current)
+        window.clearInterval(fallbackRevealTimerRef.current);
+      fallbackRevealTimerRef.current = window.setInterval(() => {
+        if (thinkingAt < content.thinking.length)
+          thinkingAt = Math.min(
+            thinkingAt + chunkSize,
+            content.thinking.length,
+          );
+        else textAt = Math.min(textAt + chunkSize, content.text.length);
+        setMessages((previous) =>
+          previous.map((item) =>
+            item.role === "assistant" &&
+            (item.isStreaming ||
+              (item.thinking?.length ?? 0) < content.thinking.length ||
+              item.text.length < content.text.length)
+              ? {
+                  ...item,
+                  thinking: content.thinking.slice(0, thinkingAt),
+                  text: content.text.slice(0, textAt),
+                }
+              : item,
+          ),
+        );
+        if (
+          thinkingAt === content.thinking.length &&
+          textAt === content.text.length
+        ) {
+          window.clearInterval(fallbackRevealTimerRef.current!);
+          fallbackRevealTimerRef.current = null;
+          setMessages((previous) =>
+            previous.map((item) =>
+              item.role === "assistant" &&
+              (item.thinking ?? "") === content.thinking &&
+              item.text === content.text
+                ? { ...item, isStreaming: false }
+                : item,
+            ),
+          );
+        }
+      }, 18);
+    }
+
     function finalizeAssistant(message: Record<string, unknown> | undefined) {
       if (message?.role !== "assistant") return;
       const content = messageContent(message);
@@ -1110,8 +1128,25 @@ export default function ChatView({
       // message twice; key it so the second delivery can never append a twin.
       const backendId =
         typeof message.id === "string" && message.id ? message.id : null;
+      // Final event variants can disagree on tool metadata and thinking, but
+      // a repeated visible response must never make a second bubble.
+      const fingerprint = content.text || `thinking\u0000${content.thinking}`;
       const alreadyFinalized =
-        backendId !== null && finalizedIdsRef.current.has(backendId);
+        (backendId !== null && finalizedIdsRef.current.has(backendId)) ||
+        [...finalizedContentRef.current].some((previous) =>
+          sameAssistantResponse(previous, fingerprint),
+        );
+      if (alreadyFinalized) return;
+      if (backendId) finalizedIdsRef.current.add(backendId);
+      finalizedContentRef.current.add(fingerprint);
+      if (
+        !usedTool &&
+        !receivedStreamDeltaRef.current &&
+        (content.text.length > 120 || content.thinking.length > 120)
+      ) {
+        revealFinalAssistant(content);
+        return;
+      }
       setMessages((prev) => {
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
@@ -1153,11 +1188,9 @@ export default function ChatView({
               text: usedTool ? tail.text : mergedText,
               thinking: mergedThinking,
             };
-            if (backendId) finalizedIdsRef.current.add(backendId);
             return copy;
           }
         }
-        if (backendId) finalizedIdsRef.current.add(backendId);
         return [
           ...copy,
           {
@@ -1176,6 +1209,14 @@ export default function ChatView({
     async function handleRaw(raw: string) {
       if (!mounted) return;
       lastAgentActivityRef.current = Date.now();
+      const entry = transcriptEntry(raw);
+      if (entry)
+        setAgentTranscript((previous) => {
+          const last = previous[previous.length - 1];
+          return last?.type === entry.type && last.detail === entry.detail
+            ? previous
+            : [...previous, entry].slice(-100);
+        });
       try {
         const ev = JSON.parse(raw) as Record<string, unknown>;
         const t = ev.type as string | undefined;
@@ -1205,11 +1246,36 @@ export default function ChatView({
             abortResponseRef.current = null;
             return;
           }
+          const replacesForkHistory =
+            cmd === "get_messages" &&
+            forkHistoryRequestRef.current !== null &&
+            ev.id === forkHistoryRequestRef.current;
+          if (
+            cmd === "get_messages" &&
+            forkHistoryRequestRef.current &&
+            !replacesForkHistory
+          )
+            return;
+          if (replacesForkHistory) {
+            if (!forkHistoryLoadingRef.current) return;
+            forkHistoryLoadingRef.current = false;
+            historyLoadedRef.current = true;
+            setIsHistoryLoading(false);
+            setIsNewSessionLoading(false);
+            if (ev.success === false) {
+              onToast(
+                `Fork history: ${String(ev.error ?? "Could not reload messages")}`,
+              );
+              return;
+            }
+          }
           const data = ev.data as Record<string, unknown> | undefined;
           if (!data) return;
           if (cmd === "get_commands") {
             setCommands((data.commands as SlashCommand[]) ?? []);
           } else if (cmd === "new_session") {
+            forkHistoryRequestRef.current = null;
+            forkHistoryLoadingRef.current = false;
             setIsNewSessionLoading(false);
             if (data.cancelled !== true) {
               setMessages([]);
@@ -1219,6 +1285,8 @@ export default function ChatView({
               onToast("New context started — dev server unchanged");
             }
           } else if (cmd === "switch_session" && data.cancelled !== true) {
+            forkHistoryRequestRef.current = null;
+            forkHistoryLoadingRef.current = false;
             setMessages([]);
             historyLoadedRef.current = false;
             setIsHistoryLoading(true);
@@ -1380,9 +1448,11 @@ export default function ChatView({
                 .filter(Boolean) as ChatMessage[];
               if (mapped.length > 0) {
                 const recent = recentItems(mapped, MAX_HISTORY);
-                setMessages((prev) => (prev.length === 0 ? recent : prev));
-                if (recent[recent.length - 1].role === "user")
-                  setAgentStatus("stopped");
+                setMessages((prev) =>
+                  replacesForkHistory || prev.length === 0 ? recent : prev,
+                );
+                // History is a snapshot and may arrive after a retry prompt.
+                // Never let it overwrite lifecycle events such as agent_start.
               }
             }
           }
@@ -1397,9 +1467,12 @@ export default function ChatView({
         }
 
         if (t === "agent_start") {
+          setAgentTranscript([]);
           setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
+          receivedStreamDeltaRef.current = false;
           finalizedIdsRef.current.clear();
+          finalizedContentRef.current.clear();
           setAgentStatus("running");
           onAgentRunning(chatId, true);
           setIsStreaming(true);
@@ -1410,10 +1483,12 @@ export default function ChatView({
           return;
         }
         if (t === "message_end" || t === "turn_end") {
+          flushDeltas();
           finalizeAssistant(ev.message as Record<string, unknown> | undefined);
           return;
         }
         if (t === "agent_end") {
+          flushDeltas();
           const generated = ev.messages as
             | Array<Record<string, unknown>>
             | undefined;
@@ -1424,7 +1499,8 @@ export default function ChatView({
           setAgentStatus("idle");
           setIsStreaming(false);
           onAgentRunning(chatId, false);
-          setMessages((prev) => settleAgentMessages(prev));
+          if (!fallbackRevealTimerRef.current)
+            setMessages((prev) => settleAgentMessages(prev));
           sendRaw({ type: "get_session_stats" });
           return;
         }
@@ -1487,11 +1563,13 @@ export default function ChatView({
             | undefined;
           if (!delta) return;
           const dtype = delta.type as string;
-          if (dtype === "text_delta")
+          if (dtype === "text_delta") {
+            receivedStreamDeltaRef.current = true;
             appendTextDelta(String(delta.delta ?? ""));
-          else if (dtype === "thinking_delta")
+          } else if (dtype === "thinking_delta") {
+            receivedStreamDeltaRef.current = true;
             appendThinkingDelta(String(delta.delta ?? ""));
-          else if (dtype === "toolcall_start") {
+          } else if (dtype === "toolcall_start") {
             const tc = delta.toolCall as
               | {
                   id?: string;
@@ -1812,6 +1890,12 @@ export default function ChatView({
           )
             return;
           const line = e.payload.line.slice(0, 2_000);
+          setAgentTranscript((previous) =>
+            [
+              ...previous,
+              { id: uid(), type: "stderr", detail: line, at: Date.now() },
+            ].slice(-100),
+          );
           setMessages((prev) => appendAgentLog(prev, line));
           onToast(`pi stderr: ${line.slice(0, 180)}`);
         },
@@ -1968,6 +2052,37 @@ export default function ChatView({
         const msg = String(e);
         historyLoadedRef.current = true;
         setIsHistoryLoading(false);
+        if (msg.includes("PI_INSTALL_REQUIRED:")) {
+          // Pi CLI is missing: never auto-install a remote script — ask for
+          // explicit consent first, then retry the spawn after approval.
+          const install = await confirm({
+            title: "Install Pi CLI?",
+            message:
+              "Pi CLI not found. Download and install from https://pi.dev/install.sh?",
+            confirmLabel: "Install",
+            cancelLabel: "Cancel",
+            danger: true,
+          });
+          if (install && mounted) {
+            try {
+              await invoke("approve_pi_install");
+              onToast("Pi installed — restarting chat session.");
+              setPiInstallRetry((n) => n + 1);
+            } catch (installError) {
+              const installMsg = String(installError);
+              setMessages((prev) => settleWithError(prev, installMsg));
+              onToast(installMsg);
+            }
+          } else if (mounted) {
+            setMessages((prev) =>
+              settleWithError(
+                prev,
+                "Pi CLI is required to start this chat session.",
+              ),
+            );
+          }
+          return;
+        }
         if (
           msg.includes("detached") ||
           msg.includes("not found") ||
@@ -2004,10 +2119,12 @@ export default function ChatView({
     onUnread,
     appendTextDelta,
     appendThinkingDelta,
+    flushDeltas,
     upsertToolCall,
     refreshGraph,
     updateGraphIfCodeStale,
     syncKanbanTask,
+    piInstallRetry,
   ]);
 
   useEffect(() => {
@@ -2095,6 +2212,7 @@ export default function ChatView({
   async function sendPrompt(text: string) {
     if (
       !chatReady ||
+      forkHistoryLoadingRef.current ||
       !text.trim() ||
       driveDetached ||
       agentStatus === "stopped"
@@ -2117,6 +2235,7 @@ export default function ChatView({
       ].slice(-MAX_HISTORY),
     );
     pendingTaskPromptRef.current = text;
+    await maybeCreateCheckpoint(text);
     await sendRaw({
       type: "prompt",
       message: `${text}${await taskContext(text)}`,
@@ -2134,13 +2253,44 @@ export default function ChatView({
           },
         )
       : await taskContext(text);
-    await sendRaw({ type: "prompt", message: `${text}${context}`, images });
+    await sendRaw({
+      type: "prompt",
+      message: `${applyPlanModePrefix(text, planMode)}${context}`,
+      images,
+    });
   }
+
+  // Finish the best-effort checkpoint before dispatching the next prompt so
+  // its snapshot cannot include edits made by that prompt's agent turn.
+  const maybeCreateCheckpoint = async (preview: string) => {
+    const path = worktree?.worktree_path;
+    if (!path) return;
+    const message = preview.replace(/\s+/g, " ").slice(0, 120);
+    await invoke("create_checkpoint", {
+      worktreePath: path,
+      message: message || "user message",
+    }).catch((error) => {
+      console.debug("checkpoint skipped:", error);
+    });
+  };
+
+  // Plan-mode approval: the agent ended its plan with AWAITING PLAN APPROVAL.
+  const approvePlan = async () => {
+    setPlanMode(false);
+    await sendPrompt("Plan approved. Proceed with implementation.");
+  };
+
+  const rejectPlan = () => {
+    setPlanMode(true);
+    setInput("Plan rejected: ");
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  };
 
   async function handleSend() {
     const text = input.trim();
     if (
       !chatReady ||
+      forkHistoryLoadingRef.current ||
       (!text && images.length === 0 && files.length === 0) ||
       driveDetached ||
       agentStatus === "stopped"
@@ -2178,6 +2328,7 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
+    await maybeCreateCheckpoint(text || visibleMessage);
     await sendWithSkill(message);
   }
 
@@ -2601,6 +2752,11 @@ export default function ChatView({
           customSystemPrompt,
           projectName,
         });
+        // The old process's fork request must not filter the new process's history.
+        forkHistoryRequestRef.current = null;
+        forkHistoryLoadingRef.current = false;
+        setIsHistoryLoading(false);
+        setIsNewSessionLoading(false);
         setAgentStatus("idle");
         setMessages(clearRestartErrors);
         onToast(retry ? "Agent retrying" : "Pi agent reloaded");
@@ -2635,6 +2791,20 @@ export default function ChatView({
       sendRaw,
       sessionId,
     ],
+  );
+
+  const handleFixPiIssue = useCallback(
+    async (issue: ChatMessage) => {
+      if (fixingPiIssueId || !isPiRuntimeIssue(issue.text)) return;
+      setFixingPiIssueId(issue.id);
+      const sent = await sendRaw({
+        type: agentStatus === "running" ? "steer" : "prompt",
+        message: `Diagnose and fix this Pi runtime issue. Inspect the relevant Pi configuration or extension package first. Apply only a safe, minimal fix; do not remove extensions or change global configuration unless necessary. Verify the result and summarize the change.\n\n${issue.text}`,
+      });
+      if (sent) onToast("AI is diagnosing the Pi issue");
+      setFixingPiIssueId(null);
+    },
+    [agentStatus, fixingPiIssueId, onToast, sendRaw],
   );
 
   async function handleOpenTerminal() {
@@ -2744,8 +2914,6 @@ export default function ChatView({
       modelId,
     });
     setModelPickerOpen(false);
-    setModelQuery("");
-    setModelIndex(0);
   }
 
   async function handleSetThinking(lvl: string) {
@@ -2761,15 +2929,8 @@ export default function ChatView({
     filePickerQuery !== null
       ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.`
       : "";
-  const filteredModels = models.filter((model) =>
-    model.toLowerCase().includes(modelQuery.trim().toLowerCase()),
-  );
-
   function openModelPicker() {
     setModelPickerOpen(true);
-    setModelQuery("");
-    setModelIndex(Math.max(0, models.indexOf(currentModel)));
-    requestAnimationFrame(() => modelSearchRef.current?.focus());
   }
   const slashQuery =
     input.startsWith("/") && !input.includes(" ")
@@ -2825,9 +2986,53 @@ export default function ChatView({
     setCommandIndex(0);
   }
 
+  function handleFilePick(f: { name: string; path: string; relative: string }) {
+    const atIdx = input.lastIndexOf("@");
+    if (atIdx === -1) return;
+    const before = input.slice(0, atIdx);
+    const after = input.slice(atIdx + 1);
+    const tokenEnd = after.search(/[\s\n]/);
+    const rest = tokenEnd === -1 ? "" : after.slice(tokenEnd);
+    setInput(`${before}@${f.relative} ${rest}`.trimStart() + " ");
+    setFiles((current) =>
+      current.some((file) => file.path === f.path) ? current : [...current, f],
+    );
+    setFilePickerQuery(null);
+  }
+
+  function handleRemoveTable() {
+    // remove table block from input
+    const lines = input.split("\n");
+    const cleaned = [] as string[];
+    let skipping = false;
+    for (const l of lines) {
+      const t = l.trim();
+      if (!skipping && t.startsWith("|") && /\|/.test(t)) {
+        // naive: skip all consecutive | lines that include separator
+        if (
+          /^\|\s*:?-{2,}/.test(t) ||
+          (cleaned.length > 0 &&
+            cleaned[cleaned.length - 1]?.trim().startsWith("|"))
+        ) {
+          skipping = true;
+        }
+      }
+      if (skipping) {
+        if (!t.startsWith("|") && t !== "") {
+          skipping = false;
+          cleaned.push(l);
+        }
+        continue;
+      }
+      cleaned.push(l);
+    }
+    setInput(cleaned.join("\n").trim());
+  }
+
   async function submitInput(
     submitMode: "prompt" | "follow_up" | "steer" = "prompt",
   ) {
+    if (forkHistoryLoadingRef.current) return;
     const text = input.trim();
     const query = researchQuery(text);
     if (query !== null) {
@@ -2958,6 +3163,7 @@ export default function ChatView({
       setImages([]);
       setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
+      await maybeCreateCheckpoint(messageText);
       await sendRaw({ type, message: messageText, images });
       onToast(
         type === "steer"
@@ -3146,12 +3352,879 @@ export default function ChatView({
       }
     >(),
   );
-  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${globalChat}|${terminalApprovalStatus}`;
+  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${fixingPiIssueId}|${globalChat}|${terminalApprovalStatus}`;
   if (rowCacheRef.current.size > messages.length + 32) {
     const alive = new Set(messages.map((message) => message.id));
     for (const id of rowCacheRef.current.keys())
       if (!alive.has(id)) rowCacheRef.current.delete(id);
   }
+
+  // Chronological feed driving the virtualized message list. Message and
+  // research rows interleave by their original flex `order` keys so the
+  // virtual list renders in exactly the same visual order as before.
+  const feedItems = useMemo<FeedItem[]>(() => {
+    const items: FeedItem[] = [];
+    if (isNewSessionLoading) items.push({ kind: "session-loading", order: -2 });
+    if (
+      messages.length === 0 &&
+      researchResults.length === 0 &&
+      !isNewSessionLoading
+    )
+      items.push({ kind: "history-state", order: -1 });
+    for (const run of [...researchResults].reverse()) {
+      items.push(
+        { kind: "research-request", run, order: run.created_at * 1000 },
+        { kind: "research-report", run, order: run.created_at * 1000 + 1 },
+      );
+    }
+    for (const message of messages)
+      items.push({ kind: "message", message, order: message.createdAt ?? 0 });
+    if (backgroundWork && agentStatus !== "running")
+      items.push({
+        kind: "background-work",
+        order: Number.MAX_SAFE_INTEGER - 1,
+      });
+    if (agentStatus === "running" || isRestarting)
+      items.push({
+        kind: "agent-activity",
+        order: Number.MAX_SAFE_INTEGER - 1,
+      });
+    // Stable sort: equal order keys keep insertion order, matching the old
+    // CSS flexbox behavior for research pairs and trailing indicators.
+    items.sort((a, b) => a.order - b.order);
+    return items;
+  }, [
+    isNewSessionLoading,
+    messages,
+    researchResults,
+    backgroundWork,
+    agentStatus,
+    isRestarting,
+  ]);
+
+  // Renders one virtualized feed row. Unchanged message rows are served from
+  // rowCacheRef so streamed tokens only re-render the active row.
+  const renderFeedItemInner = (item: FeedItem): ReactNode => {
+    if (item.kind === "session-loading") {
+      return (
+        <div className="session-loading" role="status" aria-live="polite">
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>STARTING NEW CONTEXT</strong>
+            <small>KEEPING WORKTREE AND DEV SERVER</small>
+          </div>
+        </div>
+      );
+    }
+    if (item.kind === "history-state") {
+      return isHistoryLoading ? (
+        <div className="session-loading" role="status" aria-live="polite">
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>LOADING SESSION</strong>
+            <small>RESTORING CHAT HISTORY</small>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="display-sm"
+          style={{
+            color: "var(--colors-muted)",
+            marginTop: "var(--spacing-xl)",
+          }}
+        >
+          AGENT IDLE. SEND PROMPT.
+        </div>
+      );
+    }
+    if (item.kind === "research-request") {
+      const run = item.run;
+      return (
+        <div className="chat-bubble-user body-md">/research {run.query}</div>
+      );
+    }
+    if (item.kind === "research-report") {
+      const run = item.run;
+      const report = run.final_report ?? run.partial_report;
+      return (
+        <article
+          className={`research-result-card${isActiveResearch(run) ? " is-active" : ""}`}
+          aria-live={isActiveResearch(run) ? "polite" : undefined}
+        >
+          <small>
+            {isActiveResearch(run) && (
+              <span className="research-live-mark" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            )}
+            Deep Research · {run.progress.phase || run.state} ·{" "}
+            {elapsedResearch(run.created_at)}
+          </small>
+          <h3>{run.query}</h3>
+          {isActiveResearch(run) ? (
+            <p>{run.progress.activity || "Preparing research…"}</p>
+          ) : report ? (
+            <div className="research-inline-report">
+              <MarkdownMessage>{report}</MarkdownMessage>
+            </div>
+          ) : null}
+          {run.error && <p className="research-run-error">{run.error}</p>}
+          {researchHandoffError &&
+            run.state === "completed" &&
+            !run.handoff_delivered && (
+              <p className="research-run-error" role="alert">
+                Context handoff failed: {researchHandoffError}
+              </p>
+            )}
+          <footer>
+            <span>
+              {run.progress.searches} searches · {run.progress.reads} reads ·{" "}
+              {run.progress.checks} checks · {run.sources.length} sources
+            </span>
+            <div>
+              {isActiveResearch(run) && (
+                <button
+                  disabled={researchBusy}
+                  onClick={() =>
+                    void researchAction("cancel_deep_research", run)
+                  }
+                >
+                  Cancel
+                </button>
+              )}
+              {canResumeResearch(run) && (
+                <button
+                  disabled={researchBusy}
+                  onClick={() =>
+                    void researchAction("resume_deep_research", run)
+                  }
+                >
+                  Resume
+                </button>
+              )}
+              {researchHandoffError &&
+                run.state === "completed" &&
+                !run.handoff_delivered && (
+                  <button onClick={() => void handleResearchCompleted(run)}>
+                    Retry context handoff
+                  </button>
+                )}
+              <button onClick={() => onOpenResearch(run.id)}>
+                Open full report
+              </button>
+            </div>
+          </footer>
+        </article>
+      );
+    }
+    if (item.kind === "message") {
+      const m = item.message;
+      const cachedRow = rowCacheRef.current.get(m.id);
+      if (
+        cachedRow &&
+        cachedRow.message === m &&
+        cachedRow.diff === worktreeDiff &&
+        cachedRow.approval === terminalApproval &&
+        cachedRow.restart === handleRestart &&
+        cachedRow.refresh === refreshDiff &&
+        cachedRow.send === sendRaw &&
+        cachedRow.toast === onToast &&
+        cachedRow.flags === rowFlags
+      )
+        return cachedRow.node;
+      const node = (
+        <div
+          key={m.id}
+          className={
+            m.role === "user"
+              ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
+              : m.role === "system"
+                ? "chat-notice body-sm"
+                : "chat-bubble-assistant body-md"
+          }
+        >
+          {m.role === "system" && <small>PI CONTEXT</small>}
+          {m.thinking && (
+            <ThinkingBlock isStreaming={Boolean(m.isStreaming)}>
+              {m.thinking}
+            </ThinkingBlock>
+          )}
+          {m.images && m.images.length > 0 && (
+            <div className="chat-images">
+              {m.images.map((image, index) => (
+                <button
+                  key={index}
+                  onClick={() => setPreviewImage(image)}
+                  aria-label={`Preview attachment ${index + 1}`}
+                >
+                  <img
+                    src={`data:${image.mimeType};base64,${image.data}`}
+                    alt="Pasted attachment"
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+          {m.toolCalls
+            .filter((tool) => tool.name === "recommend_global_skills")
+            .map((tool) => {
+              const skills = Array.isArray(tool.args.skills)
+                ? tool.args.skills.filter(
+                    (name): name is string => typeof name === "string",
+                  )
+                : [];
+              return skills.length ? (
+                <section
+                  className="skill-recommendation"
+                  key={tool.callId}
+                  role="status"
+                >
+                  <div>
+                    <small>SKILL RECOMMENDATION</small>
+                    <strong>{skills.join(" · ")}</strong>
+                    <span>
+                      {typeof tool.args.reason === "string"
+                        ? tool.args.reason
+                        : "Recommended by the agent."}
+                    </span>
+                  </div>
+                  <div>
+                    {skills.map((name) => (
+                      <button
+                        key={name}
+                        onClick={() => {
+                          setInput(`/skill:${name}`);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        Use {name}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ) : null;
+            })}
+          {m.toolCalls
+            .filter((tool) => isWebSearchTool(tool.name))
+            .map((tool) => (
+              <ToolCallView key={tool.callId} tc={tool} />
+            ))}
+          {m.toolCalls.some(
+            (tool) =>
+              !isWebSearchTool(tool.name) &&
+              tool.name !== "recommend_global_skills",
+          ) &&
+            (() => {
+              const tools = m.toolCalls.filter(
+                (tool) =>
+                  !isWebSearchTool(tool.name) &&
+                  tool.name !== "recommend_global_skills",
+              );
+              return (
+                <details className="tool-stack">
+                  <summary>
+                    <span className="tool-stack-icon">
+                      {tools.some((tool) => tool.phase !== "end") ? "◌" : "✓"}
+                    </span>
+                    <strong>
+                      {tools.length} TOOL{" "}
+                      {tools.length === 1 ? "CALL" : "CALLS"}
+                    </strong>
+                    <span>
+                      {tools
+                        .map((tool) => tool.name)
+                        .filter(
+                          (name, index, all) => all.indexOf(name) === index,
+                        )
+                        .join(" · ")}
+                    </span>
+                    <small>DETAILS</small>
+                  </summary>
+                  <div className="tool-stack-items">
+                    {tools.map((tool) => (
+                      <ToolCallView key={tool.callId} tc={tool} />
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
+          {m.toolCalls
+            .filter((tool) => browserScreenshotRef(tool))
+            .map((tool) => (
+              <BrowserScreenshot key={`screenshot-${tool.callId}`} tc={tool} />
+            ))}
+          {m.toolCalls.length === 0 && browserScreenshotRefFromText(m.text) && (
+            <BrowserScreenshot
+              tc={{
+                callId: `restored-${m.id}`,
+                name: "browser_screenshot",
+                args: {},
+                phase: "end",
+                result: {
+                  data: {
+                    artifactRef: browserScreenshotRefFromText(m.text),
+                  },
+                },
+              }}
+            />
+          )}
+          {m.text && (
+            <MarkdownMessage isStreaming={m.isStreaming}>
+              {m.text}
+            </MarkdownMessage>
+          )}
+          {m.role === "assistant" && m.text && !m.isStreaming && (
+            <div className="chat-actions">
+              <button
+                className="chat-copy"
+                onClick={() =>
+                  navigator.clipboard
+                    .writeText(m.text)
+                    .then(() => {
+                      setCopiedMessageId(m.id);
+                      window.setTimeout(
+                        () =>
+                          setCopiedMessageId((id) => (id === m.id ? null : id)),
+                        1600,
+                      );
+                    })
+                    .catch((error) => onToast(`Copy failed: ${String(error)}`))
+                }
+                aria-label="Copy assistant response"
+                title="Copy response"
+              >
+                {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
+              </button>
+              <button
+                className="chat-retry-inline"
+                onClick={() => {
+                  const lastUser = [...messages]
+                    .reverse()
+                    .find((item) => item.role === "user");
+                  if (lastUser?.text) {
+                    setInput(lastUser.text);
+                    inputRef.current?.focus();
+                  }
+                }}
+                aria-label="Try again with last prompt"
+                title="Copy last prompt back to composer"
+              >
+                ↻ TRY AGAIN
+              </button>
+              {globalChat && (
+                <details className="chat-save">
+                  <summary>
+                    {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
+                  </summary>
+                  <div
+                    className="chat-save-options"
+                    aria-label="Save response as"
+                  >
+                    {["knowledge", "memory", "context", "skill"].map((kind) => (
+                      <button
+                        key={kind}
+                        disabled={savingMessageId === m.id}
+                        onClick={async (event) => {
+                          const details =
+                            event.currentTarget.closest("details");
+                          setSavingMessageId(m.id);
+                          try {
+                            await invoke("save_rag_chat_response", {
+                              text: m.text,
+                              kind,
+                            });
+                            onToast(`Saved as ${kind}.`);
+                            details?.removeAttribute("open");
+                          } catch (error) {
+                            onToast(`Save failed: ${String(error)}`);
+                          } finally {
+                            setSavingMessageId(null);
+                          }
+                        }}
+                      >
+                        {kind}
+                        <small>
+                          {kind === "knowledge"
+                            ? "Reusable answer"
+                            : kind === "context"
+                              ? "Chat reference"
+                              : kind === "memory"
+                                ? "Stored preference"
+                                : "Reusable procedure"}
+                        </small>
+                      </button>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+          {m.role === "system" && shouldOfferRestart(m.text) && (
+            <button
+              onClick={() => handleRestart(true)}
+              className="chat-restart"
+              disabled={isRestarting}
+            >
+              {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
+            </button>
+          )}
+          {m.role === "system" && isPiRuntimeIssue(m.text) && (
+            <button
+              onClick={() => void handleFixPiIssue(m)}
+              className="chat-restart"
+              disabled={fixingPiIssueId !== null}
+            >
+              {fixingPiIssueId === m.id ? "AI IS FIXING…" : "✦ FIX WITH AI"}
+            </button>
+          )}
+          {(m.createdAt || m.durationMs) && (
+            <div className="chat-message-meta">
+              {m.createdAt && (
+                <time dateTime={new Date(m.createdAt).toISOString()}>
+                  {formatMessageTime(m.createdAt)}
+                </time>
+              )}
+              {m.role === "assistant" && m.durationMs && (
+                <span title="Task completion time">
+                  SELESAI DALAM {formatTaskDuration(m.durationMs)}
+                </span>
+              )}
+            </div>
+          )}
+          {agentStatus === "stopped" &&
+            m.role === "user" &&
+            m.id === messages[messages.length - 1]?.id && (
+              <button
+                onClick={() => handleRestart(true)}
+                className="chat-retry"
+                title="Retry interrupted task"
+                aria-label="Retry interrupted task"
+              >
+                ↻
+              </button>
+            )}
+          {worktreeDiff &&
+            shouldShowChanges(
+              m,
+              lastAssistantId,
+              worktreeDiff.files.length,
+            ) && (
+              <details className="chat-changes">
+                <summary>
+                  <strong>FILES CHANGED</strong>
+                  <span>{worktreeDiff.files.length}</span>
+                </summary>
+                {worktreeDiff.files.map((file) => (
+                  <button
+                    key={`${file.repository ?? ""}:${file.path}`}
+                    onClick={() => setExpandedDiff(file.path)}
+                  >
+                    <span>{file.status}</span>
+                    <b>
+                      {file.repository && <small>{file.repository}</small>}
+                      {file.path}
+                    </b>
+                    <i>+{file.added}</i>
+                    <em>-{file.removed}</em>
+                  </button>
+                ))}
+              </details>
+            )}
+          {m.id === lastAssistantId && terminalApproval && (
+            <section className="terminal-command-approval" role="alert">
+              <small>AGENT REQUEST · TERMINAL COMMAND</small>
+              <pre>{terminalApproval.data}</pre>
+              <div>
+                <button
+                  className="approval-primary"
+                  onClick={() => {
+                    const request = terminalApproval;
+                    setTerminalApprovalStatus("executing");
+                    const approved = request.pane
+                      ? invoke("terminal_write", {
+                          chatId: `${chatId}__${request.pane}`,
+                          data: request.data,
+                        }).then(
+                          () =>
+                            `Command sent to pane ${request.pane}. Read its output now.`,
+                        )
+                      : invoke<string>("terminal_execute_approved", {
+                          cwd: cwdRef.current,
+                          command: request.data,
+                        });
+                    void approved
+                      .then(async (output) => {
+                        setTerminalApprovalStatus("refreshing");
+                        await refreshDiff();
+                        setTerminalApproval(null);
+                        return sendRaw({
+                          type: agentStatus === "running" ? "steer" : "prompt",
+                          message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
+                        });
+                      })
+                      .catch((error) => {
+                        const message = `Approved terminal command failed: ${String(error)}`;
+                        onToast(message);
+                        void sendRaw({
+                          type: agentStatus === "running" ? "steer" : "prompt",
+                          message,
+                        });
+                      })
+                      .finally(() => setTerminalApprovalStatus(null));
+                  }}
+                  disabled={terminalApprovalStatus !== null}
+                >
+                  {terminalApprovalStatus === "executing"
+                    ? "EXECUTING…"
+                    : terminalApprovalStatus === "refreshing"
+                      ? "REFRESHING CHANGES…"
+                      : "✅ Approve"}
+                </button>
+                <button
+                  disabled={terminalApprovalStatus !== null}
+                  onClick={() => {
+                    setTerminalApproval(null);
+                    void sendRaw({
+                      type: agentStatus === "running" ? "steer" : "prompt",
+                      message:
+                        "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
+                    });
+                    onToast("Terminal command denied");
+                  }}
+                >
+                  ❌ Deny
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      );
+      rowCacheRef.current.set(m.id, {
+        message: m,
+        diff: worktreeDiff,
+        approval: terminalApproval,
+        restart: handleRestart,
+        refresh: refreshDiff,
+        send: sendRaw,
+        toast: onToast,
+        flags: rowFlags,
+        node,
+      });
+      return node;
+    }
+    if (item.kind === "background-work") {
+      // Guarded by the feedItems condition; narrows the type here.
+      if (!backgroundWork) return null;
+      return (
+        <div
+          className="agent-working activity-nodes phase-executing"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="agent-working-mark" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <div>
+            <strong>BACKGROUND AGENT WORKING</strong>
+            <small className="agent-working-detail">
+              {backgroundWork.runId
+                ? `Run ${backgroundWork.runId}`
+                : "Detached task in progress"}
+            </small>
+          </div>
+          <span className="agent-working-stats">
+            <span>
+              <ElapsedLabel
+                startedAt={backgroundWork.startedAt}
+                ticking={isActive}
+              />
+            </span>
+          </span>
+        </div>
+      );
+    }
+    if (item.kind === "agent-activity") {
+      return (() => {
+        const allTools = messages.flatMap((message) => message.toolCalls);
+        const allActive = allTools.filter((tool) => tool.phase !== "end");
+        const activeTool = [...allActive].reverse()[0];
+        const completedCount = allTools.filter(
+          (tool) => tool.phase === "end",
+        ).length;
+        const completedApiCount = allTools.filter(
+          (tool) =>
+            tool.phase === "end" &&
+            /(?:^|\.)(?:api_request|api_contract_test)$/.test(tool.name),
+        ).length;
+        const lastCompleted = [...allTools]
+          .reverse()
+          .find((tool) => tool.phase === "end");
+        const streamingMsg = [...messages]
+          .reverse()
+          .find((m) => m.role === "assistant" && m.isStreaming);
+        const streamingText = streamingMsg?.text?.trim() || "";
+        const thinkingText = streamingMsg?.thinking?.trim() || "";
+        const activeRequest = [...messages]
+          .reverse()
+          .find((m) => m.role === "user" && m.text.trim())
+          ?.text.replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 90);
+
+        // Multi sub-agent aggregation
+        const activeSubagents = allActive.filter((t) => isSubagentTool(t.name));
+        const primarySubagent = [...activeSubagents].reverse()[0];
+        const subMeta = primarySubagent
+          ? getSubagentMeta(primarySubagent.args)
+          : null;
+        const totalSubagentTasks = activeSubagents.reduce(
+          (acc, t) => acc + getSubagentMeta(t.args).count,
+          0,
+        );
+
+        let title: string;
+        let detail: string;
+        let icon: string;
+        let phase: "executing" | "writing" | "thinking";
+
+        if (isRestarting) {
+          phase = "thinking";
+          title = "RESTARTING PI";
+          detail = "Starting the agent session";
+          icon = "meter";
+        } else if (activeTool) {
+          phase = "executing";
+          const build = buildPhase(activeTool);
+          const isMultiSub = activeSubagents.length > 0 && subMeta;
+          if (build) {
+            title = "BUILDING";
+            detail = build;
+            icon = "build";
+          } else if (isMultiSub && subMeta) {
+            title =
+              totalSubagentTasks > 1 || activeSubagents.length > 1
+                ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)`
+                : "SUB-AGENT WORKING";
+            detail =
+              totalSubagentTasks > 1
+                ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}`
+                : subMeta.detail;
+            icon = "nodes";
+          } else if (isWebSearchTool(activeTool.name)) {
+            title = "SEARCHING WEB";
+            detail = describeToolActivity(activeTool);
+            icon = "search";
+          } else if (
+            /(?:^|\.)(?:api_request|api_contract_test)$/.test(activeTool.name)
+          ) {
+            title = "TESTING API";
+            detail = describeToolActivity(activeTool);
+            icon = "api";
+          } else {
+            const kind = activityKind(activeTool.name);
+            if (kind === "process") {
+              title = "RUNNING SESSION";
+              detail = "Interactive shell";
+              icon = "terminal";
+            } else if (kind === "index") {
+              title = "INDEXING";
+              detail = "Building knowledge graph";
+              icon = "graph";
+            } else if (kind === "loop") {
+              title = "ITERATING";
+              detail = "Autonomous pass";
+              icon = "loop";
+            } else {
+              title = "EXECUTING";
+              detail = describeToolActivity(activeTool);
+              icon = "meter";
+            }
+          }
+        } else if (streamingText) {
+          phase = "writing";
+          const lastLine =
+            streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+          title = "RESPONDING";
+          detail = lastLine
+            ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}`
+            : "Writing response";
+          icon = "meter";
+        } else {
+          phase = "thinking";
+          const lastLine =
+            thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
+          if (lastLine) {
+            title = "REASONING";
+            detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
+          } else if (lastCompleted) {
+            title = "PLANNING NEXT";
+            detail = describeToolActivity(lastCompleted);
+          } else {
+            title = "THINKING";
+            detail = activeRequest
+              ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+              : "Preparing next step";
+          }
+          icon = "meter";
+        }
+
+        const apiProgress =
+          icon === "api"
+            ? ((
+                activeTool?.result as {
+                  details?: {
+                    stage?: unknown;
+                    method?: unknown;
+                    path?: unknown;
+                    httpStatus?: unknown;
+                  };
+                }
+              )?.details ?? null)
+            : null;
+        const apiStage = String(apiProgress?.stage ?? "request");
+        const apiStages = [
+          "contract",
+          "destination",
+          "authentication",
+          "request",
+          "response",
+          "validation",
+        ];
+        const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
+        return (
+          <section className="agent-activity" aria-label="Agent activity">
+            <div
+              className={`agent-working activity-${icon} phase-${phase}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="agent-working-mark" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+              <div>
+                <strong>{title}</strong>
+                <small className="agent-working-detail" title={detail}>
+                  {detail}
+                </small>
+                {apiProgress && (
+                  <div className="api-live-progress">
+                    <span className="api-live-target">
+                      {String(apiProgress.method ?? "API")} ·{" "}
+                      {String(apiProgress.path ?? "Resolving endpoint")}
+                      {apiProgress.httpStatus != null &&
+                        ` · HTTP ${String(apiProgress.httpStatus)}`}
+                    </span>
+                    <span
+                      className="api-live-track"
+                      aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
+                    >
+                      {apiStages.map((stage, index) => (
+                        <i
+                          key={stage}
+                          className={
+                            index < apiStageIndex
+                              ? "done"
+                              : index === apiStageIndex
+                                ? "active"
+                                : ""
+                          }
+                          title={stage}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <span className="agent-working-stats">
+                {icon === "api" && completedApiCount > 0 ? (
+                  <span>
+                    {completedApiCount} API call
+                    {completedApiCount !== 1 ? "s" : ""} done
+                  </span>
+                ) : completedCount > 0 ? (
+                  <span>
+                    {completedCount} tool
+                    {completedCount !== 1 ? "s" : ""}
+                  </span>
+                ) : null}
+                <span>
+                  <ElapsedLabel
+                    startedAt={taskStartedAtRef.current ?? Date.now()}
+                    ticking={isActive}
+                  />
+                </span>
+              </span>
+              <button onClick={handleAbort} disabled={isAborting}>
+                {isAborting ? "ABORTING…" : "ABORT"}
+              </button>
+            </div>
+            <details className="agent-activity-log" open>
+              <summary>
+                {agentTranscript.length
+                  ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
+                  : "Preparing task"}
+              </summary>
+              <ul className="agent-transcript" aria-label="Agent tasks">
+                {agentTranscript.length > 0 ? (
+                  agentTranscript.map((entry) => (
+                    <li key={entry.id}>
+                      <span
+                        className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {entry.type === "Agent" && entry.detail === "Thinking"
+                          ? activeRequest
+                            ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+                            : "Preparing next step"
+                          : entry.detail}
+                      </span>
+                      <small>{entry.type}</small>
+                    </li>
+                  ))
+                ) : (
+                  <li className="agent-transcript-empty">
+                    <span
+                      className="agent-transcript-mark"
+                      aria-hidden="true"
+                    />
+                    <span>Analyzing request</span>
+                  </li>
+                )}
+              </ul>
+            </details>
+          </section>
+        );
+      })();
+    }
+    return null;
+  };
+
+  const renderFeedItem = (index: number, item: FeedItem): ReactNode => (
+    <div
+      style={
+        index === 0
+          ? { ...FEED_ITEM_STYLE, paddingTop: "var(--spacing-xl)" }
+          : FEED_ITEM_STYLE
+      }
+    >
+      {renderFeedItemInner(item)}
+    </div>
+  );
 
   if (!isActive) return null;
 
@@ -3312,6 +4385,14 @@ export default function ChatView({
           >
             ⌘ TERMINAL
           </button>
+          <button
+            onClick={() => setSessionTreeOpen(true)}
+            className="dev-control"
+            title="Session tree — fork a new branch from a past user message"
+            aria-label="Open session tree"
+          >
+            ⑂ TREE
+          </button>
           {!globalChat && devRunner && (
             <>
               <button onClick={handleStopDev} className="dev-control stop">
@@ -3356,12 +4437,14 @@ export default function ChatView({
       </div>
 
       {terminalMounted && (
-        <TerminalPanel
-          chatId={chatId}
-          cwd={cwd}
-          hidden={!showTerminal}
-          onClose={() => setShowTerminal(false)}
-        />
+        <Suspense fallback={null}>
+          <TerminalPanel
+            chatId={chatId}
+            cwd={cwd}
+            hidden={!showTerminal}
+            onClose={() => setShowTerminal(false)}
+          />
+        </Suspense>
       )}
 
       {pendingDevCommand && (
@@ -3418,100 +4501,13 @@ export default function ChatView({
       )}
 
       {modelPickerOpen && (
-        <div
-          className="model-picker-backdrop"
-          onMouseDown={() => setModelPickerOpen(false)}
-        >
-          <section
-            ref={modelDialogRef}
-            className="model-picker"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Select model"
-            tabIndex={-1}
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <header>
-              <span>MODEL CATALOG</span>
-              <button
-                onClick={() => setModelPickerOpen(false)}
-                aria-label="Close model picker"
-              >
-                ESC
-              </button>
-            </header>
-            <div className="model-search">
-              <span>›</span>
-              <input
-                ref={modelSearchRef}
-                value={modelQuery}
-                onChange={(event) => {
-                  setModelQuery(event.target.value);
-                  setModelIndex(0);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") setModelPickerOpen(false);
-                  else if (
-                    event.key === "ArrowDown" ||
-                    event.key === "ArrowUp"
-                  ) {
-                    event.preventDefault();
-                    setModelIndex(
-                      (index) =>
-                        (index +
-                          (event.key === "ArrowDown" ? 1 : -1) +
-                          filteredModels.length) %
-                        filteredModels.length,
-                    );
-                  } else if (
-                    event.key === "Enter" &&
-                    filteredModels[modelIndex]
-                  ) {
-                    event.preventDefault();
-                    handleSetModel(filteredModels[modelIndex]);
-                  }
-                }}
-                placeholder="FILTER PROVIDER OR MODEL…"
-              />
-            </div>
-            <div className="model-list" role="listbox">
-              {filteredModels.map((model, index) => {
-                const slash = model.indexOf("/");
-                const provider =
-                  slash === -1 ? "default" : model.slice(0, slash);
-                const name = slash === -1 ? model : model.slice(slash + 1);
-                return (
-                  <button
-                    key={model}
-                    className={index === modelIndex ? "active" : ""}
-                    onMouseEnter={() => setModelIndex(index)}
-                    onClick={() => handleSetModel(model)}
-                    role="option"
-                    aria-selected={model === currentModel}
-                  >
-                    <span className="model-arrow">
-                      {index === modelIndex ? "→" : ""}
-                    </span>
-                    <strong>{name}</strong>
-                    <small>[{provider}]</small>
-                    <b>{model === currentModel ? "✓" : ""}</b>
-                  </button>
-                );
-              })}
-              {filteredModels.length === 0 && (
-                <div className="model-empty">NO MATCHING MODELS</div>
-              )}
-            </div>
-            <footer>
-              <span>
-                {filteredModels.length
-                  ? `${modelIndex + 1}/${filteredModels.length}`
-                  : "0/0"}
-              </span>
-              <span>↑↓ NAVIGATE · ENTER SELECT</span>
-            </footer>
-          </section>
-        </div>
+        <ModelPickerDialog
+          models={models}
+          currentModel={currentModel}
+          dialogRef={modelDialogRef}
+          onClose={() => setModelPickerOpen(false)}
+          onSelect={(model) => void handleSetModel(model)}
+        />
       )}
 
       {resumePickerOpen && (
@@ -3600,1181 +4596,99 @@ export default function ChatView({
             : undefined
         }
       >
-        <div
-          style={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        <Virtuoso
+          ref={virtuosoRef}
+          style={{ flex: 1, minHeight: 0 }}
+          data={feedItems}
+          computeItemKey={feedItemKey}
+          followOutput="auto"
+          alignToBottom
+          atBottomStateChange={handleAtBottomStateChange}
+          itemContent={renderFeedItem}
+        />
+
+        {agentStatus !== "running" && planApprovalPending(messages) && (
           <div
-            style={{
-              maxWidth: 880,
-              width: "100%",
-              margin: "0 auto",
-              padding: "var(--spacing-xl) var(--spacing-md)",
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--spacing-xl)",
-            }}
-          >
-            {isNewSessionLoading && (
-              <div className="session-loading" role="status" aria-live="polite">
-                <span className="agent-working-mark" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <div>
-                  <strong>STARTING NEW CONTEXT</strong>
-                  <small>KEEPING WORKTREE AND DEV SERVER</small>
-                </div>
-              </div>
-            )}
-            {messages.length === 0 &&
-              researchResults.length === 0 &&
-              !isNewSessionLoading &&
-              (isHistoryLoading ? (
-                <div
-                  className="session-loading"
-                  role="status"
-                  aria-live="polite"
-                >
-                  <span className="agent-working-mark" aria-hidden="true">
-                    <i />
-                    <i />
-                    <i />
-                  </span>
-                  <div>
-                    <strong>LOADING SESSION</strong>
-                    <small>RESTORING CHAT HISTORY</small>
-                  </div>
-                </div>
-              ) : (
-                <div
-                  className="display-sm"
-                  style={{
-                    color: "var(--colors-muted)",
-                    marginTop: "var(--spacing-xl)",
-                  }}
-                >
-                  AGENT IDLE. SEND PROMPT.
-                </div>
-              ))}
-            {[...researchResults].reverse().map((run) => {
-              const report = run.final_report ?? run.partial_report;
-              return [
-                <div
-                  key={`${run.id}-request`}
-                  className="chat-bubble-user body-md"
-                  style={{ order: run.created_at * 1000 }}
-                >
-                  /research {run.query}
-                </div>,
-                <article
-                  className={`research-result-card${isActiveResearch(run) ? " is-active" : ""}`}
-                  key={run.id}
-                  style={{ order: run.created_at * 1000 + 1 }}
-                  aria-live={isActiveResearch(run) ? "polite" : undefined}
-                >
-                  <small>
-                    {isActiveResearch(run) && (
-                      <span className="research-live-mark" aria-hidden="true">
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                    )}
-                    Deep Research · {run.progress.phase || run.state} ·{" "}
-                    {elapsedResearch(run.created_at)}
-                  </small>
-                  <h3>{run.query}</h3>
-                  {isActiveResearch(run) ? (
-                    <p>{run.progress.activity || "Preparing research…"}</p>
-                  ) : report ? (
-                    <div className="research-inline-report">
-                      <MarkdownMessage>{report}</MarkdownMessage>
-                    </div>
-                  ) : null}
-                  {run.error && (
-                    <p className="research-run-error">{run.error}</p>
-                  )}
-                  {researchHandoffError &&
-                    run.state === "completed" &&
-                    !run.handoff_delivered && (
-                      <p className="research-run-error" role="alert">
-                        Context handoff failed: {researchHandoffError}
-                      </p>
-                    )}
-                  <footer>
-                    <span>
-                      {run.progress.searches} searches · {run.progress.reads}{" "}
-                      reads · {run.progress.checks} checks ·{" "}
-                      {run.sources.length} sources
-                    </span>
-                    <div>
-                      {isActiveResearch(run) && (
-                        <button
-                          disabled={researchBusy}
-                          onClick={() =>
-                            void researchAction("cancel_deep_research", run)
-                          }
-                        >
-                          Cancel
-                        </button>
-                      )}
-                      {canResumeResearch(run) && (
-                        <button
-                          disabled={researchBusy}
-                          onClick={() =>
-                            void researchAction("resume_deep_research", run)
-                          }
-                        >
-                          Resume
-                        </button>
-                      )}
-                      {researchHandoffError &&
-                        run.state === "completed" &&
-                        !run.handoff_delivered && (
-                          <button
-                            onClick={() => void handleResearchCompleted(run)}
-                          >
-                            Retry context handoff
-                          </button>
-                        )}
-                      <button onClick={() => onOpenResearch(run.id)}>
-                        Open full report
-                      </button>
-                    </div>
-                  </footer>
-                </article>,
-              ];
-            })}
-            {messages.map((m) => {
-              const cachedRow = rowCacheRef.current.get(m.id);
-              if (
-                cachedRow &&
-                cachedRow.message === m &&
-                cachedRow.diff === worktreeDiff &&
-                cachedRow.approval === terminalApproval &&
-                cachedRow.restart === handleRestart &&
-                cachedRow.refresh === refreshDiff &&
-                cachedRow.send === sendRaw &&
-                cachedRow.toast === onToast &&
-                cachedRow.flags === rowFlags
-              )
-                return cachedRow.node;
-              const node = (
-                <div
-                  key={m.id}
-                  style={{ order: m.createdAt ?? 0 }}
-                  className={
-                    m.role === "user"
-                      ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
-                      : m.role === "system"
-                        ? "chat-notice body-sm"
-                        : "chat-bubble-assistant body-md"
-                  }
-                >
-                  {m.role === "system" && <small>PI CONTEXT</small>}
-                  {m.thinking && <ThinkingBlock>{m.thinking}</ThinkingBlock>}
-                  {m.images && m.images.length > 0 && (
-                    <div className="chat-images">
-                      {m.images.map((image, index) => (
-                        <button
-                          key={index}
-                          onClick={() => setPreviewImage(image)}
-                          aria-label={`Preview attachment ${index + 1}`}
-                        >
-                          <img
-                            src={`data:${image.mimeType};base64,${image.data}`}
-                            alt="Pasted attachment"
-                          />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {m.toolCalls
-                    .filter((tool) => tool.name === "recommend_global_skills")
-                    .map((tool) => {
-                      const skills = Array.isArray(tool.args.skills)
-                        ? tool.args.skills.filter(
-                            (name): name is string => typeof name === "string",
-                          )
-                        : [];
-                      return skills.length ? (
-                        <section
-                          className="skill-recommendation"
-                          key={tool.callId}
-                          role="status"
-                        >
-                          <div>
-                            <small>SKILL RECOMMENDATION</small>
-                            <strong>{skills.join(" · ")}</strong>
-                            <span>
-                              {typeof tool.args.reason === "string"
-                                ? tool.args.reason
-                                : "Recommended by the agent."}
-                            </span>
-                          </div>
-                          <div>
-                            {skills.map((name) => (
-                              <button
-                                key={name}
-                                onClick={() => {
-                                  setInput(`/skill:${name}`);
-                                  inputRef.current?.focus();
-                                }}
-                              >
-                                Use {name}
-                              </button>
-                            ))}
-                          </div>
-                        </section>
-                      ) : null;
-                    })}
-                  {m.toolCalls
-                    .filter((tool) => isWebSearchTool(tool.name))
-                    .map((tool) => (
-                      <ToolCallView key={tool.callId} tc={tool} />
-                    ))}
-                  {m.toolCalls.some(
-                    (tool) =>
-                      !isWebSearchTool(tool.name) &&
-                      tool.name !== "recommend_global_skills",
-                  ) &&
-                    (() => {
-                      const tools = m.toolCalls.filter(
-                        (tool) =>
-                          !isWebSearchTool(tool.name) &&
-                          tool.name !== "recommend_global_skills",
-                      );
-                      return (
-                        <details className="tool-stack">
-                          <summary>
-                            <span className="tool-stack-icon">
-                              {tools.some((tool) => tool.phase !== "end")
-                                ? "◌"
-                                : "✓"}
-                            </span>
-                            <strong>
-                              {tools.length} TOOL{" "}
-                              {tools.length === 1 ? "CALL" : "CALLS"}
-                            </strong>
-                            <span>
-                              {tools
-                                .map((tool) => tool.name)
-                                .filter(
-                                  (name, index, all) =>
-                                    all.indexOf(name) === index,
-                                )
-                                .join(" · ")}
-                            </span>
-                            <small>DETAILS</small>
-                          </summary>
-                          <div className="tool-stack-items">
-                            {tools.map((tool) => (
-                              <ToolCallView key={tool.callId} tc={tool} />
-                            ))}
-                          </div>
-                        </details>
-                      );
-                    })()}
-                  {m.toolCalls
-                    .filter((tool) => browserScreenshotRef(tool))
-                    .map((tool) => (
-                      <BrowserScreenshot
-                        key={`screenshot-${tool.callId}`}
-                        tc={tool}
-                      />
-                    ))}
-                  {m.toolCalls.length === 0 &&
-                    browserScreenshotRefFromText(m.text) && (
-                      <BrowserScreenshot
-                        tc={{
-                          callId: `restored-${m.id}`,
-                          name: "browser_screenshot",
-                          args: {},
-                          phase: "end",
-                          result: {
-                            data: {
-                              artifactRef: browserScreenshotRefFromText(m.text),
-                            },
-                          },
-                        }}
-                      />
-                    )}
-                  {m.text && (
-                    <MarkdownMessage isStreaming={m.isStreaming}>
-                      {m.text}
-                    </MarkdownMessage>
-                  )}
-                  {m.role === "assistant" && m.text && !m.isStreaming && (
-                    <div className="chat-actions">
-                      <button
-                        className="chat-copy"
-                        onClick={() =>
-                          navigator.clipboard
-                            .writeText(m.text)
-                            .then(() => {
-                              setCopiedMessageId(m.id);
-                              window.setTimeout(
-                                () =>
-                                  setCopiedMessageId((id) =>
-                                    id === m.id ? null : id,
-                                  ),
-                                1600,
-                              );
-                            })
-                            .catch((error) =>
-                              onToast(`Copy failed: ${String(error)}`),
-                            )
-                        }
-                        aria-label="Copy assistant response"
-                        title="Copy response"
-                      >
-                        {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
-                      </button>
-                      <button
-                        className="chat-retry-inline"
-                        onClick={() => {
-                          const lastUser = [...messages]
-                            .reverse()
-                            .find((item) => item.role === "user");
-                          if (lastUser?.text) {
-                            setInput(lastUser.text);
-                            inputRef.current?.focus();
-                          }
-                        }}
-                        aria-label="Try again with last prompt"
-                        title="Copy last prompt back to composer"
-                      >
-                        ↻ TRY AGAIN
-                      </button>
-                      {globalChat && (
-                        <details className="chat-save">
-                          <summary>
-                            {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
-                          </summary>
-                          <div
-                            className="chat-save-options"
-                            aria-label="Save response as"
-                          >
-                            {["knowledge", "memory", "context", "skill"].map(
-                              (kind) => (
-                                <button
-                                  key={kind}
-                                  disabled={savingMessageId === m.id}
-                                  onClick={async (event) => {
-                                    const details =
-                                      event.currentTarget.closest("details");
-                                    setSavingMessageId(m.id);
-                                    try {
-                                      await invoke("save_rag_chat_response", {
-                                        text: m.text,
-                                        kind,
-                                      });
-                                      onToast(`Saved as ${kind}.`);
-                                      details?.removeAttribute("open");
-                                    } catch (error) {
-                                      onToast(`Save failed: ${String(error)}`);
-                                    } finally {
-                                      setSavingMessageId(null);
-                                    }
-                                  }}
-                                >
-                                  {kind}
-                                  <small>
-                                    {kind === "knowledge"
-                                      ? "Reusable answer"
-                                      : kind === "context"
-                                        ? "Chat reference"
-                                        : kind === "memory"
-                                          ? "Stored preference"
-                                          : "Reusable procedure"}
-                                  </small>
-                                </button>
-                              ),
-                            )}
-                          </div>
-                        </details>
-                      )}
-                    </div>
-                  )}
-                  {m.role === "system" && shouldOfferRestart(m.text) && (
-                    <button
-                      onClick={() => handleRestart(true)}
-                      className="chat-restart"
-                      disabled={isRestarting}
-                    >
-                      {isRestarting ? "RESTARTING…" : "↻ RESTART CHAT"}
-                    </button>
-                  )}
-                  {(m.createdAt || m.durationMs) && (
-                    <div className="chat-message-meta">
-                      {m.createdAt && (
-                        <time dateTime={new Date(m.createdAt).toISOString()}>
-                          {formatMessageTime(m.createdAt)}
-                        </time>
-                      )}
-                      {m.role === "assistant" && m.durationMs && (
-                        <span title="Task completion time">
-                          SELESAI DALAM {formatTaskDuration(m.durationMs)}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {agentStatus === "stopped" &&
-                    m.role === "user" &&
-                    m.id === messages[messages.length - 1]?.id && (
-                      <button
-                        onClick={() => handleRestart(true)}
-                        className="chat-retry"
-                        title="Retry interrupted task"
-                        aria-label="Retry interrupted task"
-                      >
-                        ↻
-                      </button>
-                    )}
-                  {worktreeDiff &&
-                    shouldShowChanges(
-                      m,
-                      lastAssistantId,
-                      worktreeDiff.files.length,
-                    ) && (
-                      <details className="chat-changes">
-                        <summary>
-                          <strong>FILES CHANGED</strong>
-                          <span>{worktreeDiff.files.length}</span>
-                        </summary>
-                        {worktreeDiff.files.map((file) => (
-                          <button
-                            key={`${file.repository ?? ""}:${file.path}`}
-                            onClick={() => setExpandedDiff(file.path)}
-                          >
-                            <span>{file.status}</span>
-                            <b>
-                              {file.repository && (
-                                <small>{file.repository}</small>
-                              )}
-                              {file.path}
-                            </b>
-                            <i>+{file.added}</i>
-                            <em>-{file.removed}</em>
-                          </button>
-                        ))}
-                      </details>
-                    )}
-                  {m.id === lastAssistantId && terminalApproval && (
-                    <section className="terminal-command-approval" role="alert">
-                      <small>AGENT REQUEST · TERMINAL COMMAND</small>
-                      <pre>{terminalApproval.data}</pre>
-                      <div>
-                        <button
-                          className="approval-primary"
-                          onClick={() => {
-                            const request = terminalApproval;
-                            setTerminalApprovalStatus("executing");
-                            const approved = request.pane
-                              ? invoke("terminal_write", {
-                                  chatId: `${chatId}__${request.pane}`,
-                                  data: request.data,
-                                }).then(
-                                  () =>
-                                    `Command sent to pane ${request.pane}. Read its output now.`,
-                                )
-                              : invoke<string>("terminal_execute_approved", {
-                                  cwd: cwdRef.current,
-                                  command: request.data,
-                                });
-                            void approved
-                              .then(async (output) => {
-                                setTerminalApprovalStatus("refreshing");
-                                await refreshDiff();
-                                setTerminalApproval(null);
-                                return sendRaw({
-                                  type:
-                                    agentStatus === "running"
-                                      ? "steer"
-                                      : "prompt",
-                                  message: `The user approved the destructive terminal command.\n\nExecution result:\n${output}\n\nContinue the task now and report the outcome.`,
-                                });
-                              })
-                              .catch((error) => {
-                                const message = `Approved terminal command failed: ${String(error)}`;
-                                onToast(message);
-                                void sendRaw({
-                                  type:
-                                    agentStatus === "running"
-                                      ? "steer"
-                                      : "prompt",
-                                  message,
-                                });
-                              })
-                              .finally(() => setTerminalApprovalStatus(null));
-                          }}
-                          disabled={terminalApprovalStatus !== null}
-                        >
-                          {terminalApprovalStatus === "executing"
-                            ? "EXECUTING…"
-                            : terminalApprovalStatus === "refreshing"
-                              ? "REFRESHING CHANGES…"
-                              : "✅ Approve"}
-                        </button>
-                        <button
-                          disabled={terminalApprovalStatus !== null}
-                          onClick={() => {
-                            setTerminalApproval(null);
-                            void sendRaw({
-                              type:
-                                agentStatus === "running" ? "steer" : "prompt",
-                              message:
-                                "Terminal command denied by the user. Do not execute it; explain alternatives if needed.",
-                            });
-                            onToast("Terminal command denied");
-                          }}
-                        >
-                          ❌ Deny
-                        </button>
-                      </div>
-                    </section>
-                  )}
-                </div>
-              );
-              rowCacheRef.current.set(m.id, {
-                message: m,
-                diff: worktreeDiff,
-                approval: terminalApproval,
-                restart: handleRestart,
-                refresh: refreshDiff,
-                send: sendRaw,
-                toast: onToast,
-                flags: rowFlags,
-                node,
-              });
-              return node;
-            })}
-            {backgroundWork && agentStatus !== "running" && (
-              <div
-                className="agent-working activity-nodes phase-executing"
-                style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
-                role="status"
-                aria-live="polite"
-              >
-                <span className="agent-working-mark" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </span>
-                <div>
-                  <strong>BACKGROUND AGENT WORKING</strong>
-                  <small className="agent-working-detail">
-                    {backgroundWork.runId
-                      ? `Run ${backgroundWork.runId}`
-                      : "Detached task in progress"}
-                  </small>
-                </div>
-                <span className="agent-working-stats">
-                  <span>
-                    <ElapsedLabel
-                      startedAt={backgroundWork.startedAt}
-                      ticking={isActive}
-                    />
-                  </span>
-                </span>
-              </div>
-            )}
-            {agentStatus === "running" &&
-              (() => {
-                const allTools = messages.flatMap(
-                  (message) => message.toolCalls,
-                );
-                const allActive = allTools.filter(
-                  (tool) => tool.phase !== "end",
-                );
-                const activeTool = [...allActive].reverse()[0];
-                const completedCount = allTools.filter(
-                  (tool) => tool.phase === "end",
-                ).length;
-                const completedApiCount = allTools.filter(
-                  (tool) =>
-                    tool.phase === "end" &&
-                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
-                      tool.name,
-                    ),
-                ).length;
-                const lastCompleted = [...allTools]
-                  .reverse()
-                  .find((tool) => tool.phase === "end");
-                const streamingMsg = [...messages]
-                  .reverse()
-                  .find((m) => m.role === "assistant" && m.isStreaming);
-                const streamingText = streamingMsg?.text?.trim() || "";
-                const thinkingText = streamingMsg?.thinking?.trim() || "";
-
-                // Multi sub-agent aggregation
-                const activeSubagents = allActive.filter((t) =>
-                  isSubagentTool(t.name),
-                );
-                const primarySubagent = [...activeSubagents].reverse()[0];
-                const subMeta = primarySubagent
-                  ? getSubagentMeta(primarySubagent.args)
-                  : null;
-                const totalSubagentTasks = activeSubagents.reduce(
-                  (acc, t) => acc + getSubagentMeta(t.args).count,
-                  0,
-                );
-
-                let title: string;
-                let detail: string;
-                let icon: string;
-                let phase: "executing" | "writing" | "thinking";
-
-                if (activeTool) {
-                  phase = "executing";
-                  const build = buildPhase(activeTool);
-                  const isMultiSub = activeSubagents.length > 0 && subMeta;
-                  if (build) {
-                    title = "BUILDING";
-                    detail = build;
-                    icon = "build";
-                  } else if (isMultiSub && subMeta) {
-                    title =
-                      totalSubagentTasks > 1 || activeSubagents.length > 1
-                        ? `SUB-AGENTS WORKING (${activeSubagents.length > 1 ? `${activeSubagents.length} CALLS · ` : ""}${totalSubagentTasks} TASKS)`
-                        : "SUB-AGENT WORKING";
-                    detail =
-                      totalSubagentTasks > 1
-                        ? `${totalSubagentTasks} ${subMeta.mode === "CHAIN" ? "STAGES" : "CHILD AGENTS"} · ${subMeta.mode}`
-                        : subMeta.detail;
-                    icon = "nodes";
-                  } else if (isWebSearchTool(activeTool.name)) {
-                    title = "SEARCHING WEB";
-                    detail = describeToolActivity(activeTool);
-                    icon = "search";
-                  } else if (
-                    /(?:^|\.)(?:api_request|api_contract_test)$/.test(
-                      activeTool.name,
-                    )
-                  ) {
-                    title = "TESTING API";
-                    detail = describeToolActivity(activeTool);
-                    icon = "api";
-                  } else {
-                    const kind = activityKind(activeTool.name);
-                    if (kind === "process") {
-                      title = "RUNNING SESSION";
-                      detail = "Interactive shell";
-                      icon = "terminal";
-                    } else if (kind === "index") {
-                      title = "INDEXING";
-                      detail = "Building knowledge graph";
-                      icon = "graph";
-                    } else if (kind === "loop") {
-                      title = "ITERATING";
-                      detail = "Autonomous pass";
-                      icon = "loop";
-                    } else {
-                      title = "EXECUTING";
-                      detail = describeToolActivity(activeTool);
-                      icon = "meter";
-                    }
-                  }
-                } else if (streamingText) {
-                  phase = "writing";
-                  const lastLine =
-                    streamingText
-                      .split("\n")
-                      .filter(Boolean)
-                      .pop()
-                      ?.slice(0, 55) || "";
-                  title = "RESPONDING";
-                  detail = lastLine
-                    ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}`
-                    : "Writing response";
-                  icon = "meter";
-                } else {
-                  phase = "thinking";
-                  const lastLine =
-                    thinkingText
-                      .split("\n")
-                      .filter(Boolean)
-                      .pop()
-                      ?.slice(0, 55) || "";
-                  if (lastLine) {
-                    title = "REASONING";
-                    detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
-                  } else if (lastCompleted) {
-                    title = "PLANNING NEXT";
-                    detail = describeToolActivity(lastCompleted);
-                  } else {
-                    title = "THINKING";
-                    detail = "Analyzing request";
-                  }
-                  icon = "meter";
-                }
-
-                const apiProgress =
-                  icon === "api"
-                    ? ((
-                        activeTool?.result as {
-                          details?: {
-                            stage?: unknown;
-                            method?: unknown;
-                            path?: unknown;
-                            httpStatus?: unknown;
-                          };
-                        }
-                      )?.details ?? null)
-                    : null;
-                const apiStage = String(apiProgress?.stage ?? "request");
-                const apiStages = [
-                  "contract",
-                  "destination",
-                  "authentication",
-                  "request",
-                  "response",
-                  "validation",
-                ];
-                const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
-                return (
-                  <div
-                    className={`agent-working activity-${icon} phase-${phase}`}
-                    style={{ order: Number.MAX_SAFE_INTEGER - 1 }}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <span className="agent-working-mark" aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <div>
-                      <strong>{title}</strong>
-                      <small className="agent-working-detail" title={detail}>
-                        {detail}
-                      </small>
-                      {apiProgress && (
-                        <div className="api-live-progress">
-                          <span className="api-live-target">
-                            {String(apiProgress.method ?? "API")} ·{" "}
-                            {String(apiProgress.path ?? "Resolving endpoint")}
-                            {apiProgress.httpStatus != null &&
-                              ` · HTTP ${String(apiProgress.httpStatus)}`}
-                          </span>
-                          <span
-                            className="api-live-track"
-                            aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
-                          >
-                            {apiStages.map((stage, index) => (
-                              <i
-                                key={stage}
-                                className={
-                                  index < apiStageIndex
-                                    ? "done"
-                                    : index === apiStageIndex
-                                      ? "active"
-                                      : ""
-                                }
-                                title={stage}
-                              />
-                            ))}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <span className="agent-working-stats">
-                      {icon === "api" && completedApiCount > 0 ? (
-                        <span>
-                          {completedApiCount} API call
-                          {completedApiCount !== 1 ? "s" : ""} done
-                        </span>
-                      ) : completedCount > 0 ? (
-                        <span>
-                          {completedCount} tool{completedCount !== 1 ? "s" : ""}
-                        </span>
-                      ) : null}
-                      <span>
-                        <ElapsedLabel
-                          startedAt={taskStartedAtRef.current ?? Date.now()}
-                          ticking={isActive}
-                        />
-                      </span>
-                    </span>
-                    <button onClick={handleAbort} disabled={isAborting}>
-                      {isAborting ? "ABORTING…" : "ABORT"}
-                    </button>
-                  </div>
-                );
-              })()}
-            <div ref={bottomRef} style={{ order: Number.MAX_SAFE_INTEGER }} />
-          </div>
-        </div>
-
-        <div className="chat-composer-dock">
-          <div
-            className="chat-composer"
+            role="status"
+            aria-live="polite"
+            className="caption-uppercase"
             style={{
               maxWidth: 880,
               margin: "0 auto",
-              padding: "var(--spacing-md)",
-              position: "relative",
+              padding: "8px var(--spacing-md)",
               display: "flex",
-              flexWrap: "wrap",
-              gap: "var(--spacing-md)",
-              alignItems: "flex-end",
+              alignItems: "center",
+              gap: 12,
+              border: "1px solid var(--accent)",
+              borderRadius: 8,
+              background: "var(--surface-solid)",
             }}
           >
-            <div
-              className="composer-chips"
-              role="toolbar"
-              aria-label="Quick prompts"
-            >
-              {[
-                {
-                  label: "\uD83D\uDCA1 Brainstorm",
-                  insert: "Brainstorm ideas for: ",
-                },
-                { label: "\uD83C\uDF10 Web search", insert: "/research " },
-                { label: "</> Code", insert: "Review this code: " },
-                { label: "\uFF0B Skill", insert: "/skill:" },
-              ].map((chip) => (
-                <button
-                  key={chip.label}
-                  className="composer-chip"
-                  onClick={() => {
-                    setInput(
-                      (current) => (current ? `${current} ` : "") + chip.insert,
-                    );
-                    inputRef.current?.focus();
-                  }}
-                  disabled={
-                    driveDetached ||
-                    agentStatus === "stopped" ||
-                    isNewSessionLoading
-                  }
-                >
-                  {chip.label}
-                </button>
-              ))}
-            </div>
-            {slashCommands.length > 0 && (
-              <div className="slash-menu" role="listbox">
-                {slashCommands.map((command, index) => (
-                  <button
-                    key={`${command.source}-${command.name}`}
-                    className={index === commandIndex ? "active" : ""}
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      if (shouldSubmitCommand(input, command))
-                        void submitInput();
-                      else chooseCommand(command);
-                    }}
-                    role="option"
-                    aria-selected={index === commandIndex}
-                  >
-                    <strong>/{command.name}</strong>
-                    <span>{command.description || command.source}</span>
-                    <small>{command.source}</small>
-                  </button>
-                ))}
-              </div>
-            )}
-            {!globalChat && filePickerQuery !== null && (
-              <FilePicker
-                projectPath={projectPath}
-                query={filePickerQuery}
-                pickerRef={filePickerRef}
-                onPick={(f) => {
-                  const atIdx = input.lastIndexOf("@");
-                  if (atIdx === -1) return;
-                  const before = input.slice(0, atIdx);
-                  const after = input.slice(atIdx + 1);
-                  const tokenEnd = after.search(/[\s\n]/);
-                  const rest = tokenEnd === -1 ? "" : after.slice(tokenEnd);
-                  setInput(`${before}@${f.relative} ${rest}`.trimStart() + " ");
-                  setFiles((current) =>
-                    current.some((file) => file.path === f.path)
-                      ? current
-                      : [...current, f],
-                  );
-                  setFilePickerQuery(null);
-                }}
-                onClose={() => setFilePickerQuery(null)}
-              />
-            )}
-            {tablePreviews.length > 0 && (
-              <div className="table-preview">
-                <div className="table-preview-head">
-                  <span>
-                    TABLE PREVIEW · {tablePreviews[0].header.length} cols ·{" "}
-                    {tablePreviews[0].rows.length} rows
-                  </span>
-                  <button
-                    onClick={() => {
-                      // remove table block from input
-                      const lines = input.split("\n");
-                      const cleaned = [] as string[];
-                      let skipping = false;
-                      for (const l of lines) {
-                        const t = l.trim();
-                        if (!skipping && t.startsWith("|") && /\|/.test(t)) {
-                          // naive: skip all consecutive | lines that include separator
-                          if (
-                            /^\|\s*:?-{2,}/.test(t) ||
-                            (cleaned.length > 0 &&
-                              cleaned[cleaned.length - 1]
-                                ?.trim()
-                                .startsWith("|"))
-                          ) {
-                            skipping = true;
-                          }
-                        }
-                        if (skipping) {
-                          if (!t.startsWith("|") && t !== "") {
-                            skipping = false;
-                            cleaned.push(l);
-                          }
-                          continue;
-                        }
-                        cleaned.push(l);
-                      }
-                      setInput(cleaned.join("\n").trim());
-                    }}
-                    title="Remove table"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="md-table-wrapper">
-                  <table>
-                    <thead>
-                      <tr>
-                        {tablePreviews[0].header.map((c, i) => (
-                          <th key={i}>{c || `COL ${i + 1}`}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tablePreviews[0].rows.slice(0, 30).map((r, ri) => (
-                        <tr key={ri}>
-                          {r.map((c, ci) => (
-                            <td key={ci} title={c}>
-                              {c}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {tablePreviews[0].rows.length > 30 && (
-                  <small className="table-preview-more">
-                    +{tablePreviews[0].rows.length - 30} more rows hidden — will
-                    still send full table
-                  </small>
-                )}
-              </div>
-            )}
-            {images.length > 0 && (
-              <div className="image-previews">
-                {images.map((image, index) => (
-                  <div key={index}>
-                    <button
-                      onClick={() => setPreviewImage(image)}
-                      title="Preview image"
-                    >
-                      <img
-                        src={`data:${image.mimeType};base64,${image.data}`}
-                        alt="Pasted attachment preview"
-                      />
-                    </button>
-                    <button
-                      className="image-remove"
-                      onClick={() =>
-                        setImages((prev) => prev.filter((_, i) => i !== index))
-                      }
-                      title="Remove image"
-                      aria-label="Remove image"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {files.length > 0 && (
-              <div className="image-previews" aria-label="File attachments">
-                {files.map((file) => (
-                  <div key={file.path} className="file-attachment">
-                    <span title={file.path}>📎 {file.name}</span>
-                    <button
-                      className="image-remove"
-                      onClick={() =>
-                        setFiles((current) =>
-                          current.filter((item) => item.path !== file.path),
-                        )
-                      }
-                      title="Remove file"
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            {researchUsageError && (
-              <p className="research-run-error" role="alert">
-                Add a question after <code>/research</code>, for example:{" "}
-                <code>/research compare Tauri and Electron</code>.
-              </p>
-            )}
-            {agentStatus === "running" && (
-              <div
-                className={`queue-status${pendingMessageCount ? " has-queue" : ""}`}
-                role="status"
-              >
-                <strong>
-                  {pendingMessageCount
-                    ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED`
-                    : "AGENT IS WORKING"}
-                </strong>
-                <span>
-                  Enter queues next turn · Option/Alt + Enter steers current
-                  turn
-                </span>
-              </div>
-            )}
-            <textarea
-              ref={inputRef}
-              value={input}
-              onPaste={handlePaste}
-              onChange={(e) => {
-                setInput(e.target.value);
-                setResearchUsageError(false);
-                setCommandIndex(0);
-              }}
-              onKeyDown={(e) => {
-                if (e.altKey && e.key === "Enter") {
-                  e.preventDefault();
-                  submitInput("steer");
-                  return;
-                }
-                if (e.ctrlKey && e.key.toLowerCase() === "j") {
-                  e.preventDefault();
-                  setInput((current) => `${current}\n`);
-                  return;
-                }
-                if (
-                  slashCommands.length > 0 &&
-                  (e.key === "ArrowDown" || e.key === "ArrowUp")
-                ) {
-                  e.preventDefault();
-                  setCommandIndex(
-                    (current) =>
-                      (current +
-                        (e.key === "ArrowDown" ? 1 : -1) +
-                        slashCommands.length) %
-                      slashCommands.length,
-                  );
-                  return;
-                }
-                if (
-                  slashCommands.length > 0 &&
-                  (e.key === "Tab" || e.key === "Enter")
-                ) {
-                  e.preventDefault();
-                  const command = slashCommands[commandIndex];
-                  if (e.key === "Enter" && shouldSubmitCommand(input, command))
-                    void submitInput();
-                  else chooseCommand(command);
-                  return;
-                }
-                if (
-                  filePickerQuery !== null &&
-                  filePickerRef.current?.onKeyDown(e.key)
-                ) {
-                  e.preventDefault();
-                  return;
-                }
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitInput();
-                }
-              }}
-              placeholder={
-                driveDetached
-                  ? "Reconnect the drive to continue"
-                  : agentStatus === "stopped"
-                    ? "Restart the session to continue"
-                    : agentStatus === "running"
-                      ? "Write a follow-up…"
-                      : inputPlaceholder || "Message the agent…"
-              }
-              disabled={
-                driveDetached ||
-                agentStatus === "stopped" ||
-                isNewSessionLoading
-              }
-              aria-describedby={
-                !globalChat &&
-                !atHint &&
-                !driveDetached &&
-                agentStatus !== "stopped"
-                  ? "chat-composer-help"
-                  : undefined
-              }
-              rows={1}
-              className="text-input body-md"
+            <span style={{ flex: 1 }}>PLAN READY — APPROVE TO BUILD</span>
+            <button
+              onClick={() => void approvePlan()}
+              className="composer-chip"
               style={{
-                flex: 1,
-                maxHeight: 180,
-                overflowY: "auto",
-                padding: "var(--spacing-sm) 0",
-                resize: "none",
+                borderColor: "#7bc98a",
+                color: "#9fe0ab",
+                letterSpacing: "0.08em",
               }}
-            />
-            <button
-              onClick={() => void attachFiles()}
-              disabled={
-                driveDetached ||
-                agentStatus === "stopped" ||
-                isNewSessionLoading
-              }
-              className="small-icon-button"
-              title="Attach files"
-              aria-label="Attach files"
             >
-              📎
+              ✓ APPROVE
             </button>
             <button
-              onClick={() => submitInput()}
-              disabled={
-                !chatReady ||
-                driveDetached ||
-                agentStatus === "stopped" ||
-                isNewSessionLoading ||
-                isAborting ||
-                researchBusy ||
-                (!input.trim() && images.length === 0 && files.length === 0)
-              }
-              className="button-primary chat-action"
+              onClick={rejectPlan}
+              className="composer-chip"
+              style={{
+                borderColor: "#ff7069",
+                color: "#ff9b96",
+                letterSpacing: "0.08em",
+              }}
             >
-              {!chatReady
-                ? "CONNECTING…"
-                : researchBusy
-                  ? "STARTING…"
-                  : isNewSessionLoading
-                    ? "LOADING…"
-                    : agentStatus === "running"
-                      ? "QUEUE"
-                      : "SEND"}
+              ✕ REJECT
             </button>
           </div>
-        </div>
+        )}
+        <ChatComposer
+          globalChat={globalChat}
+          planMode={planMode}
+          onPlanModeChange={setPlanMode}
+          driveDetached={driveDetached}
+          agentStatus={agentStatus}
+          isNewSessionLoading={isNewSessionLoading}
+          chatReady={chatReady}
+          isAborting={isAborting}
+          researchBusy={researchBusy}
+          researchUsageError={researchUsageError}
+          pendingMessageCount={pendingMessageCount}
+          projectPath={projectPath}
+          inputPlaceholder={inputPlaceholder}
+          input={input}
+          images={images}
+          files={files}
+          currentThinking={currentThinking}
+          slashCommands={slashCommands}
+          commandIndex={commandIndex}
+          filePickerQuery={filePickerQuery}
+          atHint={atHint}
+          tablePreviews={tablePreviews}
+          inputRef={inputRef}
+          filePickerRef={filePickerRef}
+          setInput={setInput}
+          setImages={setImages}
+          setFiles={setFiles}
+          setPreviewImage={setPreviewImage}
+          setFilePickerQuery={setFilePickerQuery}
+          setResearchUsageError={setResearchUsageError}
+          setCommandIndex={setCommandIndex}
+          onPaste={handlePaste}
+          onAttachFiles={attachFiles}
+          onSubmit={submitInput}
+          onChooseCommand={chooseCommand}
+          onFilePick={handleFilePick}
+          onRemoveTable={handleRemoveTable}
+          onSetThinking={handleSetThinking}
+        />
       </div>
       {!globalChat &&
         (atHint ? (
@@ -4796,144 +4710,23 @@ export default function ChatView({
         ))}
       {/* VSCode right sidebar: activity rail + explorer + diff, now with proper hide toggle */}
       {!globalChat && (
-        <div className={`code-sidebar-rail${rightSidebarOpen ? " open" : ""}`}>
-          <div className="activity-rail vscode-rail">
-            <button
-              className={
-                rightSidebarOpen && rightActivity === "explorer" ? "active" : ""
-              }
-              onClick={() => {
-                if (rightSidebarOpen && rightActivity === "explorer")
-                  setRightSidebarOpen(false);
-                else {
-                  setRightSidebarOpen(true);
-                  setRightActivity("explorer");
-                }
-              }}
-              title={
-                rightSidebarOpen && rightActivity === "explorer"
-                  ? "Hide Explorer"
-                  : "Explorer · Project files"
-              }
-              aria-label="Explorer"
-              aria-expanded={rightSidebarOpen && rightActivity === "explorer"}
-            >
-              <ExplorerIcon />
-            </button>
-            {(worktree || isWorkspace) && (
-              <button
-                className={
-                  rightSidebarOpen && rightActivity === "scm" ? "active" : ""
-                }
-                onClick={() => {
-                  if (rightSidebarOpen && rightActivity === "scm")
-                    setRightSidebarOpen(false);
-                  else {
-                    setRightSidebarOpen(true);
-                    setRightActivity("scm");
-                  }
-                }}
-                title={
-                  rightSidebarOpen && rightActivity === "scm"
-                    ? "Hide Changes"
-                    : "Source Control · Changes"
-                }
-                aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
-                aria-expanded={rightSidebarOpen && rightActivity === "scm"}
-              >
-                <ChangesIcon />
-                {Boolean(worktreeDiff?.files.length) && (
-                  <span className="activity-badge">
-                    {worktreeDiff?.files.length}
-                  </span>
-                )}
-              </button>
-            )}
-          </div>
-          <div
-            className="code-sidebar-panel"
-            hidden={!rightSidebarOpen}
-            style={{
-              width: rightSidebarOpen ? rightPanelWidth : 0,
-              position: "relative",
-            }}
-          >
-            <div
-              className="code-sidebar-resize-handle"
-              role="separator"
-              aria-label="Resize code sidebar"
-              aria-orientation="vertical"
-              aria-valuemin={240}
-              aria-valuemax={480}
-              aria-valuenow={rightPanelWidth}
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "ArrowLeft")
-                  setRightPanelWidth((width) => Math.min(480, width + 10));
-                if (e.key === "ArrowRight")
-                  setRightPanelWidth((width) => Math.max(240, width - 10));
-              }}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                const startX = e.clientX;
-                const startWidth = rightPanelWidth;
-                const target = e.currentTarget;
-                target.onpointermove = (ev) =>
-                  setRightPanelWidth(
-                    Math.max(
-                      240,
-                      Math.min(480, startWidth + (startX - ev.clientX)),
-                    ),
-                  );
-                target.onpointerup = () => {
-                  target.onpointermove = null;
-                  target.onpointerup = null;
-                  target.releasePointerCapture(e.pointerId);
-                };
-              }}
-            />
-            {rightActivity === "explorer" ? (
-              <section className="code-sidebar-section">
-                <div className="code-section-toggle">
-                  <small>Explorer</small>
-                  <strong>{projectName}</strong>
-                </div>
-                <div className="code-section-body">
-                  <ProjectFilesSidebar
-                    projectPath={cwd}
-                    projectName={projectName}
-                    refreshKey={worktreeDiff?.files.length ?? 0}
-                    onOpenAt={setExpandedDiff}
-                  />
-                </div>
-              </section>
-            ) : (
-              <section className="code-sidebar-section">
-                <SourceControlPanel
-                  cwd={isWorkspace ? cwd : (worktree?.worktree_path ?? cwd)}
-                  repositories={isWorkspace ? repositoryStatuses : []}
-                  onDiff={(repository, path) =>
-                    setExpandedDiff(
-                      isWorkspace ? `${repository}:${path}` : path,
-                    )
-                  }
-                  onCommitDiff={(repository, file) => {
-                    const key = isWorkspace
-                      ? `${repository}:${file.path}`
-                      : file.path;
-                    setWorktreeDiff({
-                      merge_base: "",
-                      files: [{ ...file, repository }],
-                    });
-                    setExpandedDiff(key);
-                  }}
-                  confirm={confirm}
-                  toast={onToast}
-                />
-              </section>
-            )}
-          </div>
-        </div>
+        <ChatRightSidebar
+          open={rightSidebarOpen}
+          activity={rightActivity}
+          panelWidth={rightPanelWidth}
+          worktree={worktree}
+          isWorkspace={isWorkspace}
+          worktreeDiff={worktreeDiff}
+          cwd={cwd}
+          projectName={projectName}
+          repositoryStatuses={repositoryStatuses}
+          onOpenChange={setRightSidebarOpen}
+          onActivityChange={setRightActivity}
+          onPanelWidthChange={setRightPanelWidth}
+          onOpenDiff={setExpandedDiff}
+          onWorktreeDiffChange={setWorktreeDiff}
+          onToast={onToast}
+        />
       )}
       <footer className="chat-status">
         <span>
@@ -5077,175 +4870,38 @@ export default function ChatView({
           />
         </div>
       )}
+      {sessionTreeOpen && (
+        <SessionTreePanel
+          sessionId={sessionId}
+          agentRunning={agentStatus === "running"}
+          onToast={onToast}
+          onForked={handleSessionForked}
+          onClose={() => setSessionTreeOpen(false)}
+        />
+      )}
       {expandedDiff &&
         worktreeDiff?.files.find(
           (f) =>
             `${f.repository ? `${f.repository}:` : ""}${f.path}` ===
               expandedDiff || f.path === expandedDiff,
         ) && (
-          <div
-            onPointerDown={() => setExpandedDiff(null)}
-            style={{
-              position: "fixed",
-              top: 62,
-              left: 0,
-              bottom: 0,
-              right: 432,
-              zIndex: 80,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "auto",
-              padding: 20,
-            }}
-          >
-            <div
-              onPointerDown={(e) => e.stopPropagation()}
-              ref={expandedDiffRef}
-              className="diff-panel"
-              role="dialog"
-              aria-modal="true"
-              aria-label={`Diff preview for ${expandedDiff}`}
-              tabIndex={-1}
-              style={{
-                maxWidth: "calc(100vw - 480px)",
-                maxHeight: "85vh",
-                pointerEvents: "auto",
-                boxShadow: "0 24px 60px #000c",
-                border: "1px solid var(--accent)",
-                transform: `translate(${diffPos.x}px, ${diffPos.y}px)`,
-                transition: dragRef.current
-                  ? "none"
-                  : "transform 160ms var(--ease-out)",
-                resize: "both",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 20px",
-                  borderBottom: "1px solid var(--colors-hairline)",
-                  background: "#1a1b18",
-                  cursor: "grab",
-                  userSelect: "none",
-                  flexShrink: 0,
-                }}
-                onPointerDown={(e) => {
-                  if ((e.target as HTMLElement).closest("button")) return;
-                  e.preventDefault();
-                  const rect = (
-                    e.currentTarget as HTMLElement
-                  ).parentElement!.getBoundingClientRect();
-                  dragRef.current = {
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    initX: diffPos.x,
-                    initY: diffPos.y,
-                    minX: -rect.left + 24,
-                    maxX: window.innerWidth - rect.right - 24,
-                    minY: -rect.top + 62,
-                    maxY: window.innerHeight - rect.bottom - 24,
-                  };
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grabbing";
-                }}
-                onPointerMove={(e) => {
-                  if (!dragRef.current) return;
-                  const {
-                    startX,
-                    startY,
-                    initX,
-                    initY,
-                    minX,
-                    maxX,
-                    minY,
-                    maxY,
-                  } = dragRef.current;
-                  setDiffPos({
-                    x: Math.max(
-                      minX,
-                      Math.min(maxX, initX + e.clientX - startX),
-                    ),
-                    y: Math.max(
-                      minY,
-                      Math.min(maxY, initY + e.clientY - startY),
-                    ),
-                  });
-                }}
-                onPointerUp={(e) => {
-                  dragRef.current = null;
-                  e.currentTarget.releasePointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grab";
-                }}
-                onPointerCancel={(e) => {
-                  dragRef.current = null;
-                  e.currentTarget.releasePointerCapture(e.pointerId);
-                  e.currentTarget.style.cursor = "grab";
-                }}
-              >
-                <div style={{ display: "grid", gap: 4 }}>
-                  <small
-                    style={{
-                      color: "var(--accent)",
-                      fontSize: 10,
-                      letterSpacing: "0.1em",
-                    }}
-                  >
-                    DIFF PREVIEW (READONLY)
-                  </small>
-                  <strong style={{ fontSize: 14 }}>{expandedDiff}</strong>
-                </div>
-                <button
-                  onClick={() => setExpandedDiff(null)}
-                  title="Close preview"
-                  style={{
-                    padding: "6px 12px",
-                    border: "1px solid #ff7069",
-                    color: "#ff9b96",
-                    fontSize: 10,
-                    letterSpacing: "0.1em",
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    background: "transparent",
-                  }}
-                >
-                  ✕ CLOSE
-                </button>
-              </div>
-
-              <div style={{ flex: 1, overflow: "auto", background: "#0e0f0c" }}>
-                {(() => {
-                  const file = worktreeDiff.files.find(
-                    (f) =>
-                      `${f.repository ? `${f.repository}:` : ""}${f.path}` ===
-                        expandedDiff || f.path === expandedDiff,
-                  );
-                  if (!file || !file.patch)
-                    return (
-                      <p className="code-empty" style={{ padding: 20 }}>
-                        Binary or untracked — no textual diff.
-                      </p>
-                    );
-                  return (
-                    <div
-                      className="split-diff vscode-split"
-                      style={{ maxHeight: "none" }}
-                    >
-                      <header>
-                        <span>BEFORE</span>
-                        <span>AFTER</span>
-                      </header>
-                      {splitPatch(file.patch)}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
+          <ExpandedDiffPanel
+            diffKey={expandedDiff}
+            worktreeDiff={worktreeDiff}
+            position={diffPos}
+            dialogRef={expandedDiffRef}
+            onPositionChange={setDiffPos}
+            onClose={() => setExpandedDiff(null)}
+            worktreePath={worktree?.worktree_path ?? null}
+            repositoryRoots={Object.fromEntries(
+              repositoryStatuses.map((repository) => [
+                repository.name,
+                `${cwdRef.current}/${repository.name}`,
+              ]),
+            )}
+            onToast={onToast}
+            onDiffInvalidated={refreshDiff}
+          />
         )}
       {approval && (
         <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />

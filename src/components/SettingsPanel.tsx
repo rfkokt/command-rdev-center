@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import GraphifySettings from "./GraphifySettings";
+import JevSettings from "./JevSettings";
 import McpSettings from "./McpSettings";
 import PipelineSettings from "./PipelineSettings";
 import RagSettings from "./RagSettings";
@@ -81,7 +82,7 @@ export default function SettingsPanel({
   onToast: (message: string) => void;
 }) {
   const [page, setPage] = useState<
-    "pi" | "graphify" | "mcp" | "rag" | "pipeline"
+    "pi" | "graphify" | "jev" | "mcp" | "rag" | "pipeline"
   >(initialPage);
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
@@ -261,11 +262,13 @@ export default function SettingsPanel({
                 ? "PI SETTINGS"
                 : page === "graphify"
                   ? "GRAPHIFY SETTINGS"
-                  : page === "mcp"
-                    ? "MCP SETTINGS"
-                    : page === "rag"
-                      ? "RAG SETTINGS"
-                      : "PIPELINE SETTINGS"}
+                  : page === "jev"
+                    ? "JEV SETTINGS"
+                    : page === "mcp"
+                      ? "MCP SETTINGS"
+                      : page === "rag"
+                        ? "RAG SETTINGS"
+                        : "PIPELINE SETTINGS"}
             </strong>
           </div>
           <button onClick={onClose} aria-label="Close settings">
@@ -284,6 +287,12 @@ export default function SettingsPanel({
             onClick={() => setPage("graphify")}
           >
             GRAPHIFY
+          </button>
+          <button
+            className={page === "jev" ? "active" : ""}
+            onClick={() => setPage("jev")}
+          >
+            JEV
           </button>
           <button
             className={page === "mcp" ? "active" : ""}
@@ -329,6 +338,8 @@ export default function SettingsPanel({
         </div>
         {page === "graphify" ? (
           <GraphifySettings onToast={onToast} />
+        ) : page === "jev" ? (
+          <JevSettings onToast={onToast} />
         ) : page === "mcp" ? (
           <McpSettings onToast={onToast} />
         ) : page === "rag" ? (

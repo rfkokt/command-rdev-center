@@ -170,6 +170,8 @@ pub fn run() {
             settings::get_graphify_settings,
             settings::fetch_graphify_models,
             settings::save_graphify_settings,
+            settings::get_jev_settings,
+            settings::save_jev_settings,
             worktree::ensure_worktree,
             worktree::ensure_workspace_session,
             worktree::remove_worktree,

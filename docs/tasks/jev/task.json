@@ -1,0 +1,236 @@
+{
+  "feature": {
+    "id": "jev-agent-workflows",
+    "name": "Jev Agent Workflows for Kern Studio",
+    "type": "feature",
+    "status": "active",
+    "created_at": "2026-10-02",
+    "summary": "Integrasikan keputusan typed Jev untuk kepatuhan aturan proyek, pemilihan tool/skill, pencarian file, dan compaction; fokus kualitas workflow coding.",
+    "source_plan": "docs/plans/2026-10-02-001-feat-jev-agent-workflows-plan.md",
+    "implementation_order": [
+      "foundation",
+      "tool-skill-selection",
+      "file-search",
+      "project-rules",
+      "compaction",
+      "rollout"
+    ],
+    "principles": [
+      "User-approved scope terdiri dari empat use case; penghematan token bukan tujuan utama.",
+      "Graphify dan indeks menyediakan kandidat; Jev menilai relevansi.",
+      "Host tetap mengendalikan izin dan eksekusi; confidence bukan bukti kebenaran.",
+      "Mulai shadow, aktifkan per fitur secara opt-in setelah evaluasi.",
+      "Compaction mempertahankan intent, constraint, bukti, dan kemampuan recovery."
+    ],
+    "tasks": [
+      {
+        "id": "J0-01",
+        "phase": "J0",
+        "name": "Spike kontrak Jev dan lifecycle Pi",
+        "status": "Done",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Verifikasi endpoint/model dan primitive keputusan provider pilihan.",
+          "Petakan hook tool, context, dan compaction pada runtime Pi yang dibundel.",
+          "Catat lokasi integrasi dan batas otoritas host."
+        ],
+        "acceptance_criteria": [
+          "Kontrak request/response dan versi runtime terdokumentasi.",
+          "Semua empat fitur memiliki hook/integration point yang terverifikasi atau blocker eksplisit.",
+          "Tidak ada install komunitas atau biaya API tanpa kebutuhan implementasi yang jelas."
+        ],
+        "notes": "Verified official TypeSafe wire contract and bundled Pi 1.0 declarations; real RPC extension-load smoke check passed. Hook findings are recorded in the plan."
+      },
+      {
+        "id": "J0-02",
+        "phase": "J0",
+        "name": "Bangun adapter keputusan dan konfigurasi opt-in",
+        "status": "Review",
+        "priority": "P0",
+        "depends_on": [
+          "J0-01"
+        ],
+        "scope": [
+          "Adapter typed Choice/Score/Noul, validasi kandidat, timeout/cancellation, dan hasil unavailable.",
+          "Konfigurasi provider/model serta toggle per fitur; kredensial melalui secret storage.",
+          "Trace tanpa rahasia dan mode shadow."
+        ],
+        "acceptance_criteria": [
+          "ID di luar kandidat dan response invalid ditolak.",
+          "Missing key, timeout, rate limit, dan cancellation mengembalikan fallback eksplisit.",
+          "Fitur default off dan API key tidak masuk prompt/log/history."
+        ],
+        "notes": "Typed adapter, bounded request/response, cancellation/fallback, Keychain configuration, routing-mode settings and safe traces implemented. Other feature toggles will ship with their implementations. Live provider compatibility remains unverified."
+      },
+      {
+        "id": "J0-03",
+        "phase": "J0",
+        "name": "Siapkan corpus evaluasi empat use case",
+        "status": "In Progress",
+        "priority": "P0",
+        "depends_on": [
+          "J0-01"
+        ],
+        "scope": [
+          "Fixture task dengan expected tools/skills, relevant files, aturan scoped, dan fakta yang harus bertahan setelah compact.",
+          "Masukkan kasus ambigu, tidak ada kandidat, override user, dan konten yang mencoba mengubah instruksi.",
+          "Tentukan baseline serta threshold rollout dari hasil evaluasi."
+        ],
+        "acceptance_criteria": [
+          "Setiap use case memiliki fixture positif, negatif, dan ambiguous.",
+          "Metric dan label dapat ditinjau tanpa kredensial atau data pribadi.",
+          "Ambang keberhasilan ditetapkan sebelum rollout aktif."
+        ],
+        "notes": "12 seed-labelled fixtures added across all four use cases. Baseline runs, real-session corpus expansion, and measured rollout thresholds remain outstanding."
+      },
+      {
+        "id": "J1-01",
+        "phase": "J1",
+        "name": "Implementasikan seleksi tool dan skill",
+        "status": "Review",
+        "priority": "P1",
+        "depends_on": [
+          "J0-02",
+          "J0-03"
+        ],
+        "scope": [
+          "Ambil kandidat dari katalog yang benar-benar tersedia.",
+          "Nilai manifest terhadap maksud user dan dukung no-match.",
+          "Sambungkan rekomendasi ke alur chat/Pi tanpa memperluas izin."
+        ],
+        "acceptance_criteria": [
+          "Pilihan hanya mengacu pada ID katalog dan skill terpilih dimuat sesuai lifecycle.",
+          "No-match, ambiguous, dan unavailable memiliki perilaku yang teruji.",
+          "Shadow trace dan toggle bekerja; tidak ada tool dijalankan karena rekomendasi saja."
+        ],
+        "notes": "Recommends one active tool and one loaded non-manual skill or none. Shadow/advisory only; does not activate dormant tools or execute skills. Offline lifecycle/contract checks pass; semantic accuracy needs live evaluation."
+      },
+      {
+        "id": "J2-01",
+        "phase": "J2",
+        "name": "Implementasikan ranking kandidat file dan simbol",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J1-01"
+        ],
+        "scope": [
+          "Pertahankan Graphify dan discovery yang mengikuti aturan proyek.",
+          "Nilai path/simbol/snippet dengan provenance; verifikasi ketersediaan Codebase Memory di runtime.",
+          "Tampilkan ranking dan akses hasil asli serta fallback pencarian teks."
+        ],
+        "acceptance_criteria": [
+          "Tidak ada path atau simbol karangan model.",
+          "Recall/ranking diuji pada fixture file relevan dan kasus ambigu.",
+          "Stale graph/API failure tetap menyediakan hasil discovery asli dan tidak melewati gate proyek."
+        ]
+      },
+      {
+        "id": "J3-01",
+        "phase": "J3",
+        "name": "Petakan aturan scoped dan proposal tindakan",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J2-01"
+        ],
+        "scope": [
+          "Tentukan aturan yang berlaku untuk path berdasarkan hierarki instruksi runtime.",
+          "Susun state proposal command/write/edit dan bukti tanpa credential.",
+          "Pisahkan instruksi berwenang dari konten tool/source yang tidak tepercaya."
+        ],
+        "acceptance_criteria": [
+          "Fixture aturan nested dan instruksi user menghasilkan scope yang tepat.",
+          "Konten source/tool tidak dapat menjadi aturan atau izin baru.",
+          "Hook tidak menggandakan atau melewati policy host."
+        ]
+      },
+      {
+        "id": "J3-02",
+        "phase": "J3",
+        "name": "Implementasikan feedback kepatuhan aturan",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J3-01"
+        ],
+        "scope": [
+          "Jev menilai proposal dan mengembalikan rule reference, bukti, dan confidence.",
+          "Berikan advisory yang membantu agent mengoreksi proposal.",
+          "Mulai shadow lalu opt-in advisory; host tetap mengendalikan izin."
+        ],
+        "acceptance_criteria": [
+          "Feedback menunjuk kutipan aturan dan bukti konkret.",
+          "False positive/negative dan kasus user-authorized dievaluasi.",
+          "Skor Jev sendiri tidak menambahkan block/approval; API failure dinyatakan unavailable."
+        ]
+      },
+      {
+        "id": "J4-01",
+        "phase": "J4",
+        "name": "Rancang retention dan recovery compaction",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J3-02"
+        ],
+        "scope": [
+          "Definisikan informasi wajib dipertahankan dan kandidat tool history.",
+          "Simpan sumber penuh/referensi retrieval untuk konten yang disisihkan.",
+          "Petakan boundary, file tracking, previous summary, dan accounting kontrak Pi."
+        ],
+        "acceptance_criteria": [
+          "User intent, constraint, keputusan, task aktif, edit, check, dan unresolved error memiliki aturan retensi.",
+          "Informasi uncertain dipertahankan dan sumber yang disisihkan dapat dipulihkan.",
+          "Kontrak resume/fallback terdokumentasi dan cocok dengan runtime."
+        ]
+      },
+      {
+        "id": "J4-02",
+        "phase": "J4",
+        "name": "Implementasikan compaction dengan seleksi Jev",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J4-01"
+        ],
+        "scope": [
+          "Seleksi informasi dengan keputusan typed, lalu gunakan mekanisme ringkasan Pi yang kompatibel.",
+          "Jaga field boundary/accounting/file tracking dan previous summary.",
+          "Fallback ke compaction Pi bawaan pada error atau hasil unusable."
+        ],
+        "acceptance_criteria": [
+          "Corpus compact/resume mempertahankan semua fakta wajib dan task bisa dilanjutkan.",
+          "Retrieval sumber yang disisihkan berhasil.",
+          "Timeout/invalid result tidak melakukan silent truncation atau merusak session."
+        ]
+      },
+      {
+        "id": "J5-01",
+        "phase": "J5",
+        "name": "Evaluasi dan rollout opt-in empat fitur",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [
+          "J1-01",
+          "J2-01",
+          "J3-02",
+          "J4-02"
+        ],
+        "scope": [
+          "Review shadow traces dan metric against baseline per fitur.",
+          "Sesuaikan threshold/prompt dari corpus dan dokumentasikan keterbatasan.",
+          "Dokumentasikan pengaturan, troubleshooting, dan rollback."
+        ],
+        "acceptance_criteria": [
+          "Keempat fitur memenuhi ambang evaluasi yang ditetapkan atau tetap off dengan blocker tercatat.",
+          "Perubahan model/schema/prompt/threshold memiliki identitas yang dapat ditelusuri.",
+          "Disable mengembalikan perilaku bawaan; tidak ada status Kanban otomatis berubah."
+        ]
+      }
+    ],
+    "evaluation_corpus": "docs/tasks/jev/evaluation-corpus.json",
+    "implementation_notes": "2026-10-02: first milestone implemented locally: adapter, Keychain settings, opt-in shadow/advisory project routing. No live provider evaluation or automatic activation. Other three features remain Backlog."
+  }
+}

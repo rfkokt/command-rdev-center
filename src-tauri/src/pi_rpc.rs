@@ -776,6 +776,8 @@ pub fn spawn_pi_rpc(
         );
         args.push("--extension".into());
         args.push(extensions.join("auto-format.ts").to_string_lossy().into());
+        args.push("--extension".into());
+        args.push(extensions.join("jev-routing.ts").to_string_lossy().into());
         // ponytail: browser extension added conditionally below after ensure_bridge
     } else {
         args.push("--extension".into());
@@ -924,6 +926,11 @@ pub fn spawn_pi_rpc(
 
     let mut command = Command::new(&pi_path);
     apply_user_token_env(&mut command);
+    let mut jev_generation = if !global_chat {
+        crate::settings::apply_jev_env(&mut command)
+    } else {
+        None
+    };
     // Debug aid for "agent says no CLI/token" disputes: report where each token came from.
     // Presence only — values never logged.
     for key in ["GITLAB_TOKEN", "GLAB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"] {
@@ -1007,6 +1014,9 @@ pub fn spawn_pi_rpc(
                     Ok(new_pi) => {
                         command = Command::new(&new_pi);
                         apply_user_token_env(&mut command);
+                        if !global_chat {
+                            jev_generation = crate::settings::apply_jev_env(&mut command);
+                        }
                         command
                             .args(&args)
                             .current_dir(&cwd)
@@ -1145,6 +1155,20 @@ pub fn spawn_pi_rpc(
         for line in buf.lines() {
             match line {
                 Ok(l) => {
+                    if l == "CRC_JEV_BILLING_EXHAUSTED" {
+                        if let Some(generation) = jev_generation.as_deref() {
+                            match crate::settings::disable_jev_for_billing(generation) {
+                                Ok(true) => {
+                                    let _ = app_clone2.emit("jev-settings-changed", serde_json::json!({ "mode": "off", "reason": "billing_exhausted" }));
+                                }
+                                Ok(false) => {}
+                                Err(_) => {
+                                    let _ = app_clone2.emit("pi-rpc-stderr", serde_json::json!({ "session_id": sid2, "line": "Jev disabled in this chat, but automatic Off could not be saved. Set Jev Off in Settings." }));
+                                }
+                            }
+                        }
+                        continue;
+                    }
                     let _ = app_clone2.emit(
                         "pi-rpc-stderr",
                         serde_json::json!({
