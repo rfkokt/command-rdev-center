@@ -13,7 +13,7 @@ use tauri::Emitter;
 const IGNORE_BLOCK: &str = "# graphify (local knowledge graph — do not push)\n/graphify-out\n/.graphify\n.graphify_python\n.graphify_detect.json\n";
 const AGENTS_START: &str = "<!-- command-rdev-center:graphify -->";
 const AGENTS_END: &str = "<!-- /command-rdev-center:graphify -->";
-const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify gate (blocking)\nFor every new coding task, before any file search/read (`rg`, `grep`, `find`, `ls`, `read`, or Codebase Memory):\n1. Check whether `graphify-out/graph.json` is fresh against `git HEAD`; run `graphify update .` if stale.\n2. Run `graphify query \"<the user's task>\"`.\n3. Only then inspect the returned files/symbols.\nDo not skip this gate for small tasks. Use `graphify path \"A\" \"B\"` or `graphify explain \"X\"` when needed.\n<!-- /command-rdev-center:graphify -->\n";
+const AGENTS_NOTE: &str = "<!-- command-rdev-center:graphify -->\n## Graphify (optional)\nGraphify integration is opt-in. When it is enabled, `graphify query`/`path`/`explain` can help navigate the codebase before direct file search; when disabled, ignore this section and use `rg` + `read` directly. This is not a blocking gate.\n<!-- /command-rdev-center:graphify -->\n";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -740,7 +740,10 @@ mod tests {
         .unwrap();
         ensure_agents_note(&path).unwrap();
         let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("Graphify gate (blocking)"));
+        assert!(content.contains("Graphify (optional)"));
+        assert!(!content.contains("Graphify gate (blocking)"));
+        assert!(content.starts_with("before\n"));
+        assert!(content.ends_with("\nafter\n"));
         assert!(!content.contains("\nold\n"));
         assert_eq!(content.matches(AGENTS_START).count(), 1);
         let _ = fs::remove_file(path);

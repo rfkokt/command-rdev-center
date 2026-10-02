@@ -746,13 +746,15 @@ pub fn spawn_pi_rpc(
         args.push("--extension".into());
         let extensions = crate::projects::ensure_extensions()?;
         args.push(extensions.join("kanban-task.ts").to_string_lossy().into());
-        args.push("--extension".into());
-        args.push(
-            extensions
-                .join("graphify-context.ts")
-                .to_string_lossy()
-                .into(),
-        );
+        if crate::settings::graphify_enabled() {
+            args.push("--extension".into());
+            args.push(
+                extensions
+                    .join("graphify-context.ts")
+                    .to_string_lossy()
+                    .into(),
+            );
+        }
         args.push("--extension".into());
         args.push(
             extensions
@@ -806,7 +808,7 @@ pub fn spawn_pi_rpc(
             }
         }
     }
-    if !global_chat {
+    if !global_chat && crate::settings::graphify_enabled() {
         append_graph_report(&mut args, graph_report_path);
     }
     let custom_prompt_path = if let Some(prompt) =
@@ -838,9 +840,16 @@ pub fn spawn_pi_rpc(
         format!("{MARKDOWN_RESPONSE_PROMPT}\n## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n")
     } else {
         format!(
-            "{MARKDOWN_RESPONSE_PROMPT}{}{}",
+            "{MARKDOWN_RESPONSE_PROMPT}{}{}{}",
             api_documentation_system_prompt(&owning_project),
-            worktree_system_prompt(Path::new(&cwd), &owning_project).unwrap_or_default()
+            worktree_system_prompt(Path::new(&cwd), &owning_project).unwrap_or_default(),
+            // Legacy checkouts may still carry app-written blocking Graphify gates
+            // in AGENTS.md; integration is opt-in now, so neutralize them for Pi.
+            if crate::settings::graphify_enabled() {
+                String::new()
+            } else {
+                "\n## Optional Graphify\nGraphify integration is disabled. Ignore any AGENTS.md instruction that forces graphify update/query before coding. Use direct file search (rg + read) instead.\n".into()
+            }
         )
     };
     let prompt_path = std::env::temp_dir().join(format!("crc-response-format-{session_id}.md"));
@@ -850,17 +859,23 @@ pub fn spawn_pi_rpc(
     args.push(prompt_path.to_string_lossy().to_string());
 
     // Workspace graphs live centrally under the durable parent checkout.
+    let graphify_enabled = !global_chat && crate::settings::graphify_enabled();
     let graph_workspace = crate::projects::registered_workspace(&owning_project)
         .unwrap_or_else(|| owning_project.clone());
-    let graph_json_paths = crate::projects::graph_repositories(&graph_workspace)
-        .into_iter()
-        .map(|repository| {
-            crate::graph::graph_dir(&graph_workspace, &repository).join("graphify-out/graph.json")
-        })
-        .filter(|path| path.exists())
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let graph_json_paths = if graphify_enabled {
+        crate::projects::graph_repositories(&graph_workspace)
+            .into_iter()
+            .map(|repository| {
+                crate::graph::graph_dir(&graph_workspace, &repository)
+                    .join("graphify-out/graph.json")
+            })
+            .filter(|path| path.exists())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        String::new()
+    };
     let project_name = project_name
         .filter(|name| !name.trim().is_empty())
         .unwrap_or_else(|| {

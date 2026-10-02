@@ -444,6 +444,7 @@ export default function ChatView({
     null,
   );
   const [graphElapsed, setGraphElapsed] = useState(0);
+  const [graphEnabled, setGraphEnabled] = useState(false);
   const [devRunner, setDevRunner] = useState<DevRunnerInfo | null>(null);
   const [showTerminal, setShowTerminal] = useState(false);
   // Global chat provisions a hidden pane immediately so the agent can use SSH/device tools
@@ -719,6 +720,14 @@ export default function ChatView({
     };
   }, [globalChat]);
 
+  // Graphify is opt-in: without the toggle everything below stays dormant.
+  useEffect(() => {
+    if (globalChat) return;
+    invoke<{ enabled: boolean }>("get_graphify_settings")
+      .then((settings) => setGraphEnabled(!!settings.enabled))
+      .catch(() => {});
+  }, [globalChat]);
+
   useEffect(() => {
     if (!graphBusy) return;
     setGraphElapsed(0);
@@ -797,7 +806,7 @@ export default function ChatView({
   );
 
   const updateGraphIfCodeStale = useCallback(async () => {
-    if (globalChat) return;
+    if (globalChat || !graphEnabled) return;
     try {
       const next = await invoke<GraphStatus>("get_graph_status", {
         projectPath,
@@ -806,12 +815,12 @@ export default function ChatView({
       graphReportRef.current = next.report_path;
       if (next.code_stale) await refreshGraph(false);
     } catch (e) {
-      onToast(`Graphify status: ${String(e)}`);
+      onToast(`Graphify unavailable; coding continues (${String(e)})`);
     }
-  }, [projectPath, refreshGraph, onToast]);
+  }, [projectPath, refreshGraph, onToast, graphEnabled, globalChat]);
 
   useEffect(() => {
-    if (globalChat || !isGit || !isActive) return;
+    if (globalChat || !graphEnabled || !isGit || !isActive) return;
     let fingerprint: string | null | undefined;
     const check = async () => {
       try {
@@ -828,7 +837,7 @@ export default function ChatView({
     void check();
     const id = window.setInterval(check, 5000);
     return () => window.clearInterval(id);
-  }, [isActive, isGit, projectPath, refreshGraph, onToast]);
+  }, [graphEnabled, isActive, isGit, projectPath, refreshGraph, onToast]);
 
   const refreshDiff = useCallback(async () => {
     if (!worktree && !isWorkspace) return;
@@ -1920,18 +1929,30 @@ export default function ChatView({
             customSystemPrompt,
           });
         } else {
-          let graph = await invoke<GraphStatus>("get_graph_status", {
-            projectPath,
-          });
-          if (!mounted) return;
-          setGraphStatus(graph);
-          graphReportRef.current = graph.report_path;
-          if (graph.tracked_warning) onToast(graph.tracked_warning);
-          if (graph.code_stale) {
-            // Keep the existing graph available to Pi while the incremental refresh runs.
-            void refreshGraph(false);
+          let graph: GraphStatus | null = null;
+          try {
+            const settings = await invoke<{ enabled: boolean }>(
+              "get_graphify_settings",
+            );
+            setGraphEnabled(!!settings.enabled);
+            if (settings.enabled) {
+              graph = await invoke<GraphStatus>("get_graph_status", {
+                projectPath,
+              });
+            }
+          } catch (e) {
+            // Graphify is optional; coding continues without it.
+            onToast(`Graphify unavailable; coding continues (${String(e)})`);
           }
-          graphReportRef.current = graph.report_path;
+          if (graph) {
+            setGraphStatus(graph);
+            graphReportRef.current = graph.report_path;
+            if (graph.tracked_warning) onToast(graph.tracked_warning);
+            if (graph.code_stale) {
+              // Keep the existing graph available to Pi while the incremental refresh runs.
+              void refreshGraph(false);
+            }
+          }
 
           if (isWorkspace) {
             const workspaceCwd = await invoke<string>(
@@ -4300,7 +4321,7 @@ export default function ChatView({
         {approval && (
           <output className="follow-up-badge">● INPUT REQUIRED</output>
         )}
-        {!globalChat && graphStatus && (
+        {!globalChat && graphEnabled && graphStatus && (
           <>
             <span
               className="category-tag graph-status"
