@@ -7,8 +7,10 @@ interface SpecialistConfig {
   role: string;
   color: string;
   icon: string;
-  // Normalized patch rectangle in the 2752x1536 artwork:
+  // Normalized patch rectangle for station micro-animations in the 2752x1536 artwork:
   rect: { x: number; y: number; w: number; h: number };
+  // Seamless empty patch rectangle covering the entire station, chair, and legs:
+  emptyRect: { x: number; y: number; w: number; h: number };
   // Normalized speech bubble anchor point above head:
   head: { x: number; y: number };
   // Seated / working station position on the floor plane:
@@ -35,6 +37,12 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 180 / 2752,
       h: 440 / 1536,
     },
+    emptyRect: {
+      x: 900 / 2752,
+      y: 660 / 1536,
+      w: 380 / 2752,
+      h: 640 / 1536,
+    },
     head: { x: 1130 / 2752, y: 730 / 1536 },
     homeFoot: { x: 1080 / 2752, y: 1050 / 1536 },
     standingFoot: { x: 1080 / 2752, y: 1050 / 1536 },
@@ -54,6 +62,12 @@ const SPECIALISTS: SpecialistConfig[] = [
       y: 1050 / 1536,
       w: 220 / 2752,
       h: 260 / 1536,
+    },
+    emptyRect: {
+      x: 1620 / 2752,
+      y: 950 / 1536,
+      w: 420 / 2752,
+      h: 500 / 1536,
     },
     head: { x: 1840 / 2752, y: 1040 / 1536 },
     homeFoot: { x: 1780 / 2752, y: 1240 / 1536 },
@@ -75,6 +89,12 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 300 / 2752,
       h: 400 / 1536,
     },
+    emptyRect: {
+      x: 180 / 2752,
+      y: 400 / 1536,
+      w: 380 / 2752,
+      h: 680 / 1536,
+    },
     head: { x: 420 / 2752, y: 500 / 1536 },
     homeFoot: { x: 410 / 2752, y: 920 / 1536 },
     standingFoot: { x: 410 / 2752, y: 920 / 1536 },
@@ -94,6 +114,12 @@ const SPECIALISTS: SpecialistConfig[] = [
       y: 350 / 1536,
       w: 300 / 2752,
       h: 300 / 1536,
+    },
+    emptyRect: {
+      x: 1480 / 2752,
+      y: 300 / 1536,
+      w: 400 / 2752,
+      h: 400 / 1536,
     },
     head: { x: 1700 / 2752, y: 340 / 1536 },
     homeFoot: { x: 1700 / 2752, y: 480 / 1536 },
@@ -115,6 +141,12 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 240 / 2752,
       h: 300 / 1536,
     },
+    emptyRect: {
+      x: 1100 / 2752,
+      y: 200 / 1536,
+      w: 300 / 2752,
+      h: 400 / 1536,
+    },
     head: { x: 1260 / 2752, y: 290 / 1536 },
     homeFoot: { x: 1260 / 2752, y: 420 / 1536 },
     standingFoot: { x: 1260 / 2752, y: 420 / 1536 },
@@ -135,9 +167,15 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 280 / 2752,
       h: 280 / 1536,
     },
+    emptyRect: {
+      x: 450 / 2752,
+      y: 720 / 1536,
+      w: 430 / 2752,
+      h: 530 / 1536,
+    },
     head: { x: 720 / 2752, y: 760 / 1536 },
     homeFoot: { x: 720 / 2752, y: 980 / 1536 },
-    standingFoot: { x: 820 / 2752, y: 980 / 1536 },
+    standingFoot: { x: 960 / 2752, y: 1100 / 1536 },
     walkW: 210 / 2752,
     walkH: 360 / 1536,
     footAnchorX: 0.492,
@@ -223,8 +261,8 @@ const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
     {
       name: "hallway_stroll",
       waypoints: [
-        { x: 820 / 2752, y: 980 / 1536 },
-        { x: 920 / 2752, y: 850 / 1536 },
+        { x: 960 / 2752, y: 1100 / 1536 },
+        { x: 920 / 2752, y: 880 / 1536 },
         { x: 820 / 2752, y: 720 / 1536 },
       ],
       pauseSeconds: 4.0,
@@ -686,10 +724,10 @@ export default function BackgroundMotion({
         const emptyImg = isDark ? emptyPatch?.night : emptyPatch?.day;
 
         if (emptyImg && emptyImg.complete && emptyImg.naturalWidth > 0) {
-          const destX = Math.round(dx + sp.rect.x * dw);
-          const destY = Math.round(dy + sp.rect.y * dh);
-          const destW = Math.round(sp.rect.w * dw);
-          const destH = Math.round(sp.rect.h * dh);
+          const destX = Math.round(dx + sp.emptyRect.x * dw);
+          const destY = Math.round(dy + sp.emptyRect.y * dh);
+          const destW = Math.round(sp.emptyRect.w * dw);
+          const destH = Math.round(sp.emptyRect.h * dh);
           ctx.drawImage(emptyImg, destX, destY, destW, destH);
         }
       });
