@@ -11,8 +11,10 @@ interface SpecialistConfig {
   rect: { x: number; y: number; w: number; h: number };
   // Normalized speech bubble anchor point above head:
   head: { x: number; y: number };
-  // Home foot position on the floor plane:
+  // Seated / working station position on the floor plane:
   homeFoot: { x: number; y: number };
+  // Clear open floor position where specialist stands into the aisle:
+  standingFoot: { x: number; y: number };
   // Walk sprite dimensions and foot anchor:
   walkW: number;
   walkH: number;
@@ -34,7 +36,8 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 440 / 1536,
     },
     head: { x: 1130 / 2752, y: 730 / 1536 },
-    homeFoot: { x: 0.428, y: 0.768 },
+    homeFoot: { x: 1080 / 2752, y: 1050 / 1536 },
+    standingFoot: { x: 1080 / 2752, y: 1050 / 1536 },
     walkW: 221 / 2752,
     walkH: 459 / 1536,
     footAnchorX: 0.484,
@@ -53,9 +56,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 260 / 1536,
     },
     head: { x: 1840 / 2752, y: 1040 / 1536 },
-    homeFoot: { x: 0.648, y: 0.81 },
-    walkW: 277 / 2752,
-    walkH: 462 / 1536,
+    homeFoot: { x: 1780 / 2752, y: 1240 / 1536 },
+    standingFoot: { x: 1850 / 2752, y: 1380 / 1536 },
+    walkW: 230 / 2752,
+    walkH: 380 / 1536,
     footAnchorX: 0.487,
     footAnchorY: 0.937,
   },
@@ -72,9 +76,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 400 / 1536,
     },
     head: { x: 420 / 2752, y: 500 / 1536 },
-    homeFoot: { x: 0.17, y: 0.56 },
-    walkW: 244 / 2752,
-    walkH: 459 / 1536,
+    homeFoot: { x: 410 / 2752, y: 920 / 1536 },
+    standingFoot: { x: 410 / 2752, y: 920 / 1536 },
+    walkW: 220 / 2752,
+    walkH: 420 / 1536,
     footAnchorX: 0.484,
     footAnchorY: 0.937,
   },
@@ -91,9 +96,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     head: { x: 1700 / 2752, y: 340 / 1536 },
-    homeFoot: { x: 0.618, y: 0.42 },
-    walkW: 262 / 2752,
-    walkH: 462 / 1536,
+    homeFoot: { x: 1700 / 2752, y: 480 / 1536 },
+    standingFoot: { x: 2120 / 2752, y: 750 / 1536 },
+    walkW: 190 / 2752,
+    walkH: 310 / 1536,
     footAnchorX: 0.492,
     footAnchorY: 0.931,
   },
@@ -110,9 +116,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     head: { x: 1260 / 2752, y: 290 / 1536 },
-    homeFoot: { x: 0.458, y: 0.38 },
-    walkW: 235 / 2752,
-    walkH: 454 / 1536,
+    homeFoot: { x: 1260 / 2752, y: 420 / 1536 },
+    standingFoot: { x: 1260 / 2752, y: 420 / 1536 },
+    walkW: 160 / 2752,
+    walkH: 270 / 1536,
     footAnchorX: 0.483,
     footAnchorY: 0.936,
   },
@@ -129,9 +136,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 280 / 1536,
     },
     head: { x: 720 / 2752, y: 760 / 1536 },
-    homeFoot: { x: 0.262, y: 0.66 },
-    walkW: 245 / 2752,
-    walkH: 458 / 1536,
+    homeFoot: { x: 720 / 2752, y: 980 / 1536 },
+    standingFoot: { x: 820 / 2752, y: 980 / 1536 },
+    walkW: 210 / 2752,
+    walkH: 360 / 1536,
     footAnchorX: 0.492,
     footAnchorY: 0.937,
   },
@@ -157,112 +165,95 @@ interface PatrolRoute {
 const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
   ada: [
     {
-      name: "coffee",
+      name: "hallway_breakroom",
       waypoints: [
-        { x: 0.428, y: 0.768 },
-        { x: 0.335, y: 0.67 },
-        { x: 0.24, y: 0.62 },
+        { x: 1080 / 2752, y: 1050 / 1536 },
+        { x: 950 / 2752, y: 860 / 1536 },
+        { x: 820 / 2752, y: 720 / 1536 },
       ],
       pauseSeconds: 4.5,
     },
     {
-      name: "kern",
+      name: "hallway_foreground",
       waypoints: [
-        { x: 0.428, y: 0.768 },
-        { x: 0.54, y: 0.768 },
+        { x: 1080 / 2752, y: 1050 / 1536 },
+        { x: 1060 / 2752, y: 1280 / 1536 },
       ],
       pauseSeconds: 4.0,
-    },
-    {
-      name: "alan",
-      waypoints: [
-        { x: 0.428, y: 0.768 },
-        { x: 0.485, y: 0.6 },
-      ],
-      pauseSeconds: 3.5,
     },
   ],
   linus: [
     {
-      name: "deliver_kern",
+      name: "counter_sink",
       waypoints: [
-        { x: 0.17, y: 0.56 },
-        { x: 0.24, y: 0.62 },
-        { x: 0.335, y: 0.67 },
-        { x: 0.54, y: 0.768 },
+        { x: 410 / 2752, y: 920 / 1536 },
+        { x: 320 / 2752, y: 870 / 1536 },
       ],
-      pauseSeconds: 4.0,
+      pauseSeconds: 3.5,
     },
     {
-      name: "deliver_grace",
+      name: "counter_edge",
       waypoints: [
-        { x: 0.17, y: 0.56 },
-        { x: 0.24, y: 0.62 },
-        { x: 0.285, y: 0.66 },
+        { x: 410 / 2752, y: 920 / 1536 },
+        { x: 480 / 2752, y: 960 / 1536 },
       ],
       pauseSeconds: 3.5,
     },
   ],
-  kern: [
+  bob: [
     {
-      name: "coffee_break",
+      name: "rack_left",
       waypoints: [
-        { x: 0.648, y: 0.81 },
-        { x: 0.54, y: 0.768 },
-        { x: 0.335, y: 0.67 },
-        { x: 0.24, y: 0.62 },
-      ],
-      pauseSeconds: 5.0,
-    },
-    {
-      name: "check_alan",
-      waypoints: [
-        { x: 0.648, y: 0.81 },
-        { x: 0.54, y: 0.768 },
-        { x: 0.485, y: 0.6 },
-      ],
-      pauseSeconds: 4.0,
-    },
-  ],
-  alan: [
-    {
-      name: "coffee_break",
-      waypoints: [
-        { x: 0.618, y: 0.42 },
-        { x: 0.485, y: 0.6 },
-        { x: 0.335, y: 0.67 },
-        { x: 0.24, y: 0.62 },
+        { x: 1260 / 2752, y: 420 / 1536 },
+        { x: 1160 / 2752, y: 460 / 1536 },
+        { x: 1060 / 2752, y: 420 / 1536 },
       ],
       pauseSeconds: 4.5,
     },
-  ],
-  bob: [
     {
-      name: "coffee_break",
+      name: "rack_right",
       waypoints: [
-        { x: 0.458, y: 0.38 },
-        { x: 0.37, y: 0.45 },
-        { x: 0.28, y: 0.53 },
-        { x: 0.24, y: 0.62 },
+        { x: 1260 / 2752, y: 420 / 1536 },
+        { x: 1350 / 2752, y: 380 / 1536 },
       ],
       pauseSeconds: 4.0,
     },
   ],
   grace: [
     {
-      name: "coffee_refill",
+      name: "hallway_stroll",
       waypoints: [
-        { x: 0.262, y: 0.66 },
-        { x: 0.24, y: 0.62 },
+        { x: 820 / 2752, y: 980 / 1536 },
+        { x: 920 / 2752, y: 850 / 1536 },
+        { x: 820 / 2752, y: 720 / 1536 },
+      ],
+      pauseSeconds: 4.0,
+    },
+  ],
+  alan: [
+    {
+      name: "window_aisle",
+      waypoints: [
+        { x: 2120 / 2752, y: 750 / 1536 },
+        { x: 1980 / 2752, y: 810 / 1536 },
       ],
       pauseSeconds: 3.5,
     },
+  ],
+  kern: [
     {
-      name: "sync_alan",
+      name: "foreground_aisle_right",
       waypoints: [
-        { x: 0.262, y: 0.66 },
-        { x: 0.335, y: 0.67 },
-        { x: 0.485, y: 0.6 },
+        { x: 1850 / 2752, y: 1380 / 1536 },
+        { x: 2020 / 2752, y: 1380 / 1536 },
+      ],
+      pauseSeconds: 4.0,
+    },
+    {
+      name: "foreground_aisle_left",
+      waypoints: [
+        { x: 1850 / 2752, y: 1380 / 1536 },
+        { x: 1750 / 2752, y: 1420 / 1536 },
       ],
       pauseSeconds: 4.0,
     },
@@ -422,9 +413,12 @@ export default function BackgroundMotion({
     const triggerWalker = (charId: string) => {
       const w = walkers[charId];
       const routes = SPECIALIST_ROUTES[charId];
-      if (!w || !routes || routes.length === 0 || w.isWalking) return;
+      const sp = SPECIALISTS.find((s) => s.id === charId);
+      if (!w || !routes || routes.length === 0 || !sp || w.isWalking) return;
       w.isWalking = true;
       w.routeIdx = Math.floor(Math.random() * routes.length);
+      w.curX = sp.standingFoot.x;
+      w.curY = sp.standingFoot.y;
       w.wpIdx = 1;
       w.isReturning = false;
       w.pauseTimer = 0;
@@ -620,6 +614,8 @@ export default function BackgroundMotion({
           if (w.idleTimer <= 0) {
             w.routeIdx = (w.routeIdx + 1) % routes.length;
             w.isWalking = true;
+            w.curX = sp.standingFoot.x;
+            w.curY = sp.standingFoot.y;
             w.wpIdx = 1;
             w.isReturning = false;
             w.pauseTimer = 0;
@@ -760,15 +756,17 @@ export default function BackgroundMotion({
         const footPxX = dx + w.curX * dw;
         const footPxY = dy + w.curY * dh;
 
-        // Soft floor contact shadow
+        // Soft floor contact shadow proportional to specialist scale
+        const shadowRx = Math.max(6 * pixelScale, sp.walkW * dw * 0.22);
+        const shadowRy = Math.max(3 * pixelScale, sp.walkH * dh * 0.05);
         ctx.save();
         ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
         ctx.beginPath();
         ctx.ellipse(
           footPxX,
           footPxY - 2 * pixelScale,
-          13 * pixelScale,
-          6 * pixelScale,
+          shadowRx,
+          shadowRy,
           0,
           0,
           Math.PI * 2,
@@ -870,7 +868,7 @@ export default function BackgroundMotion({
         let hy = dy + sp.head.y * dh;
         if (w && w.isWalking) {
           hx = dx + w.curX * dw;
-          hy = dy + w.curY * dh - 65 * pixelScale;
+          hy = dy + w.curY * dh - sp.walkH * dh * 0.95;
         }
 
         const bx = Math.max(10, Math.min(width - bw - 10, hx - bw / 2));
