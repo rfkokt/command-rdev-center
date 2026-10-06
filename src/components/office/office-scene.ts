@@ -272,12 +272,12 @@ export function createOfficeScene(
   // A shared briefing spot in the open right wing gives the team a visible place
   // to gather and discuss without being covered by the central chat messages UI.
   const discussionSpots = [
-    { x: 4.6, z: -0.7 },
-    { x: 5.8, z: -0.7 },
-    { x: 7.0, z: -0.7 },
-    { x: 4.8, z: 1.9 },
-    { x: 6.0, z: 1.9 },
-    { x: 7.2, z: 1.9 },
+    { x: 5.1, z: -0.6 },
+    { x: 6.5, z: -0.6 },
+    { x: 7.4, z: 0.6 },
+    { x: 4.2, z: 0.6 },
+    { x: 5.1, z: 1.8 },
+    { x: 6.5, z: 1.8 },
   ] as const;
   // Central corridor runner keeps the middle grounded now that the briefing table moved right.
   box(room, "#3e4d4d", [2.6, 0.02, 4.2], [0, 0.02, 0.1], true);
@@ -613,8 +613,8 @@ export function createOfficeScene(
               };
           const targetHeading = discussionActive
             ? Math.atan2(
-                target.z - walker.position.z,
                 target.x - walker.position.x,
+                target.z - walker.position.z,
               )
             : member.home.z < 0
               ? Math.PI
