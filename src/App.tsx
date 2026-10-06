@@ -801,6 +801,7 @@ export default function App() {
 
       <section className="workspace">
         <BackgroundMotion
+          activeTabId={activeTab?.id}
           isWorking={Boolean(activeTab?.interrupted)}
           isBlurred={bgBlurred}
         />

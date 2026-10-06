@@ -1,1154 +1,182 @@
 /* @refresh reset */
 import { useEffect, useRef, useState } from "react";
+import {
+  activityFor,
+  belongsToTab,
+  type Activity,
+  type AgentEvent,
+} from "./office/office-motion";
+import type { OfficeScene } from "./office/office-scene";
+import "./office/office-scene.css";
 
-interface SpecialistConfig {
-  id: string;
-  name: string;
-  role: string;
-  color: string;
-  icon: string;
-  // Normalized patch rectangle for station micro-animations in the 2752x1536 artwork:
-  rect: { x: number; y: number; w: number; h: number };
-  // Seamless empty patch rectangle covering the entire station, chair, and legs:
-  emptyRect: { x: number; y: number; w: number; h: number };
-  // Normalized speech bubble anchor point above head:
-  head: { x: number; y: number };
-  // Seated / working station position on the floor plane:
-  homeFoot: { x: number; y: number };
-  // Clear open floor position where specialist stands into the aisle:
-  standingFoot: { x: number; y: number };
-  // Walk sprite dimensions and foot anchor:
-  walkW: number;
-  walkH: number;
-  footAnchorX: number;
-  footAnchorY: number;
-}
-
-const SPECIALISTS: SpecialistConfig[] = [
-  {
-    id: "ada",
-    name: "Ada",
-    role: "Frontend Dev",
-    color: "#c084fc",
-    icon: "🎨",
-    rect: {
-      x: 970 / 2752,
-      y: 620 / 1536,
-      w: 221 / 2752,
-      h: 459 / 1536,
-    },
-    emptyRect: {
-      x: 888 / 2752,
-      y: 688 / 1536,
-      w: 373 / 2752,
-      h: 519 / 1536,
-    },
-    head: { x: 1080 / 2752, y: 640 / 1536 },
-    homeFoot: { x: 1080 / 2752, y: 1050 / 1536 },
-    standingFoot: { x: 1080 / 2752, y: 1050 / 1536 },
-    walkW: 221 / 2752,
-    walkH: 459 / 1536,
-    footAnchorX: 0.484,
-    footAnchorY: 0.937,
-  },
-  {
-    id: "kern",
-    name: "Kern",
-    role: "Lead Agent",
-    color: "#38bdf8",
-    icon: "🧠",
-    rect: {
-      x: 1738 / 2752,
-      y: 986 / 1536,
-      w: 230 / 2752,
-      h: 420 / 1536,
-    },
-    emptyRect: {
-      x: 1588 / 2752,
-      y: 938 / 1536,
-      w: 473 / 2752,
-      h: 523 / 1536,
-    },
-    head: { x: 1850 / 2752, y: 990 / 1536 },
-    homeFoot: { x: 1850 / 2752, y: 1380 / 1536 },
-    standingFoot: { x: 1850 / 2752, y: 1380 / 1536 },
-    walkW: 230 / 2752,
-    walkH: 420 / 1536,
-    footAnchorX: 0.487,
-    footAnchorY: 0.937,
-  },
-  {
-    id: "linus",
-    name: "Linus",
-    role: "Backend Dev",
-    color: "#22c55e",
-    icon: "⚙️",
-    rect: {
-      x: 304 / 2752,
-      y: 526 / 1536,
-      w: 220 / 2752,
-      h: 420 / 1536,
-    },
-    emptyRect: {
-      x: 138 / 2752,
-      y: 388 / 1536,
-      w: 373 / 2752,
-      h: 623 / 1536,
-    },
-    head: { x: 410 / 2752, y: 530 / 1536 },
-    homeFoot: { x: 410 / 2752, y: 920 / 1536 },
-    standingFoot: { x: 410 / 2752, y: 920 / 1536 },
-    walkW: 220 / 2752,
-    walkH: 420 / 1536,
-    footAnchorX: 0.484,
-    footAnchorY: 0.937,
-  },
-  {
-    id: "alan",
-    name: "Alan",
-    role: "AST & Search",
-    color: "#06b6d4",
-    icon: "🔍",
-    rect: {
-      x: 2007 / 2752,
-      y: 359 / 1536,
-      w: 230 / 2752,
-      h: 420 / 1536,
-    },
-    emptyRect: {
-      x: 1488 / 2752,
-      y: 289 / 1536,
-      w: 373 / 2752,
-      h: 422 / 1536,
-    },
-    head: { x: 2120 / 2752, y: 360 / 1536 },
-    homeFoot: { x: 2120 / 2752, y: 750 / 1536 },
-    standingFoot: { x: 2120 / 2752, y: 750 / 1536 },
-    walkW: 230 / 2752,
-    walkH: 420 / 1536,
-    footAnchorX: 0.492,
-    footAnchorY: 0.931,
-  },
-  {
-    id: "bob",
-    name: "Bob",
-    role: "QA Tester",
-    color: "#ec4899",
-    icon: "🧪",
-    rect: {
-      x: 1079 / 2752,
-      y: 147 / 1536,
-      w: 210 / 2752,
-      h: 420 / 1536,
-    },
-    emptyRect: {
-      x: 1040 / 2752,
-      y: 188 / 1536,
-      w: 321 / 2752,
-      h: 423 / 1536,
-    },
-    head: { x: 1180 / 2752, y: 150 / 1536 },
-    homeFoot: { x: 1180 / 2752, y: 540 / 1536 },
-    standingFoot: { x: 1180 / 2752, y: 540 / 1536 },
-    walkW: 210 / 2752,
-    walkH: 420 / 1536,
-    footAnchorX: 0.483,
-    footAnchorY: 0.936,
-  },
-  {
-    id: "grace",
-    name: "Grace",
-    role: "DevOps & Server",
-    color: "#f59e0b",
-    icon: "🛡️",
-    rect: {
-      x: 577 / 2752,
-      y: 586 / 1536,
-      w: 210 / 2752,
-      h: 420 / 1536,
-    },
-    emptyRect: {
-      x: 438 / 2752,
-      y: 738 / 1536,
-      w: 423 / 2752,
-      h: 523 / 1536,
-    },
-    head: { x: 680 / 2752, y: 590 / 1536 },
-    homeFoot: { x: 680 / 2752, y: 980 / 1536 },
-    standingFoot: { x: 680 / 2752, y: 980 / 1536 },
-    walkW: 210 / 2752,
-    walkH: 420 / 1536,
-    footAnchorX: 0.492,
-    footAnchorY: 0.937,
-  },
-];
-
-interface SpecialistState {
-  bubbleText: string | null;
-  bubbleTimer: number;
-  isFocused: boolean;
-}
-
-interface Waypoint {
-  x: number;
-  y: number;
-}
-
-interface PatrolRoute {
-  name: string;
-  waypoints: Waypoint[];
-  pauseSeconds: number;
-}
-
-const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
-  ada: [
-    {
-      name: "hallway_breakroom",
-      waypoints: [
-        { x: 1080 / 2752, y: 1050 / 1536 },
-        { x: 950 / 2752, y: 860 / 1536 },
-        { x: 820 / 2752, y: 720 / 1536 },
-      ],
-      pauseSeconds: 4.5,
-    },
-    {
-      name: "hallway_foreground",
-      waypoints: [
-        { x: 1080 / 2752, y: 1050 / 1536 },
-        { x: 1060 / 2752, y: 1280 / 1536 },
-      ],
-      pauseSeconds: 4.0,
-    },
-  ],
-  linus: [
-    {
-      name: "counter_sink",
-      waypoints: [
-        { x: 410 / 2752, y: 920 / 1536 },
-        { x: 320 / 2752, y: 870 / 1536 },
-      ],
-      pauseSeconds: 3.5,
-    },
-    {
-      name: "counter_edge",
-      waypoints: [
-        { x: 410 / 2752, y: 920 / 1536 },
-        { x: 480 / 2752, y: 960 / 1536 },
-      ],
-      pauseSeconds: 3.5,
-    },
-  ],
-  bob: [
-    {
-      name: "rack_left",
-      waypoints: [
-        { x: 1180 / 2752, y: 540 / 1536 },
-        { x: 1080 / 2752, y: 500 / 1536 },
-      ],
-      pauseSeconds: 4.5,
-    },
-    {
-      name: "rack_right",
-      waypoints: [
-        { x: 1180 / 2752, y: 540 / 1536 },
-        { x: 1260 / 2752, y: 580 / 1536 },
-      ],
-      pauseSeconds: 4.0,
-    },
-  ],
-  grace: [
-    {
-      name: "hallway_stroll",
-      waypoints: [
-        { x: 680 / 2752, y: 980 / 1536 },
-        { x: 880 / 2752, y: 900 / 1536 },
-        { x: 820 / 2752, y: 720 / 1536 },
-      ],
-      pauseSeconds: 4.0,
-    },
-  ],
-  alan: [
-    {
-      name: "window_aisle",
-      waypoints: [
-        { x: 2120 / 2752, y: 750 / 1536 },
-        { x: 1980 / 2752, y: 810 / 1536 },
-      ],
-      pauseSeconds: 3.5,
-    },
-  ],
-  kern: [
-    {
-      name: "foreground_aisle_right",
-      waypoints: [
-        { x: 1850 / 2752, y: 1380 / 1536 },
-        { x: 2020 / 2752, y: 1380 / 1536 },
-      ],
-      pauseSeconds: 4.0,
-    },
-    {
-      name: "foreground_aisle_left",
-      waypoints: [
-        { x: 1850 / 2752, y: 1380 / 1536 },
-        { x: 1750 / 2752, y: 1420 / 1536 },
-      ],
-      pauseSeconds: 4.0,
-    },
-  ],
-};
-
-interface WalkerState {
-  isWalking: boolean;
-  curX: number;
-  curY: number;
-  facing: "left" | "right";
-  routeIdx: number;
-  wpIdx: number;
-  isReturning: boolean;
-  pauseTimer: number;
-  idleTimer: number;
-  traveledDist: number;
-}
+const ACTIVITY_EVENTS = [
+  "crc-agent-activity-sync",
+  "crc-agent-activity",
+  "crc-agent-prompt",
+  "crc-agent-running",
+] as const;
 
 export default function BackgroundMotion({
   isWorking = false,
   isBlurred = false,
+  activeTabId,
 }: {
   isWorking?: boolean;
   isBlurred?: boolean;
+  activeTabId?: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const isWorkingRef = useRef(isWorking);
-  isWorkingRef.current = isWorking;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const labelsRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<OfficeScene | null>(null);
+  const latest = useRef({ isWorking, activeTabId });
+  latest.current = { isWorking, activeTabId };
+  const activityRef = useRef<Activity | null>(null);
   const [blurred, setBlurred] = useState(isBlurred);
+  const [ready, setReady] = useState(false);
 
+  useEffect(() => setBlurred(isBlurred), [isBlurred]);
   useEffect(() => {
-    setBlurred(isBlurred);
-  }, [isBlurred]);
-
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const custom = e as CustomEvent<{ blurred: boolean }>;
-      if (typeof custom.detail?.blurred === "boolean") {
-        setBlurred(custom.detail.blurred);
-      }
+    const onBlur = (event: Event) => {
+      const value = (event as CustomEvent<{ blurred?: boolean }>).detail
+        ?.blurred;
+      if (typeof value === "boolean") setBlurred(value);
     };
-    window.addEventListener("crc-bg-blur-changed", handler);
-    return () => window.removeEventListener("crc-bg-blur-changed", handler);
+    window.addEventListener("crc-bg-blur-changed", onBlur);
+    return () => window.removeEventListener("crc-bg-blur-changed", onBlur);
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    const activity = {
+      id: "kern",
+      working: latest.current.isWorking,
+      text: latest.current.isWorking ? "Working…" : "Ready",
+    } satisfies Activity;
+    activityRef.current = activity;
+    sceneRef.current?.setActivity(activity);
+  }, [activeTabId]);
+  useEffect(() => {
+    sceneRef.current?.setWorking(isWorking);
+  }, [isWorking]);
+
+  useEffect(() => {
+    let cancelled = false;
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext("2d", { alpha: true });
-    if (!ctx) return;
-
-    const prefersReducedMotion =
-      typeof window.matchMedia === "function"
-        ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        : false;
-
-    let animId = 0;
-    let width = 0;
-    let height = 0;
-
-    const getIsDark = () => {
-      if (typeof document === "undefined") return true;
-      const theme = document.documentElement.getAttribute("data-theme");
-      if (theme === "light") return false;
-      if (theme === "dark") return true;
-      return (
-        window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true
+    const labels = labelsRef.current;
+    if (!canvas || !labels) return;
+    const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const updateTheme = () => {
+      const theme = document.documentElement.dataset.theme;
+      sceneRef.current?.setTheme(
+        theme === "dark" || (theme !== "light" && (scheme?.matches ?? true)),
       );
     };
-    let isDark = getIsDark();
-
-    // 1. High-resolution 2752x1536 base pixel art artworks (clean 2K environment)
-    const nightImg = typeof Image !== "undefined" ? new Image() : null;
-    if (nightImg) nightImg.src = "/pixel_office_empty_night_2k.jpg";
-    const dayImg = typeof Image !== "undefined" ? new Image() : null;
-    if (dayImg) dayImg.src = "/pixel_office_empty_day_2k.jpg";
-
-    // 2. Full 2K empty backgrounds (2752x1536) for 100% seamless 1:1 station masking when walking
-    const emptyNightFullImg = typeof Image !== "undefined" ? new Image() : null;
-    if (emptyNightFullImg)
-      emptyNightFullImg.src = "/pixel_office_empty_night_2k.jpg";
-    const emptyDayFullImg = typeof Image !== "undefined" ? new Image() : null;
-    if (emptyDayFullImg) emptyDayFullImg.src = "/pixel_office_empty_day_2k.jpg";
-
-    // 3. Preload station micro-animations (night & day)
-    const specialistFrames: Record<
-      string,
-      { night: HTMLImageElement[]; day: HTMLImageElement[] }
-    > = {};
-
-    // 4. Preload 4-frame walk cycles for all 6 specialists
-    const specialistWalkFrames: Record<string, HTMLImageElement[]> = {};
-
-    SPECIALISTS.forEach((sp) => {
-      specialistFrames[sp.id] = { night: [], day: [] };
-      specialistWalkFrames[sp.id] = [];
-
-      for (let i = 0; i < 4; i++) {
-        const nImg = new Image();
-        nImg.src = `/sprites/${sp.id}_frame_${i}.png`;
-        specialistFrames[sp.id].night.push(nImg);
-
-        const dImg = new Image();
-        dImg.src = `/sprites/${sp.id}_day_frame_${i}.png`;
-        specialistFrames[sp.id].day.push(dImg);
-
-        const wImg = new Image();
-        wImg.src = `/sprites/${sp.id}_walk_frame_${i}.png`;
-        specialistWalkFrames[sp.id].push(wImg);
-      }
+    const updateMotion = () =>
+      sceneRef.current?.setReducedMotion(motion?.matches ?? false);
+    const updateVisibility = () =>
+      sceneRef.current?.setVisible(!document.hidden);
+    const resize = () => sceneRef.current?.resize();
+    const handleActivity = (event: Event) => {
+      const detail = (event as CustomEvent<AgentEvent>).detail;
+      if (!detail || !belongsToTab(detail, latest.current.activeTabId)) return;
+      const activity = activityFor(event.type, detail);
+      if (!activity) return;
+      activityRef.current = activity;
+      sceneRef.current?.setActivity(activity);
+    };
+    ACTIVITY_EVENTS.forEach((name) =>
+      window.addEventListener(name, handleActivity),
+    );
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
     });
-
-    const states: Record<string, SpecialistState> = {};
-    const walkers: Record<string, WalkerState> = {};
-
-    // Staggered initial walk start times so they don't all move at once
-    const initialDelays: Record<string, number> = {
-      ada: 5,
-      linus: 14,
-      kern: 26,
-      alan: 38,
-      bob: 20,
-      grace: 32,
-    };
-
-    SPECIALISTS.forEach((sp) => {
-      states[sp.id] = {
-        bubbleText: null,
-        bubbleTimer: 0,
-        isFocused: false,
-      };
-
-      walkers[sp.id] = {
-        isWalking: false,
-        curX: sp.homeFoot.x,
-        curY: sp.homeFoot.y,
-        facing: "right",
-        routeIdx: 0,
-        wpIdx: 0,
-        isReturning: false,
-        pauseTimer: 0,
-        idleTimer: initialDelays[sp.id] || 10,
-        traveledDist: 0,
-      };
-    });
-
-    let isWorkingLive = isWorking;
-
-    const triggerWalker = (charId: string) => {
-      const w = walkers[charId];
-      const routes = SPECIALIST_ROUTES[charId];
-      const sp = SPECIALISTS.find((s) => s.id === charId);
-      if (!w || !routes || routes.length === 0 || !sp || w.isWalking) return;
-      w.isWalking = true;
-      w.routeIdx = Math.floor(Math.random() * routes.length);
-      w.curX = sp.standingFoot.x;
-      w.curY = sp.standingFoot.y;
-      w.wpIdx = 1;
-      w.isReturning = false;
-      w.pauseTimer = 0;
-      w.traveledDist = 0;
-    };
-
-    // Synchronized listener from ChatView & Agent runs
-    const handleActivitySync = (e: Event) => {
-      const custom = e as CustomEvent<{
-        active?: boolean;
-        agentName?: string;
-        title?: string;
-        detail?: string;
-      }>;
-      const { active, agentName, title, detail } = custom.detail || {};
-
-      if (active) {
-        isWorkingLive = true;
-        const targetName = (agentName || "Kern").toLowerCase();
-        const matched =
-          SPECIALISTS.find((s) => s.name.toLowerCase() === targetName) ||
-          SPECIALISTS[0];
-
-        SPECIALISTS.forEach((s) => {
-          const st = states[s.id];
-          if (s.id === matched.id) {
-            st.isFocused = true;
-            const clean = (detail || title || "Working…")
-              .replace(/\s+/g, " ")
-              .trim();
-            const short = clean.length > 38 ? `${clean.slice(0, 38)}…` : clean;
-            st.bubbleText = `${s.icon} ${short}`;
-            st.bubbleTimer = 9;
-          } else {
-            st.isFocused = false;
-            if (st.bubbleTimer <= 2) st.bubbleText = null;
-          }
-        });
-
-        // Trigger the EXACT matched specialist to move into action!
-        if (matched.id !== "kern") {
-          triggerWalker(matched.id);
-        } else if (Math.random() < 0.35) {
-          triggerWalker("kern");
-        }
-      } else {
-        isWorkingLive = false;
-        SPECIALISTS.forEach((s) => {
-          const st = states[s.id];
-          if (st.isFocused) {
-            st.bubbleText = "✅ Ready";
-            st.bubbleTimer = 3;
-          }
-          st.isFocused = false;
-        });
-      }
-    };
-
-    const handleAgentActivity = (e: Event) => {
-      const custom = e as CustomEvent<{
-        type?: string;
-        phase?: string;
-        toolName?: string;
-        args?: Record<string, unknown>;
-        isError?: boolean;
-      }>;
-      const { type, toolName, args, isError } = custom.detail || {};
-
-      if (type === "agent_start") {
-        isWorkingLive = true;
-        states["kern"].isFocused = true;
-        states["kern"].bubbleText = "🧠 Analyzing request…";
-        states["kern"].bubbleTimer = 6;
-      } else if (type === "thinking") {
-        isWorkingLive = true;
-        states["kern"].isFocused = true;
-        if (!states["kern"].bubbleText || states["kern"].bubbleTimer < 2) {
-          states["kern"].bubbleText = "🧠 Reasoning…";
-          states["kern"].bubbleTimer = 5;
-        }
-      } else if (type === "streaming_text") {
-        isWorkingLive = true;
-        states["kern"].isFocused = true;
-        states["kern"].bubbleText = "🧠 Writing response…";
-        states["kern"].bubbleTimer = 4;
-      } else if (type === "agent_settled") {
-        isWorkingLive = false;
-        SPECIALISTS.forEach((s) => {
-          const st = states[s.id];
-          if (st.isFocused) {
-            st.bubbleText = isError ? "⚠️ Finished with notice" : "✅ Done";
-            st.bubbleTimer = 3.5;
-          }
-          st.isFocused = false;
-        });
-      } else if (type === "tool" && toolName) {
-        isWorkingLive = true;
-        const rawTool = toolName.replace(/^functions\./, "").toLowerCase();
-        let targetId = "kern";
-        let actionText = `Running ${rawTool}`;
-
-        if (rawTool === "run_command" || rawTool === "bash") {
-          const cmd = String(
-            args?.CommandLine || args?.command || "",
-          ).toLowerCase();
-          if (/(test|vitest|jest|cargo.*test|pytest)/.test(cmd)) {
-            targetId = "bob";
-            actionText = "Running tests…";
-          } else if (/(build|compile|tauri.*build|vite.*build)/.test(cmd)) {
-            targetId = "grace";
-            actionText = "Compiling build…";
-          } else if (/^git\s+/.test(cmd)) {
-            targetId = "linus";
-            actionText = "Git operation…";
-          } else {
-            targetId = "grace";
-            const shortCmd = cmd.split(" ")[0] || "command";
-            actionText = `Running ${shortCmd}…`;
-          }
-        } else if (rawTool.includes("view") || rawTool.includes("read")) {
-          targetId = "ada";
-          const path = String(
-            args?.AbsolutePath || args?.TargetFile || args?.path || "",
-          );
-          const file = path.split("/").pop() || "file";
-          actionText = `Reading ${file}…`;
-        } else if (
-          rawTool.includes("write") ||
-          rawTool.includes("replace") ||
-          rawTool.includes("edit")
-        ) {
-          targetId = "linus";
-          const path = String(args?.TargetFile || args?.path || "");
-          const file = path.split("/").pop() || "file";
-          actionText = `Editing ${file}…`;
-        } else if (
-          rawTool.includes("search") ||
-          rawTool.includes("grep") ||
-          rawTool.includes("graph")
-        ) {
-          targetId = "alan";
-          const q = String(
-            args?.query || args?.name_pattern || args?.pattern || "",
-          );
-          actionText = q
-            ? `Searching "${q.slice(0, 16)}"…`
-            : "Searching code graph…";
-        }
-
-        const sp = SPECIALISTS.find((s) => s.id === targetId) || SPECIALISTS[0];
-        const st = states[sp.id];
-        if (st) {
-          st.isFocused = true;
-          st.bubbleText = `${sp.icon} ${actionText}`;
-          st.bubbleTimer = 8;
-        }
-
-        if (targetId !== "kern") {
-          triggerWalker(targetId);
-        }
-      }
-    };
-
-    const handleAgentPrompt = (e: Event) => {
-      const custom = e as CustomEvent<{ text?: string }>;
-      const text = (custom.detail?.text || "").replace(/\s+/g, " ").trim();
-      if (text) {
-        isWorkingLive = true;
-        const short = text.length > 32 ? `${text.slice(0, 32)}…` : text;
-        states["kern"].bubbleText = `🧠 User: "${short}"`;
-        states["kern"].bubbleTimer = 8;
-        states["kern"].isFocused = true;
-
-        SPECIALISTS.forEach((s) => {
-          if (s.id !== "kern") {
-            states[s.id].isFocused = false;
-            states[s.id].bubbleText = null;
-          }
-        });
-
-        // Kern orchestrates the team
-        if (Math.random() < 0.5) {
-          triggerWalker("ada");
-        } else {
-          triggerWalker("linus");
-        }
-      }
-    };
-
-    const handleAgentRunning = (e: Event) => {
-      const custom = e as CustomEvent<{ running?: boolean }>;
-      isWorkingLive = Boolean(custom.detail?.running);
-      if (!isWorkingLive) {
-        SPECIALISTS.forEach((s) => {
-          states[s.id].isFocused = false;
-        });
-      }
-    };
-
-    window.addEventListener("crc-agent-activity-sync", handleActivitySync);
-    window.addEventListener("crc-agent-activity", handleAgentActivity);
-    window.addEventListener("crc-agent-prompt", handleAgentPrompt);
-    window.addEventListener("crc-agent-running", handleAgentRunning);
-
-    const themeObserver =
-      typeof MutationObserver !== "undefined"
-        ? new MutationObserver(() => {
-            isDark = getIsDark();
-          })
-        : null;
-    if (
-      themeObserver &&
-      typeof document !== "undefined" &&
-      document.documentElement
-    ) {
-      themeObserver.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["data-theme", "style", "class"],
-      });
-    }
-
-    const resize = () => {
-      if (!canvas) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const measuredW =
-        canvas.parentElement?.clientWidth ||
-        canvas.clientWidth ||
-        window.innerWidth;
-      const measuredH =
-        canvas.parentElement?.clientHeight ||
-        canvas.clientHeight ||
-        window.innerHeight;
-      width = measuredW;
-      height = measuredH;
-      const targetW = Math.round(width * dpr);
-      const targetH = Math.round(height * dpr);
-      if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
-      }
-      ctx.resetTransform();
-      ctx.scale(dpr, dpr);
-    };
-
-    resize();
     const resizeObserver =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
-    resizeObserver?.observe(canvas);
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    resizeObserver?.observe(canvas.parentElement!);
+    motion?.addEventListener("change", updateMotion);
+    scheme?.addEventListener("change", updateTheme);
     window.addEventListener("resize", resize);
-
-    let lastTime = performance.now();
-
-    function render(now: number) {
-      if (!ctx) return;
-      const dt = Math.min((now - lastTime) / 1000, 0.1);
-      lastTime = now;
-
-      ctx.clearRect(0, 0, width, height);
-
-      const isWorkingNow = isWorkingRef.current || isWorkingLive;
-      const currentBaseImg = isDark ? nightImg : dayImg;
-
-      // 1. Render Base Background with High-Quality Smoothing
-      let dw = width;
-      let dh = height;
-      let dx = 0;
-      let dy = 0;
-
-      if (
-        currentBaseImg &&
-        currentBaseImg.complete &&
-        currentBaseImg.naturalWidth > 0
-      ) {
-        const imgRatio =
-          currentBaseImg.naturalWidth / currentBaseImg.naturalHeight;
-        const canvasRatio = width / height;
-
-        if (canvasRatio > imgRatio) {
-          dw = width;
-          dh = width / imgRatio;
-          dy = (height - dh) / 2;
-        } else {
-          dh = height;
-          dw = height * imgRatio;
-          dx = (width - dw) / 2;
-        }
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(currentBaseImg, dx, dy, dw, dh);
-      } else {
-        ctx.fillStyle = isDark ? "#0c0d14" : "#f1f5f9";
-        ctx.fillRect(0, 0, width, height);
-      }
-
-      const pixelScale = dw / 1376;
-
-      // 2. Update Roaming State Machine for ALL Specialists
-      SPECIALISTS.forEach((sp) => {
-        const w = walkers[sp.id];
-        const routes = SPECIALIST_ROUTES[sp.id];
-        if (!w || !routes || routes.length === 0) return;
-
-        if (!w.isWalking) {
-          w.idleTimer -= dt;
-          if (w.idleTimer <= 0) {
-            w.routeIdx = (w.routeIdx + 1) % routes.length;
-            w.isWalking = true;
-            w.curX = sp.standingFoot.x;
-            w.curY = sp.standingFoot.y;
-            w.wpIdx = 1;
-            w.isReturning = false;
-            w.pauseTimer = 0;
-            w.traveledDist = 0;
-          }
-        } else {
-          const curRoute = routes[w.routeIdx];
-          const targetWp = curRoute?.waypoints[w.wpIdx];
-
-          if (w.pauseTimer > 0) {
-            w.pauseTimer -= dt;
-            if (w.pauseTimer <= 0) {
-              w.isReturning = true;
-              w.wpIdx = curRoute.waypoints.length - 2;
-            }
-          } else if (targetWp) {
-            const targetPxX = dx + targetWp.x * dw;
-            const targetPxY = dy + targetWp.y * dh;
-            const curPxX = dx + w.curX * dw;
-            const curPxY = dy + w.curY * dh;
-
-            const distPxX = targetPxX - curPxX;
-            const distPxY = targetPxY - curPxY;
-            const distTotal = Math.hypot(distPxX, distPxY);
-            const walkSpeedPx = 46 * (dw / 1376);
-
-            if (distTotal > 2.5) {
-              const stepPx = Math.min(distTotal, walkSpeedPx * dt);
-              w.curX += (distPxX / distTotal) * (stepPx / dw);
-              w.curY += (distPxY / distTotal) * (stepPx / dh);
-              w.traveledDist += stepPx;
-              // Forward direction: sprite naturally faces RIGHT.
-              // When moving left (distPxX < 0), flip horizontally.
-              w.facing = distPxX < -0.4 ? "left" : "right";
-            } else {
-              w.curX = targetWp.x;
-              w.curY = targetWp.y;
-
-              if (!w.isReturning) {
-                if (w.wpIdx < curRoute.waypoints.length - 1) {
-                  w.wpIdx++;
-                } else {
-                  w.pauseTimer = curRoute.pauseSeconds;
-                }
-              } else {
-                if (w.wpIdx > 0) {
-                  w.wpIdx--;
-                } else {
-                  // Returned home!
-                  w.isWalking = false;
-                  w.curX = sp.homeFoot.x;
-                  w.curY = sp.homeFoot.y;
-                  w.facing = "right";
-                  w.idleTimer = 18 + Math.random() * 16; // 18-34s at home station
-                }
-              }
-            }
-          }
-        }
-      });
-
-      // 4. Render Station Specialists (when sitting/working at home)
-      SPECIALISTS.forEach((sp) => {
-        const w = walkers[sp.id];
-        if (w && w.isWalking) return; // Rendered dynamically in walking step below
-
-        const frameSet = specialistFrames[sp.id];
-        if (!frameSet) return;
-        const frames = isDark ? frameSet.night : frameSet.day;
-        if (!frames || frames.length === 0) return;
-
-        let frameIdx = 0;
-
-        if (sp.id === "kern") {
-          if (isWorkingNow || states["kern"].isFocused) {
-            frameIdx = Math.floor(now / 110) % 4;
-          } else {
-            const burstTime = (now / 1000) % 7.5;
-            frameIdx = burstTime < 3.2 ? Math.floor(now / 180) % 4 : 0;
-          }
-        } else if (sp.id === "linus") {
-          const sipCycle = (now / 1000) % 8.2;
-          if (sipCycle < 2.4) {
-            const step = Math.floor((sipCycle / 2.4) * 6);
-            frameIdx = [0, 1, 2, 3, 2, 1][step] || 0;
-          } else {
-            frameIdx = 0;
-          }
-        } else if (sp.id === "alan") {
-          frameIdx = Math.floor(now / 220) % 4;
-        } else if (sp.id === "bob") {
-          const bobCycle = (now / 1000) % 5.5;
-          frameIdx = bobCycle < 3 ? Math.floor(now / 340) % 4 : 0;
-        } else if (sp.id === "grace") {
-          frameIdx = Math.floor(now / 200) % 4;
-        } else if (sp.id === "ada") {
-          frameIdx = Math.floor(now / 280) % 4;
-        }
-
-        const frameImg = frames[frameIdx];
-        if (frameImg && frameImg.complete && frameImg.naturalWidth > 0) {
-          const footPxX = dx + sp.standingFoot.x * dw;
-          const footPxY = dy + sp.standingFoot.y * dh;
-
-          // Soft floor contact shadow proportional to specialist scale
-          const shadowRx = Math.max(6 * pixelScale, sp.walkW * dw * 0.22);
-          const shadowRy = Math.max(3 * pixelScale, sp.walkH * dh * 0.05);
-          ctx.save();
-          ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
-          ctx.beginPath();
-          ctx.ellipse(
-            footPxX,
-            footPxY - 2 * pixelScale,
-            shadowRx,
-            shadowRy,
-            0,
-            0,
-            Math.PI * 2,
-          );
-          ctx.fill();
-          ctx.restore();
-
-          const spriteW = sp.walkW * dw;
-          const spriteH = sp.walkH * dh;
-          const footOffsetX = sp.footAnchorX * spriteW;
-          const footOffsetY = sp.footAnchorY * spriteH;
-
-          ctx.save();
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.translate(footPxX, footPxY);
-          ctx.drawImage(frameImg, -footOffsetX, -footOffsetY, spriteW, spriteH);
-          ctx.restore();
-        }
-      });
-
-      // 5. Render Walking Specialists (Sorted by Y for correct isometric depth)
-      const activeWalkers = SPECIALISTS.filter(
-        (sp) => walkers[sp.id]?.isWalking,
-      ).sort((a, b) => walkers[a.id].curY - walkers[b.id].curY);
-
-      activeWalkers.forEach((sp) => {
-        const w = walkers[sp.id];
-        const walkFrames = specialistWalkFrames[sp.id];
-        if (!w || !walkFrames || walkFrames.length === 0) return;
-
-        const footPxX = dx + w.curX * dw;
-        const footPxY = dy + w.curY * dh;
-
-        // Soft floor contact shadow proportional to specialist scale
-        const shadowRx = Math.max(6 * pixelScale, sp.walkW * dw * 0.22);
-        const shadowRy = Math.max(3 * pixelScale, sp.walkH * dh * 0.05);
-        ctx.save();
-        ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
-        ctx.beginPath();
-        ctx.ellipse(
-          footPxX,
-          footPxY - 2 * pixelScale,
-          shadowRx,
-          shadowRy,
-          0,
-          0,
-          Math.PI * 2,
-        );
-        ctx.fill();
-        ctx.restore();
-
-        // 4-frame walk cycle synced with ground displacement
-        const walkFrameIdx =
-          w.pauseTimer > 0 ? 0 : Math.floor(w.traveledDist / 16) % 4;
-        const walkImg = walkFrames[walkFrameIdx];
-
-        if (walkImg && walkImg.complete && walkImg.naturalWidth > 0) {
-          const spriteW = sp.walkW * dw;
-          const spriteH = sp.walkH * dh;
-          const footOffsetX = sp.footAnchorX * spriteW;
-          const footOffsetY = sp.footAnchorY * spriteH;
-
-          ctx.save();
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.translate(footPxX, footPxY);
-          // Sprite naturally faces RIGHT. If moving left, flip horizontally:
-          if (w.facing === "left") {
-            ctx.scale(-1, 1);
-          }
-          ctx.drawImage(walkImg, -footOffsetX, -footOffsetY, spriteW, spriteH);
-          ctx.restore();
-        }
-      });
-
-      // 6. Subtle Organic Ambiance (Blended lighting, no flat stickers)
-      ctx.save();
-      // Server room rack LEDs (soft twinkling through glass)
-      if (isDark) {
-        const rackX = dx + 0.435 * dw;
-        const rackY = dy + 0.23 * dh;
-        const ledW = Math.max(1.5, 2 * (dw / 2752));
-        const ledH = Math.max(1.5, 2 * (dh / 1536));
-        ctx.globalAlpha = 0.45;
-        for (let i = 0; i < 4; i++) {
-          const blink = Math.sin(now * 0.004 + i * 2.1) > 0.1;
-          if (blink) {
-            ctx.fillStyle = i % 2 === 0 ? "#22c55e" : "#06b6d4";
-            ctx.fillRect(
-              rackX + i * 8 * (dw / 2752),
-              rackY + i * 5 * (dh / 1536),
-              ledW,
-              ledH,
-            );
-          }
-        }
-      }
-
-      // Espresso machine warm glow pulsing gently
-      const coffeeX = dx + 0.138 * dw;
-      const coffeeY = dy + 0.418 * dh;
-      const coffeePulse = 0.14 + Math.sin(now * 0.0025) * 0.04;
-      const coffeeGrad = ctx.createRadialGradient(
-        coffeeX,
-        coffeeY,
-        1,
-        coffeeX,
-        coffeeY,
-        22 * (dw / 1376),
-      );
-      coffeeGrad.addColorStop(0, `rgba(249, 115, 22, ${coffeePulse})`);
-      coffeeGrad.addColorStop(1, "rgba(249, 115, 22, 0)");
-      ctx.fillStyle = coffeeGrad;
-      ctx.beginPath();
-      ctx.arc(coffeeX, coffeeY, 22 * (dw / 1376), 0, Math.PI * 2);
-      ctx.fill();
-
-      // Distant city window twinkling at night
-      if (isDark) {
-        const winX = dx + 0.93 * dw;
-        const winY = dy + 0.28 * dh;
-        const glintAlpha = 0.25 + Math.sin(now * 0.003) * 0.15;
-        ctx.fillStyle = `rgba(253, 224, 71, ${glintAlpha})`;
-        ctx.fillRect(winX, winY, 2, 2);
-      }
-      ctx.restore();
-
-      // 7. Floating Speech Bubbles (Only when active, sleek HUD style)
-      SPECIALISTS.forEach((sp) => {
-        const st = states[sp.id];
-        if (!st.bubbleText || st.bubbleTimer <= 0) return;
-
-        st.bubbleTimer -= dt;
-        const text = st.bubbleText;
-        const fontSize = Math.max(10, Math.floor(10.5 * pixelScale));
-
-        ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
-        const textW = ctx.measureText(text).width;
-        const bw = textW + 16 * pixelScale;
-        const bh = 22 * pixelScale;
-
-        // If specialist is walking, anchor bubble above their moving head
-        const w = walkers[sp.id];
-        let hx = dx + sp.head.x * dw;
-        let hy = dy + sp.head.y * dh;
-        if (w && w.isWalking) {
-          hx = dx + w.curX * dw;
-          hy = dy + w.curY * dh - sp.walkH * dh * 0.95;
-        }
-
-        const bx = Math.max(10, Math.min(width - bw - 10, hx - bw / 2));
-        const by = Math.max(10, hy - bh - 8 * pixelScale);
-
-        ctx.save();
-        // Drop shadow
-        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-        ctx.beginPath();
-        ctx.roundRect(bx + 2, by + 2, bw, bh, 6);
-        ctx.fill();
-
-        // Bubble pill body
-        ctx.fillStyle = isDark
-          ? "rgba(15, 20, 32, 0.94)"
-          : "rgba(255, 255, 255, 0.96)";
-        ctx.beginPath();
-        ctx.roundRect(bx, by, bw, bh, 6);
-        ctx.fill();
-
-        // Accent border
-        ctx.strokeStyle = sp.color;
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-
-        // Text
-        ctx.fillStyle = isDark ? "#f8fafc" : "#0f172a";
-        ctx.fillText(text, bx + 8 * pixelScale, by + bh * 0.68);
-        ctx.restore();
-      });
-
-      if (!prefersReducedMotion) {
-        animId = requestAnimationFrame(render);
-      }
-    }
-
-    animId = requestAnimationFrame(render);
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        cancelAnimationFrame(animId);
-      } else if (!prefersReducedMotion) {
-        lastTime = performance.now();
-        animId = requestAnimationFrame(render);
-      }
+    document.addEventListener("visibilitychange", updateVisibility);
+    const contextLost = (event: Event) => {
+      event.preventDefault();
+      sceneRef.current?.setVisible(false);
+      setReady(false);
     };
+    const contextRestored = () => {
+      updateTheme();
+      resize();
+      updateVisibility();
+      setReady(true);
+    };
+    canvas.addEventListener("webglcontextlost", contextLost);
+    canvas.addEventListener("webglcontextrestored", contextRestored);
 
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", handleVisibility);
+    // Keep Three.js off the initial application bundle; collect activity during loading.
+    if (typeof window.WebGL2RenderingContext !== "undefined") {
+      void import("./office/office-scene")
+        .then(({ createOfficeScene }) => {
+          if (cancelled) return;
+          sceneRef.current = createOfficeScene(canvas, labels);
+          updateTheme();
+          updateMotion();
+          updateVisibility();
+          sceneRef.current.setWorking(latest.current.isWorking);
+          if (activityRef.current)
+            sceneRef.current.setActivity(activityRef.current);
+          setReady(true);
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return;
+          sceneRef.current?.dispose();
+          sceneRef.current = null;
+          console.warn(
+            "Office 3D unavailable; using the static office background.",
+            error,
+          );
+          setReady(false);
+        });
     }
-
     return () => {
-      cancelAnimationFrame(animId);
+      cancelled = true;
+      sceneRef.current?.dispose();
+      sceneRef.current = null;
+      observer.disconnect();
       resizeObserver?.disconnect();
-      themeObserver?.disconnect();
-      if (typeof window !== "undefined") {
-        window.removeEventListener("resize", resize);
-        window.removeEventListener(
-          "crc-agent-activity-sync",
-          handleActivitySync,
-        );
-        window.removeEventListener("crc-agent-activity", handleAgentActivity);
-        window.removeEventListener("crc-agent-prompt", handleAgentPrompt);
-        window.removeEventListener("crc-agent-running", handleAgentRunning);
-      }
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", handleVisibility);
-      }
+      motion?.removeEventListener("change", updateMotion);
+      scheme?.removeEventListener("change", updateTheme);
+      window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", updateVisibility);
+      canvas.removeEventListener("webglcontextlost", contextLost);
+      canvas.removeEventListener("webglcontextrestored", contextRestored);
+      ACTIVITY_EVENTS.forEach((name) =>
+        window.removeEventListener(name, handleActivity),
+      );
     };
   }, []);
 
   return (
     <div
-      className={`background-motion-container${blurred ? " is-blurred" : ""}`}
-      style={{
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: "100%",
-        height: "100%",
-        overflow: "hidden",
-        pointerEvents: "none",
-        userSelect: "none",
-        touchAction: "none",
-        zIndex: 0,
-      }}
+      className={`background-motion-container office-scene${blurred ? " is-blurred" : ""}`}
       aria-hidden="true"
+      data-renderer={ready ? "webgl" : "fallback"}
     >
+      <div
+        className={`office-scene-fallback background-motion-canvas${blurred ? " is-blurred" : ""}`}
+        hidden={ready}
+      />
       <canvas
         ref={canvasRef}
         className={`background-motion-canvas${blurred ? " is-blurred" : ""}`}
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: "100%",
-          height: "100%",
-          maxWidth: "100%",
-          maxHeight: "100%",
-          display: "block",
-          pointerEvents: "none",
-          imageRendering: "auto",
-          filter: blurred ? "blur(14px) saturate(0.65)" : "none",
-          opacity: blurred ? 0.38 : 1,
-          transform: blurred ? "scale(1.04)" : "scale(1)",
-          transition:
-            "filter 0.35s ease, opacity 0.35s ease, transform 0.35s ease",
-        }}
+        style={{ opacity: ready ? undefined : 0 }}
       />
       <div
-        className="background-motion-vignette"
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          width: "100%",
-          height: "100%",
-          pointerEvents: "none",
-        }}
+        ref={labelsRef}
+        className="office-scene-labels"
+        hidden={!ready || blurred}
       />
+      <div className="background-motion-vignette" />
     </div>
   );
 }

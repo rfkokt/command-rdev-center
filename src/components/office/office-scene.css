@@ -1,0 +1,91 @@
+/* Hallmark · component: office scene · genre: atmospheric · theme: existing workspace */
+.office-scene {
+  --office-label-bg: oklch(21% 0.018 220 / 0.92);
+  --office-label-ink: oklch(94% 0.012 80);
+  --office-label-muted: oklch(80% 0.018 180);
+  --office-label-border: oklch(80% 0.018 180 / 0.2);
+}
+[data-theme="light"] .office-scene {
+  --office-label-bg: oklch(97% 0.012 80 / 0.94);
+  --office-label-ink: oklch(26% 0.018 220);
+  --office-label-muted: oklch(40% 0.018 180);
+  --office-label-border: oklch(30% 0.018 180 / 0.16);
+}
+.office-scene .office-scene-fallback {
+  background: url("/pixel_office_empty_night_2k.jpg") center / cover;
+}
+[data-theme="light"] .office-scene .office-scene-fallback {
+  background-image: url("/pixel_office_empty_day_2k.jpg");
+}
+.office-scene .office-scene-fallback[hidden] {
+  display: none !important;
+}
+.office-scene-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.office-agent-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  flex-direction: column-reverse;
+  gap: 4px;
+  max-width: min(260px, 38vw);
+  font-family: "JetBrains Mono", monospace;
+  will-change: transform;
+}
+.office-agent-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--office-label-border);
+  border-radius: 5px;
+  color: var(--office-label-muted);
+  background: var(--office-label-bg);
+  font-size: 9px;
+  line-height: 1.3;
+}
+.office-agent-name::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--agent-color);
+}
+.office-agent-label[data-active="true"] .office-agent-name {
+  color: var(--office-label-ink);
+  border-color: var(--agent-color);
+}
+.office-agent-activity {
+  display: none;
+  padding: 8px 10px;
+  border: 1px solid var(--office-label-border);
+  border-radius: 6px;
+  color: var(--office-label-ink);
+  background: var(--office-label-bg);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.office-agent-label[data-bubble="true"] .office-agent-activity {
+  display: block;
+}
+.office-agent-label[data-error="true"] .office-agent-activity {
+  border-color: oklch(70% 0.14 60);
+}
+/* A blur is a static focus state; only opacity transitions, avoiding filter repaint animation. */
+.office-scene .background-motion-canvas {
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .office-scene .background-motion-canvas {
+    transition: none !important;
+    transform: none !important;
+  }
+}
