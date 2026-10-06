@@ -77,9 +77,11 @@ body {
 }
 .chat-content,
 .chat-session,
-.research-article,
-.markdown-body {
+.research-article {
   background: var(--surface-solid);
+}
+.markdown-body {
+  background: transparent;
 }
 .chat-bubble-user {
   border-color: var(--separator);

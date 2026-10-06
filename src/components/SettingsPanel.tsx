@@ -7,6 +7,7 @@ import McpSettings from "./McpSettings";
 import PipelineSettings from "./PipelineSettings";
 import RagSettings from "./RagSettings";
 import { useModalFocus } from "./useModalFocus";
+import CustomSelect from "./CustomSelect";
 
 type PiRuntimeStatus = {
   health: "healthy" | "partial" | "missing";
@@ -18,7 +19,7 @@ type PiRuntimeStatus = {
 const GROUPS = [
   [
     "Model & Thinking",
-    "defaultProvider, defaultModel, defaultThinkingLevel, hideThinkingBlock, showCacheMissNotices, thinkingBudgets",
+    "Default AI provider, models & reasoning effort",
     [
       "defaultProvider",
       "defaultModel",
@@ -28,42 +29,42 @@ const GROUPS = [
   ],
   [
     "UI & Display",
-    "theme, externalEditor, quietStartup, defaultProjectTrust, collapseChangelog, telemetry, doubleEscapeAction, treeFilterMode, padding, autocomplete, cursor",
+    "Theme, appearance, editor & layout preferences",
     ["theme", "externalEditor", "quietStartup", "padding"],
   ],
   [
     "Compaction",
-    "compaction.enabled, reserveTokens, keepRecentTokens; branchSummary",
+    "Context window trimming & token preservation",
     ["compaction", "branchSummary"],
   ],
   [
-    "Retry",
-    "retry.enabled, maxRetries, baseDelayMs, provider timeouts/retries",
+    "Retry & Recovery",
+    "Exponential backoff, retries & timeouts",
     ["retry", "maxRetries", "baseDelayMs"],
   ],
   [
     "Delivery & Network",
-    "steeringMode, followUpMode, transport, HTTP/WebSocket timeouts, httpProxy",
+    "Stream steering, follow-up & HTTP proxies",
     ["steeringMode", "followUpMode", "transport", "httpProxy"],
   ],
   [
     "Terminal & Images",
-    "terminal image display/width/clear; image resize/blocking",
+    "Inline rendering, widths & image pipelines",
     ["terminal", "image"],
   ],
   [
     "Shell & Sessions",
-    "shellPath, shellCommandPrefix, npmCommand, sessionDir",
+    "Shell paths, npm prefixes & session storage",
     ["shellPath", "shellCommandPrefix", "npmCommand", "sessionDir"],
   ],
   [
     "Models & Markdown",
-    "enabledModels, markdown.codeBlockIndent",
+    "Enabled models & markdown formatting",
     ["enabledModels", "markdown"],
   ],
   [
     "Resources",
-    "packages, extensions, skills, prompts, themes, enableSkillCommands",
+    "Extensions, skills, prompts & custom themes",
     ["packages", "extensions", "skills", "prompts", "themes"],
   ],
 ] as const;
@@ -255,87 +256,132 @@ export default function SettingsPanel({
         tabIndex={-1}
       >
         <header>
-          <div>
-            <small>CONFIGURATION</small>
-            <strong id="settings-title">
-              {page === "pi"
-                ? "PI SETTINGS"
-                : page === "graphify"
-                  ? "GRAPHIFY SETTINGS"
-                  : page === "jev"
-                    ? "JEV SETTINGS"
-                    : page === "mcp"
-                      ? "MCP SETTINGS"
-                      : page === "rag"
-                        ? "RAG SETTINGS"
-                        : "PIPELINE SETTINGS"}
-            </strong>
+          <div className="settings-header-left">
+            <span className="settings-header-badge">Configuration</span>
+            <div className="settings-title-wrap">
+              <strong id="settings-title">
+                {page === "pi"
+                  ? "Pi Settings"
+                  : page === "graphify"
+                    ? "Graphify Settings"
+                    : page === "jev"
+                      ? "Jev Settings"
+                      : page === "mcp"
+                        ? "MCP Settings"
+                        : page === "rag"
+                          ? "RAG Settings"
+                          : "Pipeline Settings"}
+              </strong>
+              <span className="settings-page-tag">{page.toUpperCase()}</span>
+            </div>
           </div>
-          <button onClick={onClose} aria-label="Close settings">
-            ESC
+          <button
+            type="button"
+            className="settings-close-button"
+            onClick={onClose}
+            aria-label="Close settings"
+          >
+            <span className="esc-key">ESC</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M1 1l12 12M13 1L1 13" />
+            </svg>
           </button>
         </header>
+
         <div className="settings-scope">
-          <button
-            className={page === "pi" ? "active" : ""}
-            onClick={() => setPage("pi")}
-          >
-            PI
-          </button>
-          <button
-            className={page === "graphify" ? "active" : ""}
-            onClick={() => setPage("graphify")}
-          >
-            GRAPHIFY
-          </button>
-          <button
-            className={page === "jev" ? "active" : ""}
-            onClick={() => setPage("jev")}
-          >
-            JEV
-          </button>
-          <button
-            className={page === "mcp" ? "active" : ""}
-            onClick={() => setPage("mcp")}
-          >
-            MCP
-          </button>
-          <button
-            className={page === "rag" ? "active" : ""}
-            onClick={() => setPage("rag")}
-          >
-            RAG
-          </button>
-          <button
-            className={page === "pipeline" ? "active" : ""}
-            disabled={!projectPath}
-            onClick={() => setPage("pipeline")}
-          >
-            PIPELINE
-          </button>
+          <div className="settings-scope-nav" role="tablist">
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "pi" ? "active" : ""}`}
+              onClick={() => setPage("pi")}
+            >
+              Pi
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "graphify" ? "active" : ""}`}
+              onClick={() => setPage("graphify")}
+            >
+              Graphify
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "jev" ? "active" : ""}`}
+              onClick={() => setPage("jev")}
+            >
+              Jev
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "mcp" ? "active" : ""}`}
+              onClick={() => setPage("mcp")}
+            >
+              MCP
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "rag" ? "active" : ""}`}
+              onClick={() => setPage("rag")}
+            >
+              RAG
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "pipeline" ? "active" : ""}`}
+              disabled={!projectPath}
+              onClick={() => setPage("pipeline")}
+            >
+              Pipeline
+            </button>
+          </div>
           {page === "pi" && (
-            <>
-              <button
-                className={scope === "global" ? "active" : ""}
-                onClick={() => setScope("global")}
+            <div className="settings-scope-right">
+              <div
+                className="settings-scope-switch"
+                role="group"
+                aria-label="Settings scope"
               >
-                GLOBAL
-              </button>
-              <button
-                className={scope === "project" ? "active" : ""}
-                disabled={!projectPath}
-                onClick={() => setScope("project")}
+                <button
+                  type="button"
+                  className={scope === "global" ? "active" : ""}
+                  onClick={() => setScope("global")}
+                >
+                  Global
+                </button>
+                <button
+                  type="button"
+                  className={scope === "project" ? "active" : ""}
+                  disabled={!projectPath}
+                  onClick={() => setScope("project")}
+                >
+                  Project
+                </button>
+              </div>
+              <span
+                className="settings-scope-path"
+                title={
+                  scope === "global"
+                    ? "~/.pi/agent/settings.json"
+                    : `${projectPath}/.pi/settings.json`
+                }
               >
-                PROJECT
-              </button>
-              <span>
                 {scope === "global"
                   ? "~/.pi/agent/settings.json"
                   : `${projectPath}/.pi/settings.json`}
               </span>
-            </>
+            </div>
           )}
         </div>
+
         {page === "graphify" ? (
           <GraphifySettings onToast={onToast} />
         ) : page === "jev" ? (
@@ -361,55 +407,84 @@ export default function SettingsPanel({
         ) : (
           <>
             <div className="settings-content">
-              <nav>
+              <nav className="settings-groups-nav">
                 {GROUPS.map(([name, detail, keys]) => (
                   <button
                     type="button"
-                    className={activeGroup === name ? "active" : ""}
+                    className={`settings-group-btn ${activeGroup === name ? "active" : ""}`}
                     key={name}
                     onClick={() => jumpToGroup(name, keys)}
                   >
-                    <strong>{name}</strong>
-                    <span>{detail}</span>
+                    <div className="settings-group-info">
+                      <strong>{name}</strong>
+                      <small>{detail}</small>
+                    </div>
                   </button>
                 ))}
               </nav>
-              <main>
-                <div className="settings-mode">
-                  <button
-                    className={mode === "form" ? "active" : ""}
-                    onClick={() => setMode("form")}
-                  >
-                    FORM
-                  </button>
-                  <button
-                    className={mode === "json" ? "active" : ""}
-                    onClick={() => setMode("json")}
-                  >
-                    JSON · ADVANCED
-                  </button>
+              <main className="settings-main">
+                <div className="settings-main-top">
+                  <div className="settings-mode" role="tablist">
+                    <button
+                      type="button"
+                      className={mode === "form" ? "active" : ""}
+                      onClick={() => setMode("form")}
+                    >
+                      Form View
+                    </button>
+                    <button
+                      type="button"
+                      className={mode === "json" ? "active" : ""}
+                      onClick={() => setMode("json")}
+                    >
+                      JSON · Advanced
+                    </button>
+                  </div>
+                  <div className="settings-notice">
+                    <span>
+                      Project values override global values. Unknown/custom keys
+                      are preserved. Most settings apply to newly started
+                      sessions.
+                    </span>
+                  </div>
                 </div>
-                <div className="settings-notice">
-                  Project values override global values. Unknown/custom keys are
-                  preserved. Most settings apply to newly started sessions.
-                </div>
+
                 {scope === "global" && (
                   <section className="pi-runtime-card">
-                    <div>
-                      <small>PI RUNTIME</small>
-                      <strong>
-                        {runtime?.health?.toUpperCase() || "CHECKING…"}
-                      </strong>
-                      <span>
-                        {runtime?.installed_version || "Not installed"}
-                        {runtime?.latest_version
-                          ? ` · Latest ${runtime.latest_version}`
-                          : ""}
-                      </span>
-                      <code>{runtime?.path || "Pi binary not found"}</code>
+                    <div className="pi-runtime-info">
+                      <div className="pi-runtime-header">
+                        <small>PI RUNTIME</small>
+                        <span
+                          className={`pi-runtime-badge ${
+                            runtime?.health === "healthy"
+                              ? "healthy"
+                              : runtime?.health === "partial"
+                                ? "partial"
+                                : "missing"
+                          }`}
+                        >
+                          <span className="pulse-dot" />
+                          {runtime?.health?.toUpperCase() || "CHECKING…"}
+                        </span>
+                      </div>
+                      <div className="pi-runtime-meta">
+                        <span className="pi-version-tag">
+                          {runtime?.installed_version || "Not installed"}
+                        </span>
+                        {runtime?.latest_version && (
+                          <span className="pi-latest-tag">
+                            Latest {runtime.latest_version}
+                          </span>
+                        )}
+                        <code className="pi-binary-path">
+                          {runtime?.path || "Pi binary not found"}
+                        </code>
+                      </div>
                     </div>
-                    <div>
+                    <div className="pi-runtime-actions">
                       <button
+                        type="button"
+                        className="toolbar-button"
                         disabled={runtimeBusy}
                         onClick={() =>
                           void invoke<PiRuntimeStatus>("get_pi_runtime_status")
@@ -417,22 +492,35 @@ export default function SettingsPanel({
                             .catch((e) => setRuntimeLog(String(e)))
                         }
                       >
-                        CHECK
+                        Check
                       </button>
-                      <button disabled={runtimeBusy} onClick={updateRuntime}>
+                      <button
+                        type="button"
+                        className="toolbar-button toolbar-button-primary"
+                        disabled={runtimeBusy}
+                        onClick={updateRuntime}
+                      >
                         {runtime?.health === "healthy"
-                          ? "UPDATE / REPAIR PI"
-                          : "INSTALL / REPAIR PI"}
+                          ? "Update / Repair Pi"
+                          : "Install / Repair Pi"}
                       </button>
-                      <button disabled={runtimeBusy} onClick={syncExtensions}>
-                        SYNC EXTENSIONS
+                      <button
+                        type="button"
+                        className="toolbar-button"
+                        disabled={runtimeBusy}
+                        onClick={syncExtensions}
+                      >
+                        Sync Extensions
                       </button>
                     </div>
-                    {runtimeLog && <pre>{runtimeLog}</pre>}
+                    {runtimeLog && <pre className="pi-runtime-log">{runtimeLog}</pre>}
                   </section>
                 )}
+
                 {loading ? (
-                  <div className="settings-loading">LOADING…</div>
+                  <div className="settings-loading">
+                    <span className="pulse-dot" /> Loading settings…
+                  </div>
                 ) : mode === "json" ? (
                   <textarea
                     ref={editorRef}
@@ -448,9 +536,11 @@ export default function SettingsPanel({
                       return (
                         <>
                           <label id="setting-defaultProvider">
-                            <span>
-                              DEFAULT PROVIDER
-                              <small>Provider used for new sessions</small>
+                            <span className="field-label-group">
+                              <span className="field-title">DEFAULT PROVIDER</span>
+                              <small className="field-desc">
+                                Provider used for new sessions
+                              </small>
                             </span>
                             <input
                               value={String(settings.defaultProvider ?? "")}
@@ -460,10 +550,13 @@ export default function SettingsPanel({
                               placeholder="e.g. anthropic"
                             />
                           </label>
+
                           <label id="setting-defaultModel">
-                            <span>
-                              DEFAULT MODEL
-                              <small>Model ID used for new sessions</small>
+                            <span className="field-label-group">
+                              <span className="field-title">DEFAULT MODEL</span>
+                              <small className="field-desc">
+                                Model ID used for new sessions
+                              </small>
                             </span>
                             <input
                               value={String(settings.defaultModel ?? "")}
@@ -473,62 +566,93 @@ export default function SettingsPanel({
                               placeholder="provider model ID"
                             />
                           </label>
+
                           <label id="setting-defaultThinkingLevel">
-                            <span>
-                              THINKING LEVEL
-                              <small>Default reasoning effort</small>
+                            <span className="field-label-group">
+                              <span className="field-title">THINKING LEVEL</span>
+                              <small className="field-desc">
+                                Default reasoning effort
+                              </small>
                             </span>
-                            <select
-                              className="themed-select"
+                            <CustomSelect
                               value={String(
                                 settings.defaultThinkingLevel ?? "",
                               )}
-                              onChange={(e) =>
-                                updateSetting(
-                                  "defaultThinkingLevel",
-                                  e.target.value,
-                                )
+                              onChange={(val) =>
+                                updateSetting("defaultThinkingLevel", val)
                               }
-                            >
-                              <option value="">Pi default</option>
-                              {[
-                                "off",
-                                "minimal",
-                                "low",
-                                "medium",
-                                "high",
-                                "xhigh",
-                                "max",
-                              ].map((v) => (
-                                <option key={v}>{v}</option>
-                              ))}
-                            </select>
+                              ariaLabel="Default reasoning effort"
+                              placement="bottom"
+                              options={[
+                                {
+                                  value: "",
+                                  label: "Pi default",
+                                  description: "Use Pi runtime default setting",
+                                },
+                                {
+                                  value: "off",
+                                  label: "off",
+                                  description: "Direct response without reasoning",
+                                },
+                                {
+                                  value: "minimal",
+                                  label: "minimal",
+                                  description: "Quick shallow checks",
+                                },
+                                {
+                                  value: "low",
+                                  label: "low",
+                                  description: "Light reasoning",
+                                },
+                                {
+                                  value: "medium",
+                                  label: "medium",
+                                  description: "Balanced reasoning effort",
+                                },
+                                {
+                                  value: "high",
+                                  label: "high",
+                                  description: "Deep analysis and planning",
+                                },
+                                {
+                                  value: "xhigh",
+                                  label: "xhigh",
+                                  description: "Maximum reasoning effort",
+                                },
+                                {
+                                  value: "max",
+                                  label: "max",
+                                  description: "Exhaustive reasoning effort",
+                                },
+                              ]}
+                            />
                           </label>
+
                           {[
                             [
                               "hideThinkingBlock",
                               "HIDE THINKING",
-                              "Hide reasoning blocks",
+                              "Hide reasoning blocks in chat output",
                             ],
                             [
                               "showCacheMissNotices",
                               "CACHE MISS NOTICES",
-                              "Show cache status",
+                              "Show indicator for prompt cache misses",
                             ],
                             [
                               "quietStartup",
                               "QUIET STARTUP",
-                              "Reduce startup messages",
+                              "Suppress non-critical engine startup banner",
                             ],
                             [
                               "telemetry",
                               "TELEMETRY",
-                              "Allow anonymous telemetry",
+                              "Allow anonymous diagnostics and telemetry",
                             ],
                             [
                               "enableSkillCommands",
                               "SKILL COMMANDS",
-                              "Expose skills as commands",
+                              "Expose installed skills directly as chat slash commands",
                             ],
                           ].map(([key, title, detail]) => (
                             <label
@@ -536,22 +660,29 @@ export default function SettingsPanel({
                               id={`setting-${key}`}
                               key={key}
                             >
-                              <span>
-                                {title}
-                                <small>{detail}</small>
+                              <span className="field-label-group">
+                                <span className="field-title">{title}</span>
+                                <small className="field-desc">{detail}</small>
                               </span>
-                              <input
-                                type="checkbox"
-                                checked={settings[key] === true}
-                                onChange={(e) =>
-                                  updateSetting(key, e.target.checked)
-                                }
-                              />
+                              <div className="opendots-switch">
+                                <input
+                                  type="checkbox"
+                                  checked={settings[key] === true}
+                                  onChange={(e) =>
+                                    updateSetting(key, e.target.checked)
+                                  }
+                                />
+                                <span className="opendots-slider" />
+                              </div>
                             </label>
                           ))}
+
                           <label id="setting-theme">
-                            <span>
-                              THEME<small>Installed Pi theme name</small>
+                            <span className="field-label-group">
+                              <span className="field-title">THEME</span>
+                              <small className="field-desc">
+                                Installed Pi theme name
+                              </small>
                             </span>
                             <input
                               value={String(settings.theme ?? "")}
@@ -561,9 +692,13 @@ export default function SettingsPanel({
                               placeholder="Pi default"
                             />
                           </label>
+
                           <label id="setting-externalEditor">
-                            <span>
-                              EXTERNAL EDITOR<small>Editor command</small>
+                            <span className="field-label-group">
+                              <span className="field-title">EXTERNAL EDITOR</span>
+                              <small className="field-desc">
+                                Command to launch external text editor
+                              </small>
                             </span>
                             <input
                               value={String(settings.externalEditor ?? "")}
@@ -573,9 +708,13 @@ export default function SettingsPanel({
                               placeholder="e.g. code --wait"
                             />
                           </label>
+
                           <label id="setting-shellPath">
-                            <span>
-                              SHELL PATH<small>Shell executable</small>
+                            <span className="field-label-group">
+                              <span className="field-title">SHELL PATH</span>
+                              <small className="field-desc">
+                                Default shell executable path
+                              </small>
                             </span>
                             <input
                               value={String(settings.shellPath ?? "")}
@@ -585,32 +724,51 @@ export default function SettingsPanel({
                               placeholder="System default"
                             />
                           </label>
+
                           {scope === "global" && (
                             <>
                               <div
                                 className="session-storage-setting"
                                 id="setting-sessionDir"
                               >
-                                <div>
-                                  <strong>SESSION STORAGE</strong>
-                                  <span>
-                                    {String(
-                                      settings.sessionDir ||
-                                        "~/.pi/agent/sessions",
-                                    )}
-                                  </span>
+                                <div className="storage-info">
+                                  <div className="field-label-group">
+                                    <span className="field-title">
+                                      SESSION STORAGE
+                                    </span>
+                                    <span className="storage-path">
+                                      {String(
+                                        settings.sessionDir ||
+                                          "~/.pi/agent/sessions",
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
-                                <button onClick={chooseSessionDir}>
-                                  CHOOSE FOLDER
+                                <button
+                                  type="button"
+                                  className="toolbar-button"
+                                  onClick={chooseSessionDir}
+                                >
+                                  Choose Folder
                                 </button>
                               </div>
                               <div className="session-storage-setting">
-                                <div>
-                                  <strong>BACKLOG & ERROR REPORTS</strong>
-                                  <span>{backlogDir || "Loading…"}</span>
+                                <div className="storage-info">
+                                  <div className="field-label-group">
+                                    <span className="field-title">
+                                      BACKLOG & ERROR REPORTS
+                                    </span>
+                                    <span className="storage-path">
+                                      {backlogDir || "Loading…"}
+                                    </span>
+                                  </div>
                                 </div>
-                                <button onClick={chooseBacklogDir}>
-                                  CHOOSE FOLDER
+                                <button
+                                  type="button"
+                                  className="toolbar-button"
+                                  onClick={chooseBacklogDir}
+                                >
+                                  Choose Folder
                                 </button>
                               </div>
                             </>
@@ -623,21 +781,35 @@ export default function SettingsPanel({
                 {error && <div className="settings-error">{error}</div>}
               </main>
             </div>
-            <footer>
-              <span>{text === saved ? "NO CHANGES" : "UNSAVED CHANGES"}</span>
-              <div>
+            <footer className="settings-footer">
+              <div className="settings-footer-status">
+                <span
+                  className={`status-indicator-dot ${
+                    text === saved ? "clean" : "dirty"
+                  }`}
+                />
+                <span>
+                  {text === saved
+                    ? "All settings saved"
+                    : "Unsaved changes pending"}
+                </span>
+              </div>
+              <div className="settings-footer-actions">
                 <button
+                  type="button"
+                  className="toolbar-button"
                   onClick={() => setText(saved)}
                   disabled={text === saved}
                 >
-                  RESET
+                  Reset
                 </button>
                 <button
-                  className="save-settings"
+                  type="button"
+                  className="toolbar-button toolbar-button-primary save-settings"
                   onClick={save}
                   disabled={loading || text === saved}
                 >
-                  SAVE SETTINGS
+                  Save Settings
                 </button>
               </div>
             </footer>

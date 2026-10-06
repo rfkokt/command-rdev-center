@@ -3,6 +3,7 @@ import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import type { ChatImage } from "../lib/rpc";
 import type { ChatFile, SlashCommand } from "./ChatView";
 import { shouldSubmitCommand } from "./chat-utils";
+import CustomSelect from "./CustomSelect";
 
 export type ChatSubmitMode = "prompt" | "follow_up" | "steer";
 
@@ -135,32 +136,50 @@ export default function ChatComposer({
               {chip.label}
             </button>
           ))}
-          <label className="thinking-effort">
-            <span>⚡</span>
-            <select
-              value={currentThinking || "medium"}
-              onChange={(event) => void onSetThinking(event.target.value)}
-              disabled={
-                driveDetached ||
-                agentStatus === "stopped" ||
-                isNewSessionLoading
-              }
-              aria-label="Thinking effort"
-            >
-              {[
-                ["off", "No thinking"],
-                ["minimal", "Minimal"],
-                ["low", "Low"],
-                ["medium", "Medium"],
-                ["high", "High"],
-                ["xhigh", "Extra high"],
-              ].map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <CustomSelect
+            className="thinking-effort"
+            value={currentThinking || "medium"}
+            onChange={(level) => void onSetThinking(level)}
+            disabled={
+              driveDetached ||
+              agentStatus === "stopped" ||
+              isNewSessionLoading
+            }
+            ariaLabel="Thinking effort"
+            placement="top"
+            options={[
+              {
+                value: "off",
+                label: "No thinking",
+                description: "Direct response without reasoning",
+              },
+              {
+                value: "minimal",
+                label: "Minimal",
+                description: "Quick shallow checks",
+              },
+              {
+                value: "low",
+                label: "Low",
+                description: "Light reasoning",
+              },
+              {
+                value: "medium",
+                label: "Medium",
+                description: "Balanced reasoning effort",
+              },
+              {
+                value: "high",
+                label: "High",
+                description: "Deep analysis and planning",
+              },
+              {
+                value: "xhigh",
+                label: "Extra high",
+                description: "Maximum reasoning effort",
+              },
+            ]}
+          />
         </div>
         {slashCommands.length > 0 && (
           <div className="slash-menu" role="listbox">
@@ -289,14 +308,17 @@ export default function ChatComposer({
         )}
         {agentStatus === "running" && (
           <div
-            className={`queue-status${pendingMessageCount ? " has-queue" : ""}`}
+            className={`queue-status pixel-queue-status${pendingMessageCount ? " has-queue" : ""}`}
             role="status"
           >
-            <strong>
-              {pendingMessageCount
-                ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED`
-                : "AGENT IS WORKING"}
-            </strong>
+            <div className="pixel-queue-label">
+              <span className="pixel-blink-dot" />
+              <strong>
+                {pendingMessageCount
+                  ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED`
+                  : "AI AGENT OFFICE AT WORK"}
+              </strong>
+            </div>
             <span>
               Enter queues next turn · Option/Alt + Enter steers current turn
             </span>

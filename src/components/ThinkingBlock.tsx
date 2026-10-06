@@ -25,7 +25,10 @@ type ThinkingBlockProps = {
 
 function ThinkingBlock({ children, isStreaming = false }: ThinkingBlockProps) {
   return (
-    <details className="thinking-block" open={isStreaming}>
+    <details
+      className={`thinking-block${isStreaming ? " is-streaming" : ""}`}
+      open={isStreaming}
+    >
       <summary>
         <span>THINKING</span>
         <small className="thinking-show">SHOW</small>

@@ -1,16 +1,16 @@
-/* Wealthfolio-inspired application composition: navigation rail + inset workspace. */
+/* Layout reset: seamless desktop composition */
 :root {
-  --layout-gap: 14px;
-  --layout-edge: 14px;
+  --layout-gap: 0px;
+  --layout-edge: 0px;
 }
 
 .sidebar {
   min-width: 0;
-  height: calc(100vh - (var(--layout-edge) * 2));
+  height: 100vh;
   overflow: hidden;
-  border: 1px solid var(--separator);
-  border-radius: 14px;
-  box-shadow: var(--shadow-soft);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .app-shell.sidebar-hidden .sidebar {
@@ -101,10 +101,10 @@
 }
 
 .workspace {
-  height: calc(100vh - (var(--layout-edge) * 2));
-  border: 1px solid var(--separator);
-  border-radius: 14px;
-  box-shadow: var(--shadow-soft);
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .app-toolbar {

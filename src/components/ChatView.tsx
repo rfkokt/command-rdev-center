@@ -82,6 +82,7 @@ import ChatComposer from "./ChatComposer";
 import ChatRightSidebar from "./ChatRightSidebar";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel from "./SessionTreePanel";
+import Mascot from "./Mascot";
 import {
   buildPhase,
   transcriptEntry,
@@ -126,6 +127,15 @@ const FEED_ITEM_STYLE: CSSProperties = {
   width: "100%",
   margin: "0 auto",
   padding: "0 var(--spacing-md) var(--spacing-xl)",
+  boxSizing: "border-box",
+  overflowX: "hidden",
+};
+
+const ChatFeedTopSpacer = () => <div style={{ height: 16 }} />;
+const ChatFeedBottomSpacer = () => <div style={{ height: 32 }} />;
+const VIRTUOSO_COMPONENTS = {
+  Header: ChatFeedTopSpacer,
+  Footer: ChatFeedBottomSpacer,
 };
 
 type PiEventPayload = { session_id: string; raw: string };
@@ -557,18 +567,33 @@ export default function ChatView({
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
     atBottomRef.current = atBottom;
   }, []);
-  // Jump the virtualized list to the latest output when the chat tab becomes
-  // active or its history finishes loading. followOutput="auto" takes over
-  // from there: it keeps the list pinned while the user sits at the bottom
-  // and leaves their scroll position alone while they review history.
-  useEffect(() => {
-    if (!isActive || isHistoryLoading) return;
+
+  const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "auto") => {
+    atBottomRef.current = true;
     virtuosoRef.current?.scrollToIndex({
       index: "LAST",
       align: "end",
-      behavior: "auto",
+      behavior,
     });
-  }, [isActive, isHistoryLoading]);
+  }, []);
+
+  // Jump the virtualized list to the latest output when the chat tab becomes
+  // active or its history finishes loading. followOutput takes over from there.
+  useEffect(() => {
+    if (!isActive || isHistoryLoading) return;
+    scrollToBottom("auto");
+    const timer = window.setTimeout(() => scrollToBottom("auto"), 80);
+    return () => clearTimeout(timer);
+  }, [isActive, isHistoryLoading, scrollToBottom]);
+
+  // Keep list pinned to bottom whenever a new user message is appended or when at bottom
+  useEffect(() => {
+    if (!isActive || isHistoryLoading || messages.length === 0) return;
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.role === "user" || atBottomRef.current) {
+      scrollToBottom("auto");
+    }
+  }, [messages.length, isActive, isHistoryLoading, scrollToBottom]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -678,10 +703,24 @@ export default function ChatView({
   const upsertToolCall = useCallback(
     (callId: string, patch: ToolCallPatch) => {
       pendingToolPatchesRef.current.push({ callId, patch });
+      if (typeof window !== "undefined" && patch.name) {
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-activity", {
+            detail: {
+              type: "tool",
+              toolName: patch.name,
+              phase: patch.phase || "start",
+              args: patch.args,
+              isError: patch.isError,
+              tabId: chatId,
+            },
+          }),
+        );
+      }
       if (toolCallRafRef.current) return;
       toolCallRafRef.current = requestAnimationFrame(flushToolCalls);
     },
-    [flushToolCalls],
+    [flushToolCalls, chatId],
   );
   useEffect(
     () => () => {
@@ -692,23 +731,153 @@ export default function ChatView({
     },
     [],
   );
+  const lastTextDispatchRef = useRef(0);
   const appendTextDelta = useCallback(
     (textDelta: string) => {
       if (!textDelta) return;
       pendingTextRef.current += textDelta;
       queueDeltaFlush();
+      const now = Date.now();
+      if (typeof window !== "undefined" && now - lastTextDispatchRef.current > 500) {
+        lastTextDispatchRef.current = now;
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-activity", {
+            detail: {
+              type: "streaming_text",
+              phase: "streaming_text",
+              tabId: chatId,
+            },
+          }),
+        );
+      }
     },
-    [queueDeltaFlush],
+    [queueDeltaFlush, chatId],
   );
 
+  const lastThinkingDispatchRef = useRef(0);
   const appendThinkingDelta = useCallback(
     (delta: string) => {
       if (!delta) return;
       pendingThinkingRef.current += delta;
       queueDeltaFlush();
+      const now = Date.now();
+      if (typeof window !== "undefined" && now - lastThinkingDispatchRef.current > 500) {
+        lastThinkingDispatchRef.current = now;
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-activity", {
+            detail: {
+              type: "thinking",
+              phase: "thinking",
+              tabId: chatId,
+            },
+          }),
+        );
+      }
     },
-    [queueDeltaFlush],
+    [queueDeltaFlush, chatId],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isActive) return;
+    if (agentStatus !== "running" && !isRestarting) {
+      window.dispatchEvent(
+        new CustomEvent("crc-agent-activity-sync", {
+          detail: {
+            active: false,
+            phase: "idle",
+            tabId: chatId,
+          },
+        }),
+      );
+      return;
+    }
+
+    const lastMsg = messages[messages.length - 1];
+    const activeTool =
+      lastMsg && lastMsg.role === "assistant"
+        ? lastMsg.toolCalls.find((t) => t.phase !== "end")
+        : null;
+
+    const activeReq =
+      [...messages].reverse().find((m) => m.role === "user")?.text?.trim() || "";
+
+    let assignedName = "Kern";
+    let assignedRole = "Lead Agent";
+    let title = "THINKING";
+    let detail = activeReq
+      ? `Working on: ${activeReq.slice(0, 48)}${activeReq.length > 48 ? "…" : ""}`
+      : "Analyzing request";
+    let phase = "thinking";
+
+    if (activeTool) {
+      phase = "executing";
+      const rawName = activeTool.name.replace(/^functions\./, "").toLowerCase();
+      const cmd = String(activeTool.args?.command || "").toLowerCase();
+      if (rawName === "bash") {
+        if (/(test|vitest|jest|cargo.*test|pytest)/.test(cmd)) {
+          assignedName = "Bob";
+          assignedRole = "QA Tester";
+        } else if (/(build|compile|tauri.*build|vite.*build)/.test(cmd)) {
+          assignedName = "Grace";
+          assignedRole = "DevOps & Server";
+        } else if (/^git\s+/.test(cmd)) {
+          assignedName = "Linus";
+          assignedRole = "Backend Dev";
+        } else {
+          assignedName = "Grace";
+          assignedRole = "DevOps & Infra";
+        }
+      } else if (rawName === "read" || rawName === "view" || rawName === "cat") {
+        assignedName = "Ada";
+        assignedRole = "Frontend Dev";
+      } else if (rawName === "edit" || rawName === "write") {
+        assignedName = "Linus";
+        assignedRole = "Backend Dev";
+      } else if (
+        rawName.includes("search") ||
+        rawName.includes("grep") ||
+        rawName.includes("graph")
+      ) {
+        assignedName = "Alan";
+        assignedRole = "AST & Search";
+      } else if (rawName.includes("web") || rawName.includes("fetch")) {
+        assignedName = "Alan";
+        assignedRole = "Research Agent";
+      }
+      title = activeTool.name.replace(/^functions\./, "").toUpperCase();
+      detail = describeToolActivity(activeTool);
+    } else if (lastMsg && lastMsg.role === "assistant" && lastMsg.text) {
+      phase = "writing";
+      assignedName = "Kern";
+      assignedRole = "Lead Agent";
+      title = "RESPONDING";
+      const lastLine =
+        lastMsg.text.split("\n").filter(Boolean).pop()?.slice(0, 45) || "";
+      detail = lastLine ? `Writing: ${lastLine}…` : "Drafting response";
+    } else if (lastMsg && lastMsg.role === "assistant" && lastMsg.thinking) {
+      phase = "thinking";
+      assignedName = "Kern";
+      assignedRole = "Lead Agent";
+      title = "REASONING";
+      const lastLine =
+        lastMsg.thinking.split("\n").filter(Boolean).pop()?.slice(0, 45) || "";
+      detail = lastLine ? `Thinking: ${lastLine}…` : "Evaluating solution";
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("crc-agent-activity-sync", {
+        detail: {
+          active: true,
+          phase,
+          agentName: assignedName,
+          agentRole: assignedRole,
+          title,
+          detail,
+          tabId: chatId,
+        },
+      }),
+    );
+  }, [agentStatus, isRestarting, messages, isActive, chatId]);
 
   useEffect(() => {
     if (globalChat) return;
@@ -1484,6 +1653,17 @@ export default function ChatView({
           finalizedContentRef.current.clear();
           setAgentStatus("running");
           onAgentRunning(chatId, true);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("crc-agent-activity", {
+                detail: {
+                  type: "agent_start",
+                  phase: "start",
+                  tabId: chatId,
+                },
+              }),
+            );
+          }
           setIsStreaming(true);
           setMessages((prev) => {
             const next = ensureAssistantTurn(prev, createAssistantTurn);
@@ -1508,6 +1688,17 @@ export default function ChatView({
           setAgentStatus("idle");
           setIsStreaming(false);
           onAgentRunning(chatId, false);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("crc-agent-activity", {
+                detail: {
+                  type: "agent_settled",
+                  phase: "idle",
+                  tabId: chatId,
+                },
+              }),
+            );
+          }
           if (!fallbackRevealTimerRef.current)
             setMessages((prev) => settleAgentMessages(prev));
           sendRaw({ type: "get_session_stats" });
@@ -1534,6 +1725,17 @@ export default function ChatView({
           setAgentStatus("idle");
           sendRaw({ type: "get_session_stats" });
           onAgentRunning(chatId, false);
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("crc-agent-activity", {
+                detail: {
+                  type: "agent_settled",
+                  phase: "idle",
+                  tabId: chatId,
+                },
+              }),
+            );
+          }
           onUnread(chatId);
           setIsStreaming(false);
           const completedAt = Date.now();
@@ -1671,6 +1873,8 @@ export default function ChatView({
           toolArgsRef.current.delete(callId);
           activeToolCallsRef.current.delete(callId);
           upsertToolCall(callId, {
+            name,
+            args,
             phase: "end",
             callId,
             result: ev.result as unknown,
@@ -2239,7 +2443,16 @@ export default function ChatView({
       agentStatus === "stopped"
     )
       return false;
-    if (text) onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
+    if (text) {
+      onFirstMessage(chatId, text.replace(/\s+/g, " ").slice(0, 60));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-prompt", {
+            detail: { text, tabId: chatId },
+          }),
+        );
+      }
+    }
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) =>
       [
@@ -2256,6 +2469,8 @@ export default function ChatView({
       ].slice(-MAX_HISTORY),
     );
     pendingTaskPromptRef.current = text;
+    scrollToBottom("smooth");
+    window.setTimeout(() => scrollToBottom("auto"), 60);
     await maybeCreateCheckpoint(text);
     await sendRaw({
       type: "prompt",
@@ -2327,8 +2542,16 @@ export default function ChatView({
     const message = `${text}${fileContext}`;
     const visibleMessage =
       text || files.map((file) => `@${file.name}`).join(" ");
-    if (visibleMessage)
+    if (visibleMessage) {
       onFirstMessage(chatId, visibleMessage.replace(/\s+/g, " ").slice(0, 60));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-prompt", {
+            detail: { text: visibleMessage, tabId: chatId },
+          }),
+        );
+      }
+    }
     taskStartedAtRef.current ??= Date.now();
     setMessages((prev) => {
       const next = [
@@ -2349,6 +2572,8 @@ export default function ChatView({
     setImages([]);
     setFiles([]);
     pendingTaskPromptRef.current = message;
+    scrollToBottom("smooth");
+    window.setTimeout(() => scrollToBottom("auto"), 60);
     await maybeCreateCheckpoint(text || visibleMessage);
     await sendWithSkill(message);
   }
@@ -3184,6 +3409,8 @@ export default function ChatView({
       setImages([]);
       setFiles([]);
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
+      scrollToBottom("smooth");
+      window.setTimeout(() => scrollToBottom("auto"), 60);
       await maybeCreateCheckpoint(messageText);
       await sendRaw({ type, message: messageText, images });
       onToast(
@@ -3398,8 +3625,18 @@ export default function ChatView({
         { kind: "research-report", run, order: run.created_at * 1000 + 1 },
       );
     }
-    for (const message of messages)
+    for (const message of messages) {
+      if (
+        message.role === "assistant" &&
+        !message.text &&
+        !message.thinking &&
+        message.toolCalls.length === 0 &&
+        message.isStreaming
+      ) {
+        continue;
+      }
       items.push({ kind: "message", message, order: message.createdAt ?? 0 });
+    }
     if (backgroundWork && agentStatus !== "running")
       items.push({
         kind: "background-work",
@@ -3428,41 +3665,75 @@ export default function ChatView({
   const renderFeedItemInner = (item: FeedItem): ReactNode => {
     if (item.kind === "session-loading") {
       return (
-        <div className="session-loading" role="status" aria-live="polite">
-          <span className="agent-working-mark" aria-hidden="true">
+        <div className="session-loading pixel-session-loading" role="status" aria-live="polite">
+          <div className="pixel-agent-avatar-tag" title="Kern (Lead Agent)">
+            <Mascot identity="kern" state="working" small className="mini" name="Kern" />
+          </div>
+          <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
             <i />
             <i />
             <i />
           </span>
-          <div>
-            <strong>STARTING NEW CONTEXT</strong>
+          <div className="session-loading-content">
+            <strong>
+              STARTING NEW CONTEXT
+              <span className="pixel-loading-cursor" aria-hidden="true" />
+            </strong>
             <small>KEEPING WORKTREE AND DEV SERVER</small>
+          </div>
+          <div className="pixel-loading-bar" aria-hidden="true">
+            <span className="pixel-loading-bar-fill" />
           </div>
         </div>
       );
     }
     if (item.kind === "history-state") {
       return isHistoryLoading ? (
-        <div className="session-loading" role="status" aria-live="polite">
-          <span className="agent-working-mark" aria-hidden="true">
+        <div className="session-loading pixel-session-loading" role="status" aria-live="polite">
+          <div className="pixel-agent-avatar-tag" title="Kern (Lead Agent)">
+            <Mascot identity="kern" state="working" small className="mini" name="Kern" />
+          </div>
+          <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
             <i />
             <i />
             <i />
           </span>
-          <div>
-            <strong>LOADING SESSION</strong>
+          <div className="session-loading-content">
+            <strong>
+              LOADING SESSION
+              <span className="pixel-loading-cursor" aria-hidden="true" />
+            </strong>
             <small>RESTORING CHAT HISTORY</small>
+          </div>
+          <div className="pixel-loading-bar" aria-hidden="true">
+            <span className="pixel-loading-bar-fill" />
           </div>
         </div>
       ) : (
-        <div
-          className="display-sm"
-          style={{
-            color: "var(--colors-muted)",
-            marginTop: "var(--spacing-xl)",
-          }}
-        >
-          AGENT IDLE. SEND PROMPT.
+        <div className="empty-state opendots-empty-state">
+          <Mascot identity="blue" state="idle" name="Dot" />
+          <div
+            className="display-sm"
+            style={{
+              color: "var(--text-secondary)",
+              marginTop: "8px",
+              fontWeight: 600,
+            }}
+          >
+            AGENT IDLE. SEND PROMPT.
+          </div>
+          <span
+            style={{
+              fontSize: "13px",
+              color: "var(--muted)",
+              maxWidth: "340px",
+              lineHeight: "1.5",
+              textAlign: "center",
+            }}
+          >
+            Ready to build, refactor, search or assist. Type a prompt or command
+            below to begin.
+          </span>
         </div>
       );
     }
@@ -3575,6 +3846,26 @@ export default function ChatView({
           }
         >
           {m.role === "system" && <small>PI CONTEXT</small>}
+          {m.role === "assistant" && (
+            <div className="assistant-bubble-header">
+              <div className="assistant-avatar-badge">
+                <Mascot
+                  identity="blue"
+                  state={m.isStreaming ? "working" : "idle"}
+                  small
+                  className="mini"
+                  name="Kern"
+                />
+              </div>
+              <span className="assistant-author-name">Kern</span>
+              {m.isStreaming && (
+                <span className="assistant-streaming-indicator pixel-generating">
+                  <span className="pixel-pulse-block">▋</span>
+                  Typing…
+                </span>
+              )}
+            </div>
+          )}
           {m.thinking && (
             <ThinkingBlock isStreaming={Boolean(m.isStreaming)}>
               {m.thinking}
@@ -4020,6 +4311,14 @@ export default function ChatView({
         let icon: string;
         let phase: "executing" | "writing" | "thinking";
 
+        // Map active agent from the 16-bit RPG Office team
+        let assignedAgent = {
+          name: "Kern",
+          role: "Lead Agent",
+          identity: "blue",
+          color: "#38bdf8",
+        };
+
         if (isRestarting) {
           phase = "thinking";
           title = "RESTARTING PI";
@@ -4027,6 +4326,28 @@ export default function ChatView({
           icon = "meter";
         } else if (activeTool) {
           phase = "executing";
+          const rawName = activeTool.name.replace(/^functions\./, "").toLowerCase();
+          const cmd = String(activeTool.args?.command || "").toLowerCase();
+          if (rawName === "bash") {
+            if (/(test|vitest|jest|cargo.*test|pytest)/.test(cmd)) {
+              assignedAgent = { name: "Bob", role: "QA Tester", identity: "red", color: "#ec4899" };
+            } else if (/(build|compile|tauri.*build|vite.*build)/.test(cmd)) {
+              assignedAgent = { name: "Grace", role: "DevOps & Server", identity: "yellow", color: "#f59e0b" };
+            } else if (/^git\s+/.test(cmd)) {
+              assignedAgent = { name: "Linus", role: "Backend Dev", identity: "mint", color: "#22c55e" };
+            } else {
+              assignedAgent = { name: "Grace", role: "DevOps & Infra", identity: "yellow", color: "#f59e0b" };
+            }
+          } else if (rawName === "read" || rawName === "view" || rawName === "cat") {
+            assignedAgent = { name: "Ada", role: "Frontend Dev", identity: "purple", color: "#a855f7" };
+          } else if (rawName === "edit" || rawName === "write") {
+            assignedAgent = { name: "Linus", role: "Backend Dev", identity: "mint", color: "#22c55e" };
+          } else if (rawName.includes("search") || rawName.includes("grep") || rawName.includes("graph")) {
+            assignedAgent = { name: "Alan", role: "AST & Search", identity: "orange", color: "#06b6d4" };
+          } else if (rawName.includes("web") || rawName.includes("fetch")) {
+            assignedAgent = { name: "Alan", role: "Research Agent", identity: "orange", color: "#06b6d4" };
+          }
+
           const build = buildPhase(activeTool);
           const isMultiSub = activeSubagents.length > 0 && subMeta;
           if (build) {
@@ -4075,6 +4396,7 @@ export default function ChatView({
           }
         } else if (streamingText) {
           phase = "writing";
+          assignedAgent = { name: "Kern", role: "Lead Agent", identity: "blue", color: "#38bdf8" };
           const lastLine =
             streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
           title = "RESPONDING";
@@ -4084,6 +4406,7 @@ export default function ChatView({
           icon = "meter";
         } else {
           phase = "thinking";
+          assignedAgent = { name: "Kern", role: "Lead Agent", identity: "blue", color: "#38bdf8" };
           const lastLine =
             thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
           if (lastLine) {
@@ -4125,19 +4448,43 @@ export default function ChatView({
         ];
         const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
         return (
-          <section className="agent-activity" aria-label="Agent activity">
+          <section className="agent-activity pixel-activity-section" aria-label="Agent activity">
             <div
-              className={`agent-working activity-${icon} phase-${phase}`}
+              className={`agent-working pixel-activity-card activity-${icon} phase-${phase}`}
               role="status"
               aria-live="polite"
+              style={{ borderLeft: `3px solid ${assignedAgent.color}` }}
             >
-              <span className="agent-working-mark" aria-hidden="true">
+              <div
+                className="pixel-agent-avatar-tag"
+                title={`${assignedAgent.name} (${assignedAgent.role})`}
+              >
+                <Mascot
+                  identity={assignedAgent.identity}
+                  state="working"
+                  small
+                  className="mini"
+                  name={assignedAgent.name}
+                />
+              </div>
+              <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
                 <i />
                 <i />
                 <i />
               </span>
-              <div>
-                <strong>{title}</strong>
+              <div className="agent-working-content">
+                <div className="agent-working-meta">
+                  <span
+                    className="agent-badge-tag"
+                    style={{
+                      color: assignedAgent.color,
+                      borderColor: `${assignedAgent.color}55`,
+                    }}
+                  >
+                    {assignedAgent.name} · {assignedAgent.role}
+                  </span>
+                  <strong>{title}</strong>
+                </div>
                 <small className="agent-working-detail" title={detail}>
                   {detail}
                 </small>
@@ -4193,36 +4540,49 @@ export default function ChatView({
                 {isAborting ? "ABORTING…" : "ABORT"}
               </button>
             </div>
-            <details className="agent-activity-log" open>
+            <details className="agent-activity-log pixel-activity-log" open>
               <summary>
+                <span className="pixel-summary-icon">⚡</span>
                 {agentTranscript.length
                   ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
                   : "Preparing task"}
               </summary>
-              <ul className="agent-transcript" aria-label="Agent tasks">
+              <ul className="agent-transcript pixel-agent-transcript" aria-label="Agent tasks">
                 {agentTranscript.length > 0 ? (
-                  agentTranscript.map((entry) => (
-                    <li key={entry.id}>
-                      <span
-                        className={`agent-transcript-mark ${entry.type === "Tool" ? "tool" : ""}`}
-                        aria-hidden="true"
-                      />
-                      <span>
-                        {entry.type === "Agent" && entry.detail === "Thinking"
-                          ? activeRequest
-                            ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
-                            : "Preparing next step"
-                          : entry.detail}
-                      </span>
-                      <small>{entry.type}</small>
-                    </li>
-                  ))
+                  agentTranscript.map((entry) => {
+                    const isDone =
+                      entry.detail.startsWith("Finished") ||
+                      entry.detail === "Ready" ||
+                      entry.detail === "Completed";
+                    const isRun =
+                      entry.detail.startsWith("Running") ||
+                      entry.detail.startsWith("Calling") ||
+                      entry.detail === "Started";
+                    return (
+                      <li
+                        key={entry.id}
+                        className={`pixel-transcript-row ${isDone ? "is-done" : isRun ? "is-running" : ""}`}
+                      >
+                        <span
+                          className={`pixel-step-badge ${isDone ? "step-done" : isRun ? "step-running" : "step-idle"}`}
+                          aria-hidden="true"
+                        >
+                          {isDone ? "✓" : isRun ? "▶" : "·"}
+                        </span>
+                        <span className="pixel-step-text">
+                          {entry.type === "Agent" && entry.detail === "Thinking"
+                            ? activeRequest
+                              ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
+                              : "Preparing next step"
+                            : entry.detail}
+                        </span>
+                        <small className="pixel-step-type">{entry.type}</small>
+                      </li>
+                    );
+                  })
                 ) : (
                   <li className="agent-transcript-empty">
-                    <span
-                      className="agent-transcript-mark"
-                      aria-hidden="true"
-                    />
+                    <span className="pixel-step-badge step-running">▶</span>
                     <span>Analyzing request</span>
                   </li>
                 )}
@@ -4251,54 +4611,55 @@ export default function ChatView({
 
   return (
     <div
+      className="chat-view"
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
         height: "100%",
         minHeight: 0,
+        minWidth: 0,
         position: "relative",
+        overflow: "hidden",
+        overflowX: "hidden",
+        overscrollBehaviorX: "none",
+        width: "100%",
+        maxWidth: "100%",
+        touchAction: "pan-y",
       }}
     >
       <div
-        className={
+        className={`chat-header ${
           globalChat
             ? ""
             : rightSidebarOpen
               ? "has-code-rail-rail-open"
               : "has-code-rail"
-        }
+        }`}
         style={{
-          display: "flex",
-          gap: "var(--spacing-xs)",
-          alignItems: "center",
-          paddingTop: "var(--spacing-sm)",
-          paddingBottom: "var(--spacing-sm)",
-          paddingLeft: "var(--spacing-md)",
           paddingRight: !globalChat
             ? rightSidebarOpen
-              ? "448px"
-              : "68px"
-            : "var(--spacing-md)",
-          borderBottom: "1px solid var(--colors-hairline)",
-          flexWrap: "wrap",
-          flexShrink: 0,
+              ? rightPanelWidth + 48
+              : 48
+            : 24,
+          boxSizing: "border-box",
+          maxWidth: "100%",
+          overflowX: "hidden",
         }}
       >
-        <strong
-          className="title-md"
-          style={{ color: "var(--colors-on-dark)", letterSpacing: "1px" }}
-        >
-          {projectName}
-        </strong>
-        <button
-          onClick={handleClose}
-          className="small-icon-button"
-          title="Close chat"
-          aria-label="Close chat"
-        >
-          ✕
-        </button>
+        <div className="chat-header-left">
+          <div className="chat-session-badge">
+            <span className="chat-session-dot" />
+            <strong className="chat-session-name">{projectName}</strong>
+            <button
+              onClick={handleClose}
+              className="chat-session-close"
+              title="Close chat"
+              aria-label="Close chat"
+            >
+              ✕
+            </button>
+          </div>
         {!globalChat && !isGit && !isWorkspace && (
           <span className="category-tag">NOT ISOLATED</span>
         )}
@@ -4380,50 +4741,52 @@ export default function ChatView({
             />
           </div>
         )}
+      </div>
 
         <div className="chat-header-actions">
           <button
             onClick={openModelPicker}
-            className="dev-control"
-            style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+            className="dev-control dev-control-model"
             title="Change model (Ctrl+L or /model) — works in Global and project chat"
             aria-label="Change model"
           >
-            ◍{" "}
             {currentModel
               ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ??
                 "MODEL")
               : "MODEL"}
           </button>
           {!globalChat && !devRunner && (
-            <button onClick={handleRunDev} className="dev-control run">
-              ▶ RUN DEV
+            <button
+              onClick={handleRunDev}
+              className="dev-control run dev-control-run"
+            >
+              RUN DEV
             </button>
           )}
           <button
             onClick={handleOpenTerminal}
-            className={`dev-control open${showTerminal ? " active" : ""}`}
+            className={`dev-control open dev-control-term${showTerminal ? " active" : ""}`}
           >
-            ⌘ TERMINAL
+            TERMINAL
           </button>
           <button
             onClick={() => setSessionTreeOpen(true)}
-            className="dev-control"
+            className="dev-control dev-control-tree"
             title="Session tree — fork a new branch from a past user message"
             aria-label="Open session tree"
           >
-            ⑂ TREE
+            TREE
           </button>
           {!globalChat && devRunner && (
             <>
               <button onClick={handleStopDev} className="dev-control stop">
-                ■ STOP
+                STOP
               </button>
               <button
                 onClick={() => openUrl(devRunner.url)}
                 className="dev-control open"
               >
-                ↗ {devRunner.url}
+                {devRunner.url}
               </button>
             </>
           )}
@@ -4611,21 +4974,49 @@ export default function ChatView({
               : "chat-content has-code-rail"
             : "chat-content"
         }
-        style={
-          !globalChat && rightSidebarOpen
-            ? { marginRight: rightPanelWidth + 38 }
-            : undefined
-        }
+        style={{
+          flex: 1,
+          height: "100%",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          paddingRight: !globalChat
+            ? rightSidebarOpen
+              ? rightPanelWidth + 38
+              : 38
+            : 0,
+          marginRight: 0,
+          overflowX: "hidden",
+          overscrollBehaviorX: "none",
+          width: "100%",
+          maxWidth: "100%",
+          minWidth: 0,
+          boxSizing: "border-box",
+        }}
       >
         <Virtuoso
           ref={virtuosoRef}
-          style={{ flex: 1, minHeight: 0 }}
+          style={{
+            flex: 1,
+            height: "100%",
+            minHeight: 0,
+            minWidth: 0,
+            overflowX: "hidden",
+            overscrollBehaviorX: "none",
+            width: "100%",
+            maxWidth: "100%",
+          }}
           data={feedItems}
           computeItemKey={feedItemKey}
-          followOutput="auto"
+          followOutput={(isAtBottom) => {
+            const last = messages[messages.length - 1];
+            if (last?.role === "user") return "auto";
+            return isAtBottom ? "auto" : false;
+          }}
           alignToBottom
           atBottomStateChange={handleAtBottomStateChange}
           itemContent={renderFeedItem}
+          components={VIRTUOSO_COMPONENTS}
         />
 
         {agentStatus !== "running" && planApprovalPending(messages) && (
@@ -4749,7 +5140,19 @@ export default function ChatView({
           onToast={onToast}
         />
       )}
-      <footer className="chat-status">
+      <footer
+        className="chat-status"
+        style={{
+          paddingRight: !globalChat
+            ? rightSidebarOpen
+              ? rightPanelWidth + 24
+              : 48
+            : 18,
+          boxSizing: "border-box",
+          maxWidth: "100%",
+          overflowX: "hidden",
+        }}
+      >
         <span>
           ⑂{" "}
           {worktree?.branch ??

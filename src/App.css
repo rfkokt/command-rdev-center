@@ -716,8 +716,10 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
 }
-.chat-session[hidden] {
-  display: none;
+.chat-session[hidden],
+.chat-session.is-hidden,
+[hidden] {
+  display: none !important;
 }
 .empty-state {
   position: relative;
@@ -4634,8 +4636,10 @@ select:focus-visible {
 /* VSCode right sidebar: activity rail (52px) + panel 380px when open. Chat uses margin-right to avoid overlap */
 .code-sidebar-rail {
   position: absolute;
-  z-index: 3;
-  inset: 0 0 0 auto;
+  z-index: 12;
+  top: 52px;
+  bottom: 32px;
+  right: 0;
   display: flex;
   pointer-events: none;
 }

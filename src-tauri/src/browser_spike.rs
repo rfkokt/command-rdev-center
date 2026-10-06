@@ -445,7 +445,9 @@ pub fn close_session(state: &BrowserState, session_id: &str) {
             let _ = std::fs::remove_file(bridge.socket);
         }
         if let Some(mut host) = sessions.hosts.remove(session_id) {
-            host.shutdown();
+            std::thread::spawn(move || {
+                host.shutdown();
+            });
         }
     }
 }

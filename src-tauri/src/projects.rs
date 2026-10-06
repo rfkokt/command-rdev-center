@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -881,12 +882,39 @@ fn project_config_key(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("project is not registered: {}", path.display()))
 }
 
+fn url_cache_key(url: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 fn fetch_url(url: &str) -> Result<String, String> {
+    let cache_dir = std::env::temp_dir().join("crc-url-cache");
+    let cache_file = cache_dir.join(format!("{}.json", url_cache_key(url)));
+
+    if let Ok(metadata) = std::fs::metadata(&cache_file) {
+        if let Ok(modified) = metadata.modified() {
+            if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
+                if let Ok(cached) = std::fs::read_to_string(&cache_file) {
+                    if !cached.is_empty() {
+                        return Ok(cached);
+                    }
+                }
+            }
+        }
+    }
+
     let output = Command::new("curl")
-        .args(["-fsSL", "--connect-timeout", "5", "--max-time", "20", url])
+        .args(["-fsSL", "--connect-timeout", "2", "--max-time", "3", url])
         .output()
         .map_err(|error| format!("API documentation fetch: {error}"))?;
     if !output.status.success() {
+        if let Ok(cached) = std::fs::read_to_string(&cache_file) {
+            if !cached.is_empty() {
+                eprintln!("Using cached API documentation for {url} after fetch failure");
+                return Ok(cached);
+            }
+        }
         return Err(format!(
             "API documentation fetch failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
@@ -895,7 +923,10 @@ fn fetch_url(url: &str) -> Result<String, String> {
     if output.stdout.len() > MAX_API_DOCUMENTATION_BYTES {
         return Err("API documentation exceeds 512 KB".into());
     }
-    String::from_utf8(output.stdout).map_err(|_| "API documentation is not UTF-8".into())
+    let body = String::from_utf8(output.stdout).map_err(|_| "API documentation is not UTF-8".to_string())?;
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let _ = std::fs::write(&cache_file, &body);
+    Ok(body)
 }
 
 fn absolute_url(source: &str, target: &str) -> Result<String, String> {
@@ -1046,7 +1077,7 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .cloned())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ApiContract {
     id: String,
     origin: String,
@@ -1055,43 +1086,99 @@ pub struct ApiContract {
 }
 
 pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, String> {
-    swagger_urls_for_project(path)?
-        .into_iter()
-        .map(|url| {
-            let document_url = swagger_document_url(&url)?;
-            let document: serde_json::Value = serde_json::from_str(&fetch_url(&document_url)?)
-                .map_err(|_| "Swagger contract is not valid JSON")?;
-            let id = document
-                .pointer("/info/title")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(&document_url)
-                .to_lowercase()
-                .chars()
-                .map(|character| {
-                    if character.is_ascii_alphanumeric() {
-                        character
-                    } else {
-                        '-'
+    let key = project_config_key(path)?;
+    let cache_dir = std::env::temp_dir().join("crc-contracts-cache");
+    let cache_key = format!("{:016x}", {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        hasher.finish()
+    });
+    let cache_file = cache_dir.join(format!("{cache_key}.json"));
+
+    if let Ok(metadata) = std::fs::metadata(&cache_file) {
+        if let Ok(modified) = metadata.modified() {
+            if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
+                if let Ok(content) = std::fs::read_to_string(&cache_file) {
+                    if let Ok(contracts) = serde_json::from_str::<Vec<ApiContract>>(&content) {
+                        return Ok(contracts);
                     }
-                })
-                .collect::<String>()
-                .trim_matches('-')
-                .to_owned();
-            let server = document
-                .pointer("/servers/0/url")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(&url);
-            let server = url::Url::parse(server).map_err(|_| "Swagger server URL must be valid")?;
-            let origin = server.origin().ascii_serialization();
-            let base_url = server.to_string().trim_end_matches('/').to_owned();
-            Ok(ApiContract {
-                id,
-                origin,
-                base_url,
-                document,
+                }
+            }
+        }
+    }
+
+    let urls = swagger_urls_for_project(path)?;
+    if urls.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut contracts = Vec::new();
+    for url in urls {
+        let document_url = match swagger_document_url(&url) {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("Failed to resolve swagger document url {url}: {e}");
+                continue;
+            }
+        };
+        let body = match fetch_url(&document_url) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("Failed to fetch swagger document {document_url}: {e}");
+                continue;
+            }
+        };
+        let document: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let id = document
+            .pointer("/info/title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&document_url)
+            .to_lowercase()
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() {
+                    character
+                } else {
+                    '-'
+                }
             })
-        })
-        .collect()
+            .collect::<String>()
+            .trim_matches('-')
+            .to_owned();
+        let server = document
+            .pointer("/servers/0/url")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&url);
+        let Ok(server) = url::Url::parse(server) else {
+            continue;
+        };
+        let origin = server.origin().ascii_serialization();
+        let base_url = server.to_string().trim_end_matches('/').to_owned();
+        contracts.push(ApiContract {
+            id,
+            origin,
+            base_url,
+            document,
+        });
+    }
+
+    let _ = std::fs::create_dir_all(&cache_dir);
+    if !contracts.is_empty() {
+        if let Ok(json) = serde_json::to_string(&contracts) {
+            let _ = std::fs::write(&cache_file, json);
+        }
+    } else if let Ok(content) = std::fs::read_to_string(&cache_file) {
+        if let Ok(stale) = serde_json::from_str::<Vec<ApiContract>>(&content) {
+            return Ok(stale);
+        }
+    } else {
+        let _ = std::fs::write(&cache_file, "[]");
+    }
+
+    Ok(contracts)
 }
 
 pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, String> {

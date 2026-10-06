@@ -40,7 +40,18 @@ export default function ChatRightSidebar({
   onToast,
 }: ChatRightSidebarProps) {
   return (
-    <div className={`code-sidebar-rail${open ? " open" : ""}`}>
+    <div
+      className={`code-sidebar-rail${open ? " open" : ""}`}
+      style={{
+        position: "absolute",
+        top: 52,
+        bottom: 32,
+        right: 0,
+        zIndex: 12,
+        display: "flex",
+        pointerEvents: "none",
+      }}
+    >
       <div className="activity-rail vscode-rail">
         <button
           className={open && activity === "explorer" ? "active" : ""}

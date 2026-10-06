@@ -35,6 +35,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SparkIcon,
+  BlurIcon,
 } from "./components/Icons";
 import {
   APPEARANCE_KEY,
@@ -46,6 +47,8 @@ import {
   type Appearance,
   type ColorTheme,
 } from "./theme";
+import { Mascot } from "./components/Mascot";
+import BackgroundMotion from "./components/BackgroundMotion";
 import "./App.css";
 import "./core-workspace.css";
 import "./application-redesign.css";
@@ -55,8 +58,9 @@ import "./zed-theme.css";
 import "./minimal-layout.css";
 import "./zed-project-panel.css";
 import "./kern-theme.css";
-// Token owner — must stay last so :root / [data-theme] tokens win the cascade.
 import "./quiet-native.css";
+// OpenDots design system & animations — takes priority
+import "./opendots.css";
 
 type Config = {
   pi_path: string;
@@ -165,6 +169,23 @@ export default function App() {
   const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
   const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme);
+  const [bgBlurred, setBgBlurred] = useState(() => {
+    try {
+      return localStorage.getItem("crc_bg_blurred") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("crc_bg_blurred", String(bgBlurred));
+    } catch {}
+    window.dispatchEvent(
+      new CustomEvent("crc-bg-blur-changed", { detail: { blurred: bgBlurred } }),
+    );
+  }, [bgBlurred]);
+
   const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
   );
@@ -239,6 +260,13 @@ export default function App() {
         item.id === tabId && !item.title ? { ...item, title } : item,
       ),
     );
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("crc-agent-prompt", {
+          detail: { text: title, tabId },
+        }),
+      );
+    }
   }, []);
 
   const saveRuntimeSettings = useCallback(
@@ -259,6 +287,13 @@ export default function App() {
           item.id === tabId ? { ...item, interrupted } : item,
         ),
       );
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("crc-agent-running", {
+            detail: { running: interrupted, tabId },
+          }),
+        );
+      }
     },
     [],
   );
@@ -396,6 +431,11 @@ export default function App() {
         setActiveTabId(next[next.length - 1]?.id ?? null);
       return next;
     });
+    setMountedTabIds((ids) => {
+      const next = new Set(ids);
+      next.delete(tabId);
+      return next;
+    });
   }
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
@@ -505,15 +545,18 @@ export default function App() {
           }}
         />
         <div className="sidebar-brand">
-          <img
-            className="brand-mark"
-            src="/kern-studio-icon.png"
-            alt=""
-            aria-hidden="true"
-          />
-          <div>
-            <strong>Kern</strong>
-            <small>Studio</small>
+          <div className="wordmark">
+            <span className="dotted-logo" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+            <span className="wordmark-text">
+              <strong>Kern</strong>
+              <small>Studio</small>
+              <span className="wordmark-dot">•</span>
+            </span>
           </div>
           <button
             className="sidebar-collapse"
@@ -524,6 +567,38 @@ export default function App() {
             <PanelIcon />
           </button>
         </div>
+        <div className="sidebar-profile">
+          <Mascot
+            small
+            identity={activeTab?.id ?? workspaceProject?.name ?? "kern"}
+            state={activeTab?.interrupted ? "working" : "idle"}
+            decorative
+          />
+          <div className="sidebar-profile-info">
+            <strong>{workspaceProject?.name ?? "Kern Assistant"}</strong>
+            <span
+              className={`sidebar-profile-status ${activeTab?.interrupted ? "working" : ""}`}
+            >
+              <span className="online-dot" />
+              {activeTab?.interrupted ? "Thinking…" : "Online"}
+            </span>
+          </div>
+        </div>
+        <button
+          className="sidebar-new-action"
+          onClick={() => {
+            if (workspaceProject) {
+              newConversation(workspaceProject);
+            } else {
+              newGlobalChat();
+            }
+          }}
+          title="New session"
+        >
+          <PlusIcon />
+          <span>New session</span>
+        </button>
+
         <div className="sidebar-label">
           <span>Sessions</span>
           <i />
@@ -731,6 +806,10 @@ export default function App() {
       </aside>
 
       <section className="workspace">
+        <BackgroundMotion
+          isWorking={Boolean(activeTab?.interrupted)}
+          isBlurred={bgBlurred}
+        />
         <header className="app-toolbar glass-surface">
           {!sidebarOpen && (
             <button
@@ -743,7 +822,12 @@ export default function App() {
             </button>
           )}
           <div className="workspace-title">
-            <span className="live-dot" aria-hidden="true" />
+            <Mascot
+              small
+              identity={activeTab?.id ?? workspaceProject?.name ?? "kern"}
+              state={activeTab?.interrupted ? "working" : "idle"}
+              decorative
+            />
             <div>
               <strong>
                 {dashboard ?? activeTab?.project.name ?? "No project selected"}
@@ -754,6 +838,12 @@ export default function App() {
                   : "Local workspace · Idle"}
               </small>
             </div>
+            <span
+              className={`mode-badge ${activeTab?.interrupted ? "live" : ""}`}
+            >
+              <span className="pulse-dot" />
+              {activeTab?.interrupted ? "Working" : "Live"}
+            </span>
           </div>
           <div className="toolbar-actions">
             {workspaceProject && (
@@ -792,6 +882,34 @@ export default function App() {
                 </span>
               </button>
             )}
+            <button
+              className={`toolbar-button toolbar-button-blur${bgBlurred ? " is-active" : ""}`}
+              onClick={() => {
+                setBgBlurred((prev) => {
+                  const next = !prev;
+                  addToast(
+                    next
+                      ? "Latar belakang diblur (Focus mode aktif)"
+                      : "Blur latar belakang dinonaktifkan",
+                  );
+                  return next;
+                });
+              }}
+              title={
+                bgBlurred
+                  ? "Nonaktifkan blur latar belakang"
+                  : "Blur gambar belakang agar tidak terdistraksi"
+              }
+              aria-label={
+                bgBlurred
+                  ? "Nonaktifkan blur latar belakang"
+                  : "Blur gambar belakang"
+              }
+              aria-pressed={bgBlurred}
+            >
+              <BlurIcon active={bgBlurred} />
+              <span>{bgBlurred ? "Blur: On" : "Blur BG"}</span>
+            </button>
             <button
               className="toolbar-button toolbar-button-primary"
               disabled={!workspaceProject}
@@ -901,13 +1019,24 @@ export default function App() {
           {activeTab
             ? tabs
                 .filter((tab) => mountedTabIds.has(tab.id))
-                .map((tab) => (
-                  <div
-                    key={tab.id}
-                    className="chat-session"
-                    hidden={dashboard !== null || tab.id !== activeTabId}
-                  >
-                    <ChatView
+                .map((tab) => {
+                  const isHidden =
+                    dashboard !== null || tab.id !== activeTabId;
+                  return (
+                    <div
+                      key={tab.id}
+                      className={`chat-session${isHidden ? " is-hidden" : ""}`}
+                      hidden={isHidden}
+                      style={{
+                        ...(isHidden ? { display: "none" } : undefined),
+                        width: "100%",
+                        maxWidth: "100%",
+                        minWidth: 0,
+                        overflowX: "hidden",
+                        overscrollBehaviorX: "none",
+                      }}
+                    >
+                      <ChatView
                       projectPath={tab.project.path}
                       projectName={tab.project.name}
                       isGit={tab.project.is_git}
@@ -969,16 +1098,24 @@ export default function App() {
                       isActive={tab.id === activeTabId}
                     />
                   </div>
-                ))
+                  );
+                })
             : dashboard === null && (
                 <div className="empty-state">
+                  <Mascot state="idle" name="Dot" />
                   <span className="empty-status">
-                    <i aria-hidden="true" /> Workspace idle
+                    <span className="online-dot" aria-hidden="true" /> Workspace
+                    idle
                   </span>
                   <strong>No active session</strong>
                   <span>Open a project session or start Global Chat.</span>
                   <div>
-                    <button onClick={openGlobalChat}>Open Global Chat</button>
+                    <button
+                      className="toolbar-button toolbar-button-primary"
+                      onClick={openGlobalChat}
+                    >
+                      Open Global Chat
+                    </button>
                   </div>
                 </div>
               )}

@@ -23,6 +23,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@types/three": "^0.186.0",
     "ghostty-web": "^0.4.0",
     "katex": "^0.16.47",
     "mermaid": "^11.16.1",
@@ -35,7 +36,8 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "three": "^0.186.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

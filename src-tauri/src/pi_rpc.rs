@@ -436,30 +436,14 @@ const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user
 const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contract below is authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory. Do not use `web_search`. Do not open a Swagger URL in the browser or take a browser snapshot merely to discover endpoints: this saved contract is the source of truth. If the required endpoint is absent from the saved contract, state that clearly and ask the user for the endpoint or an updated contract; do not search the web or Swagger UI for it. Use browser tools only when the user explicitly asks for browser/UI verification, or when direct API testing has passed and UI integration must be verified.";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
-    let cached = crate::projects::api_documentation_context_for_project(project)
+    let context = crate::projects::api_documentation_context_for_project(project)
         .ok()
         .flatten();
-    let (context, is_cached_fallback) = match crate::projects::refresh_project_api_documentation(
-        project.to_string_lossy().into_owned(),
-    ) {
-        Ok(()) => (
-            crate::projects::api_documentation_context_for_project(project)
-                .ok()
-                .flatten(),
-            false,
-        ),
-        Err(_) => (cached, true),
-    };
 
     context
         .map(|context| {
-            let freshness = if is_cached_fallback {
-                "The live refresh failed, so this is the last successfully fetched contract; do not claim it is current."
-            } else {
-                "This was refreshed when this chat started."
-            };
             format!(
-                "## Project API documentation\n{freshness} {API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
+                "## Project API documentation\n{API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
             )
         })
         .unwrap_or_default()
