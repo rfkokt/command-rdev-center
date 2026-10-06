@@ -273,17 +273,17 @@ export function createOfficeScene(
   // A shared briefing spot in the open right wing gives the team a visible place
   // to gather and discuss without being covered by the central chat messages UI.
   const discussionSpots = [
-    { x: 5.1, z: -0.6 },
-    { x: 6.5, z: -0.6 },
-    { x: 7.4, z: 0.6 },
-    { x: 4.2, z: 0.6 },
-    { x: 5.1, z: 1.8 },
-    { x: 6.5, z: 1.8 },
+    { x: 4.8, z: -0.9 },
+    { x: 6.8, z: -0.9 },
+    { x: 7.8, z: 0.6 },
+    { x: 3.8, z: 0.6 },
+    { x: 4.8, z: 2.1 },
+    { x: 6.8, z: 2.1 },
   ] as const;
   // Central corridor runner keeps the middle grounded now that the briefing table moved right.
   box(room, "#3e4d4d", [2.6, 0.02, 4.2], [0, 0.02, 0.1], true);
   // Briefing area rug, table, and support legs on the right side.
-  box(room, "#4a5960", [4.0, 0.06, 2.6], [5.8, 0.035, 0.6], true);
+  box(room, "#4a5960", [4.6, 0.06, 3.4], [5.8, 0.035, 0.6], true);
   box(room, "#6d513e", [2.8, 0.12, 1.05], [5.8, 0.76, 0.6], true);
   for (const x of [-1.1, 1.1])
     box(room, "#3e4b4b", [0.12, 0.72, 0.82], [5.8 + x, 0.38, 0.6]);
@@ -630,8 +630,38 @@ export function createOfficeScene(
             walker.position.z - member.home.z,
           ) < 0.06 && !walker.route.length;
         actor.sit = damp(actor.sit, atHome ? 1 : 0, 7, dt);
-        // Stand before taking the first step to avoid sliding out of the chair.
-        if (actor.sit < 0.12 || !walker.route.length) advanceWalker(walker, dt);
+
+        if (actor.sit < 0.12 || !walker.route.length) {
+          advanceWalker(walker, dt);
+        }
+
+        // Mutual collision repulsion: if two characters are too close while en-route, gently push them apart laterally
+        // so they don't clip. Repulsion is disabled near the destination so characters can arrive cleanly at their spots.
+        if (walker.route.length > 0) {
+          const finalTarget = walker.route[walker.route.length - 1];
+          const distToFinal = Math.hypot(
+            walker.position.x - finalTarget.x,
+            walker.position.z - finalTarget.z,
+          );
+          // Only push apart while en-route, not when settling into designated spots
+          if (distToFinal > 0.45) {
+            const MIN_DIST = 0.85;
+            for (let o = 0; o < characters.length; o++) {
+              if (o === index) continue;
+              const other = characters[o];
+              const dx = walker.position.x - other.walker.position.x;
+              const dz = walker.position.z - other.walker.position.z;
+              const dist = Math.hypot(dx, dz);
+              if (dist > 0.001 && dist < MIN_DIST) {
+                const overlap = MIN_DIST - dist;
+                const pushFactor = other.walker.route.length === 0 ? 0.5 : 0.35;
+                walker.position.x += (dx / dist) * overlap * pushFactor * Math.min(1, dt * 8);
+                walker.position.z += (dz / dist) * overlap * pushFactor * Math.min(1, dt * 8);
+              }
+            }
+          }
+        }
+
         if (atHome || (discussionActive && !walker.route.length)) {
           const target = discussionActive
             ? { x: 5.8, z: 0.6 }

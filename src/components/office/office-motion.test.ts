@@ -86,12 +86,12 @@ describe("office motion", () => {
   });
   it("keeps routes to the right-wing briefing spots clear of desks and chair backrests", () => {
     const spots = [
-      { x: 5.1, z: -0.6 },
-      { x: 6.5, z: -0.6 },
-      { x: 7.4, z: 0.6 },
-      { x: 4.2, z: 0.6 },
-      { x: 5.1, z: 1.8 },
-      { x: 6.5, z: 1.8 },
+      { x: 4.8, z: -0.9 },
+      { x: 6.8, z: -0.9 },
+      { x: 7.8, z: 0.6 },
+      { x: 3.8, z: 0.6 },
+      { x: 4.8, z: 2.1 },
+      { x: 6.8, z: 2.1 },
     ];
     for (const member of TEAM) {
       for (const spot of spots) {
