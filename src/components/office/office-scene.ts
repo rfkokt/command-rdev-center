@@ -269,25 +269,28 @@ export function createOfficeScene(
     box(station, "#354044", [0.72, 0.065, 0.09], [x, 0.1, z + 0.1]);
     box(station, "#354044", [0.09, 0.065, 0.72], [x, 0.1, z + 0.1]);
   }
-  // A shared briefing spot gives the team a visible place to discuss a prompt.
-  // The ring of positions leaves a clear aisle around the low pixel table.
+  // A shared briefing spot in the open right wing gives the team a visible place
+  // to gather and discuss without being covered by the central chat messages UI.
   const discussionSpots = [
-    { x: -1.65, z: -1.25 },
-    { x: 0, z: -1.25 },
-    { x: 1.65, z: -1.25 },
-    { x: -1.65, z: 1.45 },
-    { x: 0, z: 1.45 },
-    { x: 1.65, z: 1.45 },
+    { x: 4.6, z: -0.7 },
+    { x: 5.8, z: -0.7 },
+    { x: 7.0, z: -0.7 },
+    { x: 4.8, z: 1.9 },
+    { x: 6.0, z: 1.9 },
+    { x: 7.2, z: 1.9 },
   ] as const;
-  box(room, "#4a5960", [4.2, 0.06, 2.55], [0, 0.035, 0.1], true);
-  box(room, "#6d513e", [3.2, 0.12, 1.05], [0, 0.76, 0.1], true);
-  for (const x of [-1.25, 1.25])
-    box(room, "#3e4b4b", [0.12, 0.72, 0.82], [x, 0.38, 0.1]);
-  // Pendant fixtures, balanced daylight and a warm practical light.
-  for (const x of [-4.9, 2.8]) {
+  // Central corridor runner keeps the middle grounded now that the briefing table moved right.
+  box(room, "#3e4d4d", [2.6, 0.02, 4.2], [0, 0.02, 0.1], true);
+  // Briefing area rug, table, and support legs on the right side.
+  box(room, "#4a5960", [4.0, 0.06, 2.6], [5.8, 0.035, 0.6], true);
+  box(room, "#6d513e", [2.8, 0.12, 1.05], [5.8, 0.76, 0.6], true);
+  for (const x of [-1.1, 1.1])
+    box(room, "#3e4b4b", [0.12, 0.72, 0.82], [5.8 + x, 0.38, 0.6]);
+  // Pendant fixtures, balanced daylight and warm practical illumination.
+  for (const x of [-4.9, 0.6, 5.8]) {
     box(room, "#334342", [0.025, 0.75, 0.025], [x, 5.05, -0.4]);
-    box(room, "#344744", [3.2, 0.12, 0.32], [x, 4.64, -0.4], true);
-    box(room, "#ffe1a7", [2.95, 0.025, 0.25], [x, 4.56, -0.4], false, 1.8);
+    box(room, "#344744", [3.0, 0.12, 0.32], [x, 4.64, -0.4], true);
+    box(room, "#ffe1a7", [2.8, 0.025, 0.25], [x, 4.56, -0.4], false, 1.8);
   }
   const ambient = new THREE.HemisphereLight("#d7e9ee", "#897054", 2.1);
   scene.add(ambient);
@@ -310,7 +313,7 @@ export function createOfficeScene(
   fill.position.set(-5, 5, -5);
   scene.add(fill);
   const warm = new THREE.PointLight("#ffc477", 38, 14, 2);
-  warm.position.set(-4.9, 4, -0.4);
+  warm.position.set(5.8, 4, 0.6);
   scene.add(warm);
 
   // Bake static transforms into material batches: the room stays inexpensive to draw.
@@ -407,10 +410,11 @@ export function createOfficeScene(
     previous = 0,
     width = 1,
     height = 1;
+  const cameraOffset = -1.6;
   const projected = new THREE.Vector3();
   const pointer = new THREE.Vector2();
   const baseCamera = new THREE.Vector3();
-  const lookAt = new THREE.Vector3(0, 1.25, -0.5);
+  const lookAt = new THREE.Vector3(cameraOffset, 1.25, -0.5);
 
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
@@ -422,7 +426,11 @@ export function createOfficeScene(
     camera.aspect = width / height;
     // Narrow panes pull back instead of cropping specialists out of the room.
     const distance = Math.max(1, 1.55 / camera.aspect);
-    baseCamera.set(9.8 * distance, 7.7 * distance, 13.5 * distance);
+    baseCamera.set(
+      (9.8 + cameraOffset) * distance,
+      7.7 * distance,
+      13.5 * distance,
+    );
     camera.position.copy(baseCamera);
     camera.lookAt(lookAt);
     camera.updateProjectionMatrix();
@@ -598,10 +606,16 @@ export function createOfficeScene(
         if (actor.sit < 0.12 || !walker.route.length) advanceWalker(walker, dt);
         if (atHome || (discussionActive && !walker.route.length)) {
           const target = discussionActive
-            ? { x: 0, z: 0.1 }
-            : { x: member.home.x, z: member.home.z < 0 ? member.home.z - 1 : member.home.z + 1 };
+            ? { x: 5.8, z: 0.6 }
+            : {
+                x: member.home.x,
+                z: member.home.z < 0 ? member.home.z - 1 : member.home.z + 1,
+              };
           const targetHeading = discussionActive
-            ? Math.atan2(target.z - walker.position.z, target.x - walker.position.x)
+            ? Math.atan2(
+                target.z - walker.position.z,
+                target.x - walker.position.x,
+              )
             : member.home.z < 0
               ? Math.PI
               : 0;

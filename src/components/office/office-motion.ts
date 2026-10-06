@@ -216,7 +216,7 @@ export function aisleRoute(from: Point, to: Point): Point[] {
     { x: exitX, z: fromAisle },
   ];
   if (fromAisle !== toAisle) {
-    path.push({ x: 7.35, z: fromAisle }, { x: 7.35, z: toAisle });
+    path.push({ x: 0, z: fromAisle }, { x: 0, z: toAisle });
   }
   path.push({ x: entryX, z: toAisle }, { x: entryX, z: to.z }, { ...to });
   return path;

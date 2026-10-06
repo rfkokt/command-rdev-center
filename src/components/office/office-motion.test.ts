@@ -84,6 +84,47 @@ describe("office motion", () => {
       }
     }
   });
+  it("keeps routes to the right-wing briefing spots clear of desks and chair backrests", () => {
+    const spots = [
+      { x: 4.6, z: -0.7 },
+      { x: 5.8, z: -0.7 },
+      { x: 7.0, z: -0.7 },
+      { x: 4.8, z: 1.9 },
+      { x: 6.0, z: 1.9 },
+      { x: 7.2, z: 1.9 },
+    ];
+    for (const member of TEAM) {
+      for (const spot of spots) {
+        for (const [from, to] of [
+          [member.home, spot],
+          [spot, member.home],
+        ]) {
+          const route = [from, ...aisleRoute(from, to)];
+          for (let i = 1; i < route.length; i++) {
+            for (let step = 0; step <= 20; step++) {
+              const t = step / 20;
+              const x = route[i - 1].x * (1 - t) + route[i].x * t;
+              const z = route[i - 1].z * (1 - t) + route[i].z * t;
+              for (const station of TEAM) {
+                const facing = station.home.z < 0 ? -1 : 1;
+                const deskZ = station.home.z + facing * 0.9;
+                const backrestZ = station.home.z - facing * 0.42;
+                expect(
+                  Math.abs(x - station.home.x) < 1.4 &&
+                    Math.abs(z - deskZ) < 0.7,
+                ).toBe(false);
+                expect(
+                  Math.abs(x - station.home.x) < 0.5 &&
+                    Math.abs(z - backrestZ) < 0.18,
+                ).toBe(false);
+              }
+            }
+          }
+          expect(route[route.length - 1]).toEqual(to);
+        }
+      }
+    }
+  });
 });
 
 describe("agent activity", () => {
@@ -129,14 +170,16 @@ describe("agent activity", () => {
     ).toMatchObject({ id: "kern", working: true, discussion: true });
   });
   it("maps session history loading to Kern without changing the session flow", () => {
+    expect(activityFor("crc-session-loading", { loading: true })).toMatchObject(
+      {
+        id: "kern",
+        text: "Restoring chat history…",
+        working: true,
+      },
+    );
     expect(
-      activityFor("crc-session-loading", { loading: true }),
+      activityFor("crc-session-loading", { loading: false }),
     ).toMatchObject({
-      id: "kern",
-      text: "Restoring chat history…",
-      working: true,
-    });
-    expect(activityFor("crc-session-loading", { loading: false })).toMatchObject({
       id: "kern",
       text: "Ready",
       working: false,
