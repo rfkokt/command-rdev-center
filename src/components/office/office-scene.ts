@@ -2,6 +2,10 @@ import * as THREE from "three";
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
+  VOXEL_MODELS,
+  OFFICE_PALETTE_BASE64,
+} from "./office-voxel-models";
+import {
   TEAM,
   advanceWalker,
   aisleRoute,
@@ -93,6 +97,63 @@ export function createOfficeScene(
     glow = 0,
   ) => shape(parent, rounded ? "round" : "box", color, size, at, glow);
 
+  // Shared palette texture for all 3D Voxel Office models.
+  const paletteImage = new Image();
+  paletteImage.src = `data:image/png;base64,${OFFICE_PALETTE_BASE64}`;
+  const paletteTexture = new THREE.Texture(paletteImage);
+  paletteImage.onload = () => {
+    paletteTexture.needsUpdate = true;
+  };
+  paletteTexture.magFilter = THREE.NearestFilter;
+  paletteTexture.minFilter = THREE.NearestFilter;
+  paletteTexture.colorSpace = THREE.SRGBColorSpace;
+  const voxelMaterial = new THREE.MeshStandardMaterial({
+    map: paletteTexture,
+    roughness: 0.85,
+    metalness: 0.1,
+  });
+
+  const parsedGeometries = new Map<string, THREE.BufferGeometry>();
+  function getVoxelGeometry(name: string): THREE.BufferGeometry {
+    let geo = parsedGeometries.get(name);
+    if (!geo) {
+      const raw = VOXEL_MODELS[name];
+      if (!raw) throw new Error(`Voxel model not found: ${name}`);
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(raw.pos, 3));
+      if (raw.norm) {
+        geo.setAttribute("normal", new THREE.BufferAttribute(raw.norm, 3));
+      }
+      geo.setAttribute("uv", new THREE.BufferAttribute(raw.uv, 2));
+      geo.setIndex(new THREE.BufferAttribute(raw.idx, 1));
+      if (!raw.norm) geo.computeVertexNormals();
+      parsedGeometries.set(name, geo);
+    }
+    return geo;
+  }
+
+  function voxelModel(
+    parent: THREE.Object3D,
+    name: string,
+    at: [number, number, number],
+    rotY = 0,
+    scale: number | [number, number, number] = 1,
+  ) {
+    const geo = getVoxelGeometry(name);
+    const mesh = new THREE.Mesh(geo, voxelMaterial);
+    mesh.position.set(at[0], at[1], at[2]);
+    mesh.rotation.y = rotY;
+    if (typeof scale === "number") {
+      mesh.scale.setScalar(scale);
+    } else {
+      mesh.scale.set(scale[0], scale[1], scale[2]);
+    }
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  }
+
   // Continuous architecture, wood boards, skirting and a recessed acoustic wall.
   box(room, "#81715c", [60, 0.3, 60], [20.8, -0.17, 23.8]);
   for (let i = 0; i < 66; i++) {
@@ -139,16 +200,14 @@ export function createOfficeScene(
     box(room, "#303d3f", [10.85, 0.075, 0.2], [2.36, y, -5.87]);
   box(room, "#e0d4bf", [11.1, 0.12, 0.48], [2.35, 1.21, -5.8]);
 
-  // A warm studio lounge on the left and shelving on the back wall.
-  box(room, "#53635e", [3.0, 0.045, 3.8], [-6.75, 0.04, 0.9], true);
-  box(room, "#b77952", [1.1, 0.48, 2.8], [-7.8, 0.49, 0.95], true);
-  box(room, "#b77952", [0.35, 0.92, 2.8], [-8.23, 0.92, 0.95], true);
-  for (const z of [-0.35, 2.25])
-    box(room, "#c18660", [1.15, 0.65, 0.22], [-7.8, 0.83, z], true);
-  for (const z of [0.25, 1.55])
-    box(room, "#d3b38c", [0.38, 0.48, 0.75], [-7.89, 0.9, z], true);
-  shape(room, "cylinder", "#cfb895", [0.62, 0.12, 0.62], [-6.2, 0.67, 0.95]);
-  shape(room, "cylinder", "#333d3b", [0.12, 0.62, 0.12], [-6.2, 0.31, 0.95]);
+  // A warm studio lounge on the left with voxel couch and coffee table.
+  box(room, "#53635e", [3.2, 0.045, 4.0], [-6.75, 0.04, 0.95], true);
+  voxelModel(room, "office_couch", [-7.4, 0, 0.95], Math.PI / 2, 1.1);
+  voxelModel(room, "office_coffee_table", [-6.1, 0, 0.95], Math.PI / 2, 1.0);
+  voxelModel(room, "office_mug", [-6.1, 0.5, 0.8], 0.4, 0.9);
+  voxelModel(room, "office_papers", [-6.1, 0.5, 1.2], -0.2, 0.9);
+
+  // Shelving and decor on the back wall.
   box(room, "#b08356", [2.1, 0.12, 0.48], [-6.0, 3.25, -5.62]);
   for (let i = 0; i < 8; i++)
     box(
@@ -158,35 +217,19 @@ export function createOfficeScene(
       [-6.8 + i * 0.17, 3.52, -5.62],
     );
 
-  function plant(x: number, z: number, scale = 1) {
-    const group = new THREE.Group();
-    group.position.set(x, 0, z);
-    group.scale.setScalar(scale);
-    room.add(group);
-    shape(group, "cylinder", "#c6bda7", [0.3, 0.55, 0.3], [0, 0.28, 0]);
-    shape(group, "cylinder", "#53493b", [0.26, 0.035, 0.26], [0, 0.56, 0]);
-    box(group, "#547b58", [0.08, 0.8, 0.08], [0, 0.94, 0]);
-    for (let i = 0; i < 12; i++) {
-      const tier = Math.floor(i / 4);
-      const x = [0.24, -0.24, 0, 0][i % 4] * (1 - tier * 0.18);
-      const z = [0, 0, 0.24, -0.24][i % 4] * (1 - tier * 0.18);
-      box(
-        group,
-        i % 2 ? "#547b58" : "#729269",
-        [0.24, 0.24, 0.24],
-        [x, 0.85 + tier * 0.24, z],
-      );
-    }
-  }
+  // Voxel potted plants in corners and along perimeter.
+  voxelModel(room, "office_plant_tall", [-8.2, 0, -4.95], 0, 1.15);
+  voxelModel(room, "office_plant_big", [8.0, 0, -5.1], 0.8, 1.3);
+  voxelModel(room, "office_plant_tall", [8.2, 0, 4.8], 1.5, 1.1);
+  voxelModel(room, "office_plant_big", [-8.3, 0, 4.8], 2.2, 1.25);
 
-  plant(-8.2, -4.95, 1.3);
-  plant(8.0, -5.1, 1.25);
-  plant(8.2, 4.8);
-  plant(-8.3, 4.8, 1.15);
-  // Storage cabinet and server rack.
-  box(room, "#647571", [2.1, 1.05, 0.9], [5.8, 0.53, -5.45], true);
-  for (const x of [5.3, 6.3])
-    box(room, "#c1b398", [0.45, 0.035, 0.04], [x, 0.8, -4.98]);
+  // Office storage, server rack, printer, and coffee station.
+  voxelModel(room, "office_cabinet", [5.8, 0, -5.45], 0, 1.1);
+  voxelModel(room, "office_printer", [4.6, 0, -5.45], 0, 1.0);
+  voxelModel(room, "office_trashcan", [7.0, 0, -5.45], 0, 1.1);
+  voxelModel(room, "office_corkboard", [-6.0, 1.8, -5.9], 0, 1.1);
+
+  // Server rack on the left wall with active LED indicators.
   box(room, "#253c41", [1.25, 2.45, 0.8], [-8.2, 1.23, -2.8], true);
   for (let i = 0; i < 7; i++) {
     box(room, "#40575b", [1.02, 0.22, 0.04], [-8.2, 0.4 + i * 0.29, -2.37]);
@@ -199,6 +242,12 @@ export function createOfficeScene(
       1.2,
     );
   }
+  // Coffee machine nook next to server rack.
+  box(room, "#4b5d59", [0.9, 0.9, 0.7], [-8.2, 0.45, -1.7], true);
+  voxelModel(room, "office_coffee_machine", [-8.2, 0.9, -1.7], Math.PI / 2, 0.85);
+
+  // Whiteboard along the back corridor.
+  voxelModel(room, "office_whiteboard", [-1.5, 0, -5.85], 0, 1.25);
 
   const screens: THREE.MeshStandardMaterial[] = [];
   for (const member of TEAM) {
@@ -210,66 +259,43 @@ export function createOfficeScene(
       station.rotation.y = Math.PI;
     }
     const deskZ = z - 0.9;
-    box(station, "#c0a17b", [2.65, 0.13, 1.25], [x, 1.02, deskZ], true);
-    for (const side of [-1, 1]) {
-      box(
-        station,
-        "#334743",
-        [0.08, 0.95, 1.0],
-        [x + side * 1.12, 0.49, deskZ],
-      );
-    }
-    box(station, "#26383d", [1.16, 0.7, 0.095], [x, 1.63, deskZ - 0.25], true);
+    // 3D Voxel desk from pack (scale 0.83 gives width ~2.65m matching layout).
+    voxelModel(station, "office_table_desk", [x, 0, deskZ], 0, 0.83);
+
+    // Voxel PC setup (tower, monitor, keyboard) on desk.
+    voxelModel(station, "office_pc", [x, 0.91, deskZ], 0, 0.9);
+
+    // Dedicated emissive screen mesh for specialist color glow and editor activity.
     const screen = box(
       station,
       member.color,
-      [1.04, 0.57, 0.018],
-      [x, 1.64, deskZ - 0.193],
+      [0.64, 0.38, 0.015],
+      [x, 1.44, deskZ - 0.16],
       false,
       0.32,
     );
     screens.push(screen.material);
-    // Code/editor lines on screen are geometry, crisp at every display density.
-    for (let line = 0; line < 6; line++) {
+
+    // Code/editor lines on screen.
+    for (let line = 0; line < 5; line++) {
       box(
         station,
         line % 3 ? "#c5e0d4" : "#f3d1a4",
-        [0.28 + (line % 3) * 0.14, 0.019, 0.006],
-        [x - 0.15 + (line % 2) * 0.1, 1.84 - line * 0.076, deskZ - 0.18],
+        [0.22 + (line % 3) * 0.09, 0.016, 0.005],
+        [x - 0.08 + (line % 2) * 0.06, 1.54 - line * 0.052, deskZ - 0.15],
         false,
         0.35,
       );
     }
-    box(station, "#35444a", [0.065, 0.32, 0.065], [x, 1.22, deskZ - 0.25]);
-    box(station, "#35444a", [0.43, 0.035, 0.3], [x, 1.11, deskZ - 0.25], true);
-    box(station, "#4f6060", [0.72, 0.045, 0.24], [x, 1.12, deskZ + 0.35], true);
-    shape(
-      station,
-      "cylinder",
-      member.color,
-      [0.095, 0.17, 0.095],
-      [x + 0.9, 1.17, deskZ + 0.2],
-    );
-    box(
-      station,
-      "#ddd0ad",
-      [0.3, 0.035, 0.36],
-      [x - 0.92, 1.11, deskZ + 0.15],
-      true,
-    );
-    // Empty chairs remain physical objects when a specialist walks away.
-    box(station, "#3c5155", [0.69, 0.13, 0.65], [x, 0.49, z + 0.13], true);
-    box(station, "#3c5155", [0.69, 0.64, 0.13], [x, 0.9, z + 0.42], true);
-    shape(
-      station,
-      "cylinder",
-      "#354044",
-      [0.07, 0.43, 0.07],
-      [x, 0.24, z + 0.1],
-    );
-    box(station, "#354044", [0.72, 0.065, 0.09], [x, 0.1, z + 0.1]);
-    box(station, "#354044", [0.09, 0.065, 0.72], [x, 0.1, z + 0.1]);
+
+    // Desk accessories: mug and documents.
+    voxelModel(station, "office_mug", [x + 0.9, 0.91, deskZ + 0.15], 0.5, 0.85);
+    voxelModel(station, "office_papers", [x - 0.85, 0.91, deskZ + 0.15], -0.2, 0.85);
+
+    // Voxel ergonomic office chair positioned at specialist station.
+    voxelModel(station, "office_chair", [x, 0, z + 0.1], 0, 0.82);
   }
+
   // A shared briefing spot in the open right wing gives the team a visible place
   // to gather and discuss without being covered by the central chat messages UI.
   const discussionSpots = [
@@ -282,11 +308,18 @@ export function createOfficeScene(
   ] as const;
   // Central corridor runner keeps the middle grounded now that the briefing table moved right.
   box(room, "#3e4d4d", [2.6, 0.02, 4.2], [0, 0.02, 0.1], true);
-  // Briefing area rug, table, and support legs on the right side.
-  box(room, "#4a5960", [4.6, 0.06, 3.4], [5.8, 0.035, 0.6], true);
-  box(room, "#6d513e", [2.8, 0.12, 1.05], [5.8, 0.76, 0.6], true);
-  for (const x of [-1.1, 1.1])
-    box(room, "#3e4b4b", [0.12, 0.72, 0.82], [5.8 + x, 0.38, 0.6]);
+
+  // Briefing area rug, voxel meeting table, and briefing chairs.
+  box(room, "#4a5960", [4.8, 0.06, 3.6], [5.8, 0.035, 0.6], true);
+  voxelModel(room, "office_meeting_table", [5.8, 0, 0.6], 0, 0.72);
+  voxelModel(room, "office_papers", [5.4, 0.79, 0.6], 0.3, 0.9);
+  voxelModel(room, "office_mug", [6.2, 0.79, 0.6], -0.8, 0.9);
+
+  // Meeting chairs arranged around the briefing table facing inward.
+  discussionSpots.forEach((spot) => {
+    const angle = Math.atan2(5.8 - spot.x, 0.6 - spot.z);
+    voxelModel(room, "office_chair_white", [spot.x, 0, spot.z], angle + Math.PI, 0.68);
+  });
   // Pendant fixtures, balanced daylight and warm practical illumination.
   for (const x of [-4.9, 0.6, 5.8]) {
     box(room, "#334342", [0.025, 0.75, 0.025], [x, 5.05, -0.4]);
@@ -350,6 +383,9 @@ export function createOfficeScene(
     const { root, body, head, arms, legs, knees } = createVoxelCharacter(
       member.id,
     );
+    // Proportion scale: 0.76 aligns the character height (~1.48m) with the voxel furniture
+    // (chair seat 0.45m, desk 0.9m) so the character doesn't look oversized.
+    root.scale.setScalar(0.76);
     scene.add(root);
     const ringMaterial = new THREE.MeshBasicMaterial({
       color: member.color,
@@ -720,7 +756,7 @@ export function createOfficeScene(
       actor.label.dataset.active = String(actor.focused);
       actor.label.dataset.bubble = String(actor.bubbleUntil > elapsed);
       projected
-        .set(walker.position.x, 2.04 - actor.sit * 0.24, walker.position.z)
+        .set(walker.position.x, 1.62 - actor.sit * 0.18, walker.position.z)
         .project(camera);
       actor.label.style.transform = `translate3d(${(projected.x * 0.5 + 0.5) * width}px,${(-projected.y * 0.5 + 0.5) * height}px,0) translate(-50%,-100%)`;
       actor.label.style.visibility =
