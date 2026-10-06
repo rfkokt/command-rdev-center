@@ -443,6 +443,8 @@ export function createOfficeScene(
   }
   function setWorking(value: boolean) {
     working = value;
+    if (working && !discussionActive) startDiscussion();
+    if (!working) endDiscussion();
     if (!working)
       characters.forEach((actor) => {
         actor.focused = false;
@@ -470,9 +472,19 @@ export function createOfficeScene(
   }
   function setActivity(activity: Activity) {
     clearTimeout(bubbleTimeout);
-    discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
-    if (activity.discussion && activity.working) startDiscussion();
-    else endDiscussion();
+    if (activity.discussion && activity.working) {
+      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
+      startDiscussion();
+    } else if (activity.working) {
+      // Thinking and tool events are still part of the same live briefing.
+      // Drop only the scripted fallback bubbles; real agent events now drive
+      // the active speaker while the team remains gathered.
+      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
+      if (!discussionActive) startDiscussion();
+    } else {
+      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
+      endDiscussion();
+    }
     working = activity.working;
     characters.forEach((actor) => {
       actor.focused = activity.working && actor.member.id === activity.id;
