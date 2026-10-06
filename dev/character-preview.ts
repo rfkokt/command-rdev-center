@@ -29,10 +29,10 @@ scene.add(new THREE.HemisphereLight("#e5f1ff", "#8a9caa", 2.3));
 const key = new THREE.DirectionalLight("#ffffff", 2.8);
 key.position.set(-3, 5, 4);
 scene.add(key);
-let rig = createVoxelCharacter("kern");
+const draw = () => renderer.render(scene, camera);
+let rig = createVoxelCharacter("kern", draw);
 scene.add(rig.root);
 let angle = 0;
-const draw = () => renderer.render(scene, camera);
 function disposeRig() {
   const geometry = new Set<THREE.BufferGeometry>(),
     materials = new Set<THREE.Material>();
@@ -48,11 +48,11 @@ function disposeRig() {
 }
 function choose(id: AgentId) {
   disposeRig();
-  rig = createVoxelCharacter(id);
+  rig = createVoxelCharacter(id, draw);
   scene.add(rig.root);
   rig.root.rotation.y = angle;
   header.querySelector("strong")!.textContent =
-    `${TEAM.find((member) => member.id === id)!.name} · voxel character`;
+    `${TEAM.find((member) => member.id === id)!.name} · chibi model`;
   draw();
 }
 for (const member of [...TEAM].sort((a) => (a.id === "kern" ? -1 : 0))) {

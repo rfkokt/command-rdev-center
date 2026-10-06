@@ -8,6 +8,7 @@ import {
   createWalker,
   damp,
   type Activity,
+  type Point,
 } from "./office-motion";
 
 export interface OfficeScene {
