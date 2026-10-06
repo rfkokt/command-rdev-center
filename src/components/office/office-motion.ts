@@ -200,26 +200,58 @@ export const damp = (value: number, target: number, rate: number, dt: number) =>
 
 /** Waypoints stay in the clear aisle in front of each row, never through a desk. */
 export function aisleRoute(from: Point, to: Point): Point[] {
-  const aisle = (point: Point) => (point.z < 0 ? -1.15 : 1.35);
-  const fromAisle = aisle(from);
-  const toAisle = aisle(to);
   const atStation = (point: Point) =>
     TEAM.some(
       (member) =>
         Math.hypot(point.x - member.home.x, point.z - member.home.z) < 0.08,
     );
+  const fromAisle = from.z < 0 ? -1.15 : 1.35;
+  // If destination is in the open central zone, avoid unnecessary aisle crossing
+  const toAisle =
+    to.z >= -0.7 &&
+    to.z <= 1.0 &&
+    (to.x <= 4.2 || to.x >= 7.35 || (to.z < 0 ? fromAisle < 0 : fromAisle > 0))
+      ? fromAisle
+      : to.z < 0
+        ? -1.15
+        : 1.35;
+
   const exitX = from.x + (atStation(from) ? 0.72 : 0);
   const entryX = to.x + (atStation(to) ? 0.72 : 0);
-  // Step beside the chair before entering the aisle; never walk through its backrest.
   const path: Point[] = [
     { x: exitX, z: from.z },
     { x: exitX, z: fromAisle },
   ];
+
   if (fromAisle !== toAisle) {
-    path.push({ x: 0, z: fromAisle }, { x: 0, z: toAisle });
+    const minX = Math.min(exitX, entryX);
+    const maxX = Math.max(exitX, entryX);
+    let crossX: number;
+    if (minX <= 4.2) {
+      crossX = Math.min(maxX, 4.2);
+    } else if (maxX >= 7.35) {
+      crossX = Math.max(minX, 7.35);
+    } else {
+      crossX =
+        Math.abs(exitX - 4.2) + Math.abs(entryX - 4.2) <=
+        Math.abs(exitX - 7.35) + Math.abs(entryX - 7.35)
+          ? 4.2
+          : 7.35;
+    }
+    path.push({ x: crossX, z: fromAisle }, { x: crossX, z: toAisle });
   }
+
   path.push({ x: entryX, z: toAisle }, { x: entryX, z: to.z }, { ...to });
-  return path;
+
+  // Clean consecutive duplicate waypoints for smooth strides
+  const result: Point[] = [];
+  for (const pt of path) {
+    const last = result[result.length - 1];
+    if (!last || Math.hypot(pt.x - last.x, pt.z - last.z) > 0.02) {
+      result.push(pt);
+    }
+  }
+  return result;
 }
 
 /** Delta-based acceleration, shortest-angle turning and distance-based gait. */

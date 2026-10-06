@@ -465,13 +465,40 @@ export function createOfficeScene(
     actor.walker.route = aisleRoute(actor.walker.position, actor.member.home);
     actor.excursion = false;
   }
+  function routeLength(route: Point[], start: Point): number {
+    let dist = 0;
+    let prev = start;
+    for (const pt of route) {
+      dist += Math.hypot(pt.x - prev.x, pt.z - prev.z);
+      prev = pt;
+    }
+    return dist;
+  }
   function startDiscussion() {
     discussionActive = true;
-    characters.forEach((actor, index) => {
-      const spot = discussionSpots[index % discussionSpots.length];
+    const remainingActors = [...characters];
+    const availableSpots = [...discussionSpots];
+    while (remainingActors.length > 0 && availableSpots.length > 0) {
+      let bestA = 0;
+      let bestS = 0;
+      let minDistance = Infinity;
+      for (let a = 0; a < remainingActors.length; a++) {
+        const pos = remainingActors[a].walker.position;
+        for (let s = 0; s < availableSpots.length; s++) {
+          const r = aisleRoute(pos, availableSpots[s]);
+          const d = routeLength(r, pos);
+          if (d < minDistance) {
+            minDistance = d;
+            bestA = a;
+            bestS = s;
+          }
+        }
+      }
+      const [actor] = remainingActors.splice(bestA, 1);
+      const [spot] = availableSpots.splice(bestS, 1);
       actor.walker.route = aisleRoute(actor.walker.position, spot);
       actor.excursion = false;
-    });
+    }
   }
   function endDiscussion() {
     if (!discussionActive) return;
