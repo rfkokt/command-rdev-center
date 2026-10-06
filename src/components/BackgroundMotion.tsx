@@ -1,47 +1,32 @@
 /* @refresh reset */
 import { useEffect, useRef, useState } from "react";
 
-interface OfficeSpecialist {
+interface SpecialistConfig {
   id: string;
   name: string;
   role: string;
   color: string;
   icon: string;
-  // Normalized coordinates in the 2752x1536 artwork:
-  x: number;
-  y: number;
-  state: "typing" | "coffee" | "server" | "mobile" | "idle";
-  bubbleText: string | null;
-  bubbleTimer: number;
-  isCurrentFocus: boolean;
+  // Normalized patch rectangle in the 2752x1536 artwork:
+  rect: { x: number; y: number; w: number; h: number };
+  // Normalized speech bubble anchor point above head:
+  head: { x: number; y: number };
 }
 
-const SPECIALISTS_BASE: OfficeSpecialist[] = [
+const SPECIALISTS: SpecialistConfig[] = [
   {
     id: "kern",
     name: "Kern",
     role: "Lead Agent",
     color: "#38bdf8",
     icon: "🧠",
-    x: 0.642,
-    y: 0.723,
-    state: "typing",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
-  },
-  {
-    id: "ada",
-    name: "Ada",
-    role: "Frontend Dev",
-    color: "#c084fc",
-    icon: "🎨",
-    x: 0.406,
-    y: 0.574,
-    state: "mobile",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
+    rect: {
+      x: 1730 / 2752,
+      y: 1050 / 1536,
+      w: 220 / 2752,
+      h: 260 / 1536,
+    },
+    head: { x: 1840 / 2752, y: 1040 / 1536 },
   },
   {
     id: "linus",
@@ -49,12 +34,13 @@ const SPECIALISTS_BASE: OfficeSpecialist[] = [
     role: "Backend Dev",
     color: "#22c55e",
     icon: "⚙️",
-    x: 0.157,
-    y: 0.446,
-    state: "coffee",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
+    rect: {
+      x: 230 / 2752,
+      y: 460 / 1536,
+      w: 300 / 2752,
+      h: 400 / 1536,
+    },
+    head: { x: 420 / 2752, y: 500 / 1536 },
   },
   {
     id: "alan",
@@ -62,12 +48,13 @@ const SPECIALISTS_BASE: OfficeSpecialist[] = [
     role: "AST & Search",
     color: "#06b6d4",
     icon: "🔍",
-    x: 0.565,
-    y: 0.546,
-    state: "typing",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
+    rect: {
+      x: 1550 / 2752,
+      y: 350 / 1536,
+      w: 300 / 2752,
+      h: 300 / 1536,
+    },
+    head: { x: 1700 / 2752, y: 340 / 1536 },
   },
   {
     id: "bob",
@@ -75,12 +62,13 @@ const SPECIALISTS_BASE: OfficeSpecialist[] = [
     role: "QA Tester",
     color: "#ec4899",
     icon: "🧪",
-    x: 0.436,
-    y: 0.28,
-    state: "server",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
+    rect: {
+      x: 1140 / 2752,
+      y: 300 / 1536,
+      w: 240 / 2752,
+      h: 300 / 1536,
+    },
+    head: { x: 1260 / 2752, y: 290 / 1536 },
   },
   {
     id: "grace",
@@ -88,31 +76,34 @@ const SPECIALISTS_BASE: OfficeSpecialist[] = [
     role: "DevOps & Server",
     color: "#f59e0b",
     icon: "🛡️",
-    x: 0.26,
-    y: 0.569,
-    state: "typing",
-    bubbleText: null,
-    bubbleTimer: 0,
-    isCurrentFocus: false,
+    rect: {
+      x: 580 / 2752,
+      y: 760 / 1536,
+      w: 280 / 2752,
+      h: 280 / 1536,
+    },
+    head: { x: 720 / 2752, y: 760 / 1536 },
+  },
+  {
+    id: "ada",
+    name: "Ada",
+    role: "Frontend Dev",
+    color: "#c084fc",
+    icon: "🎨",
+    rect: {
+      x: 1040 / 2752,
+      y: 740 / 1536,
+      w: 180 / 2752,
+      h: 440 / 1536,
+    },
+    head: { x: 1130 / 2752, y: 730 / 1536 },
   },
 ];
 
-interface FlyingEnvelope {
-  startX: number;
-  startY: number;
-  targetX: number;
-  targetY: number;
-  progress: number;
-  speed: number;
-  color: string;
-}
-
-interface SteamParticle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  alpha: number;
+interface SpecialistState {
+  bubbleText: string | null;
+  bubbleTimer: number;
+  isFocused: boolean;
 }
 
 export default function BackgroundMotion({
@@ -170,20 +161,43 @@ export default function BackgroundMotion({
     };
     let isDark = getIsDark();
 
-    // High resolution 2752x1536 unified pixel art backgrounds
+    // 1. High-resolution 2752x1536 base pixel art artworks
     const nightImg = typeof Image !== "undefined" ? new Image() : null;
     if (nightImg) nightImg.src = "/pixel_office_active_night.jpg";
     const dayImg = typeof Image !== "undefined" ? new Image() : null;
     if (dayImg) dayImg.src = "/pixel_office_active_day.jpg";
 
-    const specialists: OfficeSpecialist[] = SPECIALISTS_BASE.map((s) => ({
-      ...s,
-    }));
-    const envelopes: FlyingEnvelope[] = [];
-    const steamParticles: SteamParticle[] = [];
+    // 2. Preload animation frames for all 6 specialists (night & day)
+    const specialistFrames: Record<
+      string,
+      { night: HTMLImageElement[]; day: HTMLImageElement[] }
+    > = {};
+
+    SPECIALISTS.forEach((sp) => {
+      specialistFrames[sp.id] = { night: [], day: [] };
+      for (let i = 0; i < 4; i++) {
+        const nImg = new Image();
+        nImg.src = `/sprites/${sp.id}_frame_${i}.png`;
+        specialistFrames[sp.id].night.push(nImg);
+
+        const dImg = new Image();
+        dImg.src = `/sprites/${sp.id}_day_frame_${i}.png`;
+        specialistFrames[sp.id].day.push(dImg);
+      }
+    });
+
+    const states: Record<string, SpecialistState> = {};
+    SPECIALISTS.forEach((sp) => {
+      states[sp.id] = {
+        bubbleText: null,
+        bubbleTimer: 0,
+        isFocused: false,
+      };
+    });
+
     let isWorkingLive = isWorking;
 
-    // Synchronized listener from ChatView
+    // Synchronized listener from ChatView & Agent runs
     const handleActivitySync = (e: Event) => {
       const custom = e as CustomEvent<{
         active?: boolean;
@@ -197,44 +211,33 @@ export default function BackgroundMotion({
         isWorkingLive = true;
         const targetName = (agentName || "Kern").toLowerCase();
         const matched =
-          specialists.find((s) => s.name.toLowerCase() === targetName) ||
-          specialists[0];
+          SPECIALISTS.find((s) => s.name.toLowerCase() === targetName) ||
+          SPECIALISTS[0];
 
-        // Send a flying origami task envelope from Kern to specialist
-        if (matched.id !== "kern") {
-          envelopes.push({
-            startX: specialists[0].x,
-            startY: specialists[0].y,
-            targetX: matched.x,
-            targetY: matched.y,
-            progress: 0,
-            speed: 0.038,
-            color: matched.color,
-          });
-        }
-
-        specialists.forEach((s) => {
+        SPECIALISTS.forEach((s) => {
+          const st = states[s.id];
           if (s.id === matched.id) {
-            s.isCurrentFocus = true;
+            st.isFocused = true;
             const clean = (detail || title || "Working…")
               .replace(/\s+/g, " ")
               .trim();
-            const short = clean.length > 36 ? `${clean.slice(0, 36)}…` : clean;
-            s.bubbleText = `${s.icon} ${short}`;
-            s.bubbleTimer = 10;
+            const short = clean.length > 38 ? `${clean.slice(0, 38)}…` : clean;
+            st.bubbleText = `${s.icon} ${short}`;
+            st.bubbleTimer = 9;
           } else {
-            s.isCurrentFocus = false;
-            if (s.bubbleTimer <= 2) s.bubbleText = null;
+            st.isFocused = false;
+            if (st.bubbleTimer <= 2) st.bubbleText = null;
           }
         });
       } else {
         isWorkingLive = false;
-        specialists.forEach((s) => {
-          if (s.isCurrentFocus) {
-            s.bubbleText = "✅ Done";
-            s.bubbleTimer = 3.5;
+        SPECIALISTS.forEach((s) => {
+          const st = states[s.id];
+          if (st.isFocused) {
+            st.bubbleText = "✅ Ready";
+            st.bubbleTimer = 3;
           }
-          s.isCurrentFocus = false;
+          st.isFocused = false;
         });
       }
     };
@@ -244,15 +247,17 @@ export default function BackgroundMotion({
       const text = (custom.detail?.text || "").replace(/\s+/g, " ").trim();
       if (text) {
         isWorkingLive = true;
-        const short = text.length > 30 ? `${text.slice(0, 30)}…` : text;
-        specialists[0].bubbleText = `🧠 Prompt: "${short}"`;
-        specialists[0].bubbleTimer = 9;
-        specialists[0].isCurrentFocus = true;
+        const short = text.length > 32 ? `${text.slice(0, 32)}…` : text;
+        states["kern"].bubbleText = `🧠 Prompt: "${short}"`;
+        states["kern"].bubbleTimer = 8;
+        states["kern"].isFocused = true;
 
-        for (let i = 1; i < specialists.length; i++) {
-          specialists[i].isCurrentFocus = false;
-          specialists[i].bubbleText = null;
-        }
+        SPECIALISTS.forEach((s) => {
+          if (s.id !== "kern") {
+            states[s.id].isFocused = false;
+            states[s.id].bubbleText = null;
+          }
+        });
       }
     };
 
@@ -260,8 +265,8 @@ export default function BackgroundMotion({
       const custom = e as CustomEvent<{ running?: boolean }>;
       isWorkingLive = Boolean(custom.detail?.running);
       if (!isWorkingLive) {
-        specialists.forEach((s) => {
-          s.isCurrentFocus = false;
+        SPECIALISTS.forEach((s) => {
+          states[s.id].isFocused = false;
         });
       }
     };
@@ -317,27 +322,30 @@ export default function BackgroundMotion({
     window.addEventListener("resize", resize);
 
     let lastTime = performance.now();
-    let tick = 0;
 
     function render(now: number) {
       if (!ctx) return;
       const dt = Math.min((now - lastTime) / 1000, 0.1);
       lastTime = now;
-      tick++;
 
       ctx.clearRect(0, 0, width, height);
 
       const isWorkingNow = isWorkingRef.current || isWorkingLive;
-      const currentImg = isDark ? nightImg : dayImg;
+      const currentBaseImg = isDark ? nightImg : dayImg;
 
-      // 1. Draw High-Resolution Background with High-Quality Smoothing (eliminates pecah-pecah)
+      // 1. Render Base Background with High-Quality Smoothing
       let dw = width;
       let dh = height;
       let dx = 0;
       let dy = 0;
 
-      if (currentImg && currentImg.complete && currentImg.naturalWidth > 0) {
-        const imgRatio = currentImg.naturalWidth / currentImg.naturalHeight;
+      if (
+        currentBaseImg &&
+        currentBaseImg.complete &&
+        currentBaseImg.naturalWidth > 0
+      ) {
+        const imgRatio =
+          currentBaseImg.naturalWidth / currentBaseImg.naturalHeight;
         const canvasRatio = width / height;
 
         if (canvasRatio > imgRatio) {
@@ -350,272 +358,163 @@ export default function BackgroundMotion({
           dx = (width - dw) / 2;
         }
 
-        // Enable high-quality smoothing for crystal-clear Retina rendering
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(currentImg, dx, dy, dw, dh);
+        ctx.drawImage(currentBaseImg, dx, dy, dw, dh);
       } else {
         ctx.fillStyle = isDark ? "#0c0d14" : "#f1f5f9";
         ctx.fillRect(0, 0, width, height);
       }
 
-      const pixelScale = dw / 1376;
+      // 2. Render Character Micro-Animations (Living Specialists)
+      SPECIALISTS.forEach((sp) => {
+        const frameSet = specialistFrames[sp.id];
+        if (!frameSet) return;
+        const frames = isDark ? frameSet.night : frameSet.day;
+        if (!frames || frames.length === 0) return;
 
-      // 2. Live Animated Code Lines on Kern's Monitors (x: ~0.642, y: ~0.723)
-      const kernMonX = dx + 0.62 * dw;
-      const kernMonY = dy + 0.665 * dh;
-      const monW = 55 * pixelScale;
-      const monH = 34 * pixelScale;
+        let frameIdx = 0;
 
-      ctx.save();
-      // Monitor screen ambient glow
-      const monGlow = 0.25 + Math.sin(tick * 0.1) * 0.08;
-      ctx.fillStyle = `rgba(56, 189, 248, ${monGlow * 0.2})`;
-      ctx.fillRect(kernMonX - 4, kernMonY - 4, monW + 8, monH + 8);
-
-      // Scrolling code lines
-      for (let line = 0; line < 5; line++) {
-        const lineY = kernMonY + ((line * 6 + tick * 0.8) % monH);
-        const lineW = (18 + ((line * 17) % 24)) * pixelScale;
-        ctx.fillStyle =
-          line % 2 === 0
-            ? "rgba(56, 189, 248, 0.65)"
-            : "rgba(168, 85, 247, 0.55)";
-        ctx.fillRect(kernMonX + 6 * pixelScale, lineY, lineW, 1.6 * pixelScale);
-      }
-
-      // Kern's typing hands micro-animation
-      const typingBob = Math.sin(tick * 0.35) * 1.2 * pixelScale;
-      ctx.fillStyle = isDark
-        ? "rgba(254, 215, 170, 0.85)"
-        : "rgba(217, 119, 6, 0.85)";
-      ctx.fillRect(
-        dx + 0.64 * dw + typingBob,
-        dy + 0.732 * dh,
-        4 * pixelScale,
-        2 * pixelScale,
-      );
-      ctx.fillRect(
-        dx + 0.648 * dw - typingBob,
-        dy + 0.73 * dh,
-        4 * pixelScale,
-        2 * pixelScale,
-      );
-      ctx.restore();
-
-      // 3. Live Animated Code Lines on Alan's Monitors (x: ~0.565, y: ~0.546)
-      ctx.save();
-      const alanMonX = dx + 0.552 * dw;
-      const alanMonY = dy + 0.5 * dh;
-      for (let line = 0; line < 4; line++) {
-        const lineY = alanMonY + ((line * 5 + tick * 0.6) % (24 * pixelScale));
-        const lineW = (14 + ((line * 11) % 18)) * pixelScale;
-        ctx.fillStyle = "rgba(34, 197, 94, 0.6)";
-        ctx.fillRect(alanMonX, lineY, lineW, 1.4 * pixelScale);
-      }
-      ctx.restore();
-
-      // 4. Grace's Laptop Screen Glow (x: ~0.260, y: ~0.569)
-      ctx.save();
-      const graceLapX = dx + 0.248 * dw;
-      const graceLapY = dy + 0.572 * dh;
-      const lapGlow = 0.35 + Math.sin(tick * 0.15) * 0.1;
-      ctx.fillStyle = `rgba(56, 189, 248, ${lapGlow * 0.4})`;
-      ctx.fillRect(graceLapX, graceLapY, 14 * pixelScale, 10 * pixelScale);
-      ctx.fillStyle = "#38bdf8";
-      ctx.fillRect(
-        graceLapX + 2,
-        graceLapY + 3 + ((tick * 0.4) % 6),
-        8 * pixelScale,
-        1.2 * pixelScale,
-      );
-      ctx.restore();
-
-      // 5. Ada's Tablet Screen Glow & Subtle Posture Breathing (x: ~0.406, y: ~0.574)
-      ctx.save();
-      const adaTabX = dx + 0.412 * dw;
-      const adaTabY = dy + 0.565 * dh;
-      const tabPulse = 0.4 + Math.sin(tick * 0.2) * 0.2;
-      ctx.fillStyle = `rgba(192, 132, 252, ${tabPulse * 0.6})`;
-      ctx.fillRect(adaTabX, adaTabY, 12 * pixelScale, 9 * pixelScale);
-      ctx.restore();
-
-      // 6. Server Room Blinking Status LEDs (Bob's area inside glass room)
-      if (isDark) {
-        const ledPositions = [
-          [0.42, 0.25],
-          [0.435, 0.23],
-          [0.45, 0.21],
-          [0.465, 0.19],
-          [0.48, 0.22],
-          [0.495, 0.24],
-        ];
-        ledPositions.forEach(([lx, ly], idx) => {
-          const pulse = Math.sin(tick * 0.18 + idx * 1.5);
-          if (pulse > 0.1) {
-            const sx = dx + lx * dw;
-            const sy = dy + ly * dh;
-            ctx.fillStyle =
-              idx % 3 === 0 ? "#38bdf8" : idx % 3 === 1 ? "#22c55e" : "#f59e0b";
-            ctx.shadowColor = ctx.fillStyle;
-            ctx.shadowBlur = 5 * pixelScale;
-            ctx.fillRect(sx, sy, 2.5 * pixelScale, 2.5 * pixelScale);
-            ctx.shadowBlur = 0;
+        if (sp.id === "kern") {
+          // Kern: active rapid typing when running, natural typing bursts when idle
+          if (isWorkingNow || states["kern"].isFocused) {
+            frameIdx = Math.floor(now / 110) % 4;
+          } else {
+            const burstTime = (now / 1000) % 7.5;
+            frameIdx = burstTime < 3.2 ? Math.floor(now / 180) % 4 : 0;
           }
-        });
-      }
-
-      // 7. Coffee Machine Steam Wisps & Linus's Coffee Sipping
-      if (Math.random() < 0.24) {
-        steamParticles.push({
-          x: dx + 0.14 * dw + (Math.random() - 0.5) * 6 * pixelScale,
-          y: dy + 0.415 * dh,
-          vx: (Math.random() - 0.5) * 0.25,
-          vy: -0.6 - Math.random() * 0.4,
-          alpha: 0.5,
-        });
-      }
-      for (let s = steamParticles.length - 1; s >= 0; s--) {
-        const sp = steamParticles[s];
-        sp.x += sp.vx;
-        sp.y += sp.vy;
-        sp.alpha -= 0.016;
-        if (sp.alpha <= 0) {
-          steamParticles.splice(s, 1);
-          continue;
-        }
-        ctx.fillStyle = `rgba(255, 255, 255, ${sp.alpha * 0.35})`;
-        ctx.fillRect(sp.x, sp.y, 2.5 * pixelScale, 2.5 * pixelScale);
-      }
-
-      // Linus's mug lift sip animation (every ~8 seconds)
-      const sipCycle = (tick * 0.03) % (Math.PI * 2);
-      if (sipCycle > Math.PI * 1.6) {
-        // Arm lifting mug to mouth
-        const liftY =
-          Math.sin((sipCycle - Math.PI * 1.6) * 2.5) * 4 * pixelScale;
-        ctx.save();
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(
-          dx + 0.162 * dw,
-          dy + 0.435 * dh - liftY,
-          4 * pixelScale,
-          5 * pixelScale,
-        );
-        ctx.restore();
-      }
-
-      // 8. Flying Origami Task Envelopes between Specialists
-      for (let i = envelopes.length - 1; i >= 0; i--) {
-        const env = envelopes[i];
-        env.progress += env.speed;
-        if (env.progress >= 1) {
-          envelopes.splice(i, 1);
-          continue;
+        } else if (sp.id === "linus") {
+          // Linus: sips coffee smoothly every ~8 seconds
+          const sipCycle = (now / 1000) % 8.2;
+          if (sipCycle < 2.4) {
+            const step = Math.floor((sipCycle / 2.4) * 6);
+            frameIdx = [0, 1, 2, 3, 2, 1][step] || 0;
+          } else {
+            frameIdx = 0;
+          }
+        } else if (sp.id === "alan") {
+          // Alan: typing & reviewing dual monitors
+          frameIdx = Math.floor(now / 220) % 4;
+        } else if (sp.id === "bob") {
+          // Bob: checking server cables
+          const bobCycle = (now / 1000) % 5.5;
+          frameIdx = bobCycle < 3 ? Math.floor(now / 340) % 4 : 0;
+        } else if (sp.id === "grace") {
+          // Grace: typing on laptop
+          frameIdx = Math.floor(now / 200) % 4;
+        } else if (sp.id === "ada") {
+          // Ada: tablet review and UI checking
+          frameIdx = Math.floor(now / 280) % 4;
         }
 
-        const p0x = dx + env.startX * dw;
-        const p0y = dy + env.startY * dh;
-        const p2x = dx + env.targetX * dw;
-        const p2y = dy + env.targetY * dh;
-        const p1x = (p0x + p2x) / 2;
-        const p1y = Math.min(p0y, p2y) - 45 * pixelScale;
+        const frameImg = frames[frameIdx];
+        if (frameImg && frameImg.complete && frameImg.naturalWidth > 0) {
+          const destX = Math.round(dx + sp.rect.x * dw);
+          const destY = Math.round(dy + sp.rect.y * dh);
+          const destW = Math.round(sp.rect.w * dw);
+          const destH = Math.round(sp.rect.h * dh);
 
-        const t = env.progress;
-        const curX =
-          (1 - t) * (1 - t) * p0x + 2 * (1 - t) * t * p1x + t * t * p2x;
-        const curY =
-          (1 - t) * (1 - t) * p0y + 2 * (1 - t) * t * p1y + t * t * p2y;
+          ctx.drawImage(frameImg, destX, destY, destW, destH);
+        }
+      });
 
-        const envSz = 9 * pixelScale;
+      // 3. Subtle Organic Ambiance (Blended lighting, no flat stickers)
+      ctx.save();
+      // Server room rack LEDs (soft twinkling through glass)
+      if (isDark) {
+        const rackX = dx + 0.435 * dw;
+        const rackY = dy + 0.23 * dh;
+        const ledW = Math.max(1.5, 2 * (dw / 2752));
+        const ledH = Math.max(1.5, 2 * (dh / 1536));
+        ctx.globalAlpha = 0.45;
+        for (let i = 0; i < 4; i++) {
+          const blink = Math.sin(now * 0.004 + i * 2.1) > 0.1;
+          if (blink) {
+            ctx.fillStyle = i % 2 === 0 ? "#22c55e" : "#06b6d4";
+            ctx.fillRect(
+              rackX + i * 8 * (dw / 2752),
+              rackY + i * 5 * (dh / 1536),
+              ledW,
+              ledH,
+            );
+          }
+        }
+      }
+
+      // Espresso machine warm glow pulsing gently
+      const coffeeX = dx + 0.138 * dw;
+      const coffeeY = dy + 0.418 * dh;
+      const coffeePulse = 0.14 + Math.sin(now * 0.0025) * 0.04;
+      const coffeeGrad = ctx.createRadialGradient(
+        coffeeX,
+        coffeeY,
+        1,
+        coffeeX,
+        coffeeY,
+        22 * (dw / 1376),
+      );
+      coffeeGrad.addColorStop(0, `rgba(249, 115, 22, ${coffeePulse})`);
+      coffeeGrad.addColorStop(1, "rgba(249, 115, 22, 0)");
+      ctx.fillStyle = coffeeGrad;
+      ctx.beginPath();
+      ctx.arc(coffeeX, coffeeY, 22 * (dw / 1376), 0, Math.PI * 2);
+      ctx.fill();
+
+      // Distant city window twinking at night
+      if (isDark) {
+        const winX = dx + 0.93 * dw;
+        const winY = dy + 0.28 * dh;
+        const glintAlpha = 0.25 + Math.sin(now * 0.003) * 0.15;
+        ctx.fillStyle = `rgba(253, 224, 71, ${glintAlpha})`;
+        ctx.fillRect(winX, winY, 2, 2);
+      }
+      ctx.restore();
+
+      // 4. Floating Speech Bubbles (Only when active, sleek HUD style)
+      SPECIALISTS.forEach((sp) => {
+        const st = states[sp.id];
+        if (!st.bubbleText || st.bubbleTimer <= 0) return;
+
+        st.bubbleTimer -= dt;
+        const text = st.bubbleText;
+        const pixelScale = dw / 1376;
+        const fontSize = Math.max(10, Math.floor(10.5 * pixelScale));
+
+        ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+        const textW = ctx.measureText(text).width;
+        const bw = textW + 16 * pixelScale;
+        const bh = 22 * pixelScale;
+
+        const hx = dx + sp.head.x * dw;
+        const hy = dy + sp.head.y * dh;
+
+        const bx = Math.max(10, Math.min(width - bw - 10, hx - bw / 2));
+        const by = Math.max(10, hy - bh - 8 * pixelScale);
+
         ctx.save();
-        ctx.fillStyle = "#ffffff";
-        ctx.shadowColor = env.color;
-        ctx.shadowBlur = 8;
-        ctx.fillRect(curX - envSz / 2, curY - envSz / 3, envSz, envSz * 0.7);
-
-        ctx.strokeStyle = env.color;
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(curX - envSz / 2, curY - envSz / 3, envSz, envSz * 0.7);
-
+        // Drop shadow
+        ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
         ctx.beginPath();
-        ctx.moveTo(curX - envSz / 2, curY - envSz / 3);
-        ctx.lineTo(curX, curY + 1);
-        ctx.lineTo(curX + envSz / 2, curY - envSz / 3);
+        ctx.roundRect(bx + 2, by + 2, bw, bh, 6);
+        ctx.fill();
+
+        // Bubble pill body
+        ctx.fillStyle = isDark
+          ? "rgba(15, 20, 32, 0.94)"
+          : "rgba(255, 255, 255, 0.96)";
+        ctx.beginPath();
+        ctx.roundRect(bx, by, bw, bh, 6);
+        ctx.fill();
+
+        // Subtle accent border
+        ctx.strokeStyle = sp.color;
+        ctx.lineWidth = 1.4;
         ctx.stroke();
+
+        // Text
+        ctx.fillStyle = isDark ? "#f8fafc" : "#0f172a";
+        ctx.fillText(text, bx + 8 * pixelScale, by + bh * 0.68);
         ctx.restore();
-      }
-
-      // 9. Specialists Active Spotlights & Floating Speech Bubbles
-      specialists.forEach((sp) => {
-        const sx = dx + sp.x * dw;
-        const sy = dy + sp.y * dh;
-
-        // Active Spotlight Halo on floor when focused or working
-        if (sp.isCurrentFocus || (isWorkingNow && sp.id === "kern")) {
-          const haloPulse = 1 + Math.sin(tick * 0.2) * 0.12;
-          const haloRadius = 26 * pixelScale * haloPulse;
-
-          const grad = ctx.createRadialGradient(sx, sy, 2, sx, sy, haloRadius);
-          grad.addColorStop(0, `${sp.color}55`);
-          grad.addColorStop(0.7, `${sp.color}15`);
-          grad.addColorStop(1, "rgba(0, 0, 0, 0)");
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.ellipse(
-            sx,
-            sy,
-            haloRadius * 1.3,
-            haloRadius * 0.65,
-            0,
-            0,
-            Math.PI * 2,
-          );
-          ctx.fill();
-
-          ctx.strokeStyle = sp.color;
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        }
-
-        // Floating Speech Bubble anchored right above specialist's head
-        if (sp.bubbleText && sp.bubbleTimer > 0) {
-          sp.bubbleTimer -= dt;
-          const text = sp.bubbleText;
-          ctx.font = `bold ${Math.max(10, Math.floor(10.5 * pixelScale))}px monospace, sans-serif`;
-          const textW = ctx.measureText(text).width;
-          const bw = textW + 16 * pixelScale;
-          const bh = 22 * pixelScale;
-
-          const bx = Math.max(12, Math.min(width - bw - 12, sx - bw / 2));
-          const by = Math.max(12, sy - 64 * pixelScale);
-
-          // Drop shadow
-          ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
-          ctx.fillRect(bx + 2, by + 2, bw, bh);
-
-          // Bubble background
-          ctx.fillStyle = isDark ? "#111422" : "#ffffff";
-          ctx.fillRect(bx, by, bw, bh);
-          ctx.strokeStyle = sp.color;
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(bx, by, bw, bh);
-
-          // Bubble pointer
-          ctx.beginPath();
-          ctx.moveTo(sx - 3, by + bh);
-          ctx.lineTo(sx + 3, by + bh);
-          ctx.lineTo(sx, by + bh + 4 * pixelScale);
-          ctx.closePath();
-          ctx.fillStyle = isDark ? "#111422" : "#ffffff";
-          ctx.fill();
-          ctx.strokeStyle = sp.color;
-          ctx.stroke();
-
-          // Bubble text
-          ctx.fillStyle = isDark ? "#f8fafc" : "#0f172a";
-          ctx.fillText(text, bx + 8 * pixelScale, by + bh * 0.68);
-        }
       });
 
       if (!prefersReducedMotion) {
