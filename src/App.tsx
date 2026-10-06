@@ -174,7 +174,9 @@ export default function App() {
       localStorage.setItem("crc_bg_blurred", String(bgBlurred));
     } catch {}
     window.dispatchEvent(
-      new CustomEvent("crc-bg-blur-changed", { detail: { blurred: bgBlurred } }),
+      new CustomEvent("crc-bg-blur-changed", {
+        detail: { blurred: bgBlurred },
+      }),
     );
   }, [bgBlurred]);
 
@@ -1012,8 +1014,7 @@ export default function App() {
             ? tabs
                 .filter((tab) => mountedTabIds.has(tab.id))
                 .map((tab) => {
-                  const isHidden =
-                    dashboard !== null || tab.id !== activeTabId;
+                  const isHidden = dashboard !== null || tab.id !== activeTabId;
                   return (
                     <div
                       key={tab.id}
@@ -1029,67 +1030,67 @@ export default function App() {
                       }}
                     >
                       <ChatView
-                      projectPath={tab.project.path}
-                      projectName={tab.project.name}
-                      isGit={tab.project.is_git}
-                      repositories={tab.project.repositories ?? []}
-                      globalChat={tab.global}
-                      pipelineType={tab.project.pipeline_type ?? "Personal"}
-                      chatId={tab.id}
-                      sessionFile={tab.sessionFile}
-                      initialModel={tab.model}
-                      initialThinking={tab.thinking}
-                      initialInterrupted={tab.interrupted}
-                      resumableSessions={tabs
-                        .filter(
-                          (candidate) =>
-                            candidate.id !== tab.id &&
-                            candidate.global === tab.global &&
-                            candidate.project.path === tab.project.path &&
-                            candidate.sessionFile,
-                        )
-                        .map((candidate) => ({
-                          title: candidate.title ?? "Untitled session",
-                          sessionFile: candidate.sessionFile!,
-                        }))}
-                      onSessionFile={saveSessionFile}
-                      onFirstMessage={saveTitle}
-                      onRuntimeSettings={saveRuntimeSettings}
-                      onAgentRunning={saveAgentRunning}
-                      onUnread={markUnread}
-                      onClose={() => closeTab(tab.id)}
-                      onToast={addToast}
-                      initialPrompt={tab.initialPrompt}
-                      initialDraft={tab.initialDraft}
-                      onInitialPromptConsumed={() =>
-                        setTabs((prev) =>
-                          prev.map((item) =>
-                            item.id === tab.id
-                              ? { ...item, initialPrompt: undefined }
-                              : item,
-                          ),
-                        )
-                      }
-                      onInitialDraftConsumed={() =>
-                        setTabs((prev) =>
-                          prev.map((item) =>
-                            item.id === tab.id
-                              ? { ...item, initialDraft: undefined }
-                              : item,
-                          ),
-                        )
-                      }
-                      onOpenPipeline={() => {
-                        setSelectedProject(tab.project);
-                        setDashboard("pipeline");
-                      }}
-                      onOpenResearch={(runId) => {
-                        setResearchRunId(runId);
-                        setDashboard("research");
-                      }}
-                      isActive={tab.id === activeTabId}
-                    />
-                  </div>
+                        projectPath={tab.project.path}
+                        projectName={tab.project.name}
+                        isGit={tab.project.is_git}
+                        repositories={tab.project.repositories ?? []}
+                        globalChat={tab.global}
+                        pipelineType={tab.project.pipeline_type ?? "Personal"}
+                        chatId={tab.id}
+                        sessionFile={tab.sessionFile}
+                        initialModel={tab.model}
+                        initialThinking={tab.thinking}
+                        initialInterrupted={tab.interrupted}
+                        resumableSessions={tabs
+                          .filter(
+                            (candidate) =>
+                              candidate.id !== tab.id &&
+                              candidate.global === tab.global &&
+                              candidate.project.path === tab.project.path &&
+                              candidate.sessionFile,
+                          )
+                          .map((candidate) => ({
+                            title: candidate.title ?? "Untitled session",
+                            sessionFile: candidate.sessionFile!,
+                          }))}
+                        onSessionFile={saveSessionFile}
+                        onFirstMessage={saveTitle}
+                        onRuntimeSettings={saveRuntimeSettings}
+                        onAgentRunning={saveAgentRunning}
+                        onUnread={markUnread}
+                        onClose={() => closeTab(tab.id)}
+                        onToast={addToast}
+                        initialPrompt={tab.initialPrompt}
+                        initialDraft={tab.initialDraft}
+                        onInitialPromptConsumed={() =>
+                          setTabs((prev) =>
+                            prev.map((item) =>
+                              item.id === tab.id
+                                ? { ...item, initialPrompt: undefined }
+                                : item,
+                            ),
+                          )
+                        }
+                        onInitialDraftConsumed={() =>
+                          setTabs((prev) =>
+                            prev.map((item) =>
+                              item.id === tab.id
+                                ? { ...item, initialDraft: undefined }
+                                : item,
+                            ),
+                          )
+                        }
+                        onOpenPipeline={() => {
+                          setSelectedProject(tab.project);
+                          setDashboard("pipeline");
+                        }}
+                        onOpenResearch={(runId) => {
+                          setResearchRunId(runId);
+                          setDashboard("research");
+                        }}
+                        isActive={tab.id === activeTabId}
+                      />
+                    </div>
                   );
                 })
             : dashboard === null && (

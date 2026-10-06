@@ -141,9 +141,7 @@ export default function ChatComposer({
             value={currentThinking || "medium"}
             onChange={(level) => void onSetThinking(level)}
             disabled={
-              driveDetached ||
-              agentStatus === "stopped" ||
-              isNewSessionLoading
+              driveDetached || agentStatus === "stopped" || isNewSessionLoading
             }
             ariaLabel="Thinking effort"
             placement="top"

@@ -923,7 +923,8 @@ fn fetch_url(url: &str) -> Result<String, String> {
     if output.stdout.len() > MAX_API_DOCUMENTATION_BYTES {
         return Err("API documentation exceeds 512 KB".into());
     }
-    let body = String::from_utf8(output.stdout).map_err(|_| "API documentation is not UTF-8".to_string())?;
+    let body = String::from_utf8(output.stdout)
+        .map_err(|_| "API documentation is not UTF-8".to_string())?;
     let _ = std::fs::create_dir_all(&cache_dir);
     let _ = std::fs::write(&cache_file, &body);
     Ok(body)

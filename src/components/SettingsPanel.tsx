@@ -513,7 +513,9 @@ export default function SettingsPanel({
                         Sync Extensions
                       </button>
                     </div>
-                    {runtimeLog && <pre className="pi-runtime-log">{runtimeLog}</pre>}
+                    {runtimeLog && (
+                      <pre className="pi-runtime-log">{runtimeLog}</pre>
+                    )}
                   </section>
                 )}
 
@@ -537,7 +539,9 @@ export default function SettingsPanel({
                         <>
                           <label id="setting-defaultProvider">
                             <span className="field-label-group">
-                              <span className="field-title">DEFAULT PROVIDER</span>
+                              <span className="field-title">
+                                DEFAULT PROVIDER
+                              </span>
                               <small className="field-desc">
                                 Provider used for new sessions
                               </small>
@@ -569,7 +573,9 @@ export default function SettingsPanel({
 
                           <label id="setting-defaultThinkingLevel">
                             <span className="field-label-group">
-                              <span className="field-title">THINKING LEVEL</span>
+                              <span className="field-title">
+                                THINKING LEVEL
+                              </span>
                               <small className="field-desc">
                                 Default reasoning effort
                               </small>
@@ -592,7 +598,8 @@ export default function SettingsPanel({
                                 {
                                   value: "off",
                                   label: "off",
-                                  description: "Direct response without reasoning",
+                                  description:
+                                    "Direct response without reasoning",
                                 },
                                 {
                                   value: "minimal",
@@ -695,7 +702,9 @@ export default function SettingsPanel({
 
                           <label id="setting-externalEditor">
                             <span className="field-label-group">
-                              <span className="field-title">EXTERNAL EDITOR</span>
+                              <span className="field-title">
+                                EXTERNAL EDITOR
+                              </span>
                               <small className="field-desc">
                                 Command to launch external text editor
                               </small>

@@ -35,7 +35,8 @@ export function CustomSelect({
   );
 
   const selectedOption =
-    normalizedOptions.find((opt) => opt.value === value) ?? normalizedOptions[0];
+    normalizedOptions.find((opt) => opt.value === value) ??
+    normalizedOptions[0];
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -45,7 +46,8 @@ export function CustomSelect({
     }
     if (open) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+      return () =>
+        document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [open]);
 
@@ -63,11 +65,14 @@ export function CustomSelect({
         setOpen(true);
         return;
       }
-      const currentIndex = normalizedOptions.findIndex((opt) => opt.value === value);
+      const currentIndex = normalizedOptions.findIndex(
+        (opt) => opt.value === value,
+      );
       const nextIndex =
         event.key === "ArrowDown"
           ? (currentIndex + 1) % normalizedOptions.length
-          : (currentIndex - 1 + normalizedOptions.length) % normalizedOptions.length;
+          : (currentIndex - 1 + normalizedOptions.length) %
+            normalizedOptions.length;
       onChange(normalizedOptions[nextIndex].value);
     }
   };
@@ -131,7 +136,9 @@ export function CustomSelect({
                 aria-selected={isSelected}
               >
                 <div className="opendots-select-option-text">
-                  <span className="opendots-select-option-label">{option.label}</span>
+                  <span className="opendots-select-option-label">
+                    {option.label}
+                  </span>
                   {option.description && (
                     <small className="opendots-select-option-desc">
                       {option.description}

@@ -738,7 +738,10 @@ export default function ChatView({
       pendingTextRef.current += textDelta;
       queueDeltaFlush();
       const now = Date.now();
-      if (typeof window !== "undefined" && now - lastTextDispatchRef.current > 500) {
+      if (
+        typeof window !== "undefined" &&
+        now - lastTextDispatchRef.current > 500
+      ) {
         lastTextDispatchRef.current = now;
         window.dispatchEvent(
           new CustomEvent("crc-agent-activity", {
@@ -761,7 +764,10 @@ export default function ChatView({
       pendingThinkingRef.current += delta;
       queueDeltaFlush();
       const now = Date.now();
-      if (typeof window !== "undefined" && now - lastThinkingDispatchRef.current > 500) {
+      if (
+        typeof window !== "undefined" &&
+        now - lastThinkingDispatchRef.current > 500
+      ) {
         lastThinkingDispatchRef.current = now;
         window.dispatchEvent(
           new CustomEvent("crc-agent-activity", {
@@ -799,7 +805,10 @@ export default function ChatView({
         : null;
 
     const activeReq =
-      [...messages].reverse().find((m) => m.role === "user")?.text?.trim() || "";
+      [...messages]
+        .reverse()
+        .find((m) => m.role === "user")
+        ?.text?.trim() || "";
 
     let assignedName = "Kern";
     let assignedRole = "Lead Agent";
@@ -827,7 +836,11 @@ export default function ChatView({
           assignedName = "Grace";
           assignedRole = "DevOps & Infra";
         }
-      } else if (rawName === "read" || rawName === "view" || rawName === "cat") {
+      } else if (
+        rawName === "read" ||
+        rawName === "view" ||
+        rawName === "cat"
+      ) {
         assignedName = "Ada";
         assignedRole = "Frontend Dev";
       } else if (rawName === "edit" || rawName === "write") {
@@ -3665,11 +3678,24 @@ export default function ChatView({
   const renderFeedItemInner = (item: FeedItem): ReactNode => {
     if (item.kind === "session-loading") {
       return (
-        <div className="session-loading pixel-session-loading" role="status" aria-live="polite">
+        <div
+          className="session-loading pixel-session-loading"
+          role="status"
+          aria-live="polite"
+        >
           <div className="pixel-agent-avatar-tag" title="Kern (Lead Agent)">
-            <Mascot identity="kern" state="working" small className="mini" name="Kern" />
+            <Mascot
+              identity="kern"
+              state="working"
+              small
+              className="mini"
+              name="Kern"
+            />
           </div>
-          <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
+          <span
+            className="agent-working-mark pixel-agent-working-mark"
+            aria-hidden="true"
+          >
             <i />
             <i />
             <i />
@@ -3689,11 +3715,24 @@ export default function ChatView({
     }
     if (item.kind === "history-state") {
       return isHistoryLoading ? (
-        <div className="session-loading pixel-session-loading" role="status" aria-live="polite">
+        <div
+          className="session-loading pixel-session-loading"
+          role="status"
+          aria-live="polite"
+        >
           <div className="pixel-agent-avatar-tag" title="Kern (Lead Agent)">
-            <Mascot identity="kern" state="working" small className="mini" name="Kern" />
+            <Mascot
+              identity="kern"
+              state="working"
+              small
+              className="mini"
+              name="Kern"
+            />
           </div>
-          <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
+          <span
+            className="agent-working-mark pixel-agent-working-mark"
+            aria-hidden="true"
+          >
             <i />
             <i />
             <i />
@@ -4326,26 +4365,76 @@ export default function ChatView({
           icon = "meter";
         } else if (activeTool) {
           phase = "executing";
-          const rawName = activeTool.name.replace(/^functions\./, "").toLowerCase();
+          const rawName = activeTool.name
+            .replace(/^functions\./, "")
+            .toLowerCase();
           const cmd = String(activeTool.args?.command || "").toLowerCase();
           if (rawName === "bash") {
             if (/(test|vitest|jest|cargo.*test|pytest)/.test(cmd)) {
-              assignedAgent = { name: "Bob", role: "QA Tester", identity: "red", color: "#ec4899" };
+              assignedAgent = {
+                name: "Bob",
+                role: "QA Tester",
+                identity: "red",
+                color: "#ec4899",
+              };
             } else if (/(build|compile|tauri.*build|vite.*build)/.test(cmd)) {
-              assignedAgent = { name: "Grace", role: "DevOps & Server", identity: "yellow", color: "#f59e0b" };
+              assignedAgent = {
+                name: "Grace",
+                role: "DevOps & Server",
+                identity: "yellow",
+                color: "#f59e0b",
+              };
             } else if (/^git\s+/.test(cmd)) {
-              assignedAgent = { name: "Linus", role: "Backend Dev", identity: "mint", color: "#22c55e" };
+              assignedAgent = {
+                name: "Linus",
+                role: "Backend Dev",
+                identity: "mint",
+                color: "#22c55e",
+              };
             } else {
-              assignedAgent = { name: "Grace", role: "DevOps & Infra", identity: "yellow", color: "#f59e0b" };
+              assignedAgent = {
+                name: "Grace",
+                role: "DevOps & Infra",
+                identity: "yellow",
+                color: "#f59e0b",
+              };
             }
-          } else if (rawName === "read" || rawName === "view" || rawName === "cat") {
-            assignedAgent = { name: "Ada", role: "Frontend Dev", identity: "purple", color: "#a855f7" };
+          } else if (
+            rawName === "read" ||
+            rawName === "view" ||
+            rawName === "cat"
+          ) {
+            assignedAgent = {
+              name: "Ada",
+              role: "Frontend Dev",
+              identity: "purple",
+              color: "#a855f7",
+            };
           } else if (rawName === "edit" || rawName === "write") {
-            assignedAgent = { name: "Linus", role: "Backend Dev", identity: "mint", color: "#22c55e" };
-          } else if (rawName.includes("search") || rawName.includes("grep") || rawName.includes("graph")) {
-            assignedAgent = { name: "Alan", role: "AST & Search", identity: "orange", color: "#06b6d4" };
+            assignedAgent = {
+              name: "Linus",
+              role: "Backend Dev",
+              identity: "mint",
+              color: "#22c55e",
+            };
+          } else if (
+            rawName.includes("search") ||
+            rawName.includes("grep") ||
+            rawName.includes("graph")
+          ) {
+            assignedAgent = {
+              name: "Alan",
+              role: "AST & Search",
+              identity: "orange",
+              color: "#06b6d4",
+            };
           } else if (rawName.includes("web") || rawName.includes("fetch")) {
-            assignedAgent = { name: "Alan", role: "Research Agent", identity: "orange", color: "#06b6d4" };
+            assignedAgent = {
+              name: "Alan",
+              role: "Research Agent",
+              identity: "orange",
+              color: "#06b6d4",
+            };
           }
 
           const build = buildPhase(activeTool);
@@ -4396,7 +4485,12 @@ export default function ChatView({
           }
         } else if (streamingText) {
           phase = "writing";
-          assignedAgent = { name: "Kern", role: "Lead Agent", identity: "blue", color: "#38bdf8" };
+          assignedAgent = {
+            name: "Kern",
+            role: "Lead Agent",
+            identity: "blue",
+            color: "#38bdf8",
+          };
           const lastLine =
             streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
           title = "RESPONDING";
@@ -4406,7 +4500,12 @@ export default function ChatView({
           icon = "meter";
         } else {
           phase = "thinking";
-          assignedAgent = { name: "Kern", role: "Lead Agent", identity: "blue", color: "#38bdf8" };
+          assignedAgent = {
+            name: "Kern",
+            role: "Lead Agent",
+            identity: "blue",
+            color: "#38bdf8",
+          };
           const lastLine =
             thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
           if (lastLine) {
@@ -4448,7 +4547,10 @@ export default function ChatView({
         ];
         const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
         return (
-          <section className="agent-activity pixel-activity-section" aria-label="Agent activity">
+          <section
+            className="agent-activity pixel-activity-section"
+            aria-label="Agent activity"
+          >
             <div
               className={`agent-working pixel-activity-card activity-${icon} phase-${phase}`}
               role="status"
@@ -4467,7 +4569,10 @@ export default function ChatView({
                   name={assignedAgent.name}
                 />
               </div>
-              <span className="agent-working-mark pixel-agent-working-mark" aria-hidden="true">
+              <span
+                className="agent-working-mark pixel-agent-working-mark"
+                aria-hidden="true"
+              >
                 <i />
                 <i />
                 <i />
@@ -4547,7 +4652,10 @@ export default function ChatView({
                   ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
                   : "Preparing task"}
               </summary>
-              <ul className="agent-transcript pixel-agent-transcript" aria-label="Agent tasks">
+              <ul
+                className="agent-transcript pixel-agent-transcript"
+                aria-label="Agent tasks"
+              >
                 {agentTranscript.length > 0 ? (
                   agentTranscript.map((entry) => {
                     const isDone =
@@ -4660,88 +4768,88 @@ export default function ChatView({
               ✕
             </button>
           </div>
-        {!globalChat && !isGit && !isWorkspace && (
-          <span className="category-tag">NOT ISOLATED</span>
-        )}
-        {driveDetached && (
-          <span
-            className="category-tag"
-            style={{ color: "var(--colors-muted-soft)" }}
-          >
-            DRIVE DETACHED
-          </span>
-        )}
-        {agentStatus === "stopped" && (
-          <span
-            className="category-tag"
-            style={{ color: "var(--colors-muted-soft)" }}
-          >
-            AGENT STOPPED
-          </span>
-        )}
-        {approval && (
-          <output className="follow-up-badge">● INPUT REQUIRED</output>
-        )}
-        {!globalChat && graphEnabled && graphStatus && (
-          <>
+          {!globalChat && !isGit && !isWorkspace && (
+            <span className="category-tag">NOT ISOLATED</span>
+          )}
+          {driveDetached && (
             <span
-              className="category-tag graph-status"
-              title={graphStatus.tracked_warning ?? "Graphify status"}
+              className="category-tag"
+              style={{ color: "var(--colors-muted-soft)" }}
             >
-              GRAPH {graphStatus.state}
+              DRIVE DETACHED
             </span>
-            <button
-              className="dev-control"
-              disabled={graphBusy}
-              onClick={() =>
-                refreshGraph(
-                  graphStatus.state === "none" || graphStatus.docs_stale,
-                )
-              }
+          )}
+          {agentStatus === "stopped" && (
+            <span
+              className="category-tag"
+              style={{ color: "var(--colors-muted-soft)" }}
             >
-              {graphBusy && (
-                <span className="graph-spinner" aria-hidden="true" />
-              )}
-              {graphBusy
-                ? "GRAPHIFYING…"
-                : graphStatus.state === "none"
-                  ? "BUILD GRAPH"
-                  : "UPDATE GRAPH"}
-            </button>
-          </>
-        )}
-        {graphError && (
-          <span className="dev-error" title={graphError}>
-            GRAPH ERROR: {graphError}
-          </span>
-        )}
-        {graphBusy && graphProgress && (
-          <div className="graph-progress" role="status" aria-live="polite">
-            <span>
-              <b>
-                {graphProgress.index}/{graphProgress.total}
-              </b>{" "}
-              {graphProgress.repository}
+              AGENT STOPPED
             </span>
-            <small title={graphProgress.activity}>
-              {graphProgress.activity}
-            </small>
-            <small>
-              {graphProgress.index < graphProgress.total
-                ? `${graphProgress.total - graphProgress.index} repositories remaining · `
-                : "Finalizing repository · "}
-              {Math.floor(graphElapsed / 60)}:
-              {String(graphElapsed % 60).padStart(2, "0")} elapsed · CHAT
-              AVAILABLE
-            </small>
-            <i
-              style={{
-                width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%`,
-              }}
-            />
-          </div>
-        )}
-      </div>
+          )}
+          {approval && (
+            <output className="follow-up-badge">● INPUT REQUIRED</output>
+          )}
+          {!globalChat && graphEnabled && graphStatus && (
+            <>
+              <span
+                className="category-tag graph-status"
+                title={graphStatus.tracked_warning ?? "Graphify status"}
+              >
+                GRAPH {graphStatus.state}
+              </span>
+              <button
+                className="dev-control"
+                disabled={graphBusy}
+                onClick={() =>
+                  refreshGraph(
+                    graphStatus.state === "none" || graphStatus.docs_stale,
+                  )
+                }
+              >
+                {graphBusy && (
+                  <span className="graph-spinner" aria-hidden="true" />
+                )}
+                {graphBusy
+                  ? "GRAPHIFYING…"
+                  : graphStatus.state === "none"
+                    ? "BUILD GRAPH"
+                    : "UPDATE GRAPH"}
+              </button>
+            </>
+          )}
+          {graphError && (
+            <span className="dev-error" title={graphError}>
+              GRAPH ERROR: {graphError}
+            </span>
+          )}
+          {graphBusy && graphProgress && (
+            <div className="graph-progress" role="status" aria-live="polite">
+              <span>
+                <b>
+                  {graphProgress.index}/{graphProgress.total}
+                </b>{" "}
+                {graphProgress.repository}
+              </span>
+              <small title={graphProgress.activity}>
+                {graphProgress.activity}
+              </small>
+              <small>
+                {graphProgress.index < graphProgress.total
+                  ? `${graphProgress.total - graphProgress.index} repositories remaining · `
+                  : "Finalizing repository · "}
+                {Math.floor(graphElapsed / 60)}:
+                {String(graphElapsed % 60).padStart(2, "0")} elapsed · CHAT
+                AVAILABLE
+              </small>
+              <i
+                style={{
+                  width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
 
         <div className="chat-header-actions">
           <button

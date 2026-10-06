@@ -1,4 +1,11 @@
-export const characters = ["blue", "mint", "orange", "purple", "yellow", "red"] as const;
+export const characters = [
+  "blue",
+  "mint",
+  "orange",
+  "purple",
+  "yellow",
+  "red",
+] as const;
 
 export type CharacterName = (typeof characters)[number];
 
@@ -102,11 +109,15 @@ export function characterFor(identity?: string): CharacterName {
   if (!identity) return characters[0];
   const lower = identity.toLowerCase();
   if (lower === "kern" || lower.includes("lead")) return "blue";
-  if (lower === "ada" || lower.includes("frontend") || lower.includes("ui")) return "purple";
+  if (lower === "ada" || lower.includes("frontend") || lower.includes("ui"))
+    return "purple";
   if (lower === "linus" || lower.includes("backend")) return "mint";
-  if (lower === "alan" || lower.includes("search") || lower.includes("graph")) return "orange";
-  if (lower === "grace" || lower.includes("devops") || lower.includes("infra")) return "yellow";
-  if (lower === "bob" || lower.includes("qa") || lower.includes("test")) return "red";
+  if (lower === "alan" || lower.includes("search") || lower.includes("graph"))
+    return "orange";
+  if (lower === "grace" || lower.includes("devops") || lower.includes("infra"))
+    return "yellow";
+  if (lower === "bob" || lower.includes("qa") || lower.includes("test"))
+    return "red";
 
   if ((characters as readonly string[]).includes(identity))
     return identity as CharacterName;
