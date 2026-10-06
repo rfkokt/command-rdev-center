@@ -11,9 +11,35 @@ interface SpecialistConfig {
   rect: { x: number; y: number; w: number; h: number };
   // Normalized speech bubble anchor point above head:
   head: { x: number; y: number };
+  // Home foot position on the floor plane:
+  homeFoot: { x: number; y: number };
+  // Walk sprite dimensions and foot anchor:
+  walkW: number;
+  walkH: number;
+  footAnchorX: number;
+  footAnchorY: number;
 }
 
 const SPECIALISTS: SpecialistConfig[] = [
+  {
+    id: "ada",
+    name: "Ada",
+    role: "Frontend Dev",
+    color: "#c084fc",
+    icon: "🎨",
+    rect: {
+      x: 1040 / 2752,
+      y: 740 / 1536,
+      w: 180 / 2752,
+      h: 440 / 1536,
+    },
+    head: { x: 1130 / 2752, y: 730 / 1536 },
+    homeFoot: { x: 0.428, y: 0.768 },
+    walkW: 221 / 2752,
+    walkH: 459 / 1536,
+    footAnchorX: 0.484,
+    footAnchorY: 0.937,
+  },
   {
     id: "kern",
     name: "Kern",
@@ -27,6 +53,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 260 / 1536,
     },
     head: { x: 1840 / 2752, y: 1040 / 1536 },
+    homeFoot: { x: 0.648, y: 0.81 },
+    walkW: 277 / 2752,
+    walkH: 462 / 1536,
+    footAnchorX: 0.487,
+    footAnchorY: 0.937,
   },
   {
     id: "linus",
@@ -41,6 +72,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 400 / 1536,
     },
     head: { x: 420 / 2752, y: 500 / 1536 },
+    homeFoot: { x: 0.17, y: 0.56 },
+    walkW: 244 / 2752,
+    walkH: 459 / 1536,
+    footAnchorX: 0.484,
+    footAnchorY: 0.937,
   },
   {
     id: "alan",
@@ -55,6 +91,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     head: { x: 1700 / 2752, y: 340 / 1536 },
+    homeFoot: { x: 0.618, y: 0.42 },
+    walkW: 262 / 2752,
+    walkH: 462 / 1536,
+    footAnchorX: 0.492,
+    footAnchorY: 0.931,
   },
   {
     id: "bob",
@@ -69,6 +110,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     head: { x: 1260 / 2752, y: 290 / 1536 },
+    homeFoot: { x: 0.458, y: 0.38 },
+    walkW: 235 / 2752,
+    walkH: 454 / 1536,
+    footAnchorX: 0.483,
+    footAnchorY: 0.936,
   },
   {
     id: "grace",
@@ -83,20 +129,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 280 / 1536,
     },
     head: { x: 720 / 2752, y: 760 / 1536 },
-  },
-  {
-    id: "ada",
-    name: "Ada",
-    role: "Frontend Dev",
-    color: "#c084fc",
-    icon: "🎨",
-    rect: {
-      x: 1040 / 2752,
-      y: 740 / 1536,
-      w: 180 / 2752,
-      h: 440 / 1536,
-    },
-    head: { x: 1130 / 2752, y: 730 / 1536 },
+    homeFoot: { x: 0.262, y: 0.66 },
+    walkW: 245 / 2752,
+    walkH: 458 / 1536,
+    footAnchorX: 0.492,
+    footAnchorY: 0.937,
   },
 ];
 
@@ -117,35 +154,133 @@ interface PatrolRoute {
   pauseSeconds: number;
 }
 
-const ADA_HOME_FOOT = { x: 0.428, y: 0.768 };
+const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
+  ada: [
+    {
+      name: "coffee",
+      waypoints: [
+        { x: 0.428, y: 0.768 },
+        { x: 0.335, y: 0.67 },
+        { x: 0.24, y: 0.62 },
+      ],
+      pauseSeconds: 4.5,
+    },
+    {
+      name: "kern",
+      waypoints: [
+        { x: 0.428, y: 0.768 },
+        { x: 0.54, y: 0.768 },
+      ],
+      pauseSeconds: 4.0,
+    },
+    {
+      name: "alan",
+      waypoints: [
+        { x: 0.428, y: 0.768 },
+        { x: 0.485, y: 0.6 },
+      ],
+      pauseSeconds: 3.5,
+    },
+  ],
+  linus: [
+    {
+      name: "deliver_kern",
+      waypoints: [
+        { x: 0.17, y: 0.56 },
+        { x: 0.24, y: 0.62 },
+        { x: 0.335, y: 0.67 },
+        { x: 0.54, y: 0.768 },
+      ],
+      pauseSeconds: 4.0,
+    },
+    {
+      name: "deliver_grace",
+      waypoints: [
+        { x: 0.17, y: 0.56 },
+        { x: 0.24, y: 0.62 },
+        { x: 0.285, y: 0.66 },
+      ],
+      pauseSeconds: 3.5,
+    },
+  ],
+  kern: [
+    {
+      name: "coffee_break",
+      waypoints: [
+        { x: 0.648, y: 0.81 },
+        { x: 0.54, y: 0.768 },
+        { x: 0.335, y: 0.67 },
+        { x: 0.24, y: 0.62 },
+      ],
+      pauseSeconds: 5.0,
+    },
+    {
+      name: "check_alan",
+      waypoints: [
+        { x: 0.648, y: 0.81 },
+        { x: 0.54, y: 0.768 },
+        { x: 0.485, y: 0.6 },
+      ],
+      pauseSeconds: 4.0,
+    },
+  ],
+  alan: [
+    {
+      name: "coffee_break",
+      waypoints: [
+        { x: 0.618, y: 0.42 },
+        { x: 0.485, y: 0.6 },
+        { x: 0.335, y: 0.67 },
+        { x: 0.24, y: 0.62 },
+      ],
+      pauseSeconds: 4.5,
+    },
+  ],
+  bob: [
+    {
+      name: "coffee_break",
+      waypoints: [
+        { x: 0.458, y: 0.38 },
+        { x: 0.37, y: 0.45 },
+        { x: 0.28, y: 0.53 },
+        { x: 0.24, y: 0.62 },
+      ],
+      pauseSeconds: 4.0,
+    },
+  ],
+  grace: [
+    {
+      name: "coffee_refill",
+      waypoints: [
+        { x: 0.262, y: 0.66 },
+        { x: 0.24, y: 0.62 },
+      ],
+      pauseSeconds: 3.5,
+    },
+    {
+      name: "sync_alan",
+      waypoints: [
+        { x: 0.262, y: 0.66 },
+        { x: 0.335, y: 0.67 },
+        { x: 0.485, y: 0.6 },
+      ],
+      pauseSeconds: 4.0,
+    },
+  ],
+};
 
-const PATROL_ROUTES: PatrolRoute[] = [
-  {
-    name: "coffee",
-    waypoints: [
-      ADA_HOME_FOOT,
-      { x: 0.335, y: 0.67 }, // Walkway next to table
-      { x: 0.24, y: 0.62 }, // Coffee station near Linus
-    ],
-    pauseSeconds: 4.5,
-  },
-  {
-    name: "kern",
-    waypoints: [
-      ADA_HOME_FOOT,
-      { x: 0.54, y: 0.768 }, // Beside Kern's desk
-    ],
-    pauseSeconds: 4.0,
-  },
-  {
-    name: "alan",
-    waypoints: [
-      ADA_HOME_FOOT,
-      { x: 0.485, y: 0.6 }, // Between desks near Alan
-    ],
-    pauseSeconds: 3.5,
-  },
-];
+interface WalkerState {
+  isWalking: boolean;
+  curX: number;
+  curY: number;
+  facing: "left" | "right";
+  routeIdx: number;
+  wpIdx: number;
+  isReturning: boolean;
+  pauseTimer: number;
+  idleTimer: number;
+  traveledDist: number;
+}
 
 export default function BackgroundMotion({
   isWorking = false,
@@ -208,14 +343,25 @@ export default function BackgroundMotion({
     const dayImg = typeof Image !== "undefined" ? new Image() : null;
     if (dayImg) dayImg.src = "/pixel_office_active_day.jpg";
 
-    // 2. Preload animation frames for all 6 specialists (night & day)
+    // 2. Preload station micro-animations (night & day)
     const specialistFrames: Record<
       string,
       { night: HTMLImageElement[]; day: HTMLImageElement[] }
     > = {};
 
+    // 3. Preload 4-frame walk cycles for all 6 specialists
+    const specialistWalkFrames: Record<string, HTMLImageElement[]> = {};
+
+    // 4. Preload empty station patches (night & day)
+    const emptyStationPatches: Record<
+      string,
+      { night: HTMLImageElement; day: HTMLImageElement }
+    > = {};
+
     SPECIALISTS.forEach((sp) => {
       specialistFrames[sp.id] = { night: [], day: [] };
+      specialistWalkFrames[sp.id] = [];
+
       for (let i = 0; i < 4; i++) {
         const nImg = new Image();
         nImg.src = `/sprites/${sp.id}_frame_${i}.png`;
@@ -224,54 +370,65 @@ export default function BackgroundMotion({
         const dImg = new Image();
         dImg.src = `/sprites/${sp.id}_day_frame_${i}.png`;
         specialistFrames[sp.id].day.push(dImg);
+
+        const wImg = new Image();
+        wImg.src = `/sprites/${sp.id}_walk_frame_${i}.png`;
+        specialistWalkFrames[sp.id].push(wImg);
       }
+
+      const emptyN = new Image();
+      emptyN.src = `/sprites/${sp.id}_empty_night.png`;
+      const emptyD = new Image();
+      emptyD.src = `/sprites/${sp.id}_empty_day.png`;
+      emptyStationPatches[sp.id] = { night: emptyN, day: emptyD };
     });
 
-    // 3. Preload Ada walking cycle frames and empty floor patch
-    const adaWalkFrames: HTMLImageElement[] = [];
-    for (let i = 0; i < 4; i++) {
-      const wImg = new Image();
-      wImg.src = `/sprites/ada_walk_frame_${i}.png`;
-      adaWalkFrames.push(wImg);
-    }
-
-    const adaEmptyNight = new Image();
-    adaEmptyNight.src = "/sprites/ada_empty_night.png";
-    const adaEmptyDay = new Image();
-    adaEmptyDay.src = "/sprites/ada_empty_day.png";
-
     const states: Record<string, SpecialistState> = {};
+    const walkers: Record<string, WalkerState> = {};
+
+    // Staggered initial walk start times so they don't all move at once
+    const initialDelays: Record<string, number> = {
+      ada: 5,
+      linus: 14,
+      kern: 26,
+      alan: 38,
+      bob: 20,
+      grace: 32,
+    };
+
     SPECIALISTS.forEach((sp) => {
       states[sp.id] = {
         bubbleText: null,
         bubbleTimer: 0,
         isFocused: false,
       };
-    });
 
-    // Ada roaming state
-    let adaWalking = false;
-    let adaCurX = ADA_HOME_FOOT.x;
-    let adaCurY = ADA_HOME_FOOT.y;
-    let adaFacing: "left" | "right" = "left";
-    let adaRouteIdx = 0;
-    let adaWpIdx = 0;
-    let adaIsReturning = false;
-    let adaPauseTimer = 0;
-    let adaIdleTimer = 8 + Math.random() * 6; // starts roaming within 8-14s
-    let adaTraveledDist = 0;
+      walkers[sp.id] = {
+        isWalking: false,
+        curX: sp.homeFoot.x,
+        curY: sp.homeFoot.y,
+        facing: "right",
+        routeIdx: 0,
+        wpIdx: 0,
+        isReturning: false,
+        pauseTimer: 0,
+        idleTimer: initialDelays[sp.id] || 10,
+        traveledDist: 0,
+      };
+    });
 
     let isWorkingLive = isWorking;
 
-    // Trigger roaming walk towards active agent
-    const triggerAdaPatrol = (routeIndex = 0) => {
-      if (adaWalking) return;
-      adaWalking = true;
-      adaRouteIdx = routeIndex % PATROL_ROUTES.length;
-      adaWpIdx = 1;
-      adaIsReturning = false;
-      adaPauseTimer = 0;
-      adaTraveledDist = 0;
+    const triggerWalker = (charId: string) => {
+      const w = walkers[charId];
+      const routes = SPECIALIST_ROUTES[charId];
+      if (!w || !routes || routes.length === 0 || w.isWalking) return;
+      w.isWalking = true;
+      w.routeIdx = Math.floor(Math.random() * routes.length);
+      w.wpIdx = 1;
+      w.isReturning = false;
+      w.pauseTimer = 0;
+      w.traveledDist = 0;
     };
 
     // Synchronized listener from ChatView & Agent runs
@@ -307,12 +464,10 @@ export default function BackgroundMotion({
           }
         });
 
-        // Ada roams towards the active specialist
-        if (matched.id === "linus")
-          triggerAdaPatrol(0); // Coffee
-        else if (matched.id === "kern")
-          triggerAdaPatrol(1); // Kern
-        else if (matched.id === "alan") triggerAdaPatrol(2); // Alan
+        // Trigger specialist to roam or sync
+        if (matched.id !== "kern") {
+          triggerWalker("ada");
+        }
       } else {
         isWorkingLive = false;
         SPECIALISTS.forEach((s) => {
@@ -343,8 +498,7 @@ export default function BackgroundMotion({
           }
         });
 
-        // Trigger Ada to walk to Kern when prompt is received
-        triggerAdaPatrol(1);
+        triggerWalker("ada");
       }
     };
 
@@ -453,93 +607,101 @@ export default function BackgroundMotion({
         ctx.fillRect(0, 0, width, height);
       }
 
-      // 2. Ada Walking & Roaming State Machine
-      const curRoute = PATROL_ROUTES[adaRouteIdx];
+      const pixelScale = dw / 1376;
 
-      if (!adaWalking) {
-        adaIdleTimer -= dt;
-        if (adaIdleTimer <= 0) {
-          adaRouteIdx = (adaRouteIdx + 1) % PATROL_ROUTES.length;
-          adaWalking = true;
-          adaWpIdx = 1;
-          adaIsReturning = false;
-          adaPauseTimer = 0;
-          adaTraveledDist = 0;
-        }
-      } else {
-        const targetWp = curRoute.waypoints[adaWpIdx];
+      // 2. Update Roaming State Machine for ALL Specialists
+      SPECIALISTS.forEach((sp) => {
+        const w = walkers[sp.id];
+        const routes = SPECIALIST_ROUTES[sp.id];
+        if (!w || !routes || routes.length === 0) return;
 
-        if (adaPauseTimer > 0) {
-          adaPauseTimer -= dt;
-          if (adaPauseTimer <= 0) {
-            adaIsReturning = true;
-            adaWpIdx = curRoute.waypoints.length - 2;
+        if (!w.isWalking) {
+          w.idleTimer -= dt;
+          if (w.idleTimer <= 0) {
+            w.routeIdx = (w.routeIdx + 1) % routes.length;
+            w.isWalking = true;
+            w.wpIdx = 1;
+            w.isReturning = false;
+            w.pauseTimer = 0;
+            w.traveledDist = 0;
           }
-        } else if (targetWp) {
-          const targetPxX = dx + targetWp.x * dw;
-          const targetPxY = dy + targetWp.y * dh;
-          const curPxX = dx + adaCurX * dw;
-          const curPxY = dy + adaCurY * dh;
+        } else {
+          const curRoute = routes[w.routeIdx];
+          const targetWp = curRoute?.waypoints[w.wpIdx];
 
-          const distPxX = targetPxX - curPxX;
-          const distPxY = targetPxY - curPxY;
-          const distTotal = Math.hypot(distPxX, distPxY);
-          const walkSpeedPx = 48 * (dw / 1376);
+          if (w.pauseTimer > 0) {
+            w.pauseTimer -= dt;
+            if (w.pauseTimer <= 0) {
+              w.isReturning = true;
+              w.wpIdx = curRoute.waypoints.length - 2;
+            }
+          } else if (targetWp) {
+            const targetPxX = dx + targetWp.x * dw;
+            const targetPxY = dy + targetWp.y * dh;
+            const curPxX = dx + w.curX * dw;
+            const curPxY = dy + w.curY * dh;
 
-          if (distTotal > 2.5) {
-            const stepPx = Math.min(distTotal, walkSpeedPx * dt);
-            adaCurX += (distPxX / distTotal) * (stepPx / dw);
-            adaCurY += (distPxY / distTotal) * (stepPx / dh);
-            adaTraveledDist += stepPx;
-            adaFacing = distPxX < -0.5 ? "left" : "right";
-          } else {
-            adaCurX = targetWp.x;
-            adaCurY = targetWp.y;
+            const distPxX = targetPxX - curPxX;
+            const distPxY = targetPxY - curPxY;
+            const distTotal = Math.hypot(distPxX, distPxY);
+            const walkSpeedPx = 46 * (dw / 1376);
 
-            if (!adaIsReturning) {
-              if (adaWpIdx < curRoute.waypoints.length - 1) {
-                adaWpIdx++;
-              } else {
-                // Reached destination, pause for a moment
-                adaPauseTimer = curRoute.pauseSeconds;
-              }
+            if (distTotal > 2.5) {
+              const stepPx = Math.min(distTotal, walkSpeedPx * dt);
+              w.curX += (distPxX / distTotal) * (stepPx / dw);
+              w.curY += (distPxY / distTotal) * (stepPx / dh);
+              w.traveledDist += stepPx;
+              // Forward direction: sprite naturally faces RIGHT.
+              // When moving left (distPxX < 0), flip horizontally.
+              w.facing = distPxX < -0.4 ? "left" : "right";
             } else {
-              if (adaWpIdx > 0) {
-                adaWpIdx--;
+              w.curX = targetWp.x;
+              w.curY = targetWp.y;
+
+              if (!w.isReturning) {
+                if (w.wpIdx < curRoute.waypoints.length - 1) {
+                  w.wpIdx++;
+                } else {
+                  w.pauseTimer = curRoute.pauseSeconds;
+                }
               } else {
-                // Returned home!
-                adaWalking = false;
-                adaCurX = ADA_HOME_FOOT.x;
-                adaCurY = ADA_HOME_FOOT.y;
-                adaFacing = "left";
-                adaIdleTimer = 16 + Math.random() * 8; // 16-24s idle at desk
+                if (w.wpIdx > 0) {
+                  w.wpIdx--;
+                } else {
+                  // Returned home!
+                  w.isWalking = false;
+                  w.curX = sp.homeFoot.x;
+                  w.curY = sp.homeFoot.y;
+                  w.facing = "right";
+                  w.idleTimer = 18 + Math.random() * 16; // 18-34s at home station
+                }
               }
             }
           }
         }
-      }
+      });
 
-      // If Ada is walking away from home, mask her original home position with empty floor
-      if (adaWalking) {
-        const emptyFloorImg = isDark ? adaEmptyNight : adaEmptyDay;
-        if (
-          emptyFloorImg &&
-          emptyFloorImg.complete &&
-          emptyFloorImg.naturalWidth > 0
-        ) {
-          const spAda = SPECIALISTS.find((s) => s.id === "ada")!;
-          const homeX = Math.round(dx + spAda.rect.x * dw);
-          const homeY = Math.round(dy + spAda.rect.y * dh);
-          const homeW = Math.round(spAda.rect.w * dw);
-          const homeH = Math.round(spAda.rect.h * dh);
-          ctx.drawImage(emptyFloorImg, homeX, homeY, homeW, homeH);
-        }
-      }
-
-      // 3. Render Station Specialists (Kern, Linus, Alan, Bob, Grace, and Ada when at home)
+      // 3. For any specialist walking away from home, mask their station with empty patch
       SPECIALISTS.forEach((sp) => {
-        // When Ada is roaming, her walking sprite is rendered dynamically below
-        if (sp.id === "ada" && adaWalking) return;
+        const w = walkers[sp.id];
+        if (!w || !w.isWalking) return;
+
+        const emptyPatch = emptyStationPatches[sp.id];
+        const emptyImg = isDark ? emptyPatch?.night : emptyPatch?.day;
+
+        if (emptyImg && emptyImg.complete && emptyImg.naturalWidth > 0) {
+          const destX = Math.round(dx + sp.rect.x * dw);
+          const destY = Math.round(dy + sp.rect.y * dh);
+          const destW = Math.round(sp.rect.w * dw);
+          const destH = Math.round(sp.rect.h * dh);
+          ctx.drawImage(emptyImg, destX, destY, destW, destH);
+        }
+      });
+
+      // 4. Render Station Specialists (when sitting/working at home)
+      SPECIALISTS.forEach((sp) => {
+        const w = walkers[sp.id];
+        if (w && w.isWalking) return; // Rendered dynamically in walking step below
 
         const frameSet = specialistFrames[sp.id];
         if (!frameSet) return;
@@ -549,7 +711,6 @@ export default function BackgroundMotion({
         let frameIdx = 0;
 
         if (sp.id === "kern") {
-          // Kern: rapid typing when working, natural typing bursts when idle
           if (isWorkingNow || states["kern"].isFocused) {
             frameIdx = Math.floor(now / 110) % 4;
           } else {
@@ -557,7 +718,6 @@ export default function BackgroundMotion({
             frameIdx = burstTime < 3.2 ? Math.floor(now / 180) % 4 : 0;
           }
         } else if (sp.id === "linus") {
-          // Linus: sips coffee smoothly every ~8 seconds
           const sipCycle = (now / 1000) % 8.2;
           if (sipCycle < 2.4) {
             const step = Math.floor((sipCycle / 2.4) * 6);
@@ -566,17 +726,13 @@ export default function BackgroundMotion({
             frameIdx = 0;
           }
         } else if (sp.id === "alan") {
-          // Alan: typing & reviewing dual monitors
           frameIdx = Math.floor(now / 220) % 4;
         } else if (sp.id === "bob") {
-          // Bob: checking server cables in server room
           const bobCycle = (now / 1000) % 5.5;
           frameIdx = bobCycle < 3 ? Math.floor(now / 340) % 4 : 0;
         } else if (sp.id === "grace") {
-          // Grace: typing on laptop
           frameIdx = Math.floor(now / 200) % 4;
         } else if (sp.id === "ada") {
-          // Ada: tablet review and UI checking at home spot
           frameIdx = Math.floor(now / 280) % 4;
         }
 
@@ -591,13 +747,20 @@ export default function BackgroundMotion({
         }
       });
 
-      // 4. Render Ada Walking Sprite (when roaming)
-      if (adaWalking) {
-        const footPxX = dx + adaCurX * dw;
-        const footPxY = dy + adaCurY * dh;
-        const pixelScale = dw / 1376;
+      // 5. Render Walking Specialists (Sorted by Y for correct isometric depth)
+      const activeWalkers = SPECIALISTS.filter(
+        (sp) => walkers[sp.id]?.isWalking,
+      ).sort((a, b) => walkers[a.id].curY - walkers[b.id].curY);
 
-        // Soft floor contact shadow directly beneath feet
+      activeWalkers.forEach((sp) => {
+        const w = walkers[sp.id];
+        const walkFrames = specialistWalkFrames[sp.id];
+        if (!w || !walkFrames || walkFrames.length === 0) return;
+
+        const footPxX = dx + w.curX * dw;
+        const footPxY = dy + w.curY * dh;
+
+        // Soft floor contact shadow
         ctx.save();
         ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
         ctx.beginPath();
@@ -613,28 +776,29 @@ export default function BackgroundMotion({
         ctx.fill();
         ctx.restore();
 
-        // 4-frame walk cycle synced with ground displacement (zero sliding)
+        // 4-frame walk cycle synced with ground displacement
         const walkFrameIdx =
-          adaPauseTimer > 0 ? 0 : Math.floor(adaTraveledDist / 16) % 4;
-        const walkImg = adaWalkFrames[walkFrameIdx];
+          w.pauseTimer > 0 ? 0 : Math.floor(w.traveledDist / 16) % 4;
+        const walkImg = walkFrames[walkFrameIdx];
 
         if (walkImg && walkImg.complete && walkImg.naturalWidth > 0) {
-          const spriteW = (221 / 2752) * dw;
-          const spriteH = (459 / 1536) * dh;
-          const footOffsetX = (116 / 221) * spriteW;
-          const footOffsetY = (424 / 459) * spriteH;
+          const spriteW = sp.walkW * dw;
+          const spriteH = sp.walkH * dh;
+          const footOffsetX = sp.footAnchorX * spriteW;
+          const footOffsetY = sp.footAnchorY * spriteH;
 
           ctx.save();
           ctx.translate(footPxX, footPxY);
-          if (adaFacing === "right") {
+          // Sprite naturally faces RIGHT. If moving left, flip horizontally:
+          if (w.facing === "left") {
             ctx.scale(-1, 1);
           }
           ctx.drawImage(walkImg, -footOffsetX, -footOffsetY, spriteW, spriteH);
           ctx.restore();
         }
-      }
+      });
 
-      // 5. Subtle Organic Ambiance (Blended lighting, no flat stickers)
+      // 6. Subtle Organic Ambiance (Blended lighting, no flat stickers)
       ctx.save();
       // Server room rack LEDs (soft twinkling through glass)
       if (isDark) {
@@ -686,14 +850,13 @@ export default function BackgroundMotion({
       }
       ctx.restore();
 
-      // 6. Floating Speech Bubbles (Only when active, sleek HUD style)
+      // 7. Floating Speech Bubbles (Only when active, sleek HUD style)
       SPECIALISTS.forEach((sp) => {
         const st = states[sp.id];
         if (!st.bubbleText || st.bubbleTimer <= 0) return;
 
         st.bubbleTimer -= dt;
         const text = st.bubbleText;
-        const pixelScale = dw / 1376;
         const fontSize = Math.max(10, Math.floor(10.5 * pixelScale));
 
         ctx.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
@@ -701,12 +864,13 @@ export default function BackgroundMotion({
         const bw = textW + 16 * pixelScale;
         const bh = 22 * pixelScale;
 
-        // If Ada is walking, anchor bubble above her moving head
+        // If specialist is walking, anchor bubble above their moving head
+        const w = walkers[sp.id];
         let hx = dx + sp.head.x * dw;
         let hy = dy + sp.head.y * dh;
-        if (sp.id === "ada" && adaWalking) {
-          hx = dx + adaCurX * dw;
-          hy = dy + adaCurY * dh - 65 * pixelScale;
+        if (w && w.isWalking) {
+          hx = dx + w.curX * dw;
+          hy = dy + w.curY * dh - 65 * pixelScale;
         }
 
         const bx = Math.max(10, Math.min(width - bw - 10, hx - bw / 2));
@@ -727,7 +891,7 @@ export default function BackgroundMotion({
         ctx.roundRect(bx, by, bw, bh, 6);
         ctx.fill();
 
-        // Subtle accent border
+        // Accent border
         ctx.strokeStyle = sp.color;
         ctx.lineWidth = 1.4;
         ctx.stroke();
