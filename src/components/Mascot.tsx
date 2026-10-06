@@ -17,7 +17,7 @@ interface AgentProfile {
   accent: string;
 }
 
-const PROFILES: Record<string, AgentProfile> = {
+export const AGENT_PROFILES: Record<string, AgentProfile> = {
   blue: {
     name: "Kern",
     role: "Lead Agent",
@@ -134,7 +134,7 @@ export function PixelAgentSprite({
   character: string;
   isWorking: boolean;
 }) {
-  const profile = PROFILES[character] || PROFILES.blue;
+  const profile = AGENT_PROFILES[character] || AGENT_PROFILES.blue;
   const isKern = character === "blue" || character === "kern";
   const isAda = character === "purple" || character === "ada";
   const isLinus = character === "mint" || character === "linus";

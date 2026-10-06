@@ -89,3 +89,32 @@
     transform: none !important;
   }
 }
+/* The scene owns its sizing, including isolated previews and fallback rendering. */
+.office-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  z-index: 0;
+}
+.office-scene .background-motion-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.office-scene .background-motion-canvas.is-blurred {
+  filter: blur(14px) saturate(0.65);
+  opacity: 0.38;
+  transform: scale(1.04);
+}
+/* Pixel raster over real voxel geometry; interpolation stays smooth in world space. */
+.office-scene .background-motion-canvas {
+  image-rendering: pixelated !important;
+}
+.office-agent-name,
+.office-agent-activity {
+  border-radius: 0;
+}

@@ -5,6 +5,7 @@ import {
   aisleRoute,
   belongsToTab,
   createWalker,
+  TEAM,
 } from "./office-motion";
 
 describe("office motion", () => {
@@ -49,14 +50,39 @@ describe("office motion", () => {
     advanceWalker(walker, 1 / 60);
     expect(Math.abs(walker.heading - (Math.PI - 0.05))).toBeLessThan(0.03);
   });
-  it("routes between desk rows through the outer aisle", () => {
-    expect(aisleRoute({ x: -5.4, z: -2.5 }, { x: 1.8, z: 2.9 })).toEqual([
-      { x: -5.4, z: -1.15 },
-      { x: 7.35, z: -1.15 },
-      { x: 7.35, z: 4.3 },
-      { x: 1.8, z: 4.3 },
-      { x: 1.8, z: 2.9 },
-    ]);
+  it("keeps every route clear of desks and chair backrests", () => {
+    for (const member of TEAM) {
+      const destination = {
+        x: member.home.x + 1.25,
+        z: member.home.z < 0 ? -1.15 : 1.35,
+      };
+      for (const [from, to] of [
+        [member.home, destination],
+        [destination, member.home],
+      ]) {
+        const route = [from, ...aisleRoute(from, to)];
+        for (let i = 1; i < route.length; i++) {
+          for (let step = 0; step <= 20; step++) {
+            const t = step / 20;
+            const x = route[i - 1].x * (1 - t) + route[i].x * t;
+            const z = route[i - 1].z * (1 - t) + route[i].z * t;
+            for (const station of TEAM) {
+              const facing = station.home.z < 0 ? -1 : 1;
+              const deskZ = station.home.z + facing * 0.9;
+              const backrestZ = station.home.z - facing * 0.42;
+              expect(
+                Math.abs(x - station.home.x) < 1.4 && Math.abs(z - deskZ) < 0.7,
+              ).toBe(false);
+              expect(
+                Math.abs(x - station.home.x) < 0.5 &&
+                  Math.abs(z - backrestZ) < 0.18,
+              ).toBe(false);
+            }
+          }
+        }
+        expect(route[route.length - 1]).toEqual(to);
+      }
+    }
   });
 });
 

@@ -55,11 +55,14 @@ export default function BackgroundMotion({
     sceneRef.current?.setActivity(activity);
   }, [activeTabId]);
   useEffect(() => {
+    if (activityRef.current)
+      activityRef.current = { ...activityRef.current, working: isWorking };
     sceneRef.current?.setWorking(isWorking);
   }, [isWorking]);
 
   useEffect(() => {
     let cancelled = false;
+    let contextAvailable = true;
     const canvas = canvasRef.current;
     const labels = labelsRef.current;
     if (!canvas || !labels) return;
@@ -74,7 +77,7 @@ export default function BackgroundMotion({
     const updateMotion = () =>
       sceneRef.current?.setReducedMotion(motion?.matches ?? false);
     const updateVisibility = () =>
-      sceneRef.current?.setVisible(!document.hidden);
+      sceneRef.current?.setVisible(!document.hidden && contextAvailable);
     const resize = () => sceneRef.current?.resize();
     const handleActivity = (event: Event) => {
       const detail = (event as CustomEvent<AgentEvent>).detail;
@@ -101,14 +104,20 @@ export default function BackgroundMotion({
     document.addEventListener("visibilitychange", updateVisibility);
     const contextLost = (event: Event) => {
       event.preventDefault();
+      contextAvailable = false;
       sceneRef.current?.setVisible(false);
       setReady(false);
     };
     const contextRestored = () => {
-      updateTheme();
-      resize();
-      updateVisibility();
-      setReady(true);
+      // Three restores its own GPU resources in the same event dispatch.
+      queueMicrotask(() => {
+        if (cancelled || !sceneRef.current) return;
+        contextAvailable = true;
+        updateTheme();
+        resize();
+        updateVisibility();
+        setReady(true);
+      });
     };
     canvas.addEventListener("webglcontextlost", contextLost);
     canvas.addEventListener("webglcontextrestored", contextRestored);

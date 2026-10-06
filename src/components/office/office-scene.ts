@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   TEAM,
@@ -27,11 +27,11 @@ export function createOfficeScene(
 ): OfficeScene {
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: true,
+    antialias: false,
     alpha: false,
     powerPreference: "low-power",
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.setPixelRatio(1);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -43,10 +43,10 @@ export function createOfficeScene(
   scene.add(room);
   const geometry = {
     box: new THREE.BoxGeometry(1, 1, 1),
-    round: new RoundedBoxGeometry(1, 1, 1, 2, 0.12),
-    ball: new THREE.SphereGeometry(1, 16, 12),
-    cylinder: new THREE.CylinderGeometry(1, 1, 1, 16),
-    leaf: new THREE.SphereGeometry(1, 8, 6),
+    round: new THREE.BoxGeometry(1, 1, 1),
+    ball: new THREE.BoxGeometry(2, 2, 2),
+    cylinder: new THREE.BoxGeometry(2, 1, 2),
+    leaf: new THREE.BoxGeometry(2, 2, 2),
   };
   const materials = new Map<string, THREE.MeshStandardMaterial>();
   function material(color: string, glow = 0) {
@@ -55,8 +55,9 @@ export function createOfficeScene(
     if (!result) {
       result = new THREE.MeshStandardMaterial({
         color,
-        roughness: 0.78,
-        metalness: 0.05,
+        roughness: 1,
+        metalness: 0,
+        flatShading: true,
         emissive: glow ? color : "#000000",
         emissiveIntensity: glow,
       });
@@ -101,8 +102,8 @@ export function createOfficeScene(
       );
     }
   }
-  box(room, "#d3c9b7", [60, 12, 0.24], [20.8, 5.9, -6.2]);
-  box(room, "#315354", [0.25, 12, 60], [-9.2, 5.9, 23.8]);
+  box(room, "#d3c9b7", [60, 30, 0.24], [20.8, 14.9, -6.2]);
+  box(room, "#315354", [0.25, 30, 60], [-9.2, 14.9, 23.8]);
   box(room, "#444c44", [60, 0.14, 0.12], [20.8, 0.14, -6.02]);
   box(room, "#263e3c", [0.12, 0.14, 60], [-9.02, 0.14, 23.8]);
   box(room, "#294c4d", [5.4, 3.65, 0.16], [-5.95, 2.2, -6.01]);
@@ -161,18 +162,20 @@ export function createOfficeScene(
     room.add(group);
     shape(group, "cylinder", "#c6bda7", [0.3, 0.55, 0.3], [0, 0.28, 0]);
     shape(group, "cylinder", "#53493b", [0.26, 0.035, 0.26], [0, 0.56, 0]);
-    for (let i = 0; i < 7; i++) {
-      const angle = i * 2.4;
-      const leaf = shape(
+    box(group, "#547b58", [0.08, 0.8, 0.08], [0, 0.94, 0]);
+    for (let i = 0; i < 12; i++) {
+      const tier = Math.floor(i / 4);
+      const x = [0.24, -0.24, 0, 0][i % 4] * (1 - tier * 0.18);
+      const z = [0, 0, 0.24, -0.24][i % 4] * (1 - tier * 0.18);
+      box(
         group,
-        "leaf",
         i % 2 ? "#547b58" : "#729269",
-        [0.15, 0.54, 0.25],
-        [Math.sin(angle) * 0.23, 0.96 + (i % 3) * 0.18, Math.cos(angle) * 0.23],
+        [0.24, 0.24, 0.24],
+        [x, 0.85 + tier * 0.24, z],
       );
-      leaf.rotation.set(Math.cos(angle) * 0.45, angle, Math.sin(angle) * 0.45);
     }
   }
+
   plant(-8.2, -4.95, 1.3);
   plant(8.0, -5.1, 1.25);
   plant(8.2, 4.8);
@@ -197,14 +200,25 @@ export function createOfficeScene(
   const screens: THREE.MeshStandardMaterial[] = [];
   for (const member of TEAM) {
     const { x, z } = member.home;
-    const deskZ = z - 0.9;
-    box(room, "#c0a17b", [2.65, 0.13, 1.25], [x, 1.02, deskZ], true);
-    for (const side of [-1, 1]) {
-      box(room, "#334743", [0.08, 0.95, 1.0], [x + side * 1.12, 0.49, deskZ]);
+    const station = new THREE.Group();
+    room.add(station);
+    if (z > 0) {
+      station.position.set(2 * x, 0, 2 * z);
+      station.rotation.y = Math.PI;
     }
-    box(room, "#26383d", [1.16, 0.7, 0.095], [x, 1.63, deskZ - 0.25], true);
+    const deskZ = z - 0.9;
+    box(station, "#c0a17b", [2.65, 0.13, 1.25], [x, 1.02, deskZ], true);
+    for (const side of [-1, 1]) {
+      box(
+        station,
+        "#334743",
+        [0.08, 0.95, 1.0],
+        [x + side * 1.12, 0.49, deskZ],
+      );
+    }
+    box(station, "#26383d", [1.16, 0.7, 0.095], [x, 1.63, deskZ - 0.25], true);
     const screen = box(
-      room,
+      station,
       member.color,
       [1.04, 0.57, 0.018],
       [x, 1.64, deskZ - 0.193],
@@ -215,7 +229,7 @@ export function createOfficeScene(
     // Code/editor lines on screen are geometry, crisp at every display density.
     for (let line = 0; line < 6; line++) {
       box(
-        room,
+        station,
         line % 3 ? "#c5e0d4" : "#f3d1a4",
         [0.28 + (line % 3) * 0.14, 0.019, 0.006],
         [x - 0.15 + (line % 2) * 0.1, 1.84 - line * 0.076, deskZ - 0.18],
@@ -223,29 +237,35 @@ export function createOfficeScene(
         0.35,
       );
     }
-    box(room, "#35444a", [0.065, 0.32, 0.065], [x, 1.22, deskZ - 0.25]);
-    box(room, "#35444a", [0.43, 0.035, 0.3], [x, 1.11, deskZ - 0.25], true);
-    box(room, "#4f6060", [0.72, 0.045, 0.24], [x, 1.12, deskZ + 0.35], true);
+    box(station, "#35444a", [0.065, 0.32, 0.065], [x, 1.22, deskZ - 0.25]);
+    box(station, "#35444a", [0.43, 0.035, 0.3], [x, 1.11, deskZ - 0.25], true);
+    box(station, "#4f6060", [0.72, 0.045, 0.24], [x, 1.12, deskZ + 0.35], true);
     shape(
-      room,
+      station,
       "cylinder",
       member.color,
       [0.095, 0.17, 0.095],
       [x + 0.9, 1.17, deskZ + 0.2],
     );
     box(
-      room,
+      station,
       "#ddd0ad",
       [0.3, 0.035, 0.36],
       [x - 0.92, 1.11, deskZ + 0.15],
       true,
     );
     // Empty chairs remain physical objects when a specialist walks away.
-    box(room, "#3c5155", [0.69, 0.13, 0.65], [x, 0.49, z + 0.13], true);
-    box(room, "#3c5155", [0.69, 0.64, 0.13], [x, 0.9, z + 0.42], true);
-    shape(room, "cylinder", "#354044", [0.07, 0.43, 0.07], [x, 0.24, z + 0.1]);
-    box(room, "#354044", [0.72, 0.065, 0.09], [x, 0.1, z + 0.1]);
-    box(room, "#354044", [0.09, 0.065, 0.72], [x, 0.1, z + 0.1]);
+    box(station, "#3c5155", [0.69, 0.13, 0.65], [x, 0.49, z + 0.13], true);
+    box(station, "#3c5155", [0.69, 0.64, 0.13], [x, 0.9, z + 0.42], true);
+    shape(
+      station,
+      "cylinder",
+      "#354044",
+      [0.07, 0.43, 0.07],
+      [x, 0.24, z + 0.1],
+    );
+    box(station, "#354044", [0.72, 0.065, 0.09], [x, 0.1, z + 0.1]);
+    box(station, "#354044", [0.09, 0.065, 0.72], [x, 0.1, z + 0.1]);
   }
   // Pendant fixtures, balanced daylight and a warm practical light.
   for (const x of [-4.9, 2.8]) {
@@ -305,69 +325,10 @@ export function createOfficeScene(
   });
 
   function character(member: (typeof TEAM)[number]) {
-    const root = new THREE.Group();
+    const { root, body, head, arms, legs, knees } = createVoxelCharacter(
+      member.id,
+    );
     scene.add(root);
-    const body = new THREE.Group();
-    root.add(body);
-    box(body, member.color, [0.53, 0.58, 0.34], [0, 1.02, 0], true);
-    box(body, "#e0d8c4", [0.15, 0.18, 0.027], [0, 1.21, 0.18], true);
-    const head = new THREE.Group();
-    head.position.y = 1.48;
-    body.add(head);
-    shape(head, "ball", member.skin, [0.26, 0.28, 0.245], [0, 0, 0]);
-    shape(head, "ball", member.hair, [0.275, 0.18, 0.25], [0, 0.17, -0.025]);
-    box(head, member.hair, [0.5, 0.21, 0.13], [0, 0.12, -0.17], true);
-    if (member.id === "ada" || member.id === "grace") {
-      shape(head, "ball", member.hair, [0.22, 0.26, 0.2], [0, -0.015, -0.24]);
-    }
-    for (const side of [-1, 1]) {
-      shape(
-        head,
-        "ball",
-        member.skin,
-        [0.06, 0.09, 0.055],
-        [side * 0.245, -0.015, 0],
-      );
-      shape(
-        head,
-        "ball",
-        "#26323b",
-        [0.022, 0.032, 0.015],
-        [side * 0.09, 0.018, 0.225],
-      );
-      if (member.id === "kern" || member.id === "alan") {
-        const rim = new THREE.Mesh(
-          new THREE.TorusGeometry(0.072, 0.012, 6, 16),
-          material("#334048"),
-        );
-        rim.position.set(side * 0.096, 0.02, 0.233);
-        head.add(rim);
-      }
-    }
-    shape(head, "ball", member.skin, [0.035, 0.037, 0.045], [0, -0.035, 0.239]);
-    box(head, "#865d50", [0.07, 0.012, 0.013], [0, -0.112, 0.215], true);
-    const arms: THREE.Group[] = [],
-      legs: THREE.Group[] = [],
-      knees: THREE.Group[] = [];
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Group();
-      arm.position.set(side * 0.34, 1.23, 0);
-      body.add(arm);
-      arms.push(arm);
-      box(arm, member.color, [0.19, 0.32, 0.23], [0, -0.14, 0], true);
-      shape(arm, "ball", member.skin, [0.095, 0.17, 0.1], [0, -0.37, 0]);
-      const leg = new THREE.Group();
-      leg.position.set(side * 0.145, 0.78, 0);
-      body.add(leg);
-      legs.push(leg);
-      box(leg, "#394954", [0.22, 0.35, 0.25], [0, -0.16, 0], true);
-      const knee = new THREE.Group();
-      knee.position.y = -0.34;
-      leg.add(knee);
-      knees.push(knee);
-      box(knee, "#394954", [0.2, 0.33, 0.22], [0, -0.145, 0], true);
-      box(knee, "#e2d9c7", [0.23, 0.12, 0.36], [0, -0.32, 0.06], true);
-    }
     const ringMaterial = new THREE.MeshBasicMaterial({
       color: member.color,
       transparent: true,
@@ -375,7 +336,7 @@ export function createOfficeScene(
       depthWrite: false,
     });
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.47, 0.51, 40),
+      new THREE.RingGeometry(0.5, 0.55, 4),
       ringMaterial,
     );
     ring.rotation.x = -Math.PI / 2;
@@ -393,7 +354,8 @@ export function createOfficeScene(
     labels.append(label);
     const walker = createWalker(member.home);
     root.position.set(member.home.x, 0, member.home.z);
-    root.rotation.y = Math.PI;
+    root.rotation.y = member.home.z < 0 ? Math.PI : 0;
+    walker.heading = root.rotation.y;
     return {
       member,
       root,
@@ -420,6 +382,7 @@ export function createOfficeScene(
     disposed = false,
     dark = true,
     working = false;
+  let bubbleTimeout: ReturnType<typeof setTimeout> | undefined;
   let elapsed = 0,
     previous = 0,
     width = 1,
@@ -432,7 +395,9 @@ export function createOfficeScene(
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
     height = Math.max(1, canvas.parentElement?.clientHeight || 1);
-    renderer.setSize(width, height, false);
+    // Pixel density is intentional and independent of display DPR. Geometry and
+    // animation remain continuous; only the final raster uses crisp 2px pixels.
+    renderer.setSize(Math.ceil(width / 2), Math.ceil(height / 2), false);
     camera.aspect = width / height;
     // Narrow panes pull back instead of cropping specialists out of the room.
     const distance = Math.max(1, 1.55 / camera.aspect);
@@ -463,9 +428,10 @@ export function createOfficeScene(
       });
     else if (!characters.some((actor) => actor.focused))
       characters.find((actor) => actor.member.id === "kern")!.focused = true;
-    draw(0);
+    if (reduced || !previous) draw(0);
   }
   function setActivity(activity: Activity) {
+    clearTimeout(bubbleTimeout);
     working = activity.working;
     characters.forEach((actor) => {
       actor.focused = activity.working && actor.member.id === activity.id;
@@ -486,8 +452,24 @@ export function createOfficeScene(
         actor.bubbleUntil = 0;
       }
     });
-    draw(0);
+    if (reduced || !previous) draw(0);
+    scheduleBubbleExpiry();
   }
+  function scheduleBubbleExpiry() {
+    clearTimeout(bubbleTimeout);
+    const remaining = Math.max(
+      ...characters.map((actor) => actor.bubbleUntil - elapsed),
+    );
+    if (reduced && remaining > 0) {
+      bubbleTimeout = setTimeout(() => {
+        characters.forEach((actor) => {
+          actor.bubbleUntil = 0;
+        });
+        draw(0);
+      }, remaining * 1000);
+    }
+  }
+
   function draw(dt: number) {
     if (disposed || !visible) return;
     elapsed += dt;
@@ -521,7 +503,7 @@ export function createOfficeScene(
               ? member.home
               : {
                   x: member.home.x + (member.home.x > 0 ? -1.25 : 1.25),
-                  z: member.home.z < 0 ? -1.15 : 4.3,
+                  z: member.home.z < 0 ? -1.15 : 1.35,
                 };
             walker.route = aisleRoute(walker.position, destination);
             actor.excursion = !actor.excursion;
@@ -538,8 +520,8 @@ export function createOfficeScene(
         if (actor.sit < 0.12 || !walker.route.length) advanceWalker(walker, dt);
         if (atHome) {
           const turn = Math.atan2(
-            Math.sin(Math.PI - walker.heading),
-            Math.cos(Math.PI - walker.heading),
+            Math.sin((member.home.z < 0 ? Math.PI : 0) - walker.heading),
+            Math.cos((member.home.z < 0 ? Math.PI : 0) - walker.heading),
           );
           walker.heading += turn * (1 - Math.exp(-5 * dt));
         }
@@ -631,12 +613,13 @@ export function createOfficeScene(
           actor.walker.route = [];
           actor.walker.position = { ...actor.member.home };
           actor.walker.speed = 0;
-          actor.walker.heading = Math.PI;
+          actor.walker.heading = actor.member.home.z < 0 ? Math.PI : 0;
           actor.sit = 1;
           actor.excursion = false;
         });
       }
       schedule();
+      scheduleBubbleExpiry();
     },
     setVisible(value) {
       visible = value;
@@ -644,6 +627,7 @@ export function createOfficeScene(
     },
     dispose() {
       disposed = true;
+      clearTimeout(bubbleTimeout);
       renderer.setAnimationLoop(null);
       window.removeEventListener("pointermove", move);
       const allGeometry = new Set<THREE.BufferGeometry>([

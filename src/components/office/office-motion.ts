@@ -186,14 +186,25 @@ export const damp = (value: number, target: number, rate: number, dt: number) =>
 
 /** Waypoints stay in the clear aisle in front of each row, never through a desk. */
 export function aisleRoute(from: Point, to: Point): Point[] {
-  const aisle = (point: Point) => (point.z < 0 ? -1.15 : 4.3);
+  const aisle = (point: Point) => (point.z < 0 ? -1.15 : 1.35);
   const fromAisle = aisle(from);
   const toAisle = aisle(to);
-  const path: Point[] = [{ x: from.x, z: fromAisle }];
+  const atStation = (point: Point) =>
+    TEAM.some(
+      (member) =>
+        Math.hypot(point.x - member.home.x, point.z - member.home.z) < 0.08,
+    );
+  const exitX = from.x + (atStation(from) ? 0.72 : 0);
+  const entryX = to.x + (atStation(to) ? 0.72 : 0);
+  // Step beside the chair before entering the aisle; never walk through its backrest.
+  const path: Point[] = [
+    { x: exitX, z: from.z },
+    { x: exitX, z: fromAisle },
+  ];
   if (fromAisle !== toAisle) {
     path.push({ x: 7.35, z: fromAisle }, { x: 7.35, z: toAisle });
   }
-  path.push({ x: to.x, z: toAisle }, { ...to });
+  path.push({ x: entryX, z: toAisle }, { x: entryX, z: to.z }, { ...to });
   return path;
 }
 
