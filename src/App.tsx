@@ -120,14 +120,6 @@ function savedTabs(): Tab[] {
   }
 }
 
-function chatSlug(id: string) {
-  return id
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 32);
-}
-
 export default function App() {
   const [configErr, setConfigErr] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tab[]>(savedTabs);

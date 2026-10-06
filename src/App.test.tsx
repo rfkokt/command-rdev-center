@@ -128,7 +128,7 @@ test("never deletes worktrees as startup housekeeping", async () => {
   await screen.findByText("v1.2.3");
   expect(
     invokeMock.mock.calls.some(
-      ([command]) => command === "cleanup_orphaned_worktrees",
+      (call: unknown[]) => call[0] === "cleanup_orphaned_worktrees",
     ),
   ).toBe(false);
 });
