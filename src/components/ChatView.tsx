@@ -394,6 +394,31 @@ export default function ChatView({
   const forkHistoryRequestRef = useRef<string | null>(null);
   const forkHistoryLoadingRef = useRef(false);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
+
+  // Mirror the existing loading state in the office scene without changing
+  // session loading, retries, or the chat data flow.
+  useEffect(() => {
+    if (typeof window === "undefined" || !isActive) return;
+    const dispatch = (loading: boolean) =>
+      window.dispatchEvent(
+        new CustomEvent("crc-session-loading", {
+          detail: { loading, tabId: chatId },
+        }),
+      );
+    dispatch(isHistoryLoading);
+    // The initial history card can render before BackgroundMotion's passive
+    // listener mounts. Replay once after the effect queue has settled so the
+    // 3D character and the card enter the loading state together.
+    let cancelled = false;
+    const resync = window.setTimeout(() => {
+      if (!cancelled) dispatch(isHistoryLoading);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(resync);
+      dispatch(false);
+    };
+  }, [chatId, isActive, isHistoryLoading]);
   const [input, setInput] = useState("");
   // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
   // pi; the displayed user message stays raw.

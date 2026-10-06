@@ -123,4 +123,23 @@ describe("agent activity", () => {
       }),
     ).toMatchObject({ working: false, error: true });
   });
+  it("marks a user prompt as the start of the visual team briefing", () => {
+    expect(
+      activityFor("crc-agent-prompt", { text: "Build the interface" }),
+    ).toMatchObject({ id: "kern", working: true, discussion: true });
+  });
+  it("maps session history loading to Kern without changing the session flow", () => {
+    expect(
+      activityFor("crc-session-loading", { loading: true }),
+    ).toMatchObject({
+      id: "kern",
+      text: "Restoring chat history…",
+      working: true,
+    });
+    expect(activityFor("crc-session-loading", { loading: false })).toMatchObject({
+      id: "kern",
+      text: "Ready",
+      working: false,
+    });
+  });
 });

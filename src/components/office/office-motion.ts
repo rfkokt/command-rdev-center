@@ -65,12 +65,14 @@ export type AgentEvent = {
   title?: string;
   detail?: string;
   text?: string;
+  loading?: boolean;
 };
 export type Activity = {
   id: AgentId;
   text: string;
   working: boolean;
   error?: boolean;
+  discussion?: boolean;
 };
 
 export function belongsToTab(event: AgentEvent, activeTabId?: string) {
@@ -88,8 +90,20 @@ export function activityFor(
       working: !!event.running,
     };
   }
+  if (eventName === "crc-session-loading") {
+    return {
+      id: "kern",
+      text: event.loading ? "Restoring chat history…" : "Ready",
+      working: !!event.loading,
+    };
+  }
   if (eventName === "crc-agent-prompt") {
-    return { id: "kern", text: "Planning the next steps…", working: true };
+    return {
+      id: "kern",
+      text: "Planning the next steps…",
+      working: true,
+      discussion: true,
+    };
   }
   if (eventName === "crc-agent-activity-sync") {
     const agent = TEAM.find(

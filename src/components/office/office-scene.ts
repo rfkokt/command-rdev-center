@@ -27,13 +27,15 @@ export function createOfficeScene(
 ): OfficeScene {
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: false,
+    antialias: true,
     alpha: false,
-    powerPreference: "low-power",
+    powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(1);
+  renderer.setPixelRatio(
+    Math.min(1.5, Math.max(1, window.devicePixelRatio || 1)),
+  );
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   const scene = new THREE.Scene();
@@ -267,6 +269,20 @@ export function createOfficeScene(
     box(station, "#354044", [0.72, 0.065, 0.09], [x, 0.1, z + 0.1]);
     box(station, "#354044", [0.09, 0.065, 0.72], [x, 0.1, z + 0.1]);
   }
+  // A shared briefing spot gives the team a visible place to discuss a prompt.
+  // The ring of positions leaves a clear aisle around the low pixel table.
+  const discussionSpots = [
+    { x: -1.65, z: -1.25 },
+    { x: 0, z: -1.25 },
+    { x: 1.65, z: -1.25 },
+    { x: -1.65, z: 1.45 },
+    { x: 0, z: 1.45 },
+    { x: 1.65, z: 1.45 },
+  ] as const;
+  box(room, "#4a5960", [4.2, 0.06, 2.55], [0, 0.035, 0.1], true);
+  box(room, "#6d513e", [3.2, 0.12, 1.05], [0, 0.76, 0.1], true);
+  for (const x of [-1.25, 1.25])
+    box(room, "#3e4b4b", [0.12, 0.72, 0.82], [x, 0.38, 0.1]);
   // Pendant fixtures, balanced daylight and a warm practical light.
   for (const x of [-4.9, 2.8]) {
     box(room, "#334342", [0.025, 0.75, 0.025], [x, 5.05, -0.4]);
@@ -287,8 +303,8 @@ export function createOfficeScene(
     near: 0.5,
     far: 35,
   });
-  sunlight.shadow.bias = -0.0004;
-  sunlight.shadow.normalBias = 0.035;
+  sunlight.shadow.bias = 0.001;
+  sunlight.shadow.normalBias = 0.05;
   scene.add(sunlight);
   const fill = new THREE.DirectionalLight("#a2c4d6", 1.2);
   fill.position.set(-5, 5, -5);
@@ -319,7 +335,9 @@ export function createOfficeScene(
     if (!combined) return;
     baked.push(combined);
     const mesh = new THREE.Mesh(combined, mat);
-    mesh.castShadow = true;
+    // The baked room is static. Let characters cast shadows onto it, but avoid
+    // self-shadowing the large floor/wall batches, which causes acne and flicker.
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
     room.add(mesh);
   });
@@ -381,8 +399,10 @@ export function createOfficeScene(
     visible = true,
     disposed = false,
     dark = true,
-    working = false;
+    working = false,
+    discussionActive = false;
   let bubbleTimeout: ReturnType<typeof setTimeout> | undefined;
+  const discussionTimeouts: ReturnType<typeof setTimeout>[] = [];
   let elapsed = 0,
     previous = 0,
     width = 1,
@@ -395,9 +415,10 @@ export function createOfficeScene(
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
     height = Math.max(1, canvas.parentElement?.clientHeight || 1);
-    // Pixel density is intentional and independent of display DPR. Geometry and
-    // animation remain continuous; only the final raster uses crisp 2px pixels.
-    renderer.setSize(Math.ceil(width / 2), Math.ceil(height / 2), false);
+    // Keep the voxel geometry crisp while rendering at a stable native canvas
+    // size. Half-resolution rasterization made the floor shimmer during resize
+    // and pointer parallax.
+    renderer.setSize(Math.ceil(width), Math.ceil(height), false);
     camera.aspect = width / height;
     // Narrow panes pull back instead of cropping specialists out of the room.
     const distance = Math.max(1, 1.55 / camera.aspect);
@@ -430,8 +451,28 @@ export function createOfficeScene(
       characters.find((actor) => actor.member.id === "kern")!.focused = true;
     if (reduced || !previous) draw(0);
   }
+  function routeHome(actor: (typeof characters)[number]) {
+    actor.walker.route = aisleRoute(actor.walker.position, actor.member.home);
+    actor.excursion = false;
+  }
+  function startDiscussion() {
+    discussionActive = true;
+    characters.forEach((actor, index) => {
+      const spot = discussionSpots[index % discussionSpots.length];
+      actor.walker.route = aisleRoute(actor.walker.position, spot);
+      actor.excursion = false;
+    });
+  }
+  function endDiscussion() {
+    if (!discussionActive) return;
+    discussionActive = false;
+    characters.forEach(routeHome);
+  }
   function setActivity(activity: Activity) {
     clearTimeout(bubbleTimeout);
+    discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
+    if (activity.discussion && activity.working) startDiscussion();
+    else endDiscussion();
     working = activity.working;
     characters.forEach((actor) => {
       actor.focused = activity.working && actor.member.id === activity.id;
@@ -441,19 +482,44 @@ export function createOfficeScene(
           text.length > 58 ? `${text.slice(0, 57)}…` : text;
         actor.bubbleUntil = elapsed + (activity.working ? 8 : 3.5);
         actor.label.dataset.error = String(!!activity.error);
-        if (actor.focused && actor.excursion) {
-          actor.walker.route = aisleRoute(
-            actor.walker.position,
-            actor.member.home,
-          );
-          actor.excursion = false;
-        }
       } else {
         actor.bubbleUntil = 0;
       }
     });
     if (reduced || !previous) draw(0);
     scheduleBubbleExpiry();
+    if (activity.discussion && activity.working) scheduleDiscussion();
+  }
+
+  function scheduleDiscussion() {
+    // This is a visual choreography layered on top of existing agent events.
+    // Tool routing still comes from activityFor(), so the app's behavior stays unchanged.
+    const steps: Array<{
+      delay: number;
+      id: (typeof TEAM)[number]["id"];
+      text: string;
+    }> = [
+      { delay: 520, id: "ada", text: "I’ll shape the interface." },
+      { delay: 1120, id: "alan", text: "I’ll trace the code path." },
+      { delay: 1720, id: "linus", text: "I’m checking the implementation." },
+      { delay: 2320, id: "kern", text: "Team aligned. Executing." },
+    ];
+    steps.forEach(({ delay, id, text }) => {
+      const timeout = setTimeout(
+        () => {
+          if (disposed || !working) return;
+          characters.forEach((actor) => {
+            actor.focused = actor.member.id === id;
+            actor.bubbleUntil =
+              actor.member.id === id ? elapsed + 6 : actor.bubbleUntil;
+            if (actor.member.id === id) actor.bubble.textContent = text;
+          });
+          draw(0);
+        },
+        reduced ? 0 : delay,
+      );
+      discussionTimeouts.push(timeout);
+    });
   }
   function scheduleBubbleExpiry() {
     clearTimeout(bubbleTimeout);
@@ -518,10 +584,18 @@ export function createOfficeScene(
         actor.sit = damp(actor.sit, atHome ? 1 : 0, 7, dt);
         // Stand before taking the first step to avoid sliding out of the chair.
         if (actor.sit < 0.12 || !walker.route.length) advanceWalker(walker, dt);
-        if (atHome) {
+        if (atHome || (discussionActive && !walker.route.length)) {
+          const target = discussionActive
+            ? { x: 0, z: 0.1 }
+            : { x: member.home.x, z: member.home.z < 0 ? member.home.z - 1 : member.home.z + 1 };
+          const targetHeading = discussionActive
+            ? Math.atan2(target.z - walker.position.z, target.x - walker.position.x)
+            : member.home.z < 0
+              ? Math.PI
+              : 0;
           const turn = Math.atan2(
-            Math.sin((member.home.z < 0 ? Math.PI : 0) - walker.heading),
-            Math.cos((member.home.z < 0 ? Math.PI : 0) - walker.heading),
+            Math.sin(targetHeading - walker.heading),
+            Math.cos(targetHeading - walker.heading),
           );
           walker.heading += turn * (1 - Math.exp(-5 * dt));
         }
@@ -583,6 +657,7 @@ export function createOfficeScene(
   const move = (event: PointerEvent) => {
     if (reduced || event.pointerType === "touch") return;
     const bounds = canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
     pointer.set(
       THREE.MathUtils.clamp(
         (event.clientX - bounds.left) / bounds.width - 0.5,
@@ -628,6 +703,7 @@ export function createOfficeScene(
     dispose() {
       disposed = true;
       clearTimeout(bubbleTimeout);
+      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
       renderer.setAnimationLoop(null);
       window.removeEventListener("pointermove", move);
       const allGeometry = new Set<THREE.BufferGeometry>([

@@ -14,6 +14,7 @@ const ACTIVITY_EVENTS = [
   "crc-agent-activity",
   "crc-agent-prompt",
   "crc-agent-running",
+  "crc-session-loading",
 ] as const;
 
 export default function BackgroundMotion({
@@ -78,7 +79,14 @@ export default function BackgroundMotion({
       sceneRef.current?.setReducedMotion(motion?.matches ?? false);
     const updateVisibility = () =>
       sceneRef.current?.setVisible(!document.hidden && contextAvailable);
-    const resize = () => sceneRef.current?.resize();
+    let resizeFrame = 0;
+    const resize = () => {
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = 0;
+        sceneRef.current?.resize();
+      });
+    };
     const handleActivity = (event: Event) => {
       const detail = (event as CustomEvent<AgentEvent>).detail;
       if (!detail || !belongsToTab(detail, latest.current.activeTabId)) return;
@@ -149,6 +157,7 @@ export default function BackgroundMotion({
     }
     return () => {
       cancelled = true;
+      if (resizeFrame) cancelAnimationFrame(resizeFrame);
       sceneRef.current?.dispose();
       sceneRef.current = null;
       observer.disconnect();

@@ -61,6 +61,12 @@
   color: var(--office-label-ink);
   border-color: var(--agent-color);
 }
+.office-agent-label[data-active="true"] {
+  z-index: 2;
+}
+.office-agent-label[data-bubble="true"] {
+  z-index: 3;
+}
 .office-agent-activity {
   display: none;
   padding: 8px 10px;
@@ -110,9 +116,9 @@
   opacity: 0.38;
   transform: scale(1.04);
 }
-/* Pixel raster over real voxel geometry; interpolation stays smooth in world space. */
+/* Voxel geometry stays crisp without forcing a low-resolution raster that can shimmer. */
 .office-scene .background-motion-canvas {
-  image-rendering: pixelated !important;
+  image-rendering: auto;
 }
 .office-agent-name,
 .office-agent-activity {

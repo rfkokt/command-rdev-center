@@ -52,6 +52,18 @@ it("only forwards active-tab events and resets the scene when switching tabs", a
   expect(scene.setActivity).toHaveBeenLastCalledWith(
     expect.objectContaining({ id: "bob", working: true }),
   );
+  dispatch("crc-agent-prompt", { tabId: "first", text: "Build the interface" });
+  expect(scene.setActivity).toHaveBeenLastCalledWith(
+    expect.objectContaining({ id: "kern", working: true, discussion: true }),
+  );
+  dispatch("crc-session-loading", { tabId: "first", loading: true });
+  expect(scene.setActivity).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      id: "kern",
+      working: true,
+      text: "Restoring chat history…",
+    }),
+  );
   rerender(<BackgroundMotion activeTabId="second" />);
   expect(scene.setActivity).toHaveBeenLastCalledWith(
     expect.objectContaining({ id: "kern", working: false }),
