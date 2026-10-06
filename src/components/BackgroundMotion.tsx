@@ -38,10 +38,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 440 / 1536,
     },
     emptyRect: {
-      x: 900 / 2752,
-      y: 660 / 1536,
-      w: 380 / 2752,
-      h: 640 / 1536,
+      x: 888 / 2752,
+      y: 688 / 1536,
+      w: 373 / 2752,
+      h: 519 / 1536,
     },
     head: { x: 1130 / 2752, y: 730 / 1536 },
     homeFoot: { x: 1080 / 2752, y: 1050 / 1536 },
@@ -64,10 +64,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 260 / 1536,
     },
     emptyRect: {
-      x: 1620 / 2752,
-      y: 950 / 1536,
-      w: 420 / 2752,
-      h: 500 / 1536,
+      x: 1588 / 2752,
+      y: 938 / 1536,
+      w: 473 / 2752,
+      h: 523 / 1536,
     },
     head: { x: 1840 / 2752, y: 1040 / 1536 },
     homeFoot: { x: 1780 / 2752, y: 1240 / 1536 },
@@ -90,10 +90,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 400 / 1536,
     },
     emptyRect: {
-      x: 180 / 2752,
-      y: 400 / 1536,
-      w: 380 / 2752,
-      h: 680 / 1536,
+      x: 138 / 2752,
+      y: 388 / 1536,
+      w: 373 / 2752,
+      h: 623 / 1536,
     },
     head: { x: 420 / 2752, y: 500 / 1536 },
     homeFoot: { x: 410 / 2752, y: 920 / 1536 },
@@ -116,10 +116,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     emptyRect: {
-      x: 1480 / 2752,
-      y: 300 / 1536,
-      w: 400 / 2752,
-      h: 400 / 1536,
+      x: 1488 / 2752,
+      y: 289 / 1536,
+      w: 373 / 2752,
+      h: 422 / 1536,
     },
     head: { x: 1700 / 2752, y: 340 / 1536 },
     homeFoot: { x: 1700 / 2752, y: 480 / 1536 },
@@ -142,10 +142,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 300 / 1536,
     },
     emptyRect: {
-      x: 1100 / 2752,
-      y: 200 / 1536,
-      w: 300 / 2752,
-      h: 400 / 1536,
+      x: 1040 / 2752,
+      y: 188 / 1536,
+      w: 321 / 2752,
+      h: 423 / 1536,
     },
     head: { x: 1260 / 2752, y: 290 / 1536 },
     homeFoot: { x: 1260 / 2752, y: 420 / 1536 },
@@ -168,10 +168,10 @@ const SPECIALISTS: SpecialistConfig[] = [
       h: 280 / 1536,
     },
     emptyRect: {
-      x: 450 / 2752,
-      y: 720 / 1536,
-      w: 430 / 2752,
-      h: 530 / 1536,
+      x: 438 / 2752,
+      y: 738 / 1536,
+      w: 423 / 2752,
+      h: 523 / 1536,
     },
     head: { x: 720 / 2752, y: 760 / 1536 },
     homeFoot: { x: 720 / 2752, y: 980 / 1536 },
@@ -372,20 +372,21 @@ export default function BackgroundMotion({
     const dayImg = typeof Image !== "undefined" ? new Image() : null;
     if (dayImg) dayImg.src = "/pixel_office_active_day.jpg";
 
-    // 2. Preload station micro-animations (night & day)
+    // 2. Full 2K empty backgrounds (2752x1536) for 100% seamless 1:1 station masking when walking
+    const emptyNightFullImg = typeof Image !== "undefined" ? new Image() : null;
+    if (emptyNightFullImg)
+      emptyNightFullImg.src = "/pixel_office_empty_night_2k.jpg";
+    const emptyDayFullImg = typeof Image !== "undefined" ? new Image() : null;
+    if (emptyDayFullImg) emptyDayFullImg.src = "/pixel_office_empty_day_2k.jpg";
+
+    // 3. Preload station micro-animations (night & day)
     const specialistFrames: Record<
       string,
       { night: HTMLImageElement[]; day: HTMLImageElement[] }
     > = {};
 
-    // 3. Preload 4-frame walk cycles for all 6 specialists
+    // 4. Preload 4-frame walk cycles for all 6 specialists
     const specialistWalkFrames: Record<string, HTMLImageElement[]> = {};
-
-    // 4. Preload empty station patches (night & day)
-    const emptyStationPatches: Record<
-      string,
-      { night: HTMLImageElement; day: HTMLImageElement }
-    > = {};
 
     SPECIALISTS.forEach((sp) => {
       specialistFrames[sp.id] = { night: [], day: [] };
@@ -404,12 +405,6 @@ export default function BackgroundMotion({
         wImg.src = `/sprites/${sp.id}_walk_frame_${i}.png`;
         specialistWalkFrames[sp.id].push(wImg);
       }
-
-      const emptyN = new Image();
-      emptyN.src = `/sprites/${sp.id}_empty_night.png`;
-      const emptyD = new Image();
-      emptyD.src = `/sprites/${sp.id}_empty_day.png`;
-      emptyStationPatches[sp.id] = { night: emptyN, day: emptyD };
     });
 
     const states: Record<string, SpecialistState> = {};
@@ -496,9 +491,11 @@ export default function BackgroundMotion({
           }
         });
 
-        // Trigger specialist to roam or sync
+        // Trigger the EXACT matched specialist to move into action!
         if (matched.id !== "kern") {
-          triggerWalker("ada");
+          triggerWalker(matched.id);
+        } else if (Math.random() < 0.35) {
+          triggerWalker("kern");
         }
       } else {
         isWorkingLive = false;
@@ -513,13 +510,118 @@ export default function BackgroundMotion({
       }
     };
 
+    const handleAgentActivity = (e: Event) => {
+      const custom = e as CustomEvent<{
+        type?: string;
+        phase?: string;
+        toolName?: string;
+        args?: Record<string, unknown>;
+        isError?: boolean;
+      }>;
+      const { type, toolName, args, isError } = custom.detail || {};
+
+      if (type === "agent_start") {
+        isWorkingLive = true;
+        states["kern"].isFocused = true;
+        states["kern"].bubbleText = "🧠 Analyzing request…";
+        states["kern"].bubbleTimer = 6;
+      } else if (type === "thinking") {
+        isWorkingLive = true;
+        states["kern"].isFocused = true;
+        if (!states["kern"].bubbleText || states["kern"].bubbleTimer < 2) {
+          states["kern"].bubbleText = "🧠 Reasoning…";
+          states["kern"].bubbleTimer = 5;
+        }
+      } else if (type === "streaming_text") {
+        isWorkingLive = true;
+        states["kern"].isFocused = true;
+        states["kern"].bubbleText = "🧠 Writing response…";
+        states["kern"].bubbleTimer = 4;
+      } else if (type === "agent_settled") {
+        isWorkingLive = false;
+        SPECIALISTS.forEach((s) => {
+          const st = states[s.id];
+          if (st.isFocused) {
+            st.bubbleText = isError ? "⚠️ Finished with notice" : "✅ Done";
+            st.bubbleTimer = 3.5;
+          }
+          st.isFocused = false;
+        });
+      } else if (type === "tool" && toolName) {
+        isWorkingLive = true;
+        const rawTool = toolName.replace(/^functions\./, "").toLowerCase();
+        let targetId = "kern";
+        let actionText = `Running ${rawTool}`;
+
+        if (rawTool === "run_command" || rawTool === "bash") {
+          const cmd = String(
+            args?.CommandLine || args?.command || "",
+          ).toLowerCase();
+          if (/(test|vitest|jest|cargo.*test|pytest)/.test(cmd)) {
+            targetId = "bob";
+            actionText = "Running tests…";
+          } else if (/(build|compile|tauri.*build|vite.*build)/.test(cmd)) {
+            targetId = "grace";
+            actionText = "Compiling build…";
+          } else if (/^git\s+/.test(cmd)) {
+            targetId = "linus";
+            actionText = "Git operation…";
+          } else {
+            targetId = "grace";
+            const shortCmd = cmd.split(" ")[0] || "command";
+            actionText = `Running ${shortCmd}…`;
+          }
+        } else if (rawTool.includes("view") || rawTool.includes("read")) {
+          targetId = "ada";
+          const path = String(
+            args?.AbsolutePath || args?.TargetFile || args?.path || "",
+          );
+          const file = path.split("/").pop() || "file";
+          actionText = `Reading ${file}…`;
+        } else if (
+          rawTool.includes("write") ||
+          rawTool.includes("replace") ||
+          rawTool.includes("edit")
+        ) {
+          targetId = "linus";
+          const path = String(args?.TargetFile || args?.path || "");
+          const file = path.split("/").pop() || "file";
+          actionText = `Editing ${file}…`;
+        } else if (
+          rawTool.includes("search") ||
+          rawTool.includes("grep") ||
+          rawTool.includes("graph")
+        ) {
+          targetId = "alan";
+          const q = String(
+            args?.query || args?.name_pattern || args?.pattern || "",
+          );
+          actionText = q
+            ? `Searching "${q.slice(0, 16)}"…`
+            : "Searching code graph…";
+        }
+
+        const sp = SPECIALISTS.find((s) => s.id === targetId) || SPECIALISTS[0];
+        const st = states[sp.id];
+        if (st) {
+          st.isFocused = true;
+          st.bubbleText = `${sp.icon} ${actionText}`;
+          st.bubbleTimer = 8;
+        }
+
+        if (targetId !== "kern") {
+          triggerWalker(targetId);
+        }
+      }
+    };
+
     const handleAgentPrompt = (e: Event) => {
       const custom = e as CustomEvent<{ text?: string }>;
       const text = (custom.detail?.text || "").replace(/\s+/g, " ").trim();
       if (text) {
         isWorkingLive = true;
         const short = text.length > 32 ? `${text.slice(0, 32)}…` : text;
-        states["kern"].bubbleText = `🧠 Prompt: "${short}"`;
+        states["kern"].bubbleText = `🧠 User: "${short}"`;
         states["kern"].bubbleTimer = 8;
         states["kern"].isFocused = true;
 
@@ -530,7 +632,12 @@ export default function BackgroundMotion({
           }
         });
 
-        triggerWalker("ada");
+        // Kern orchestrates the team
+        if (Math.random() < 0.5) {
+          triggerWalker("ada");
+        } else {
+          triggerWalker("linus");
+        }
       }
     };
 
@@ -545,6 +652,7 @@ export default function BackgroundMotion({
     };
 
     window.addEventListener("crc-agent-activity-sync", handleActivitySync);
+    window.addEventListener("crc-agent-activity", handleAgentActivity);
     window.addEventListener("crc-agent-prompt", handleAgentPrompt);
     window.addEventListener("crc-agent-running", handleAgentRunning);
 
@@ -631,8 +739,7 @@ export default function BackgroundMotion({
           dx = (width - dw) / 2;
         }
 
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+        ctx.imageSmoothingEnabled = false;
         ctx.drawImage(currentBaseImg, dx, dy, dw, dh);
       } else {
         ctx.fillStyle = isDark ? "#0c0d14" : "#f1f5f9";
@@ -715,22 +822,41 @@ export default function BackgroundMotion({
         }
       });
 
-      // 3. For any specialist walking away from home, mask their station with empty patch
-      SPECIALISTS.forEach((sp) => {
-        const w = walkers[sp.id];
-        if (!w || !w.isWalking) return;
+      // 3. For any specialist walking away from home, mask their station seamlessly from full empty 2K image
+      const currentEmptyFullImg = isDark ? emptyNightFullImg : emptyDayFullImg;
+      if (
+        currentEmptyFullImg &&
+        currentEmptyFullImg.complete &&
+        currentEmptyFullImg.naturalWidth > 0
+      ) {
+        ctx.imageSmoothingEnabled = false;
+        SPECIALISTS.forEach((sp) => {
+          const w = walkers[sp.id];
+          if (!w || !w.isWalking) return;
 
-        const emptyPatch = emptyStationPatches[sp.id];
-        const emptyImg = isDark ? emptyPatch?.night : emptyPatch?.day;
+          const sx = Math.round(sp.emptyRect.x * 2752);
+          const sy = Math.round(sp.emptyRect.y * 1536);
+          const sw = Math.round(sp.emptyRect.w * 2752);
+          const sh = Math.round(sp.emptyRect.h * 1536);
 
-        if (emptyImg && emptyImg.complete && emptyImg.naturalWidth > 0) {
           const destX = Math.round(dx + sp.emptyRect.x * dw);
           const destY = Math.round(dy + sp.emptyRect.y * dh);
           const destW = Math.round(sp.emptyRect.w * dw);
           const destH = Math.round(sp.emptyRect.h * dh);
-          ctx.drawImage(emptyImg, destX, destY, destW, destH);
-        }
-      });
+
+          ctx.drawImage(
+            currentEmptyFullImg,
+            sx,
+            sy,
+            sw,
+            sh,
+            destX,
+            destY,
+            destW,
+            destH,
+          );
+        });
+      }
 
       // 4. Render Station Specialists (when sitting/working at home)
       SPECIALISTS.forEach((sp) => {
@@ -777,6 +903,7 @@ export default function BackgroundMotion({
           const destW = Math.round(sp.rect.w * dw);
           const destH = Math.round(sp.rect.h * dh);
 
+          ctx.imageSmoothingEnabled = false;
           ctx.drawImage(frameImg, destX, destY, destW, destH);
         }
       });
@@ -824,6 +951,7 @@ export default function BackgroundMotion({
           const footOffsetY = sp.footAnchorY * spriteH;
 
           ctx.save();
+          ctx.imageSmoothingEnabled = false;
           ctx.translate(footPxX, footPxY);
           // Sprite naturally faces RIGHT. If moving left, flip horizontally:
           if (w.facing === "left") {
@@ -968,6 +1096,7 @@ export default function BackgroundMotion({
           "crc-agent-activity-sync",
           handleActivitySync,
         );
+        window.removeEventListener("crc-agent-activity", handleAgentActivity);
         window.removeEventListener("crc-agent-prompt", handleAgentPrompt);
         window.removeEventListener("crc-agent-running", handleAgentRunning);
       }
@@ -1009,6 +1138,7 @@ export default function BackgroundMotion({
           maxHeight: "100%",
           display: "block",
           pointerEvents: "none",
+          imageRendering: "pixelated",
           filter: blurred ? "blur(14px) saturate(0.65)" : "none",
           opacity: blurred ? 0.38 : 1,
           transform: blurred ? "scale(1.04)" : "scale(1)",

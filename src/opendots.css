@@ -1260,18 +1260,16 @@ body,
   pointer-events: none !important;
   background: radial-gradient(
     circle at 50% 50%,
-    rgba(15, 16, 21, 0.25) 25%,
-    rgba(15, 16, 21, 0.55) 70%,
-    rgba(15, 16, 21, 0.85) 100%
+    transparent 65%,
+    rgba(15, 16, 21, 0.32) 100%
   ) !important;
 }
 
 [data-theme="light"] .background-motion-vignette {
   background: radial-gradient(
     circle at 50% 50%,
-    rgba(240, 242, 245, 0.25) 25%,
-    rgba(240, 242, 245, 0.55) 70%,
-    rgba(240, 242, 245, 0.85) 100%
+    transparent 65%,
+    rgba(240, 242, 245, 0.32) 100%
   ) !important;
 }
 
@@ -4540,6 +4538,9 @@ select option {
   display: block !important;
   pointer-events: none !important;
   touch-action: none !important;
+  image-rendering: pixelated !important;
+  image-rendering: -moz-crisp-edges !important;
+  image-rendering: crisp-edges !important;
 }
 
 .background-motion-vignette {
