@@ -32,10 +32,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#c084fc",
     icon: "🎨",
     rect: {
-      x: 1040 / 2752,
-      y: 740 / 1536,
-      w: 180 / 2752,
-      h: 440 / 1536,
+      x: 970 / 2752,
+      y: 620 / 1536,
+      w: 221 / 2752,
+      h: 459 / 1536,
     },
     emptyRect: {
       x: 888 / 2752,
@@ -43,7 +43,7 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 373 / 2752,
       h: 519 / 1536,
     },
-    head: { x: 1130 / 2752, y: 730 / 1536 },
+    head: { x: 1080 / 2752, y: 640 / 1536 },
     homeFoot: { x: 1080 / 2752, y: 1050 / 1536 },
     standingFoot: { x: 1080 / 2752, y: 1050 / 1536 },
     walkW: 221 / 2752,
@@ -58,10 +58,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#38bdf8",
     icon: "🧠",
     rect: {
-      x: 1730 / 2752,
-      y: 1050 / 1536,
-      w: 220 / 2752,
-      h: 260 / 1536,
+      x: 1738 / 2752,
+      y: 986 / 1536,
+      w: 230 / 2752,
+      h: 420 / 1536,
     },
     emptyRect: {
       x: 1588 / 2752,
@@ -69,11 +69,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 473 / 2752,
       h: 523 / 1536,
     },
-    head: { x: 1840 / 2752, y: 1040 / 1536 },
-    homeFoot: { x: 1780 / 2752, y: 1240 / 1536 },
+    head: { x: 1850 / 2752, y: 990 / 1536 },
+    homeFoot: { x: 1850 / 2752, y: 1380 / 1536 },
     standingFoot: { x: 1850 / 2752, y: 1380 / 1536 },
     walkW: 230 / 2752,
-    walkH: 380 / 1536,
+    walkH: 420 / 1536,
     footAnchorX: 0.487,
     footAnchorY: 0.937,
   },
@@ -84,10 +84,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#22c55e",
     icon: "⚙️",
     rect: {
-      x: 230 / 2752,
-      y: 460 / 1536,
-      w: 300 / 2752,
-      h: 400 / 1536,
+      x: 304 / 2752,
+      y: 526 / 1536,
+      w: 220 / 2752,
+      h: 420 / 1536,
     },
     emptyRect: {
       x: 138 / 2752,
@@ -95,7 +95,7 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 373 / 2752,
       h: 623 / 1536,
     },
-    head: { x: 420 / 2752, y: 500 / 1536 },
+    head: { x: 410 / 2752, y: 530 / 1536 },
     homeFoot: { x: 410 / 2752, y: 920 / 1536 },
     standingFoot: { x: 410 / 2752, y: 920 / 1536 },
     walkW: 220 / 2752,
@@ -110,10 +110,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#06b6d4",
     icon: "🔍",
     rect: {
-      x: 1550 / 2752,
-      y: 350 / 1536,
-      w: 300 / 2752,
-      h: 300 / 1536,
+      x: 2007 / 2752,
+      y: 359 / 1536,
+      w: 230 / 2752,
+      h: 420 / 1536,
     },
     emptyRect: {
       x: 1488 / 2752,
@@ -121,11 +121,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 373 / 2752,
       h: 422 / 1536,
     },
-    head: { x: 1700 / 2752, y: 340 / 1536 },
-    homeFoot: { x: 1700 / 2752, y: 480 / 1536 },
+    head: { x: 2120 / 2752, y: 360 / 1536 },
+    homeFoot: { x: 2120 / 2752, y: 750 / 1536 },
     standingFoot: { x: 2120 / 2752, y: 750 / 1536 },
-    walkW: 190 / 2752,
-    walkH: 310 / 1536,
+    walkW: 230 / 2752,
+    walkH: 420 / 1536,
     footAnchorX: 0.492,
     footAnchorY: 0.931,
   },
@@ -136,10 +136,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#ec4899",
     icon: "🧪",
     rect: {
-      x: 1140 / 2752,
-      y: 300 / 1536,
-      w: 240 / 2752,
-      h: 300 / 1536,
+      x: 1079 / 2752,
+      y: 147 / 1536,
+      w: 210 / 2752,
+      h: 420 / 1536,
     },
     emptyRect: {
       x: 1040 / 2752,
@@ -147,11 +147,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 321 / 2752,
       h: 423 / 1536,
     },
-    head: { x: 1260 / 2752, y: 290 / 1536 },
-    homeFoot: { x: 1260 / 2752, y: 420 / 1536 },
-    standingFoot: { x: 1260 / 2752, y: 420 / 1536 },
-    walkW: 160 / 2752,
-    walkH: 270 / 1536,
+    head: { x: 1180 / 2752, y: 150 / 1536 },
+    homeFoot: { x: 1180 / 2752, y: 540 / 1536 },
+    standingFoot: { x: 1180 / 2752, y: 540 / 1536 },
+    walkW: 210 / 2752,
+    walkH: 420 / 1536,
     footAnchorX: 0.483,
     footAnchorY: 0.936,
   },
@@ -162,10 +162,10 @@ const SPECIALISTS: SpecialistConfig[] = [
     color: "#f59e0b",
     icon: "🛡️",
     rect: {
-      x: 580 / 2752,
-      y: 760 / 1536,
-      w: 280 / 2752,
-      h: 280 / 1536,
+      x: 577 / 2752,
+      y: 586 / 1536,
+      w: 210 / 2752,
+      h: 420 / 1536,
     },
     emptyRect: {
       x: 438 / 2752,
@@ -173,11 +173,11 @@ const SPECIALISTS: SpecialistConfig[] = [
       w: 423 / 2752,
       h: 523 / 1536,
     },
-    head: { x: 720 / 2752, y: 760 / 1536 },
-    homeFoot: { x: 720 / 2752, y: 980 / 1536 },
-    standingFoot: { x: 960 / 2752, y: 1100 / 1536 },
+    head: { x: 680 / 2752, y: 590 / 1536 },
+    homeFoot: { x: 680 / 2752, y: 980 / 1536 },
+    standingFoot: { x: 680 / 2752, y: 980 / 1536 },
     walkW: 210 / 2752,
-    walkH: 360 / 1536,
+    walkH: 420 / 1536,
     footAnchorX: 0.492,
     footAnchorY: 0.937,
   },
@@ -242,17 +242,16 @@ const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
     {
       name: "rack_left",
       waypoints: [
-        { x: 1260 / 2752, y: 420 / 1536 },
-        { x: 1160 / 2752, y: 460 / 1536 },
-        { x: 1060 / 2752, y: 420 / 1536 },
+        { x: 1180 / 2752, y: 540 / 1536 },
+        { x: 1080 / 2752, y: 500 / 1536 },
       ],
       pauseSeconds: 4.5,
     },
     {
       name: "rack_right",
       waypoints: [
-        { x: 1260 / 2752, y: 420 / 1536 },
-        { x: 1350 / 2752, y: 380 / 1536 },
+        { x: 1180 / 2752, y: 540 / 1536 },
+        { x: 1260 / 2752, y: 580 / 1536 },
       ],
       pauseSeconds: 4.0,
     },
@@ -261,8 +260,8 @@ const SPECIALIST_ROUTES: Record<string, PatrolRoute[]> = {
     {
       name: "hallway_stroll",
       waypoints: [
-        { x: 960 / 2752, y: 1100 / 1536 },
-        { x: 920 / 2752, y: 880 / 1536 },
+        { x: 680 / 2752, y: 980 / 1536 },
+        { x: 880 / 2752, y: 900 / 1536 },
         { x: 820 / 2752, y: 720 / 1536 },
       ],
       pauseSeconds: 4.0,
@@ -366,11 +365,11 @@ export default function BackgroundMotion({
     };
     let isDark = getIsDark();
 
-    // 1. High-resolution 2752x1536 base pixel art artworks
+    // 1. High-resolution 2752x1536 base pixel art artworks (clean 2K environment)
     const nightImg = typeof Image !== "undefined" ? new Image() : null;
-    if (nightImg) nightImg.src = "/pixel_office_active_night.jpg";
+    if (nightImg) nightImg.src = "/pixel_office_empty_night_2k.jpg";
     const dayImg = typeof Image !== "undefined" ? new Image() : null;
-    if (dayImg) dayImg.src = "/pixel_office_active_day.jpg";
+    if (dayImg) dayImg.src = "/pixel_office_empty_day_2k.jpg";
 
     // 2. Full 2K empty backgrounds (2752x1536) for 100% seamless 1:1 station masking when walking
     const emptyNightFullImg = typeof Image !== "undefined" ? new Image() : null;
@@ -739,7 +738,8 @@ export default function BackgroundMotion({
           dx = (width - dw) / 2;
         }
 
-        ctx.imageSmoothingEnabled = false;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(currentBaseImg, dx, dy, dw, dh);
       } else {
         ctx.fillStyle = isDark ? "#0c0d14" : "#f1f5f9";
@@ -822,42 +822,6 @@ export default function BackgroundMotion({
         }
       });
 
-      // 3. For any specialist walking away from home, mask their station seamlessly from full empty 2K image
-      const currentEmptyFullImg = isDark ? emptyNightFullImg : emptyDayFullImg;
-      if (
-        currentEmptyFullImg &&
-        currentEmptyFullImg.complete &&
-        currentEmptyFullImg.naturalWidth > 0
-      ) {
-        ctx.imageSmoothingEnabled = false;
-        SPECIALISTS.forEach((sp) => {
-          const w = walkers[sp.id];
-          if (!w || !w.isWalking) return;
-
-          const sx = Math.round(sp.emptyRect.x * 2752);
-          const sy = Math.round(sp.emptyRect.y * 1536);
-          const sw = Math.round(sp.emptyRect.w * 2752);
-          const sh = Math.round(sp.emptyRect.h * 1536);
-
-          const destX = Math.round(dx + sp.emptyRect.x * dw);
-          const destY = Math.round(dy + sp.emptyRect.y * dh);
-          const destW = Math.round(sp.emptyRect.w * dw);
-          const destH = Math.round(sp.emptyRect.h * dh);
-
-          ctx.drawImage(
-            currentEmptyFullImg,
-            sx,
-            sy,
-            sw,
-            sh,
-            destX,
-            destY,
-            destW,
-            destH,
-          );
-        });
-      }
-
       // 4. Render Station Specialists (when sitting/working at home)
       SPECIALISTS.forEach((sp) => {
         const w = walkers[sp.id];
@@ -898,13 +862,38 @@ export default function BackgroundMotion({
 
         const frameImg = frames[frameIdx];
         if (frameImg && frameImg.complete && frameImg.naturalWidth > 0) {
-          const destX = Math.round(dx + sp.rect.x * dw);
-          const destY = Math.round(dy + sp.rect.y * dh);
-          const destW = Math.round(sp.rect.w * dw);
-          const destH = Math.round(sp.rect.h * dh);
+          const footPxX = dx + sp.standingFoot.x * dw;
+          const footPxY = dy + sp.standingFoot.y * dh;
 
-          ctx.imageSmoothingEnabled = false;
-          ctx.drawImage(frameImg, destX, destY, destW, destH);
+          // Soft floor contact shadow proportional to specialist scale
+          const shadowRx = Math.max(6 * pixelScale, sp.walkW * dw * 0.22);
+          const shadowRy = Math.max(3 * pixelScale, sp.walkH * dh * 0.05);
+          ctx.save();
+          ctx.fillStyle = "rgba(0, 0, 0, 0.28)";
+          ctx.beginPath();
+          ctx.ellipse(
+            footPxX,
+            footPxY - 2 * pixelScale,
+            shadowRx,
+            shadowRy,
+            0,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+          ctx.restore();
+
+          const spriteW = sp.walkW * dw;
+          const spriteH = sp.walkH * dh;
+          const footOffsetX = sp.footAnchorX * spriteW;
+          const footOffsetY = sp.footAnchorY * spriteH;
+
+          ctx.save();
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.translate(footPxX, footPxY);
+          ctx.drawImage(frameImg, -footOffsetX, -footOffsetY, spriteW, spriteH);
+          ctx.restore();
         }
       });
 
@@ -951,7 +940,8 @@ export default function BackgroundMotion({
           const footOffsetY = sp.footAnchorY * spriteH;
 
           ctx.save();
-          ctx.imageSmoothingEnabled = false;
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
           ctx.translate(footPxX, footPxY);
           // Sprite naturally faces RIGHT. If moving left, flip horizontally:
           if (w.facing === "left") {
@@ -1138,7 +1128,7 @@ export default function BackgroundMotion({
           maxHeight: "100%",
           display: "block",
           pointerEvents: "none",
-          imageRendering: "pixelated",
+          imageRendering: "auto",
           filter: blurred ? "blur(14px) saturate(0.65)" : "none",
           opacity: blurred ? 0.38 : 1,
           transform: blurred ? "scale(1.04)" : "scale(1)",

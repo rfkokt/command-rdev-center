@@ -4538,9 +4538,7 @@ select option {
   display: block !important;
   pointer-events: none !important;
   touch-action: none !important;
-  image-rendering: pixelated !important;
-  image-rendering: -moz-crisp-edges !important;
-  image-rendering: crisp-edges !important;
+  image-rendering: auto !important;
 }
 
 .background-motion-vignette {
