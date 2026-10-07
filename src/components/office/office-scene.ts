@@ -1,21 +1,9 @@
 import * as THREE from "three";
-import {
-  DISCUSSION_SPOTS,
-  DISCUSSION_CENTER,
-  STUDIO_COLORS,
-} from "./office-layout";
+import { DISCUSSION_CENTER, STUDIO_COLORS } from "./office-layout";
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { VOXEL_MODELS, OFFICE_PALETTE_BASE64 } from "./office-voxel-models";
-import {
-  TEAM,
-  advanceWalkers,
-  routeWalkersTo,
-  aisleRoute,
-  createWalker,
-  damp,
-  type Activity,
-} from "./office-motion";
+import { TEAM, damp, type Activity } from "./office-motion";
 
 export interface OfficeScene {
   setActivity(activity: Activity): void;
@@ -38,11 +26,11 @@ export function createOfficeScene(
     alpha: false,
     powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(
-    Math.min(1.5, Math.max(1, window.devicePixelRatio || 1)),
-  );
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  // Seated actors only sway slightly; refresh their anchored shadows on changes.
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   const scene = new THREE.Scene();
@@ -161,8 +149,43 @@ export function createOfficeScene(
 
   // Hallmark · component: night studio · reference: user screenshot
   // pre-emit critique: P4 H4 E4 S5 R4 V4
-  // A finite cutaway floor, with timber circulation and tiled work / pantry zones.
-  box(room, C.edge, [18.4, 0.3, 12.8], [0, -0.18, 0]);
+  // Continue the parquet beyond the desks so the studio fills the viewport.
+  // One tiled plane avoids thousands of extra floor meshes on wide screens.
+  const floorPixels = new Uint8Array(128 * 128 * 4);
+  const floorColors = C.woodFloor.map((value) =>
+    new THREE.Color(value).convertLinearToSRGB(),
+  );
+  const seamColor = new THREE.Color(C.woodDark).convertLinearToSRGB();
+  for (let y = 0; y < 128; y++)
+    for (let x = 0; x < 128; x++) {
+      const row = Math.floor(y / 64);
+      const offsetX = (x + row * 16) % 128;
+      const color =
+        offsetX % 32 === 0 || y % 64 === 0
+          ? seamColor
+          : floorColors[(Math.floor(offsetX / 32) + row * 3) % 4];
+      const at = (y * 128 + x) * 4;
+      // DataTexture with SRGBColorSpace expects sRGB byte values.
+      floorPixels[at] = Math.round(color.r * 255);
+      floorPixels[at + 1] = Math.round(color.g * 255);
+      floorPixels[at + 2] = Math.round(color.b * 255);
+      floorPixels[at + 3] = 255;
+    }
+  const floorTexture = new THREE.DataTexture(floorPixels, 128, 128);
+  floorTexture.colorSpace = THREE.SRGBColorSpace;
+  floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+  floorTexture.repeat.set(48, 30);
+  floorTexture.magFilter = THREE.LinearFilter;
+  floorTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  floorTexture.generateMipmaps = true;
+  floorTexture.needsUpdate = true;
+  const continuousFloor = new THREE.Mesh(
+    new THREE.PlaneGeometry(96, 96),
+    new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 1 }),
+  );
+  continuousFloor.rotation.x = -Math.PI / 2;
+  continuousFloor.position.set(38.85, -0.025, 41.75);
+  room.add(continuousFloor);
   for (let x = 0; x < 36; x++) {
     for (let z = 0; z < 8; z++) {
       box(
@@ -188,14 +211,14 @@ export function createOfficeScene(
   tileZone(-2.0, 2.0, 12, 4);
 
   // Two low cutaway walls, coloured charcoal-plum against the midnight city.
-  box(room, C.wall, [18.4, 5.5, 0.22], [0, 2.75, -6.25]);
-  box(room, C.wall, [0.22, 5.5, 12.8], [-9.15, 2.75, 0]);
-  box(room, C.trim, [18.25, 0.16, 0.16], [0, 0.15, -6.08]);
-  box(room, C.trim, [0.16, 0.16, 12.5], [-9.0, 0.15, 0]);
-  box(room, C.trim, [18.4, 0.18, 0.3], [0, 5.52, -6.22]);
-  box(room, C.trim, [0.3, 0.18, 12.8], [-9.15, 5.52, 0]);
-  box(room, C.cyan, [0.04, 0.055, 12.2], [-9.0, 5.15, 0], false, 2.5);
-  box(room, C.amber, [17.9, 0.055, 0.04], [0, 5.15, -6.1], false, 2.5);
+  box(room, C.wall, [48, 8, 0.22], [14.8, 4, -6.25]);
+  box(room, C.wall, [0.22, 8, 48], [-9.15, 4, 17.7]);
+  box(room, C.trim, [48, 0.16, 0.16], [14.8, 0.15, -6.08]);
+  box(room, C.trim, [0.16, 0.16, 48], [-9.0, 0.15, 17.7]);
+  box(room, C.trim, [48, 0.18, 0.3], [14.8, 5.52, -6.22]);
+  box(room, C.trim, [0.3, 0.18, 48], [-9.15, 5.52, 17.7]);
+  box(room, C.cyan, [0.04, 0.055, 48], [-9.0, 5.15, 17.7], false, 2.5);
+  box(room, C.amber, [48, 0.055, 0.04], [14.8, 5.15, -6.1], false, 2.5);
 
   // Window panels: separate buildings and lit windows keep the skyline legible.
   const skyMaterial = material(C.skyNight, 0.3);
@@ -469,8 +492,7 @@ export function createOfficeScene(
     officeChair(station, x, z + 0.1);
   }
 
-  // A small wooden break table provides the prompt discussion destination.
-  const discussionSpots = DISCUSSION_SPOTS;
+  // A small wooden break table furnishes the pantry corner.
   const { x: tableX, z: tableZ } = DISCUSSION_CENTER;
   box(room, C.wood, [2.05, 0.1, 1.55], [tableX, 0.88, tableZ]);
   for (const dx of [-0.86, 0.86])
@@ -521,18 +543,42 @@ export function createOfficeScene(
   // Bake static transforms into material batches: the room stays inexpensive to draw.
   room.updateMatrixWorld(true);
   const batches = new Map<THREE.Material, THREE.BufferGeometry[]>();
+  const staticColors = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 1,
+    flatShading: true,
+  });
   room.traverse((object) => {
-    if (!(object instanceof THREE.Mesh)) return;
+    if (
+      !(object instanceof THREE.Mesh) ||
+      !(object.material instanceof THREE.MeshStandardMaterial)
+    )
+      return;
     const transformed = (
       object.geometry.index
         ? object.geometry.toNonIndexed()
         : object.geometry.clone()
     ).applyMatrix4(object.matrixWorld);
-    const batch = batches.get(object.material) ?? [];
+    let mat = object.material;
+    // Batch opaque colours together; emissive screens and palette textures stay mutable.
+    if (!mat.map && mat.emissiveIntensity === 0) {
+      const colors = new Float32Array(
+        transformed.getAttribute("position").count * 3,
+      );
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = mat.color.r;
+        colors[i + 1] = mat.color.g;
+        colors[i + 2] = mat.color.b;
+      }
+      transformed.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+      mat = staticColors;
+    }
+    const batch = batches.get(mat) ?? [];
     batch.push(transformed);
-    batches.set(object.material, batch);
+    batches.set(mat, batch);
   });
   room.clear();
+  continuousFloor.geometry.dispose();
   const baked: THREE.BufferGeometry[] = [];
   batches.forEach((parts, mat) => {
     const combined = mergeGeometries(parts);
@@ -544,6 +590,7 @@ export function createOfficeScene(
     // self-shadowing the large floor/wall batches, which causes acne and flicker.
     mesh.castShadow = false;
     mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
     room.add(mesh);
   });
 
@@ -552,7 +599,10 @@ export function createOfficeScene(
       member.id,
       () =>
         queueMicrotask(() => {
-          if (!disposed) draw(0);
+          if (!disposed) {
+            renderer.shadowMap.needsUpdate = true;
+            draw(0);
+          }
         }),
     );
     // Proportion scale: 0.76 aligns the character height (~1.48m) with the voxel furniture
@@ -582,10 +632,8 @@ export function createOfficeScene(
     bubble.className = "office-agent-activity";
     label.append(name, bubble);
     labels.append(label);
-    const walker = createWalker(member.home);
     root.position.set(member.home.x, 0, member.home.z);
     root.rotation.y = Math.PI;
-    walker.heading = root.rotation.y;
     return {
       member,
       root,
@@ -598,12 +646,8 @@ export function createOfficeScene(
       ringMaterial,
       label,
       bubble,
-      walker,
       focused: false,
-      sit: 1,
-      idle: 14 + TEAM.indexOf(member) * 9,
       bubbleUntil: 0,
-      excursion: false,
     };
   }
   const characters = TEAM.map(character);
@@ -611,29 +655,32 @@ export function createOfficeScene(
     visible = true,
     disposed = false,
     dark = true,
-    working = false,
-    discussionActive = false;
+    working = false;
   let bubbleTimeout: ReturnType<typeof setTimeout> | undefined;
-  const discussionTimeouts: ReturnType<typeof setTimeout>[] = [];
   let elapsed = 0,
     previous = 0,
     width = 1,
     height = 1;
-  const cameraOffset = 0;
   const projected = new THREE.Vector3();
-  const pointer = new THREE.Vector2();
   const baseCamera = new THREE.Vector3();
-  const lookAt = new THREE.Vector3(cameraOffset, 1.3, 0);
+  const lookAt = new THREE.Vector3(0.8, 1.25, 0.7);
+  let labelsNeedLayout = true;
+  let workAmount = 0;
 
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
     height = Math.max(1, canvas.parentElement?.clientHeight || 1);
-    // Keep the voxel geometry crisp while rendering at a stable native canvas
-    // size. Half-resolution rasterization made the floor shimmer during resize
-    // and pointer parallax.
+    // Stable pixel budget: native detail without a 7MP buffer on Retina displays.
+    renderer.setPixelRatio(
+      Math.min(
+        window.devicePixelRatio || 1,
+        1.25,
+        Math.sqrt(3_000_000 / (width * height)),
+      ),
+    );
     renderer.setSize(Math.ceil(width), Math.ceil(height), false);
     const aspect = width / height;
-    const halfHeight = Math.max(8.1, 12.3 / aspect);
+    const halfHeight = Math.max(6.3, 9.5 / aspect);
     camera.left = -halfHeight * aspect;
     camera.right = halfHeight * aspect;
     camera.top = halfHeight;
@@ -642,6 +689,8 @@ export function createOfficeScene(
     camera.position.copy(baseCamera);
     camera.lookAt(lookAt);
     camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    labelsNeedLayout = true;
     draw(0);
   }
   function setTheme(value: boolean) {
@@ -656,12 +705,11 @@ export function createOfficeScene(
     skyMaterial.color.set(dark ? C.skyNight : C.skyDay);
     skyMaterial.emissive.set(dark ? C.skyNight : C.skyDay);
     renderer.toneMappingExposure = dark ? 0.95 : 1.1;
+    renderer.shadowMap.needsUpdate = true;
     draw(0);
   }
   function setWorking(value: boolean) {
     working = value;
-    if (working && !discussionActive) startDiscussion();
-    if (!working) endDiscussion();
     if (!working)
       characters.forEach((actor) => {
         actor.focused = false;
@@ -670,40 +718,8 @@ export function createOfficeScene(
       characters.find((actor) => actor.member.id === "kern")!.focused = true;
     if (reduced || !previous) draw(0);
   }
-  function routeHome(actor: (typeof characters)[number]) {
-    actor.walker.route = aisleRoute(actor.walker.position, actor.member.home);
-    actor.excursion = false;
-  }
-  function startDiscussion() {
-    discussionActive = true;
-    routeWalkersTo(
-      characters.map((actor) => actor.walker),
-      discussionSpots,
-    );
-    characters.forEach((actor) => {
-      actor.excursion = false;
-    });
-  }
-  function endDiscussion() {
-    if (!discussionActive) return;
-    discussionActive = false;
-    characters.forEach(routeHome);
-  }
   function setActivity(activity: Activity) {
     clearTimeout(bubbleTimeout);
-    if (activity.discussion && activity.working) {
-      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
-      startDiscussion();
-    } else if (activity.working) {
-      // Thinking and tool events are still part of the same live briefing.
-      // Drop only the scripted fallback bubbles; real agent events now drive
-      // the active speaker while the team remains gathered.
-      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
-      if (!discussionActive) startDiscussion();
-    } else {
-      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
-      endDiscussion();
-    }
     working = activity.working;
     characters.forEach((actor) => {
       actor.focused = activity.working && actor.member.id === activity.id;
@@ -719,38 +735,6 @@ export function createOfficeScene(
     });
     if (reduced || !previous) draw(0);
     scheduleBubbleExpiry();
-    if (activity.discussion && activity.working) scheduleDiscussion();
-  }
-
-  function scheduleDiscussion() {
-    // This is a visual choreography layered on top of existing agent events.
-    // Tool routing still comes from activityFor(), so the app's behavior stays unchanged.
-    const steps: Array<{
-      delay: number;
-      id: (typeof TEAM)[number]["id"];
-      text: string;
-    }> = [
-      { delay: 520, id: "ada", text: "I’ll shape the interface." },
-      { delay: 1120, id: "alan", text: "I’ll trace the code path." },
-      { delay: 1720, id: "linus", text: "I’m checking the implementation." },
-      { delay: 2320, id: "kern", text: "Team aligned. Executing." },
-    ];
-    steps.forEach(({ delay, id, text }) => {
-      const timeout = setTimeout(
-        () => {
-          if (disposed || !working) return;
-          characters.forEach((actor) => {
-            actor.focused = actor.member.id === id;
-            actor.bubbleUntil =
-              actor.member.id === id ? elapsed + 6 : actor.bubbleUntil;
-            if (actor.member.id === id) actor.bubble.textContent = text;
-          });
-          draw(0);
-        },
-        reduced ? 0 : delay,
-      );
-      discussionTimeouts.push(timeout);
-    });
   }
   function scheduleBubbleExpiry() {
     clearTimeout(bubbleTimeout);
@@ -770,109 +754,31 @@ export function createOfficeScene(
   function draw(dt: number) {
     if (disposed || !visible) return;
     elapsed += dt;
-    if (!reduced && dt) {
-      camera.position.x = damp(
-        camera.position.x,
-        baseCamera.x + pointer.x * 0.25,
-        2,
-        dt,
-      );
-      camera.position.y = damp(
-        camera.position.y,
-        baseCamera.y - pointer.y * 0.12,
-        2,
-        dt,
-      );
-      camera.lookAt(lookAt);
-    }
-    camera.updateMatrixWorld();
-    if (!reduced)
-      characters.forEach((actor, index) => {
-        const { walker, member } = actor;
-
-        // One visitor at a time, routed through the aisle; tasks recall them to work.
-        if (!working && !walker.route.length) {
-          actor.idle -= dt;
-          if (
-            actor.idle <= 0 &&
-            !characters.some((other) => other.walker.route.length)
-          ) {
-            const destination = actor.excursion
-              ? member.home
-              : {
-                  x: member.home.x + (member.home.x > 0 ? -1.25 : 1.25),
-                  z: member.home.z + 1.25,
-                };
-            walker.route = aisleRoute(walker.position, destination);
-            actor.excursion = !actor.excursion;
-            actor.idle = actor.excursion ? 4 : 24 + index * 5;
-          }
-        }
-        const atHome =
-          Math.hypot(
-            walker.position.x - member.home.x,
-            walker.position.z - member.home.z,
-          ) < 0.06 && !walker.route.length;
-        actor.sit = damp(actor.sit, atHome ? 1 : 0, 7, dt);
-      });
-    if (!reduced)
-      advanceWalkers(
-        characters.map((actor) => actor.walker),
-        dt,
-        characters.map(
-          (actor) => actor.sit < 0.12 || !actor.walker.route.length,
-        ),
-      );
+    const targetWork = working && !reduced ? 1 : 0;
+    workAmount = reduced ? 0 : damp(workAmount, targetWork, 8, dt);
+    if (Math.abs(workAmount - targetWork) < 0.001) workAmount = targetWork;
     characters.forEach((actor, index) => {
-      const { walker, member } = actor;
-      if (!reduced) {
-        const atHome =
-          Math.hypot(
-            walker.position.x - member.home.x,
-            walker.position.z - member.home.z,
-          ) < 0.06 && !walker.route.length;
-        if (atHome || (discussionActive && !walker.route.length)) {
-          const target = discussionActive
-            ? DISCUSSION_CENTER
-            : {
-                x: member.home.x,
-                z: member.home.z - 1,
-              };
-          const targetHeading = discussionActive
-            ? Math.atan2(
-                target.x - walker.position.x,
-                target.z - walker.position.z,
-              )
-            : Math.PI;
-          const turn = Math.atan2(
-            Math.sin(targetHeading - walker.heading),
-            Math.cos(targetHeading - walker.heading),
-          );
-          walker.heading += turn * (1 - Math.exp(-5 * dt));
-        }
-      }
-      actor.root.position.set(walker.position.x, 0, walker.position.z);
-      actor.root.rotation.y = walker.heading;
-      const pace = reduced ? 0 : Math.min(1, walker.speed / 1.25);
-      const gait = walker.distance * 8.5;
+      const { member } = actor;
+      // Everyone stays seated. Animate the body as well as the fallback limbs:
+      // loaded GLBs are rigid meshes, so arm-only typing would be invisible.
+      const phase = elapsed * (4.1 + index * 0.17) + index * 1.7;
       const breathe = reduced ? 0 : Math.sin(elapsed * 1.8 + index) * 0.009;
+      const typing = workAmount;
       actor.body.position.y =
-        -actor.sit * 0.24 + Math.abs(Math.sin(gait)) * 0.033 * pace + breathe;
-      actor.body.rotation.z = reduced ? 0 : Math.sin(gait) * 0.025 * pace;
+        -0.24 + breathe + typing * Math.sin(phase) * 0.008;
+      actor.body.rotation.x = typing * (0.035 + Math.sin(phase) * 0.012);
+      actor.body.rotation.z = typing * Math.sin(phase * 0.6) * 0.008;
       actor.head.rotation.y = reduced
         ? 0
-        : Math.sin(elapsed * 0.65 + index * 2) * 0.09 * (1 - pace);
+        : Math.sin(elapsed * 0.65 + index * 2) * (working ? 0.025 : 0.09);
       for (let side = 0; side < 2; side++) {
-        const stride = Math.sin(gait + side * Math.PI) * pace;
-        actor.legs[side].rotation.x =
-          -actor.sit * 1.23 + stride * 0.55 * (1 - actor.sit);
-        actor.knees[side].rotation.x =
-          actor.sit * 1.38 + Math.max(0, -stride) * 0.65 * (1 - actor.sit);
-        const typing =
-          !reduced && actor.focused
-            ? Math.sin(elapsed * 9 + side * 1.8) * 0.07
-            : 0;
-        actor.arms[side].rotation.x = -actor.sit * 0.8 - stride * 0.42 + typing;
+        actor.legs[side].rotation.x = -1.23;
+        actor.knees[side].rotation.x = 1.38;
+        actor.arms[side].rotation.x =
+          -0.8 +
+          typing *
+            Math.sin(elapsed * (9 + index * 0.4) + side * 1.8 + index) *
+            0.07;
       }
       actor.ringMaterial.opacity = reduced
         ? actor.focused
@@ -881,16 +787,31 @@ export function createOfficeScene(
         : damp(actor.ringMaterial.opacity, actor.focused ? 0.65 : 0, 6, dt);
       screens[index * 2].emissiveIntensity = screens[
         index * 2 + 1
-      ].emissiveIntensity = actor.focused ? 0.7 : dark ? 0.4 : 0.18;
-      actor.label.dataset.active = String(actor.focused);
-      actor.label.dataset.bubble = String(actor.bubbleUntil > elapsed);
-      projected
-        .set(walker.position.x, 1.62 - actor.sit * 0.18, walker.position.z)
-        .project(camera);
-      actor.label.style.transform = `translate3d(${(projected.x * 0.5 + 0.5) * width}px,${(-projected.y * 0.5 + 0.5) * height}px,0) translate(-50%,-100%)`;
-      actor.label.style.visibility =
-        projected.z > 1 || Math.abs(projected.x) > 0.98 ? "hidden" : "visible";
+      ].emissiveIntensity = actor.focused
+        ? 0.7
+        : working
+          ? 0.55
+          : dark
+            ? 0.4
+            : 0.18;
+      for (const [key, value] of Object.entries({
+        active: actor.focused,
+        working,
+        bubble: actor.bubbleUntil > elapsed,
+      })) {
+        const next = String(value);
+        if (actor.label.dataset[key] !== next) actor.label.dataset[key] = next;
+      }
+      if (labelsNeedLayout) {
+        projected.set(member.home.x, 1.44, member.home.z).project(camera);
+        actor.label.style.transform = `translate3d(${(projected.x * 0.5 + 0.5) * width}px,${(-projected.y * 0.5 + 0.5) * height}px,0) translate(-50%,-100%)`;
+        actor.label.style.visibility =
+          projected.z > 1 || Math.abs(projected.x) > 0.98
+            ? "hidden"
+            : "visible";
+      }
     });
+    labelsNeedLayout = false;
     renderer.render(scene, camera);
   }
   function frame(now: number) {
@@ -903,24 +824,6 @@ export function createOfficeScene(
     renderer.setAnimationLoop(visible && !reduced && !disposed ? frame : null);
     draw(0);
   }
-  const move = (event: PointerEvent) => {
-    if (reduced || event.pointerType === "touch") return;
-    const bounds = canvas.getBoundingClientRect();
-    if (!bounds.width || !bounds.height) return;
-    pointer.set(
-      THREE.MathUtils.clamp(
-        (event.clientX - bounds.left) / bounds.width - 0.5,
-        -0.5,
-        0.5,
-      ),
-      THREE.MathUtils.clamp(
-        (event.clientY - bounds.top) / bounds.height - 0.5,
-        -0.5,
-        0.5,
-      ),
-    );
-  };
-  window.addEventListener("pointermove", move, { passive: true });
   resize();
   schedule();
   return {
@@ -933,14 +836,6 @@ export function createOfficeScene(
       if (reduced) {
         camera.position.copy(baseCamera);
         camera.lookAt(lookAt);
-        characters.forEach((actor) => {
-          actor.walker.route = [];
-          actor.walker.position = { ...actor.member.home };
-          actor.walker.speed = 0;
-          actor.walker.heading = Math.PI;
-          actor.sit = 1;
-          actor.excursion = false;
-        });
       }
       schedule();
       scheduleBubbleExpiry();
@@ -952,9 +847,7 @@ export function createOfficeScene(
     dispose() {
       disposed = true;
       clearTimeout(bubbleTimeout);
-      discussionTimeouts.splice(0).forEach((timeout) => clearTimeout(timeout));
       renderer.setAnimationLoop(null);
-      window.removeEventListener("pointermove", move);
       const allGeometry = new Set<THREE.BufferGeometry>([
         ...Object.values(geometry),
         ...baked,
@@ -972,6 +865,7 @@ export function createOfficeScene(
       allGeometry.forEach((item) => item.dispose());
       allMaterials.forEach((item) => item.dispose());
       paletteTexture.dispose();
+      floorTexture.dispose();
       parsedGeometries.forEach((item) => item.dispose());
       sunlight.shadow.map?.dispose();
       renderer.dispose();

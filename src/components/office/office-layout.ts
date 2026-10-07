@@ -42,12 +42,12 @@ export const STUDIO_COLORS = {
 export const DISCUSSION_CENTER: Point = { x: -5.3, z: 2.6 };
 // Leave enough room for the widest chibi and clear approaches around the table.
 export const DISCUSSION_SPOTS: readonly Point[] = [
-  { x: -5.8, z: 0.2 },
-  { x: -3.6, z: 0.6 },
-  { x: -6.9, z: 2.7 },
-  { x: -3.2, z: 2.9 },
+  { x: -6.7, z: 0.4 },
+  { x: -4.9, z: -0.6 },
+  { x: -3.2, z: -0.1 },
+  { x: -3.2, z: 2.0 },
   { x: -6.3, z: 5.3 },
-  { x: -4.1, z: 5.3 },
+  { x: -2.4, z: 5.3 },
 ];
 
 export type FloorObstacle = {

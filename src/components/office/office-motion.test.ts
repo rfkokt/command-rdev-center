@@ -269,10 +269,10 @@ describe("agent activity", () => {
       }),
     ).toMatchObject({ working: false, error: true });
   });
-  it("marks a user prompt as the start of the visual team briefing", () => {
+  it("marks a user prompt as work at the desks", () => {
     expect(
       activityFor("crc-agent-prompt", { text: "Build the interface" }),
-    ).toMatchObject({ id: "kern", working: true, discussion: true });
+    ).toMatchObject({ id: "kern", working: true });
   });
   it("maps session history loading to Kern without changing the session flow", () => {
     expect(activityFor("crc-session-loading", { loading: true })).toMatchObject(

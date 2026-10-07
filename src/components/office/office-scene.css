@@ -1,23 +1,26 @@
 /* Hallmark · component: office scene · genre: atmospheric · theme: existing workspace */
 .office-scene {
+  --office-background: var(--office-night);
+  /* Match the 3D clear color while loading or recovering the GPU context. */
+  background: var(--office-background) !important;
   --office-label-bg: oklch(21% 0.018 220 / 0.92);
   --office-label-ink: oklch(94% 0.012 80);
   --office-label-muted: oklch(80% 0.018 180);
   --office-label-border: oklch(80% 0.018 180 / 0.2);
 }
 [data-theme="light"] .office-scene {
+  --office-background: var(--office-day);
   --office-label-bg: oklch(97% 0.012 80 / 0.94);
   --office-label-ink: oklch(26% 0.018 220);
   --office-label-muted: oklch(40% 0.018 180);
   --office-label-border: oklch(30% 0.018 180 / 0.16);
 }
-.office-scene .office-scene-fallback {
-  background: url("/pixel_office_empty_night_2k.jpg") center / cover;
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) .office-scene {
+    --office-background: var(--office-day);
+  }
 }
-[data-theme="light"] .office-scene .office-scene-fallback {
-  background-image: url("/pixel_office_empty_day_2k.jpg");
-}
-.office-scene .office-scene-fallback[hidden] {
+.office-scene canvas[hidden] {
   display: none !important;
 }
 .office-scene-labels {
@@ -56,6 +59,10 @@
   height: 5px;
   border-radius: 50%;
   background: var(--agent-color);
+  opacity: 0.45;
+}
+.office-agent-label[data-working="true"] .office-agent-name::before {
+  opacity: 1;
 }
 .office-agent-label[data-active="true"] .office-agent-name {
   color: var(--office-label-ink);

@@ -15,9 +15,11 @@ const { createScene, scene } = vi.hoisted(() => {
 });
 vi.mock("./office/office-scene", () => ({ createOfficeScene: createScene }));
 import BackgroundMotion from "./BackgroundMotion";
+import { STUDIO_COLORS } from "./office/office-layout";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  createScene.mockReset().mockImplementation(() => scene);
   vi.stubGlobal("WebGL2RenderingContext", class {});
   vi.stubGlobal(
     "matchMedia",
@@ -54,7 +56,7 @@ it("only forwards active-tab events and resets the scene when switching tabs", a
   );
   dispatch("crc-agent-prompt", { tabId: "first", text: "Build the interface" });
   expect(scene.setActivity).toHaveBeenLastCalledWith(
-    expect.objectContaining({ id: "kern", working: true, discussion: true }),
+    expect.objectContaining({ id: "kern", working: true }),
   );
   dispatch("crc-session-loading", { tabId: "first", loading: true });
   expect(scene.setActivity).toHaveBeenLastCalledWith(
@@ -94,11 +96,59 @@ it("keeps status updates live with reduced motion and disposes its subscriptions
   dispatch("crc-agent-prompt", { tabId: "first", text: "hello" });
   expect(scene.setActivity).not.toHaveBeenCalled();
 });
-it("shows the static fallback when WebGL is unavailable", () => {
+it("uses the studio clear colors without an old office image when WebGL is unavailable", () => {
   vi.stubGlobal("WebGL2RenderingContext", undefined);
   const { container } = render(<BackgroundMotion />);
   expect(
     container.querySelector(".office-scene")?.getAttribute("data-renderer"),
   ).toBe("fallback");
+  const studio = container.querySelector<HTMLElement>(".office-scene")!;
+  expect(studio.style.getPropertyValue("--office-night")).toBe(
+    STUDIO_COLORS.night,
+  );
+  expect(studio.style.getPropertyValue("--office-day")).toBe(STUDIO_COLORS.day);
+  expect(container.querySelector(".office-scene-fallback")).toBeNull();
+  expect(container.querySelector("canvas")?.hidden).toBe(true);
   expect(createScene).not.toHaveBeenCalled();
+});
+it("hides the canvas immediately on context loss and resumes the scene on restoration", async () => {
+  const { container } = render(<BackgroundMotion />);
+  const studio = container.querySelector(".office-scene")!;
+  const canvas = container.querySelector("canvas")!;
+  await waitFor(() =>
+    expect(studio.getAttribute("data-renderer")).toBe("webgl"),
+  );
+  expect(canvas.hidden).toBe(false);
+  const lost = new Event("webglcontextlost", { cancelable: true });
+  act(() => {
+    canvas.dispatchEvent(lost);
+  });
+  expect(lost.defaultPrevented).toBe(true);
+  expect(canvas.hidden).toBe(true);
+  expect(studio.getAttribute("data-renderer")).toBe("fallback");
+  expect(scene.setVisible).toHaveBeenLastCalledWith(false);
+  act(() => {
+    canvas.dispatchEvent(new Event("webglcontextrestored"));
+  });
+  await waitFor(() => expect(canvas.hidden).toBe(false));
+  expect(studio.getAttribute("data-renderer")).toBe("webgl");
+  expect(scene.setVisible).toHaveBeenLastCalledWith(true);
+  expect(createScene).toHaveBeenCalledOnce();
+});
+it("keeps the neutral backdrop if scene creation fails", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  createScene.mockImplementationOnce(() => {
+    throw new Error("GPU unavailable");
+  });
+  try {
+    const { container } = render(<BackgroundMotion />);
+    await waitFor(() => expect(warning).toHaveBeenCalled());
+    expect(container.querySelector("canvas")?.hidden).toBe(true);
+    expect(
+      container.querySelector(".office-scene")?.getAttribute("data-renderer"),
+    ).toBe("fallback");
+    expect(container.querySelector(".office-scene-fallback")).toBeNull();
+  } finally {
+    warning.mockRestore();
+  }
 });

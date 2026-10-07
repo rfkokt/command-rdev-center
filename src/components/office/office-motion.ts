@@ -74,7 +74,6 @@ export type Activity = {
   text: string;
   working: boolean;
   error?: boolean;
-  discussion?: boolean;
 };
 
 export function belongsToTab(event: AgentEvent, activeTabId?: string) {
@@ -104,7 +103,6 @@ export function activityFor(
       id: "kern",
       text: "Planning the next steps…",
       working: true,
-      discussion: true,
     };
   }
   if (eventName === "crc-agent-activity-sync") {
@@ -274,8 +272,8 @@ const cornerLinks = corners.map((point, index) =>
   ),
 );
 
-// Covers the horizontal bounding circle of the widest loaded chibi at scene scale.
-export const CHARACTER_CLEARANCE = 1.4;
+// Covers the widest loaded chibi at scene scale, including its walking sway.
+export const CHARACTER_CLEARANCE = 1.5;
 function distanceToSegment(point: Point, from: Point, to: Point) {
   const dx = to.x - from.x,
     dz = to.z - from.z;

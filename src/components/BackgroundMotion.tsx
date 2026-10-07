@@ -1,5 +1,6 @@
 /* @refresh reset */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { STUDIO_COLORS } from "./office/office-layout";
 import {
   activityFor,
   belongsToTab,
@@ -67,6 +68,7 @@ export default function BackgroundMotion({
     const canvas = canvasRef.current;
     const labels = labelsRef.current;
     if (!canvas || !labels) return;
+    setReady(false);
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
     const updateTheme = () => {
@@ -142,14 +144,14 @@ export default function BackgroundMotion({
           sceneRef.current.setWorking(latest.current.isWorking);
           if (activityRef.current)
             sceneRef.current.setActivity(activityRef.current);
-          setReady(true);
+          setReady(contextAvailable);
         })
         .catch((error: unknown) => {
           if (cancelled) return;
           sceneRef.current?.dispose();
           sceneRef.current = null;
           console.warn(
-            "Office 3D unavailable; using the static office background.",
+            "Office 3D unavailable; using the studio backdrop.",
             error,
           );
           setReady(false);
@@ -179,15 +181,17 @@ export default function BackgroundMotion({
       className={`background-motion-container office-scene${blurred ? " is-blurred" : ""}`}
       aria-hidden="true"
       data-renderer={ready ? "webgl" : "fallback"}
+      style={
+        {
+          "--office-night": STUDIO_COLORS.night,
+          "--office-day": STUDIO_COLORS.day,
+        } as CSSProperties
+      }
     >
-      <div
-        className={`office-scene-fallback background-motion-canvas${blurred ? " is-blurred" : ""}`}
-        hidden={ready}
-      />
       <canvas
         ref={canvasRef}
         className={`background-motion-canvas${blurred ? " is-blurred" : ""}`}
-        style={{ opacity: ready ? undefined : 0 }}
+        hidden={!ready}
       />
       <div
         ref={labelsRef}
