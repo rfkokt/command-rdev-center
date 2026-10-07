@@ -14,6 +14,8 @@ const GRAPHIFY_EXTENSION: &str = include_str!("../extensions/graphify-context.ts
 const PIPELINE_EXTENSION: &str = include_str!("../extensions/pipeline-runner.ts");
 const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts");
 const WORKSPACE_EXTENSION: &str = include_str!("../extensions/workspace-repositories.ts");
+const TASK_VERIFICATION_EXTENSION: &str = include_str!("../extensions/task-verification.ts");
+const OPENAPI_CATALOG_EXTENSION: &str = include_str!("../extensions/openapi-catalog.ts");
 const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts");
 const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts");
 const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
@@ -271,10 +273,12 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("terminal-context.ts", TERMINAL_EXTENSION),
         ("workspace-repositories.ts", WORKSPACE_EXTENSION),
         ("auto-format.ts", AUTO_FORMAT_EXTENSION),
+        ("task-verification.ts", TASK_VERIFICATION_EXTENSION),
         ("agent-reach.ts", AGENT_REACH_EXTENSION),
         ("agent-reach-security.ts", AGENT_REACH_SECURITY),
         ("browser-tools.ts", BROWSER_TOOLS_EXTENSION),
         ("api-test.ts", API_TEST_EXTENSION),
+        ("openapi-catalog.ts", OPENAPI_CATALOG_EXTENSION),
         ("jev-routing.ts", JEV_ROUTING_EXTENSION),
         ("jev-client.ts", JEV_CLIENT),
     ] {
@@ -851,6 +855,7 @@ pub fn task_sources() -> Result<HashMap<String, TaskSource>, String> {
 }
 
 const MAX_API_DOCUMENTATION_BYTES: usize = 512 * 1024;
+const MAX_SWAGGER_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
 fn validated_swagger_url(url: &str) -> Result<String, String> {
     let url = url.trim();
@@ -889,6 +894,10 @@ fn url_cache_key(url: &str) -> String {
 }
 
 fn fetch_url(url: &str) -> Result<String, String> {
+    fetch_url_with_limit(url, MAX_API_DOCUMENTATION_BYTES)
+}
+
+fn fetch_url_with_limit(url: &str, limit: usize) -> Result<String, String> {
     let cache_dir = std::env::temp_dir().join("crc-url-cache");
     let cache_file = cache_dir.join(format!("{}.json", url_cache_key(url)));
 
@@ -896,7 +905,7 @@ fn fetch_url(url: &str) -> Result<String, String> {
         if let Ok(modified) = metadata.modified() {
             if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
                 if let Ok(cached) = std::fs::read_to_string(&cache_file) {
-                    if !cached.is_empty() {
+                    if !cached.is_empty() && cached.len() <= limit {
                         return Ok(cached);
                     }
                 }
@@ -910,7 +919,7 @@ fn fetch_url(url: &str) -> Result<String, String> {
         .map_err(|error| format!("API documentation fetch: {error}"))?;
     if !output.status.success() {
         if let Ok(cached) = std::fs::read_to_string(&cache_file) {
-            if !cached.is_empty() {
+            if !cached.is_empty() && cached.len() <= limit {
                 eprintln!("Using cached API documentation for {url} after fetch failure");
                 return Ok(cached);
             }
@@ -920,8 +929,8 @@ fn fetch_url(url: &str) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    if output.stdout.len() > MAX_API_DOCUMENTATION_BYTES {
-        return Err("API documentation exceeds 512 KB".into());
+    if output.stdout.len() > limit {
+        return Err(format!("API documentation exceeds {} bytes", limit));
     }
     let body = String::from_utf8(output.stdout)
         .map_err(|_| "API documentation is not UTF-8".to_string())?;
@@ -931,61 +940,121 @@ fn fetch_url(url: &str) -> Result<String, String> {
 }
 
 fn absolute_url(source: &str, target: &str) -> Result<String, String> {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        return Ok(target.into());
+    let url = url::Url::parse(source)
+        .and_then(|base| base.join(target))
+        .map_err(|error| format!("API documentation URL: {error}"))?;
+    if !["http", "https"].contains(&url.scheme())
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err("API documentation URL must be HTTP(S) without credentials".into());
     }
-    let (_, rest) = source
-        .split_once("://")
-        .ok_or("API documentation URL is invalid")?;
-    let host = rest.split('/').next().unwrap_or_default();
-    let scheme = source.split(':').next().unwrap_or_default();
-    if target.starts_with('/') {
-        Ok(format!("{scheme}://{host}{target}"))
-    } else {
-        let base = source
-            .rsplit_once('/')
-            .map(|(base, _)| base)
-            .unwrap_or(source);
-        Ok(format!("{base}/{target}"))
+    Ok(url.into())
+}
+
+// Swagger initializers vary in quoting and whitespace. Read a literal string
+// assignment; never evaluate downloaded JavaScript.
+fn swagger_config_literal(source: &str, key: &str) -> Option<String> {
+    swagger_config_literals(source, key).into_iter().next()
+}
+
+fn swagger_config_literals(source: &str, key: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    for (index, _) in source.match_indices(key) {
+        if index > 0
+            && (source.as_bytes()[index - 1].is_ascii_alphanumeric()
+                || source.as_bytes()[index - 1] == b'_')
+        {
+            continue;
+        }
+        let line = source[..index]
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default()
+            .trim_start();
+        if line.starts_with("//") || line.starts_with('*') {
+            continue;
+        }
+        let tail = source[index + key.len()..]
+            .trim_start_matches(['\"', '\''])
+            .trim_start();
+        let Some(tail) = tail.strip_prefix(':') else {
+            continue;
+        };
+        let tail = tail.trim_start();
+        let Some(quote) = tail.chars().next() else {
+            continue;
+        };
+        if quote != '\"' && quote != '\'' {
+            continue;
+        }
+        let value = tail[1..].split(quote).next().unwrap_or_default();
+        if !value.is_empty() && !values.iter().any(|existing| existing == value) {
+            values.push(value.to_owned());
+        }
     }
+    values
+}
+
+fn swagger_config_document_urls(
+    config: &serde_json::Value,
+    source: &str,
+) -> Result<Vec<String>, String> {
+    let mut urls = Vec::new();
+    if let Some(items) = config.get("urls").and_then(serde_json::Value::as_array) {
+        for item in items {
+            if let Some(target) = item.get("url").and_then(serde_json::Value::as_str) {
+                let url = absolute_url(source, target)?;
+                if !urls.contains(&url) {
+                    urls.push(url);
+                }
+            }
+        }
+    }
+    if let Some(target) = config.get("url").and_then(serde_json::Value::as_str) {
+        let url = absolute_url(source, target)?;
+        if !urls.contains(&url) {
+            urls.push(url);
+        }
+    }
+    if urls.is_empty() {
+        return Err("Swagger config contains no API document".into());
+    }
+    Ok(urls)
+}
+
+fn swagger_document_urls(url: &str) -> Result<Vec<String>, String> {
+    let source = fetch_url_with_limit(url, MAX_SWAGGER_DOCUMENT_BYTES)?;
+    if serde_json::from_str::<serde_json::Value>(&source)
+        .ok()
+        .is_some_and(|document| document.get("paths").is_some())
+    {
+        return Ok(vec![url.to_owned()]);
+    }
+    let initializer = absolute_url(url, "swagger-initializer.js")?;
+    let initializer_source = fetch_url(&initializer).unwrap_or_else(|_| source.clone());
+    if let Some(config) = swagger_config_literal(&initializer_source, "configUrl") {
+        let config_url = absolute_url(&initializer, &config)?;
+        let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
+            .map_err(|_| "Swagger config is not valid JSON")?;
+        return swagger_config_document_urls(&config, &config_url);
+    }
+    // Standard SwaggerUIBundle({ url: "..." }) and inline urls dropdowns.
+    let targets = swagger_config_literals(&initializer_source, "url");
+    if !targets.is_empty() {
+        return targets
+            .iter()
+            .map(|target| absolute_url(&initializer, target))
+            .collect();
+    }
+    Err("Swagger UI document URL was not found; configure its JSON URL".into())
 }
 
 fn swagger_document_url(url: &str) -> Result<String, String> {
-    if !url.contains("swagger-ui") {
-        return Ok(url.into());
-    }
-    let initializer = absolute_url(url, "swagger-initializer.js")?;
-    let initializer_source = fetch_url(&initializer)?;
-    let config_url = initializer_source
-        .split_once("\"configUrl\" : \"")
-        .and_then(|(_, value)| value.split('"').next())
-        .ok_or("Swagger UI config URL was not found")?;
-    let config_url = absolute_url(&initializer, config_url)?;
-    let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
-        .map_err(|_| "Swagger config is not valid JSON")?;
-    let primary_name = url::Url::parse(url).ok().and_then(|url| {
-        url.query_pairs()
-            .find(|(key, _)| key == "urls.primaryName")
-            .map(|(_, value)| value.into_owned())
-    });
-    let document_url = config
-        .get("urls")
-        .and_then(|urls| urls.as_array())
-        .and_then(|urls| {
-            primary_name
-                .as_deref()
-                .and_then(|name| {
-                    urls.iter().find(|item| {
-                        item.get("name").and_then(|value| value.as_str()) == Some(name)
-                    })
-                })
-                .or_else(|| urls.first())
-        })
-        .and_then(|item| item.get("url"))
-        .and_then(|item| item.as_str())
-        .or_else(|| config.get("url").and_then(|item| item.as_str()))
-        .ok_or("Swagger config contains no API document")?;
-    absolute_url(&config_url, document_url)
+    swagger_document_urls(url)?
+        .into_iter()
+        .next()
+        .ok_or("Swagger contains no API document".into())
 }
 
 fn validated_postman_collection_json(json: String) -> Result<String, String> {
@@ -1008,12 +1077,16 @@ fn api_documentation_context(
 ) -> Result<String, String> {
     let mut context = String::new();
     for url in swagger_urls {
-        let document_url = swagger_document_url(url)?;
-        context.push_str("## Swagger/OpenAPI contract\nSource: ");
-        context.push_str(&document_url);
-        context.push_str("\n```json\n");
-        context.push_str(&fetch_url(&document_url)?);
-        context.push_str("\n```\n");
+        for document_url in swagger_document_urls(url)? {
+            context.push_str("## Swagger/OpenAPI contract\nSource: ");
+            context.push_str(&document_url);
+            context.push_str("\n```json\n");
+            context.push_str(&fetch_url_with_limit(
+                &document_url,
+                MAX_SWAGGER_DOCUMENT_BYTES,
+            )?);
+            context.push_str("\n```\n");
+        }
     }
     if let Some(api_list_sheet) = api_list_sheet {
         let csv =
@@ -1078,107 +1151,182 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .cloned())
 }
 
+pub(crate) fn compact_swagger_context(context: &str) -> String {
+    let marker = "## Swagger/OpenAPI contract";
+    let mut parts = context.split(marker);
+    let mut result = parts.next().unwrap_or_default().to_owned();
+    for section in parts {
+        result.push_str(marker);
+        if let Some((header, body)) = section.split_once("```json\n") {
+            if let Some((json, rest)) = body.split_once("\n```") {
+                if let Ok(document) = serde_json::from_str::<serde_json::Value>(json) {
+                    let paths = document
+                        .get("paths")
+                        .and_then(serde_json::Value::as_object)
+                        .map_or(0, |paths| paths.len());
+                    result.push_str(header);
+                    result.push_str(&format!("Title: {}\nPath entries: {paths}\nThe full contract is available through api_find_operations and api_operation_detail. This outline is not an endpoint inventory.\n", document.pointer("/info/title").and_then(serde_json::Value::as_str).unwrap_or("API")));
+                    result.push_str(rest);
+                    continue;
+                }
+            }
+        }
+        result.push_str(section);
+    }
+    result
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ApiContract {
     id: String,
     origin: String,
     base_url: String,
     document: serde_json::Value,
+    #[serde(default)]
+    source_url: String,
+    #[serde(default)]
+    load_error: Option<String>,
+    #[serde(default)]
+    stale: bool,
+}
+
+fn swagger_server_url(document: &serde_json::Value, document_url: &str) -> Result<String, String> {
+    let source = url::Url::parse(document_url).map_err(|e| e.to_string())?;
+    let target = if document.get("swagger").and_then(serde_json::Value::as_str) == Some("2.0") {
+        let scheme = document
+            .pointer("/schemes/0")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(source.scheme());
+        let host = document
+            .get("host")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                source[url::Position::BeforeHost..url::Position::AfterPort].to_owned()
+            });
+        let base = document
+            .get("basePath")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("/");
+        format!("{scheme}://{host}{base}")
+    } else if let Some(server) = document.pointer("/servers/0") {
+        let mut target = server
+            .get("url")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("Swagger server URL is missing")?
+            .to_owned();
+        if let Some(variables) = server
+            .get("variables")
+            .and_then(serde_json::Value::as_object)
+        {
+            for (name, variable) in variables {
+                if let Some(default) = variable.get("default").and_then(serde_json::Value::as_str) {
+                    target = target.replace(&format!("{{{name}}}"), default);
+                }
+            }
+        }
+        if target.contains('{') {
+            return Err("Swagger server variable has no default".into());
+        }
+        target
+    } else {
+        "/".to_owned()
+    };
+    Ok(absolute_url(document_url, &target)?
+        .trim_end_matches('/')
+        .to_owned())
+}
+
+fn swagger_contract(document: serde_json::Value, source_url: &str) -> Result<ApiContract, String> {
+    if !document
+        .get("paths")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        return Err("Swagger document has no paths object".into());
+    }
+    let (base_url, origin, load_error) = match swagger_server_url(&document, source_url) {
+        Ok(base_url) => {
+            let origin = url::Url::parse(&base_url)
+                .map_err(|e| e.to_string())?
+                .origin()
+                .ascii_serialization();
+            (base_url, origin, None)
+        }
+        Err(error) => (
+            String::new(),
+            String::new(),
+            Some(format!("API server unavailable: {error}")),
+        ),
+    };
+    let title = document
+        .pointer("/info/title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("api")
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    let cache = std::env::temp_dir()
+        .join("crc-url-cache")
+        .join(format!("{}.json", url_cache_key(source_url)));
+    let stale = std::fs::metadata(cache)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .is_some_and(|elapsed| elapsed.as_secs() >= 3600);
+    Ok(ApiContract {
+        id: format!("{}-{}", title.trim_matches('-'), url_cache_key(source_url)),
+        origin,
+        base_url,
+        document,
+        source_url: source_url.to_owned(),
+        load_error,
+        stale,
+    })
 }
 
 pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, String> {
-    let key = project_config_key(path)?;
-    let cache_dir = std::env::temp_dir().join("crc-contracts-cache");
-    let cache_key = format!("{:016x}", {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        hasher.finish()
-    });
-    let cache_file = cache_dir.join(format!("{cache_key}.json"));
-
-    if let Ok(metadata) = std::fs::metadata(&cache_file) {
-        if let Ok(modified) = metadata.modified() {
-            if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
-                if let Ok(content) = std::fs::read_to_string(&cache_file) {
-                    if let Ok(contracts) = serde_json::from_str::<Vec<ApiContract>>(&content) {
-                        return Ok(contracts);
-                    }
-                }
-            }
-        }
-    }
-
     let urls = swagger_urls_for_project(path)?;
-    if urls.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let mut contracts = Vec::new();
-    for url in urls {
-        let document_url = match swagger_document_url(&url) {
-            Ok(u) => u,
-            Err(e) => {
-                eprintln!("Failed to resolve swagger document url {url}: {e}");
+    let mut seen = std::collections::HashSet::new();
+    // Raw documents are cached per source URL. A project-only parsed cache used
+    // to retain the old inventory even after its configured Swagger URLs changed.
+    for configured in urls {
+        let documents = match swagger_document_urls(&configured) {
+            Ok(urls) => urls,
+            Err(error) => {
+                contracts.push(ApiContract {
+                    id: format!("unavailable-{}", url_cache_key(&configured)),
+                    origin: String::new(),
+                    base_url: String::new(),
+                    document: serde_json::json!({}),
+                    source_url: configured,
+                    load_error: Some(error),
+                    stale: false,
+                });
                 continue;
             }
         };
-        let body = match fetch_url(&document_url) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("Failed to fetch swagger document {document_url}: {e}");
+        for document_url in documents {
+            if !seen.insert(document_url.clone()) {
                 continue;
             }
-        };
-        let document: serde_json::Value = match serde_json::from_str(&body) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let id = document
-            .pointer("/info/title")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&document_url)
-            .to_lowercase()
-            .chars()
-            .map(|character| {
-                if character.is_ascii_alphanumeric() {
-                    character
-                } else {
-                    '-'
-                }
-            })
-            .collect::<String>()
-            .trim_matches('-')
-            .to_owned();
-        let server = document
-            .pointer("/servers/0/url")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(&url);
-        let Ok(server) = url::Url::parse(server) else {
-            continue;
-        };
-        let origin = server.origin().ascii_serialization();
-        let base_url = server.to_string().trim_end_matches('/').to_owned();
-        contracts.push(ApiContract {
-            id,
-            origin,
-            base_url,
-            document,
-        });
-    }
-
-    let _ = std::fs::create_dir_all(&cache_dir);
-    if !contracts.is_empty() {
-        if let Ok(json) = serde_json::to_string(&contracts) {
-            let _ = std::fs::write(&cache_file, json);
+            let result = fetch_url_with_limit(&document_url, MAX_SWAGGER_DOCUMENT_BYTES)
+                .and_then(|body| {
+                    serde_json::from_str(&body).map_err(|e| format!("Swagger JSON: {e}"))
+                })
+                .and_then(|document| swagger_contract(document, &document_url));
+            contracts.push(result.unwrap_or_else(|error| ApiContract {
+                id: format!("unavailable-{}", url_cache_key(&document_url)),
+                origin: String::new(),
+                base_url: String::new(),
+                document: serde_json::json!({}),
+                source_url: document_url,
+                load_error: Some(error),
+                stale: false,
+            }));
         }
-    } else if let Ok(content) = std::fs::read_to_string(&cache_file) {
-        if let Ok(stale) = serde_json::from_str::<Vec<ApiContract>>(&content) {
-            return Ok(stale);
-        }
-    } else {
-        let _ = std::fs::write(&cache_file, "[]");
     }
-
     Ok(contracts)
 }
 
@@ -1186,7 +1334,9 @@ pub fn swagger_document_for_project(path: &Path) -> Result<Option<String>, Strin
     let Some(url) = swagger_url_for_project(path)? else {
         return Ok(None);
     };
-    match swagger_document_url(&url).and_then(|document_url| fetch_url(&document_url)) {
+    match swagger_document_url(&url)
+        .and_then(|document_url| fetch_url_with_limit(&document_url, MAX_SWAGGER_DOCUMENT_BYTES))
+    {
         Ok(document) => Ok(Some(document)),
         Err(error) => api_documentation_context_for_project(path)?
             .and_then(|context| {
@@ -1655,6 +1805,84 @@ pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swagger_servers_support_relative_variables_defaults_and_v2() {
+        let source = "https://api.example.com/docs/openapi.json";
+        assert_eq!(
+            swagger_server_url(&serde_json::json!({"openapi":"3.0.3", "paths":{}}), source)
+                .unwrap(),
+            "https://api.example.com"
+        );
+        assert_eq!(swagger_server_url(&serde_json::json!({"servers":[{"url":"../api/{version}","variables":{"version":{"default":"v2"}}}]}), source).unwrap(), "https://api.example.com/api/v2");
+        assert_eq!(
+            swagger_server_url(
+                &serde_json::json!({"swagger":"2.0","host":"backend.example.com","basePath":"/v1"}),
+                source
+            )
+            .unwrap(),
+            "https://backend.example.com/v1"
+        );
+        assert!(swagger_server_url(
+            &serde_json::json!({"servers":[{"url":"https://{host}"}]}),
+            source
+        )
+        .is_err());
+        let unresolved = swagger_contract(
+            serde_json::json!({"servers":[{"url":"https://{host}"}],"paths":{"/employees":{"get":{"responses":{"200":{}}}}}}),
+            source,
+        ).unwrap();
+        assert!(unresolved.load_error.is_some());
+        assert!(unresolved.document["paths"]["/employees"]["get"].is_object());
+        let a = swagger_contract(
+            serde_json::json!({"info":{"title":"Same API"},"paths":{}}),
+            "https://api.example.com/a.json",
+        )
+        .unwrap();
+        let b = swagger_contract(
+            serde_json::json!({"info":{"title":"Same API"},"paths":{}}),
+            "https://api.example.com/b.json",
+        )
+        .unwrap();
+        assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn swagger_config_reads_all_documents_and_varied_initializer_literals() {
+        let config = serde_json::json!({"urls":[{"name":"First","url":"../first.json"},{"name":"Second","url":"/v3/api-docs/second"}]});
+        assert_eq!(
+            swagger_config_document_urls(&config, "https://api.example.com/docs/config.json")
+                .unwrap(),
+            vec![
+                "https://api.example.com/first.json",
+                "https://api.example.com/v3/api-docs/second"
+            ]
+        );
+        for source in [
+            r#"{ "configUrl" : "../config" }"#,
+            r#"{configUrl: '../config'}"#,
+            r#"{ "configUrl":"../config" }"#,
+        ] {
+            assert_eq!(
+                swagger_config_literal(source, "configUrl"),
+                Some("../config".into())
+            );
+        }
+        assert_eq!(
+            swagger_config_literal(r#"SwaggerUIBundle({url: 'openapi.json'})"#, "url"),
+            Some("openapi.json".into())
+        );
+    }
+
+    #[test]
+    fn swagger_prompt_outline_keeps_other_context_without_a_clipped_inventory() {
+        let raw = "## Swagger/OpenAPI contract\nSource: https://api.example.com/openapi.json\n```json\n{\"info\":{\"title\":\"API\"},\"paths\":{\"/hidden-endpoint\":{}}}\n```\n## API list\nrequired reference data";
+        let compact = compact_swagger_context(raw);
+        assert!(compact.contains("api_find_operations"));
+        assert!(compact.contains("Path entries: 1"));
+        assert!(compact.contains("required reference data"));
+        assert!(!compact.contains("hidden-endpoint"));
+    }
     #[test]
     fn resolve_live_dir_falls_back_to_nearest_living_ancestor() {
         let base = std::env::temp_dir().join("crc-resolve-live-dir-test");

@@ -28,7 +28,9 @@ The global **Deep Research** dashboard runs one dedicated Pi session with a rest
 
 The session tree retains all branches using Pi's flat `get_entries` response. Forking is available on user messages only; it replaces the active transcript with that branch's history and restores the selected prompt as an editable draft.
 
-Git-worktree chats await a best-effort checkpoint before dispatching each user message. Restoring a checkpoint restores the tracked snapshot, including removing tracked files added afterward, without changing HEAD, unrelated untracked files, or conversation history. File-picker results are cached for at most one second so nested file and ignore-rule changes become visible on the next lookup after expiry.
+Git-worktree chats await a best-effort checkpoint before dispatching an idle user message; steering an active agent does not interrupt it with a snapshot. Checkpoints use a temporary index and local `refs/kern/checkpoints/*`, leaving HEAD and the user's staging untouched. Identical snapshots are reused. Restoring a checkpoint restores the tracked snapshot, including removing tracked files added afterward, without changing HEAD, unrelated untracked files, or conversation history. File-picker results are cached for at most one second so nested file and ignore-rule changes become visible on the next lookup after expiry.
+
+Project coding sessions record task criteria, real validation exit codes, and source fingerprints. Completion evidence is checked after formatting and before final settlement. See [agent workflow](docs/agent-workflow.md) for the behavior and limits.
 
 ## Stack
 

@@ -22,6 +22,8 @@ export type ChatMessage = {
   durationMs?: number;
   // streaming flags
   isStreaming?: boolean;
+  // Transient offsets: one visible turn can contain several Pi assistant messages.
+  assistantMessageStart?: { text: number; thinking: number };
 };
 
 export type ApprovalRequest = {

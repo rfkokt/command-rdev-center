@@ -57,6 +57,26 @@ export function transcriptEntry(raw: string) {
         detail: event.success === false ? "Failed" : "Completed",
         at: Date.now(),
       };
+    if (type === "compaction_start" || type === "auto_compaction_start")
+      return {
+        id: uid(),
+        type: "Context",
+        detail: "Compaction started",
+        at: Date.now(),
+      };
+    if (type === "compaction_end" || type === "auto_compaction_end")
+      return {
+        id: uid(),
+        type: "Context",
+        detail: event.errorMessage
+          ? "Compaction failed"
+          : event.aborted
+            ? "Compaction canceled"
+            : event.willRetry
+              ? "Compacted · Resuming task"
+              : "Compaction completed",
+        at: Date.now(),
+      };
     if (type !== "message_update") return null;
 
     const update = event.assistantMessageEvent as

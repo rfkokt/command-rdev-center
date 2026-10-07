@@ -1,5 +1,70 @@
 import { describe, expect, test } from "vitest";
-import { appendStreamingText } from "./chat-utils";
+import { appendStreamingText, mergeAssistantMessage } from "./chat-utils";
+import type { ChatMessage } from "../lib/rpc";
+
+describe("assistant message boundaries", () => {
+  const previous: ChatMessage = {
+    id: "visible-turn",
+    role: "assistant",
+    text: "Cek datanya:",
+    thinking: "First investigation",
+    toolCalls: [],
+    isStreaming: true,
+    assistantMessageStart: { text: 12, thinking: 19 },
+  };
+
+  test("separates messages while keeping chunks and cumulative snapshots inside one paragraph", () => {
+    const first = mergeAssistantMessage(previous, { text: "Data tersedia" });
+    const second = mergeAssistantMessage(first, {
+      text: "Data tersedia di API.",
+    });
+    const final = mergeAssistantMessage(
+      second,
+      { text: "Data tersedia di API." },
+      true,
+    );
+    expect(final.text).toBe("Cek datanya:\n\nData tersedia di API.");
+    expect(final.thinking).toBe(previous.thinking);
+  });
+
+  test("keeps final-only content and separate thinking after earlier progress", () => {
+    const final = mergeAssistantMessage(
+      previous,
+      {
+        text: "## Temuan\n\n- Token berbeda.\n- API tersedia.",
+        thinking: "Second investigation",
+      },
+      true,
+    );
+    expect(final.text).toBe(
+      "Cek datanya:\n\n## Temuan\n\n- Token berbeda.\n- API tersedia.",
+    );
+    expect(final.thinking).toBe("First investigation\n\nSecond investigation");
+  });
+
+  test("does not insert paragraph gaps between code chunks", () => {
+    const first = mergeAssistantMessage(previous, { text: '```json\n{"ok":' });
+    const last = mergeAssistantMessage(first, { text: "true}\n```" });
+    expect(last.text).toBe('Cek datanya:\n\n```json\n{"ok":true}\n```');
+  });
+
+  test("keeps the current message offset valid after bounded history truncation", () => {
+    const prefix = "x".repeat(199_995);
+    const first = mergeAssistantMessage(
+      {
+        ...previous,
+        text: prefix,
+        assistantMessageStart: { text: prefix.length, thinking: 19 },
+      },
+      { text: "new paragraph" },
+    );
+    const last = mergeAssistantMessage(first, {
+      text: "new paragraph continues",
+    });
+    expect(last.text.length).toBe(200_000);
+    expect(last.text.endsWith("\n\nnew paragraph continues")).toBe(true);
+  });
+});
 
 // Reference copy of the pre-fix implementation (O(n·m) suffix-overlap scan),
 // used for differential testing of the KMP-based replacement.

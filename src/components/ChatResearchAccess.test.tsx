@@ -294,6 +294,83 @@ describe("session startup recovery", () => {
   });
 });
 
+describe("readable assistant responses", () => {
+  it.each([
+    [true, false],
+    [false, false],
+    [false, true],
+  ])(
+    "preserves separate progress and final paragraphs (streamed: %s, similar text: %s)",
+    async (streamed, similar) => {
+      mockBackend();
+      const view = render(<ChatView {...baseProps} />);
+      await waitFor(() => expect(listeners.has("pi-rpc-event")).toBe(true));
+      const emit = async (event: unknown) =>
+        act(async () => {
+          listeners.get("pi-rpc-event")!({
+            payload: {
+              session_id: "chat-chat-one",
+              raw: JSON.stringify(event),
+            },
+          });
+        });
+      const text =
+        "Data tersedia di API. Token berasal dari sesi login yang berbeda, sehingga respons browser perlu dibandingkan dengan permintaan API langsung.";
+      const progressText = similar ? text : "Cek datanya:";
+      const progress = {
+        id: "progress",
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "text", text: progressText }],
+      };
+      const final = {
+        id: "final",
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text }],
+      };
+      await emit({ type: "agent_start" });
+      await emit({ type: "message_start", message: { role: "assistant" } });
+      if (streamed)
+        await emit({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: progressText },
+        });
+      await emit({ type: "message_end", message: progress });
+      await emit({ type: "turn_end", message: progress });
+      await emit({ type: "message_start", message: { role: "assistant" } });
+      if (streamed) {
+        await emit({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "Data tersedia" },
+        });
+        await emit({
+          type: "message_update",
+          assistantMessageEvent: {
+            type: "text_delta",
+            delta: text.slice("Data tersedia".length),
+          },
+        });
+      }
+      await emit({ type: "message_end", message: final });
+      await emit({ type: "turn_end", message: final });
+      await emit({ type: "agent_end", messages: [progress, final] });
+      await emit({ type: "agent_settled" });
+      await waitFor(() => {
+        const paragraphs = [
+          ...view.container.querySelectorAll(
+            ".chat-bubble-assistant > .markdown-body > p",
+          ),
+        ].map((p) => p.textContent);
+        expect(paragraphs).toEqual([progressText, text]);
+      });
+      expect(
+        view.container.querySelectorAll(".chat-bubble-assistant"),
+      ).toHaveLength(1);
+    },
+  );
+});
+
 describe("chat-native Deep Research", () => {
   it.each(["history", "empty", "reload", "pending-reload"])(
     "replaces fork history and supports Pi reload (%s)",
@@ -678,5 +755,389 @@ describe("chat-native Deep Research", () => {
     expect(await screen.findByText("/research Research A")).toBeInTheDocument();
     expect(screen.getByText("/research Research B")).toBeInTheDocument();
     expect(screen.getAllByRole("article")).toHaveLength(2);
+  });
+});
+
+describe("agent final settlement", () => {
+  it("shows Pi 1.0 compaction while preserving the active task through an overflow retry", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() => expect(listeners.has("pi-rpc-event")).toBe(true));
+    const emit = (event: unknown) =>
+      act(async () =>
+        listeners.get("pi-rpc-event")!({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+        }),
+      );
+    await emit({
+      type: "response",
+      command: "get_session_stats",
+      data: {
+        tokens: { input: 100, output: 10, total: 110 },
+        contextUsage: { tokens: 107000, contextWindow: 100000, percent: 107 },
+      },
+    });
+    expect(screen.getByTitle("Show token usage")).toHaveTextContent("107%");
+    await emit({ type: "agent_start" });
+    await emit({ type: "agent_end", messages: [] });
+    baseProps.onAgentRunning.mockClear();
+    baseProps.onUnread.mockClear();
+    await emit({ type: "compaction_start", reason: "overflow" });
+    expect(screen.getByText("COMPACTING CONTEXT")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Cancel compaction" }),
+    ).toBeInTheDocument();
+    await emit({
+      type: "compaction_end",
+      reason: "overflow",
+      result: { tokensBefore: 107000, estimatedTokensAfter: 12000 },
+      aborted: false,
+      willRetry: true,
+    });
+    expect(screen.getByTitle("Show token usage")).not.toHaveTextContent("107%");
+    expect(baseProps.onAgentRunning).not.toHaveBeenCalledWith(
+      "chat-one",
+      false,
+    );
+    expect(baseProps.onUnread).not.toHaveBeenCalled();
+    expect(
+      invoke.mock.calls.some(
+        ([command, args]) =>
+          command === "send_pi_command" &&
+          JSON.parse(args.jsonLine).type === "get_session_stats",
+      ),
+    ).toBe(true);
+    await emit({ type: "agent_start" });
+    await emit({ type: "agent_settled" });
+    expect(baseProps.onAgentRunning).toHaveBeenCalledWith("chat-one", false);
+  });
+
+  it("clears a rejected prompt without waiting for agent events that will never arrive", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() => expect(listeners.has("pi-rpc-event")).toBe(true));
+    await act(async () =>
+      listeners.get("pi-rpc-event")!({
+        payload: {
+          session_id: "chat-chat-one",
+          raw: JSON.stringify({
+            type: "response",
+            command: "prompt",
+            success: false,
+            error: "Context overflow recovery failed before prompt startup",
+          }),
+        },
+      }),
+    );
+    expect(
+      screen.getByText(
+        /Context overflow recovery failed before prompt startup/,
+      ),
+    ).toBeInTheDocument();
+    expect(baseProps.onAgentRunning).toHaveBeenLastCalledWith(
+      "chat-one",
+      false,
+    );
+  });
+
+  it("surfaces manual compaction RPC errors even when the response has no data or end event", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    fireEvent.change(screen.getByPlaceholderText("Message the agent…"), {
+      target: { value: "/compact" },
+    });
+    fireEvent.keyDown(screen.getByPlaceholderText("Message the agent…"), {
+      key: "Enter",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Cancel compaction" }),
+      ).toBeInTheDocument(),
+    );
+    const request = invoke.mock.calls
+      .filter(([command]) => command === "send_pi_command")
+      .map(([, args]) => JSON.parse(args.jsonLine))
+      .find((command) => command.type === "compact");
+    expect(request.id).toBeTruthy();
+    await act(async () =>
+      listeners.get("pi-rpc-event")!({
+        payload: {
+          session_id: "chat-chat-one",
+          raw: JSON.stringify({
+            type: "response",
+            command: "compact",
+            id: request.id,
+            success: false,
+            error: "Summary provider rejected the request",
+          }),
+        },
+      }),
+    );
+    expect(
+      screen.getByText("Summary provider rejected the request"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry compaction" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Restart agent" }),
+    ).toBeInTheDocument();
+    expect(baseProps.onAgentRunning).toHaveBeenLastCalledWith(
+      "chat-one",
+      false,
+    );
+  });
+
+  it("does not abort silent compaction at two minutes and exposes a bounded timeout with saved-session recovery", async () => {
+    vi.useFakeTimers();
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) =>
+      command === "is_pi_session_running"
+        ? Promise.resolve(true)
+        : original(command, args),
+    );
+    render(<ChatView {...baseProps} />);
+    await act(async () => {});
+    const emit = (event: unknown) =>
+      act(async () =>
+        listeners.get("pi-rpc-event")!({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+        }),
+      );
+    await emit({
+      type: "response",
+      command: "get_state",
+      data: { sessionFile: "/tmp/saved.jsonl", autoCompactionEnabled: true },
+    });
+    await emit({ type: "compaction_start", reason: "threshold" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(125000);
+    });
+    const aborts = () =>
+      invoke.mock.calls.filter(
+        ([command, args]) =>
+          command === "send_pi_command" &&
+          JSON.parse(args.jsonLine).type === "abort",
+      );
+    expect(aborts()).toHaveLength(0);
+    expect(screen.getByText("COMPACTING CONTEXT")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180000);
+    });
+    expect(aborts()).toHaveLength(1);
+    expect(
+      screen.getByText(/Context compaction exceeded 5 minutes/),
+    ).toBeInTheDocument();
+    await emit({
+      type: "compaction_end",
+      reason: "threshold",
+      aborted: true,
+      willRetry: false,
+    });
+    expect(
+      screen.getByText(/Context compaction exceeded 5 minutes/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restart agent" }));
+    await act(async () => {});
+    expect(invoke).toHaveBeenCalledWith(
+      "spawn_pi_rpc",
+      expect.objectContaining({ sessionFile: "/tmp/saved.jsonl" }),
+    );
+  });
+
+  it("recovers from a missing compaction end event using the runtime state", async () => {
+    vi.useFakeTimers();
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) =>
+      command === "is_pi_session_running"
+        ? Promise.resolve(true)
+        : original(command, args),
+    );
+    render(<ChatView {...baseProps} />);
+    await act(async () => {});
+    const emit = (event: unknown) =>
+      act(async () =>
+        listeners.get("pi-rpc-event")!({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+        }),
+      );
+    await emit({ type: "compaction_start", reason: "threshold" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    const probe = invoke.mock.calls
+      .filter(([command]) => command === "send_pi_command")
+      .map(([, args]) => JSON.parse(args.jsonLine))
+      .reverse()
+      .find((command) => command.type === "get_state" && command.id);
+    await emit({
+      type: "response",
+      command: "get_state",
+      id: probe.id,
+      data: {
+        isCompacting: false,
+        isStreaming: false,
+        autoCompactionEnabled: true,
+      },
+    });
+    expect(
+      screen.getByText(/Agent is idle but no compaction result was received/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry compaction" }),
+    ).toBeEnabled();
+    expect(screen.queryByText("COMPACTING CONTEXT")).not.toBeInTheDocument();
+  });
+
+  it("keeps manual compaction pending through turn abortion, preserves drafts and deduplicates its acknowledgement", async () => {
+    vi.useFakeTimers();
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command, args) =>
+      command === "is_pi_session_running"
+        ? Promise.resolve(true)
+        : original(command, args),
+    );
+    render(<ChatView {...baseProps} />);
+    await act(async () => {});
+    const emit = (event: unknown) =>
+      act(async () =>
+        listeners.get("pi-rpc-event")!({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+        }),
+      );
+    await emit({ type: "agent_start" });
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/compact" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await act(async () => {});
+    const commands = () =>
+      invoke.mock.calls
+        .filter(([command]) => command === "send_pi_command")
+        .map(([, args]) => JSON.parse(args.jsonLine));
+    const request = commands().find((command) => command.type === "compact");
+    baseProps.onUnread.mockClear();
+    await emit({ type: "agent_settled" });
+    expect(baseProps.onUnread).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+    const probe = commands()
+      .reverse()
+      .find((command) => command.type === "get_state" && command.id);
+    await emit({
+      type: "response",
+      command: "get_state",
+      id: probe.id,
+      data: { isCompacting: false, isStreaming: false },
+    });
+    expect(
+      screen.getByRole("button", { name: "Cancel compaction" }),
+    ).toBeInTheDocument();
+    const count = commands().length;
+    fireEvent.change(input, { target: { value: "Draft that must survive" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await act(async () => {});
+    expect(input).toHaveValue("Draft that must survive");
+    expect(commands()).toHaveLength(count);
+    await emit({ type: "compaction_start", reason: "manual" });
+    baseProps.onToast.mockClear();
+    await emit({
+      type: "compaction_end",
+      reason: "manual",
+      result: {},
+      aborted: false,
+      willRetry: false,
+    });
+    await emit({
+      type: "response",
+      command: "compact",
+      id: request.id,
+      success: true,
+      data: {},
+    });
+    expect(
+      baseProps.onToast.mock.calls.filter(
+        ([message]) => message === "Context compacted",
+      ),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Cancel compaction" }),
+    ).not.toBeInTheDocument();
+    expect(input).toHaveValue("Draft that must survive");
+  });
+
+  it("shows visible verification results immediately and keeps hidden guidance out of chat", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() => expect(listeners.has("pi-rpc-event")).toBe(true));
+    const emit = (event: unknown) =>
+      listeners.get("pi-rpc-event")!({
+        payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+      });
+    const visible = {
+      role: "custom",
+      customType: "kern-verification",
+      display: true,
+      content: "Task incomplete: tests unavailable",
+      timestamp: 123,
+    };
+    await act(async () => {
+      emit({
+        type: "message_end",
+        message: {
+          ...visible,
+          display: false,
+          content: "Hidden task guidance",
+        },
+      });
+      emit({ type: "message_end", message: visible });
+      emit({ type: "turn_end", message: visible });
+    });
+    expect(screen.queryByText("Hidden task guidance")).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Task incomplete: tests unavailable"),
+    ).toHaveLength(1);
+  });
+  it("keeps retry/compaction/queued runs active and finishes only once at agent_settled", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    const emit = async (event: Record<string, unknown>) =>
+      act(async () => {
+        listeners.get("pi-rpc-event")?.({
+          payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+        });
+      });
+    baseProps.onAgentRunning.mockClear();
+    baseProps.onUnread.mockClear();
+    await emit({ type: "agent_start" });
+    await emit({ type: "agent_end", messages: [] });
+    await emit({ type: "auto_retry_start" });
+    await emit({ type: "auto_retry_end", success: true });
+    await emit({ type: "auto_compaction_start" });
+    await emit({ type: "auto_compaction_end" });
+    await emit({ type: "agent_start" });
+    await emit({ type: "agent_end", messages: [] });
+    expect(baseProps.onAgentRunning).not.toHaveBeenCalledWith(
+      "chat-one",
+      false,
+    );
+    expect(baseProps.onUnread).not.toHaveBeenCalled();
+    await emit({ type: "agent_settled" });
+    await emit({ type: "agent_settled" });
+    expect(
+      baseProps.onAgentRunning.mock.calls.filter(
+        ([, running]) => running === false,
+      ),
+    ).toHaveLength(1);
+    expect(baseProps.onUnread).toHaveBeenCalledTimes(1);
   });
 });

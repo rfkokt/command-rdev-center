@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 type Task = {
@@ -38,7 +39,10 @@ function taskMarkdown(task: Task, allTasks: Task[]) {
       ([key, value]) =>
         !known.has(key) && value != null && String(value).trim(),
     )
-    .map(([key, value]) => `- ${key}: ${String(value)}`);
+    .map(
+      ([key, value]) =>
+        `- ${key}: ${typeof value === "object" ? JSON.stringify(value) : String(value)}`,
+    );
   const embeddedReferences = Array.isArray(task.references)
     ? (task.references as Task[])
     : [];
@@ -97,19 +101,49 @@ function kanbanMarkdown(items: Task[]) {
   return [`# Task project · ${items.length}`, "", ...sections].join("\n\n");
 }
 
-async function tasks(): Promise<Task[]> {
-  const dir = process.env.CRC_TASK_DIR;
-  const project = process.env.CRC_PROJECT_NAME;
+async function tasks() {
+  const dir = process.env.CRC_TASK_DIR,
+    project = process.env.CRC_PROJECT_NAME;
   if (!dir || !project) throw new Error("Project task context is unavailable");
+  const cached = process.env.CRC_TASK_SOURCE_KIND === "google_sheets";
+  const path = join(
+    dir,
+    ...(cached ? [".cache", `${project}.json`] : [`${project}.json`]),
+  );
+  let raw: string,
+    source = path;
   try {
-    return JSON.parse(
-      await readFile(join(dir, ".cache", `${project}.json`), "utf8"),
-    ) as Task[];
-  } catch {
-    return JSON.parse(
-      await readFile(join(dir, `${project}.json`), "utf8"),
-    ) as Task[];
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || cached)
+      throw error;
+    source = join(dir, ".cache", `${project}.json`);
+    raw = await readFile(source, "utf8");
   }
+  let metadata: any;
+  if (source.includes(`${join(dir, ".cache")}/`)) {
+    try {
+      metadata = JSON.parse(
+        await readFile(join(dir, ".cache", `${project}.meta.json`), "utf8"),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (metadata?.error)
+      throw new Error(
+        `Task source unavailable: ${metadata.error}. Do not infer that no tasks exist.`,
+      );
+  }
+  const items = JSON.parse(raw);
+  if (!Array.isArray(items) || items.some((task) => !task || task.no == null))
+    throw new Error("Invalid project task data");
+  const updatedAt = (await stat(source)).mtime.toISOString();
+  return {
+    items: items as Task[],
+    source,
+    updatedAt,
+    cached: source !== join(dir, `${project}.json`),
+  };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -184,7 +218,8 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, input) {
       const requestedStatus = input.status?.trim().toLowerCase();
       const ready = new Set(["to do", "todo", "backlog", "open", "ready"]);
-      const result = (await tasks()).filter((task) => {
+      const data = await tasks();
+      const result = data.items.filter((task) => {
         const status = task.status?.trim().toLowerCase() || "backlog";
         return (
           (!input.pic ||
@@ -195,7 +230,13 @@ export default function (pi: ExtensionAPI) {
       });
       return {
         content: [{ type: "text", text: kanbanMarkdown(result) }],
-        details: { count: result.length },
+        details: {
+          count: result.length,
+          taskIds: result.map((task) => String(task.no)),
+          source: data.source,
+          updatedAt: data.updatedAt,
+          cached: data.cached,
+        },
       };
     },
   });
@@ -203,17 +244,38 @@ export default function (pi: ExtensionAPI) {
     name: "get_project_task",
     label: "Get project task",
     description:
-      "Get the complete, authoritative detail of one project task by number or ID. The returned Markdown includes the full task description and notes without list-preview truncation. Use it directly as the requirements; never claim it is clipped or ask the user to paste it again.",
+      "Get the complete, authoritative detail of one project task by number or ID. The returned Markdown includes the full task description and notes without list-preview truncation. Use the full description, notes, and referenced tasks as requirements before mapping them to Swagger operations. Check source/updatedAt and cached metadata; do not guess a task ID or invent missing requirements. Never claim it is clipped or ask the user to paste it again.",
     parameters: Type.Object({
       taskNo: Type.String({ description: "Task number or ID" }),
     }),
     async execute(_id, input) {
-      const allTasks = await tasks();
-      const task = allTasks.find((item) => String(item.no) === input.taskNo);
-      if (!task) throw new Error(`Task ${input.taskNo} not found`);
+      const data = await tasks();
+      const allTasks = data.items;
+      const taskNo = input.taskNo.trim().replace(/^#/, "");
+      const matching = allTasks.filter(
+        (item) => String(item.no).trim() === taskNo,
+      );
+      if (!matching.length)
+        throw new Error(
+          `Task ${taskNo} not found in ${data.source} (updated ${data.updatedAt})`,
+        );
+      if (matching.length > 1)
+        throw new Error(
+          `Task ${taskNo} is ambiguous: ${matching.length} records share this ID. Resolve the task source before choosing requirements.`,
+        );
+      const task = matching[0];
       return {
         content: [{ type: "text", text: taskMarkdown(task, allTasks) }],
-        details: { taskNo: input.taskNo },
+        details: {
+          taskNo,
+          source: data.source,
+          updatedAt: data.updatedAt,
+          cached: data.cached,
+          revision: createHash("sha256")
+            .update(JSON.stringify(task))
+            .digest("hex"),
+          requirements: task,
+        },
       };
     },
   });

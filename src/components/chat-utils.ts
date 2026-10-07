@@ -106,6 +106,40 @@ export function preserveStreamedContent(streamed: string, completed: string) {
   return `${streamed}\n\n${completed}`;
 }
 
+// Keep overlap/deduplication local to the current backend message. Earlier
+// progress updates must not swallow a similar final answer or join its words.
+export function mergeAssistantMessage(
+  message: ChatMessage,
+  content: { text?: string; thinking?: string },
+  completed = false,
+): ChatMessage {
+  const next = { ...message };
+  const starts = message.assistantMessageStart
+    ? { ...message.assistantMessageStart }
+    : undefined;
+  for (const field of ["text", "thinking"] as const) {
+    const incoming = content[field];
+    if (!incoming) continue;
+    const current = message[field] ?? "";
+    const start = starts?.[field] ?? 0;
+    const prefix = current.slice(0, start);
+    const segment = current.slice(start);
+    const merged = completed
+      ? preserveStreamedContent(segment, incoming)
+      : appendStreamingText(segment, incoming);
+    const separator = prefix && !segment ? "\n\n" : "";
+    const combined = prefix + separator + merged;
+    next[field] = combined.slice(-200_000);
+    if (starts)
+      starts[field] = Math.max(
+        0,
+        start + separator.length - Math.max(0, combined.length - 200_000),
+      );
+  }
+  if (starts) next.assistantMessageStart = starts;
+  return next;
+}
+
 export type TaskIntent = { kind: "list" } | { kind: "detail"; taskNo: string };
 
 export function projectTaskIntent(input: string): TaskIntent | null {

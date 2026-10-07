@@ -29,7 +29,7 @@ import { parseApprovalRequest } from "../lib/rpc";
 import { withTimeout } from "../lib/with-timeout";
 import {
   formatTokens,
-  appendStreamingText,
+  mergeAssistantMessage,
   recentItems,
   uid,
   shouldShowChanges,
@@ -207,6 +207,13 @@ type SessionStats = {
     percent: number | null;
   };
 };
+type CompactionState = {
+  status: "running" | "failed" | "cancelled";
+  reason: string;
+  startedAt: number;
+  message?: string;
+  awaitingStart?: boolean;
+};
 export type ChatFile = { name: string; path: string };
 type ChatAttachment = ChatFile & { content: string };
 
@@ -216,6 +223,7 @@ function attachmentContext(attachments: ChatAttachment[]) {
 
 const MAX_HISTORY = 600;
 const AGENT_INACTIVITY_TIMEOUT_MS = 2 * 60_000;
+const COMPACTION_TIMEOUT_MS = 5 * 60_000;
 
 // ponytail: own 1s ticker so the whole chat tree doesn't re-render every second.
 const ElapsedLabel = memo(function ElapsedLabel({
@@ -496,6 +504,19 @@ export default function ChatView({
   const [devStarting, setDevStarting] = useState(false);
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [compaction, setCompaction] = useState<CompactionState | null>(null);
+  const [autoCompactionEnabled, setAutoCompactionEnabled] = useState<
+    boolean | null
+  >(null);
+  const compactionRef = useRef<CompactionState | null>(null);
+  const manualCompactionRef = useRef<string | null>(null);
+  const compactionProbeRef = useRef<{ id: string; startedAt: number } | null>(
+    null,
+  );
+  const updateCompaction = useCallback((value: CompactionState | null) => {
+    compactionRef.current = value;
+    setCompaction(value);
+  }, []);
   const [usageOpen, setUsageOpen] = useState(false);
   const [backgroundWork, setBackgroundWork] = useState<{
     runId?: string;
@@ -536,6 +557,7 @@ export default function ChatView({
   const abortResponseRef = useRef<(() => void) | null>(null);
   const latestAssistantResponseRef = useRef("");
   const receivedStreamDeltaRef = useRef(false);
+  const assistantMessageCountRef = useRef(0);
   const fallbackRevealTimerRef = useRef<number | null>(null);
   const devDialogRef = useModalFocus<HTMLDivElement>(
     () => setPendingDevCommand(null),
@@ -662,22 +684,7 @@ export default function ChatView({
       const copy = ensureAssistantTurn(prev, createAssistantTurn);
       for (let i = copy.length - 1; i >= 0; i--) {
         if (copy[i].role === "assistant" && copy[i].isStreaming) {
-          copy[i] = {
-            ...copy[i],
-            ...(text
-              ? {
-                  text: appendStreamingText(copy[i].text, text),
-                }
-              : null),
-            ...(thinking
-              ? {
-                  thinking: appendStreamingText(
-                    copy[i].thinking ?? "",
-                    thinking,
-                  ),
-                }
-              : null),
-          };
+          copy[i] = mergeAssistantMessage(copy[i], { text, thinking });
           if (text) latestAssistantResponseRef.current = copy[i].text;
           break;
         }
@@ -1136,8 +1143,17 @@ export default function ChatView({
   // Elapsed timers live in <ElapsedLabel/> so ticking doesn't re-render the tree.
 
   useEffect(() => {
-    if (agentStatus === "stopped") setBackgroundWork(null);
-  }, [agentStatus]);
+    if (agentStatus === "stopped") {
+      setBackgroundWork(null);
+      if (compactionRef.current?.status === "running")
+        updateCompaction({
+          ...compactionRef.current,
+          status: "failed",
+          message:
+            "Agent stopped during context compaction. Restart the saved session and retry.",
+        });
+    }
+  }, [agentStatus, updateCompaction]);
 
   // Elapsed timers live in <ElapsedLabel/> so ticking doesn't re-render the tree.
 
@@ -1175,6 +1191,9 @@ export default function ChatView({
       setInput(text);
       setMessages([]);
       setPendingMessageCount(0);
+      updateCompaction(null);
+      manualCompactionRef.current = null;
+      compactionProbeRef.current = null;
       trackedTaskRef.current = false;
       finalizedIdsRef.current.clear();
       finalizedContentRef.current.clear();
@@ -1196,12 +1215,122 @@ export default function ChatView({
         }
       });
     },
-    [sendRaw],
+    [sendRaw, updateCompaction],
   );
 
+  const finishCompaction = useCallback(
+    (event: Record<string, unknown>) => {
+      const previous = compactionRef.current;
+      const reason =
+        typeof event.reason === "string"
+          ? event.reason
+          : (previous?.reason ?? "manual");
+      const error =
+        typeof event.errorMessage === "string" ? event.errorMessage : "";
+      if (previous?.status === "failed" && event.aborted === true) {
+        // Preserve the watchdog's explanation when its abort is acknowledged.
+      } else if (error || event.aborted === true) {
+        const message =
+          error || "Context compaction canceled. Retry compaction when ready.";
+        updateCompaction({
+          status: error ? "failed" : "cancelled",
+          reason,
+          startedAt: previous?.startedAt ?? Date.now(),
+          message,
+        });
+        if (previous?.message !== message) onToast(message);
+      } else {
+        updateCompaction(null);
+        // Pre-compaction usage must not keep displaying an old value such as 107%.
+        setSessionStats((stats) =>
+          stats?.contextUsage
+            ? {
+                ...stats,
+                contextUsage: {
+                  ...stats.contextUsage,
+                  tokens: null,
+                  percent: null,
+                },
+              }
+            : stats,
+        );
+        onToast("Context compacted");
+      }
+      compactionProbeRef.current = null;
+      lastAgentActivityRef.current = Date.now();
+      if (reason === "manual") {
+        setAgentStatus("idle");
+        setIsStreaming(false);
+        setMessages(settleAgentMessages);
+        onAgentRunning(chatId, false);
+      }
+      // Automatic compaction may retry or drain queued work. Wait for agent_settled.
+      void sendRaw({ type: "get_session_stats" });
+      void sendRaw({ type: "get_state" });
+    },
+    [chatId, onAgentRunning, onToast, sendRaw, updateCompaction],
+  );
+
+  const requestCompaction = useCallback(async () => {
+    if (compactionRef.current?.status === "running") return;
+    const id = uid();
+    manualCompactionRef.current = id;
+    updateCompaction({
+      status: "running",
+      reason: "manual",
+      startedAt: Date.now(),
+      awaitingStart: true,
+    });
+    setAgentStatus("running");
+    onAgentRunning(chatId, true);
+    if (!(await sendRaw({ type: "compact", id }))) {
+      manualCompactionRef.current = null;
+      updateCompaction({
+        status: "failed",
+        reason: "manual",
+        startedAt: Date.now(),
+        message:
+          "Compaction command could not be sent. Restart the agent and retry.",
+      });
+      setAgentStatus("stopped");
+      onAgentRunning(chatId, false);
+    }
+  }, [chatId, onAgentRunning, sendRaw, updateCompaction]);
+
   useEffect(() => {
-    if (agentStatus !== "running") return;
+    if (compaction?.status !== "running") return;
     const id = window.setInterval(() => {
+      const current = compactionRef.current;
+      if (current?.status !== "running") return;
+      const requestId = uid();
+      compactionProbeRef.current = {
+        id: requestId,
+        startedAt: current.startedAt,
+      };
+      void sendRaw({ type: "get_state", id: requestId });
+    }, 10_000);
+    return () => window.clearInterval(id);
+  }, [compaction?.status, compaction?.startedAt, sendRaw]);
+
+  useEffect(() => {
+    if (agentStatus !== "running" && compaction?.status !== "running") return;
+    const id = window.setInterval(() => {
+      if (approval) return;
+      const current = compactionRef.current;
+      if (current?.status === "running") {
+        if (Date.now() - current.startedAt < COMPACTION_TIMEOUT_MS) return;
+        const message =
+          "Context compaction exceeded 5 minutes. It was stopped; retry compaction or restart the agent to resume this saved session.";
+        updateCompaction({ ...current, status: "failed", message });
+        lastAgentActivityRef.current = Date.now();
+        void sendRaw({ type: "abort" });
+        setAgentStatus("stopped");
+        setIsStreaming(false);
+        onAgentRunning(chatId, false);
+        setMessages(settleAgentMessages);
+        onToast(message);
+        return;
+      }
       if (
         activeToolCallsRef.current.size > 0 ||
         Date.now() - lastAgentActivityRef.current < AGENT_INACTIVITY_TIMEOUT_MS
@@ -1223,13 +1352,24 @@ export default function ChatView({
       );
     }, 5_000);
     return () => window.clearInterval(id);
-  }, [agentStatus, chatId, onAgentRunning, onToast, sendRaw]);
+  }, [
+    agentStatus,
+    compaction?.status,
+    approval,
+    chatId,
+    onAgentRunning,
+    onToast,
+    sendRaw,
+    updateCompaction,
+  ]);
 
   // LISTENERS + SPAWN in one effect to avoid race: get_available_models lost if spawn before listen
   useEffect(() => {
     if (!globalChat && !repositoryMapLoaded) return;
     let mounted = true;
     let startupExpired = false;
+    let settlementHandled = false;
+    const visibleCustomMessages = new Set<string>();
     let startupStage = "connecting to the agent";
     const unlisteners: Array<() => void> = [];
     const retryIds: number[] = [];
@@ -1388,6 +1528,7 @@ export default function ChatView({
       if (
         !usedTool &&
         !receivedStreamDeltaRef.current &&
+        assistantMessageCountRef.current <= 1 &&
         (content.text.length > 120 || content.thinking.length > 120)
       ) {
         revealFinalAssistant(content);
@@ -1397,14 +1538,7 @@ export default function ChatView({
         const copy = [...prev];
         for (let i = copy.length - 1; i >= 0; i--) {
           if (copy[i].role === "assistant" && copy[i].isStreaming) {
-            copy[i] = {
-              ...copy[i],
-              text: preserveStreamedContent(copy[i].text, content.text),
-              thinking: preserveStreamedContent(
-                copy[i].thinking ?? "",
-                content.thinking,
-              ),
-            };
+            copy[i] = mergeAssistantMessage(copy[i], content, true);
             return copy;
           }
         }
@@ -1454,7 +1588,6 @@ export default function ChatView({
 
     async function handleRaw(raw: string) {
       if (!mounted) return;
-      lastAgentActivityRef.current = Date.now();
       const entry = transcriptEntry(raw);
       if (entry)
         setAgentTranscript((previous) => {
@@ -1467,6 +1600,29 @@ export default function ChatView({
         const ev = JSON.parse(raw) as Record<string, unknown>;
         const t = ev.type as string | undefined;
         if (!t) return;
+        // State/stat polling is not evidence that the model is making progress.
+        if (t !== "response") lastAgentActivityRef.current = Date.now();
+
+        if (t === "compaction_start" || t === "auto_compaction_start") {
+          settlementHandled = false;
+          flushDeltas();
+          const previous = compactionRef.current;
+          updateCompaction({
+            status: "running",
+            reason: typeof ev.reason === "string" ? ev.reason : "auto",
+            startedAt:
+              previous?.status === "running" ? previous.startedAt : Date.now(),
+          });
+          setAgentStatus("running");
+          setIsStreaming(false);
+          setMessages(settleAgentMessages);
+          onAgentRunning(chatId, true);
+          return;
+        }
+        if (t === "compaction_end" || t === "auto_compaction_end") {
+          finishCompaction(ev);
+          return;
+        }
 
         if (t === "extension_ui_request") {
           const req = parseApprovalRequest(sessionId, raw);
@@ -1487,6 +1643,37 @@ export default function ChatView({
 
         if (t === "response") {
           const cmd = ev.command as string | undefined;
+          if (cmd === "prompt" && ev.success === false) {
+            // Preflight can reject before agent_start (for example during
+            // compaction). There will be no run/settlement event to clear the UI.
+            const error = String(
+              ev.error ?? "Agent could not start this prompt",
+            );
+            setAgentStatus("idle");
+            setIsStreaming(false);
+            setMessages((previous) => settleWithError(previous, error));
+            onAgentRunning(chatId, false);
+            onToast(error);
+            void sendRaw({ type: "get_state" });
+            return;
+          }
+          if (cmd === "compact" && manualCompactionRef.current === ev.id) {
+            manualCompactionRef.current = null;
+            // Pi emits compaction_end before this RPC acknowledgement. Older or
+            // disconnected runtimes may deliver only the acknowledgement.
+            if (
+              compactionRef.current?.status === "running" &&
+              compactionRef.current.reason === "manual"
+            )
+              finishCompaction({
+                reason: "manual",
+                errorMessage:
+                  ev.success === false
+                    ? String(ev.error ?? "Compaction failed")
+                    : undefined,
+              });
+            return;
+          }
           if (cmd === "abort") {
             abortResponseRef.current?.();
             abortResponseRef.current = null;
@@ -1535,6 +1722,10 @@ export default function ChatView({
             forkHistoryLoadingRef.current = false;
             setIsNewSessionLoading(false);
             if (data.cancelled !== true) {
+              updateCompaction(null);
+              manualCompactionRef.current = null;
+              compactionProbeRef.current = null;
+              setSessionStats(null);
               setMessages([]);
               setPendingMessageCount(0);
               trackedTaskRef.current = false;
@@ -1542,6 +1733,10 @@ export default function ChatView({
               onToast("New context started — dev server unchanged");
             }
           } else if (cmd === "switch_session" && data.cancelled !== true) {
+            updateCompaction(null);
+            manualCompactionRef.current = null;
+            compactionProbeRef.current = null;
+            setSessionStats(null);
             forkHistoryRequestRef.current = null;
             forkHistoryLoadingRef.current = false;
             setMessages([]);
@@ -1583,6 +1778,53 @@ export default function ChatView({
           } else if (cmd === "get_session_stats") {
             setSessionStats(data as SessionStats);
           } else if (cmd === "get_state") {
+            if (typeof data.autoCompactionEnabled === "boolean")
+              setAutoCompactionEnabled(data.autoCompactionEnabled);
+            const current = compactionRef.current;
+            const probe = compactionProbeRef.current;
+            if (probe && probe.id === ev.id) {
+              compactionProbeRef.current = null;
+              if (
+                current?.status === "running" &&
+                current.startedAt === probe.startedAt &&
+                !current.awaitingStart &&
+                data.isCompacting === false
+              ) {
+                if (data.isStreaming === true) {
+                  // The runtime has resumed; a compaction_end event was missed.
+                  updateCompaction(null);
+                  void sendRaw({ type: "get_session_stats" });
+                } else if (data.isStreaming === false) {
+                  updateCompaction({
+                    ...current,
+                    status: "failed",
+                    message:
+                      "Agent is idle but no compaction result was received. Retry compaction or restart this saved session.",
+                  });
+                  setAgentStatus("idle");
+                  setIsStreaming(false);
+                  setMessages(settleAgentMessages);
+                  onAgentRunning(chatId, false);
+                  void sendRaw({ type: "get_session_stats" });
+                }
+              } else if (
+                current?.status === "running" &&
+                current.awaitingStart &&
+                data.isCompacting === true
+              ) {
+                updateCompaction({ ...current, awaitingStart: false });
+              }
+            } else if (data.isCompacting === true && current === null) {
+              // Recover the visible phase after reconnecting to a busy runtime.
+              settlementHandled = false;
+              updateCompaction({
+                status: "running",
+                reason: "auto",
+                startedAt: Date.now(),
+              });
+              setAgentStatus("running");
+              onAgentRunning(chatId, true);
+            }
             if (typeof data.sessionFile === "string") {
               sessionFileRef.current = data.sessionFile;
               onSessionFile(chatId, data.sessionFile);
@@ -1724,10 +1966,18 @@ export default function ChatView({
         }
 
         if (t === "agent_start") {
+          if (
+            compactionRef.current &&
+            (compactionRef.current.status !== "running" ||
+              manualCompactionRef.current === null)
+          )
+            updateCompaction(null);
+          settlementHandled = false;
           setAgentTranscript([]);
           setBackgroundWork(null);
           latestAssistantResponseRef.current = "";
           receivedStreamDeltaRef.current = false;
+          assistantMessageCountRef.current = 0;
           finalizedIdsRef.current.clear();
           finalizedContentRef.current.clear();
           setAgentStatus("running");
@@ -1750,9 +2000,72 @@ export default function ChatView({
           });
           return;
         }
-        if (t === "message_end" || t === "turn_end") {
+        if (
+          t === "message_start" &&
+          (ev.message as { role?: string })?.role === "assistant"
+        ) {
           flushDeltas();
-          finalizeAssistant(ev.message as Record<string, unknown> | undefined);
+          flushToolCalls();
+          assistantMessageCountRef.current += 1;
+          // Text similarity deduplicates event variants of this message only.
+          // A later answer can legitimately repeat the preceding finding.
+          finalizedContentRef.current.clear();
+          setMessages((previous) => {
+            const next = ensureAssistantTurn(previous, createAssistantTurn);
+            const index = next.length - 1;
+            next[index] = {
+              ...next[index],
+              assistantMessageStart: {
+                text: next[index].text.length,
+                thinking: (next[index].thinking ?? "").length,
+              },
+            };
+            return next;
+          });
+          return;
+        }
+        if (t === "message_end" || t === "turn_end") {
+          if (t === "turn_end") void sendRaw({ type: "get_session_stats" });
+          flushDeltas();
+          const message = ev.message as Record<string, unknown> | undefined;
+          if (message?.role === "custom" && message.display === true) {
+            const text =
+              typeof message.content === "string"
+                ? message.content
+                : Array.isArray(message.content)
+                  ? message.content
+                      .filter(
+                        (item) =>
+                          item?.type === "text" &&
+                          typeof item.text === "string",
+                      )
+                      .map((item) => item.text)
+                      .join("\n")
+                  : "";
+            const key = `${message.customType}\0${message.timestamp}\0${text}`;
+            if (text && !visibleCustomMessages.has(key)) {
+              visibleCustomMessages.add(key);
+              if (visibleCustomMessages.size > 100)
+                visibleCustomMessages.delete(
+                  visibleCustomMessages.values().next().value!,
+                );
+              setMessages((previous) => [
+                ...previous,
+                {
+                  id: uid(),
+                  role: "system",
+                  text: text.slice(0, 200_000),
+                  thinking: "",
+                  toolCalls: [],
+                  createdAt:
+                    typeof message.timestamp === "number"
+                      ? message.timestamp
+                      : Date.now(),
+                  isStreaming: false,
+                },
+              ]);
+            }
+          } else finalizeAssistant(message);
           return;
         }
         if (t === "agent_end") {
@@ -1763,24 +2076,8 @@ export default function ChatView({
           const assistants =
             generated?.filter((message) => message.role === "assistant") ?? [];
           finalizeAssistant(assistants[assistants.length - 1]);
-          activeToolCallsRef.current.clear();
-          setAgentStatus("idle");
-          setIsStreaming(false);
-          onAgentRunning(chatId, false);
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(
-              new CustomEvent("crc-agent-activity", {
-                detail: {
-                  type: "agent_settled",
-                  phase: "idle",
-                  tabId: chatId,
-                },
-              }),
-            );
-          }
-          if (!fallbackRevealTimerRef.current)
-            setMessages((prev) => settleAgentMessages(prev));
-          sendRaw({ type: "get_session_stats" });
+          // A low-level run ended. Retry, compaction, or queued work can still
+          // continue; only agent_settled makes the session idle.
           return;
         }
         if (t === "auto_retry_end") {
@@ -1801,6 +2098,22 @@ export default function ChatView({
           return;
         }
         if (t === "agent_settled") {
+          if (
+            compactionRef.current?.status === "running" &&
+            compactionRef.current.reason === "manual" &&
+            compactionRef.current.awaitingStart
+          ) {
+            // compact() first aborts an active turn; this is not task completion.
+            flushDeltas();
+            activeToolCallsRef.current.clear();
+            setIsStreaming(false);
+            setMessages(settleAgentMessages);
+            return;
+          }
+          if (settlementHandled) return;
+          settlementHandled = true;
+          flushDeltas();
+          activeToolCallsRef.current.clear();
           setAgentStatus("idle");
           sendRaw({ type: "get_session_stats" });
           onAgentRunning(chatId, false);
@@ -1836,6 +2149,11 @@ export default function ChatView({
           });
           taskStartedAtRef.current = null;
           surfacedErrorRef.current = null;
+          if (
+            compactionRef.current?.status === "failed" ||
+            compactionRef.current?.status === "cancelled"
+          )
+            return;
           void notifyAgent(
             "finished",
             projectName,
@@ -2449,6 +2767,8 @@ export default function ChatView({
     chatId,
     sessionId,
     sendRaw,
+    finishCompaction,
+    updateCompaction,
     onToast,
     onSessionFile,
     onAgentRunning,
@@ -2617,7 +2937,7 @@ export default function ChatView({
       worktreePath: path,
       message: message || "user message",
     }).catch((error) => {
-      console.debug("checkpoint skipped:", error);
+      onToast(`Checkpoint unavailable: ${String(error)}`);
     });
   };
 
@@ -3071,6 +3391,13 @@ export default function ChatView({
       });
       if (!(await sendRaw({ type: "abort" }))) return;
       await aborted;
+      const current = compactionRef.current;
+      if (current?.status === "running")
+        updateCompaction({
+          ...current,
+          status: "cancelled",
+          message: "Context compaction canceled. Retry compaction when ready.",
+        });
       setAgentStatus("idle");
       setIsStreaming(false);
       setMessages((prev) =>
@@ -3092,6 +3419,9 @@ export default function ChatView({
       setIsRestarting(true);
       setDriveDetached(false);
       setBackgroundWork(null);
+      updateCompaction(null);
+      manualCompactionRef.current = null;
+      compactionProbeRef.current = null;
       try {
         await invoke("kill_pi_session", { sessionId }).catch(() => {});
         if (!chatReady) {
@@ -3124,6 +3454,7 @@ export default function ChatView({
         forkHistoryLoadingRef.current = false;
         setIsHistoryLoading(false);
         setIsNewSessionLoading(false);
+        updateCompaction(null);
         setAgentStatus("idle");
         setMessages(clearRestartErrors);
         onToast(retry ? "Agent retrying" : "Pi agent reloaded");
@@ -3158,6 +3489,7 @@ export default function ChatView({
       projectName,
       sendRaw,
       sessionId,
+      updateCompaction,
     ],
   );
 
@@ -3471,7 +3803,7 @@ export default function ChatView({
     }
     if (text === "/compact") {
       setInput("");
-      await sendRaw({ type: "compact" });
+      await requestCompaction();
       return;
     }
     if (text === "/sync") {
@@ -3498,6 +3830,15 @@ export default function ChatView({
     if (text.startsWith("/thinking ")) {
       await handleSetThinking(text.slice(10).trim());
       setInput("");
+      return;
+    }
+    if (
+      compactionRef.current?.status === "running" &&
+      compactionRef.current.reason === "manual"
+    ) {
+      onToast(
+        "Context compaction is running. Your draft is kept; send it when compaction finishes.",
+      );
       return;
     }
     if (agentStatus === "running") {
@@ -3533,7 +3874,6 @@ export default function ChatView({
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
       scrollToBottom("smooth");
       window.setTimeout(() => scrollToBottom("auto"), 60);
-      await maybeCreateCheckpoint(messageText);
       await sendRaw({ type, message: messageText, images });
       onToast(
         type === "steer"
@@ -3764,7 +4104,11 @@ export default function ChatView({
         kind: "background-work",
         order: Number.MAX_SAFE_INTEGER - 1,
       });
-    if (agentStatus === "running" || isRestarting)
+    if (
+      agentStatus === "running" ||
+      isRestarting ||
+      compaction?.status === "running"
+    )
       items.push({
         kind: "agent-activity",
         order: Number.MAX_SAFE_INTEGER - 1,
@@ -3780,6 +4124,7 @@ export default function ChatView({
     backgroundWork,
     agentStatus,
     isRestarting,
+    compaction?.status,
   ]);
 
   // Renders one virtualized feed row. Unchanged message rows are served from
@@ -4471,6 +4816,14 @@ export default function ChatView({
           phase = "thinking";
           title = "RESTARTING PI";
           detail = "Starting the agent session";
+          icon = "meter";
+        } else if (compaction?.status === "running") {
+          phase = "thinking";
+          title = "COMPACTING CONTEXT";
+          detail =
+            compaction.reason === "overflow"
+              ? "Recovering from the context limit before retrying"
+              : "Generating a summary of the conversation";
           icon = "meter";
         } else if (activeTool) {
           phase = "executing";
@@ -5278,12 +5631,79 @@ export default function ChatView({
             </button>
           </div>
         )}
+        {(compaction || (sessionStats?.contextUsage?.percent ?? 0) >= 90) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="caption-uppercase"
+            style={{
+              maxWidth: 880,
+              margin: "0 auto",
+              padding: "8px var(--spacing-md)",
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+              border: "1px solid var(--accent)",
+              borderRadius: 8,
+              background: "var(--surface-solid)",
+            }}
+          >
+            <span style={{ flex: 1 }}>
+              {compaction?.status === "running" ? (
+                <>
+                  Compacting context ·{" "}
+                  <ElapsedLabel
+                    startedAt={compaction.startedAt}
+                    ticking={isActive}
+                  />{" "}
+                  · Generating conversation summary
+                </>
+              ) : (
+                (compaction?.message ??
+                `Context nearly full · Auto compaction ${autoCompactionEnabled === false ? "off" : autoCompactionEnabled === true ? "on" : "status unavailable"}`)
+              )}
+            </span>
+            {compaction?.status === "running" ? (
+              <button
+                className="composer-chip"
+                onClick={handleAbort}
+                disabled={isAborting}
+              >
+                Cancel compaction
+              </button>
+            ) : (
+              <>
+                <button
+                  className="composer-chip"
+                  onClick={() => void requestCompaction()}
+                  disabled={
+                    !chatReady || agentStatus === "running" || isRestarting
+                  }
+                >
+                  {compaction ? "Retry compaction" : "Compact context"}
+                </button>
+                {compaction && (
+                  <button
+                    className="composer-chip"
+                    onClick={() => void handleRestart(false)}
+                    disabled={isRestarting}
+                  >
+                    Restart agent
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <ChatComposer
           globalChat={globalChat}
           planMode={planMode}
           onPlanModeChange={setPlanMode}
           driveDetached={driveDetached}
-          agentStatus={agentStatus}
+          agentStatus={
+            compaction?.status === "running" ? "running" : agentStatus
+          }
           isNewSessionLoading={isNewSessionLoading}
           chatReady={chatReady}
           isAborting={isAborting}
@@ -5446,7 +5866,14 @@ export default function ChatView({
               aria-label="Context used"
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-valuenow={sessionStats.contextUsage?.percent ?? undefined}
+              aria-valuenow={
+                sessionStats.contextUsage?.percent == null
+                  ? undefined
+                  : Math.max(
+                      0,
+                      Math.min(100, sessionStats.contextUsage.percent),
+                    )
+              }
             >
               <i
                 style={{
@@ -5485,6 +5912,26 @@ export default function ChatView({
                 <dd>{sessionStats.tokens.total.toLocaleString()}</dd>
               </div>
             </dl>
+            <p>
+              Auto compaction:{" "}
+              {autoCompactionEnabled === null
+                ? "status unavailable"
+                : autoCompactionEnabled
+                  ? "on"
+                  : "off"}
+            </p>
+            <button
+              className="composer-chip"
+              onClick={() => {
+                setUsageOpen(false);
+                void requestCompaction();
+              }}
+              disabled={
+                !chatReady || compaction?.status === "running" || isRestarting
+              }
+            >
+              Compact context
+            </button>
           </section>
         </div>
       )}

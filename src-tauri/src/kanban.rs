@@ -523,11 +523,18 @@ pub fn list_project_tasks(
     pic: Option<String>,
     status: Option<String>,
 ) -> Result<Vec<KanbanTask>, String> {
-    let tasks = list_kanban_tasks()?
+    let entry = list_kanban_tasks()?
         .into_iter()
-        .find(|entry| entry.project == project)
-        .map(|entry| entry.tasks)
-        .unwrap_or_default();
+        .find(|entry| entry.project == project);
+    let tasks = match entry {
+        Some(entry) => {
+            if let Some(error) = entry.error {
+                return Err(format!("Task source unavailable for {project}: {error}"));
+            }
+            entry.tasks
+        }
+        None => Vec::new(),
+    };
     Ok(tasks
         .into_iter()
         .filter(|task| {
@@ -578,16 +585,42 @@ fn attach_references(tasks: &mut [KanbanTask], all_tasks: &[KanbanTask]) {
 
 #[tauri::command]
 pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
-    list_project_tasks(project, None, None)?
+    let task_no = task_no.trim().trim_start_matches('#');
+    let mut matching = list_project_tasks(project, None, None)?
         .into_iter()
-        .find(|task| {
+        .filter(|task| {
             task.no.as_str().is_some_and(|value| value == task_no)
                 || task
                     .no
                     .as_i64()
                     .is_some_and(|value| value.to_string() == task_no)
-        })
-        .ok_or("task not found".into())
+        });
+    let selected = matching.next().ok_or("task not found")?;
+    if matching.next().is_some() {
+        return Err("task ID is ambiguous; multiple records share this number".into());
+    }
+    Ok(selected)
+}
+
+fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), String> {
+    // A failed Sheets refresh must not replace a good snapshot with an empty list.
+    if project.error.is_none() {
+        write_tasks(
+            &cache.join(format!("{}.json", project.project)),
+            &project.tasks,
+        )?;
+    }
+    let metadata = cache.join(format!("{}.meta.json", project.project));
+    let temp = metadata.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    std::fs::write(&temp, serde_json::to_vec(&json!({ "sourceKind": if project.read_only { "google_sheets" } else { "local" }, "error": project.error })).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(temp, metadata).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -676,9 +709,7 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
         let cache = dir.join(".cache");
         if std::fs::create_dir_all(&cache).is_ok() {
             for project in &projects {
-                if let Ok(bytes) = serde_json::to_vec_pretty(&project.tasks) {
-                    let _ = std::fs::write(cache.join(format!("{}.json", project.project)), bytes);
-                }
+                let _ = cache_project_tasks(&cache, project);
             }
         }
     }
@@ -688,6 +719,36 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_task_refresh_preserves_last_good_cache_and_records_failure() {
+        let cache = std::env::temp_dir().join(format!("kern-task-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        std::fs::create_dir_all(&cache).unwrap();
+        let good = KanbanProject {
+            project: "demo".into(),
+            tasks: serde_json::from_value(
+                json!([{ "no": 12, "deskripsi":"Full task", "status":"Backlog" }]),
+            )
+            .unwrap(),
+            read_only: true,
+            error: None,
+        };
+        cache_project_tasks(&cache, &good).unwrap();
+        let before = std::fs::read(cache.join("demo.json")).unwrap();
+        let failed = KanbanProject {
+            project: "demo".into(),
+            tasks: Vec::new(),
+            read_only: true,
+            error: Some("Sheets unavailable".into()),
+        };
+        cache_project_tasks(&cache, &failed).unwrap();
+        assert_eq!(std::fs::read(cache.join("demo.json")).unwrap(), before);
+        let metadata: Value =
+            serde_json::from_slice(&std::fs::read(cache.join("demo.meta.json")).unwrap()).unwrap();
+        assert_eq!(metadata["error"], "Sheets unavailable");
+        std::fs::remove_dir_all(cache).unwrap();
+    }
 
     #[test]
     fn ignores_internal_pipeline_json_files() {

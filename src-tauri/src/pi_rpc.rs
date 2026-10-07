@@ -432,18 +432,22 @@ pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, Stri
     Ok(status)
 }
 
-const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing final answer in clean Markdown. Use short paragraphs, `##` headings for distinct sections, and `-` lists for grouped items. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known. Never expose scratchpad, internal planning, or raw provider errors.\n";
-const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contract below is authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly; never describe examples from memory as the complete API inventory. Do not use `web_search`. Do not open a Swagger URL in the browser or take a browser snapshot merely to discover endpoints: this saved contract is the source of truth. If the required endpoint is absent from the saved contract, state that clearly and ask the user for the endpoint or an updated contract; do not search the web or Swagger UI for it. Use browser tools only when the user explicitly asks for browser/UI verification, or when direct API testing has passed and UI integration must be verified.";
+const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing response, including progress updates and the final answer, in clean Markdown. Lead with the result or current finding. Keep progress updates to one or two concise sentences; do not narrate every investigation step. Keep paragraphs short (two to four sentences), separated by a blank line. Use `##` headings only for distinct sections of a longer answer, and `-` lists for grouped findings or next steps, with a blank line before each list. Summarize the evidence and relevant limitations in the final answer instead of repeating the running investigation. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known; include only the relevant excerpt. Never expose scratchpad, internal planning, or raw provider errors.\n";
+const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions.";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
     let context = crate::projects::api_documentation_context_for_project(project)
         .ok()
-        .flatten();
+        .flatten()
+        .or_else(|| crate::projects::swagger_urls_for_project(project).ok()
+            .filter(|urls| !urls.is_empty())
+            .map(|_| "Swagger sources are configured. Inspect api_find_operations for the loaded inventory and any document load issues.".to_owned()));
 
     context
         .map(|context| {
+            let context = crate::projects::compact_swagger_context(&context);
             format!(
-                "## Project API documentation\n{API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug file and this contract, map each bug to a Swagger operation, then call `api_contract_test`; use `api_request` only when no matching operation exists. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
+                "## Project API documentation\n{API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug/task detail, search api_find_operations across all contracts, inspect api_operation_detail, map each requirement to an exact method/path/contractId, then call `api_contract_test`; use `api_request` when no matching operation exists or for deliberate invalid-input cases rejected by contract preflight, while retaining the documented operation as the test reference. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
             )
         })
         .unwrap_or_default()
@@ -452,7 +456,7 @@ fn api_documentation_system_prompt(project: &Path) -> String {
 fn worktree_system_prompt(cwd: &Path, project: &Path) -> Option<String> {
     (cwd != project).then(|| {
         format!(
-            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Session memory: read `{}/memory.md` at session start (per-worktree learnings; local-only file, never commit it). Append durable, session-transcending learnings there as short bullets (decisions, gotchas, user prefs) — keep it short, no play-by-play narration.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
+            "COMMAND RDEV CENTER WORKTREE:\n- This session runs in ephemeral worktree {} owned by {}.\n- Session memory: read `{}/memory.md` at session start (durable per-chat learnings anchored in repository metadata; local-only file, never commit it). Append durable, session-transcending learnings there as short bullets (decisions, gotchas, user prefs) — keep it short, no play-by-play narration.\n- Always execute a requested build before claiming it cannot run; diagnose failures from the actual command output.\n- The app may create worktree/node_modules as a symlink to the owning project's node_modules.\n- Turbopack rejects that external symlink with `points out of the filesystem root`. This is a known app constraint, not an unexplained build failure.\n- If a build fails because worktree/node_modules points outside the worktree, replace only that symlink with a local dependency install, then rerun the build. Do not modify or delete the owning project's node_modules.\n",
             cwd.display(),
             project.display(),
             cwd.display()
@@ -763,6 +767,13 @@ pub fn spawn_pi_rpc(
         args.push("--extension".into());
         args.push(extensions.join("auto-format.ts").to_string_lossy().into());
         args.push("--extension".into());
+        args.push(
+            extensions
+                .join("task-verification.ts")
+                .to_string_lossy()
+                .into(),
+        );
+        args.push("--extension".into());
         args.push(extensions.join("jev-routing.ts").to_string_lossy().into());
         // ponytail: browser extension added conditionally below after ensure_bridge
     } else {
@@ -899,7 +910,9 @@ pub fn spawn_pi_rpc(
                 if !allowed.is_empty() {
                     allowed.push(',');
                 }
-                allowed.push_str("api_request,api_contract_test");
+                allowed.push_str(
+                    "api_find_operations,api_operation_detail,api_request,api_contract_test",
+                );
             }
         }
     }
@@ -987,6 +1000,14 @@ pub fn spawn_pi_rpc(
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
             .env("CRC_TASK_DIR", task_dir.clone())
+            .env(
+                "CRC_TASK_SOURCE_KIND",
+                crate::projects::get_project_task_source(
+                    owning_project.to_string_lossy().into_owned(),
+                )
+                .map(|source| source.kind)
+                .unwrap_or_else(|_| "local".into()),
+            )
             .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
     let mut spawn_attempts = 0;

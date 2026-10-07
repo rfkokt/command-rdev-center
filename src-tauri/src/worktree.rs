@@ -3,6 +3,17 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// Stable across restarts; unlike DefaultHasher this also defines our on-disk keys.
+fn local_path_key(path: &Path) -> String {
+    let hash = path
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf29ce484222325u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100000001b3)
+        });
+    format!("{hash:016x}")
+}
+
 /// Root where all CRC worktrees live: `<project_root>/.crc-worktrees`.
 fn worktree_root(project_root: &Path) -> PathBuf {
     project_root.join(".crc-worktrees")
@@ -179,17 +190,59 @@ fn exclude_worktree_memory(worktree_path: &Path) {
 /// git-local via `.git/info/exclude`. Best-effort: worktree creation must
 /// never fail because memory setup did.
 fn ensure_worktree_memory(worktree_path: &Path, project_name: &str) {
+    if let Err(error) = anchor_worktree_memory(worktree_path, project_name) {
+        eprintln!("Worktree memory could not be anchored: {error}");
+    }
+}
+
+/// Git metadata survives ephemeral checkout removal and is already scoped to this repository.
+/// Each chat keeps its own memory; migrating an old regular file preserves its contents.
+fn anchor_worktree_memory(worktree_path: &Path, project_name: &str) -> Result<(), String> {
+    let common = worktree_common_git_dir(worktree_path).ok_or("memory repository unavailable")?;
+    let durable = common
+        .join("kern/memory")
+        .join(format!("{}.md", local_path_key(worktree_path)));
+    std::fs::create_dir_all(durable.parent().unwrap()).map_err(|e| e.to_string())?;
     let memory = worktree_path.join(WORKTREE_MEMORY_FILE);
-    if !memory.exists() {
+    if memory.is_symlink()
+        && memory.canonicalize().ok() == durable.canonicalize().ok()
+        && durable.exists()
+    {
+        exclude_worktree_memory(worktree_path);
+        return Ok(());
+    }
+    if memory.is_file() {
+        let legacy = std::fs::read_to_string(&memory).map_err(|e| e.to_string())?;
+        let existing = std::fs::read_to_string(&durable).unwrap_or_default();
+        if existing != legacy {
+            let contents = if existing.is_empty() || legacy.starts_with(&existing) {
+                legacy
+            } else {
+                format!("{existing}\n\n## Recovered checkout memory\n{legacy}")
+            };
+            std::fs::write(&durable, contents).map_err(|e| e.to_string())?;
+        }
+    } else if !durable.exists() {
         let created = unix_date_yyyymmdd(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
         );
-        let _ = std::fs::write(&memory, worktree_memory_template(project_name, &created));
+        std::fs::write(&durable, worktree_memory_template(project_name, &created))
+            .map_err(|e| e.to_string())?;
     }
+    #[cfg(unix)]
+    {
+        if memory.symlink_metadata().is_ok() {
+            std::fs::remove_file(&memory).map_err(|e| e.to_string())?;
+        }
+        std::os::unix::fs::symlink(&durable, &memory).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(unix))]
+    std::fs::copy(&durable, &memory).map_err(|e| e.to_string())?;
     exclude_worktree_memory(worktree_path);
+    Ok(())
 }
 
 fn ensure_worktree_root(project_root: &Path, repo_path: &Path) -> Result<PathBuf, String> {
@@ -449,6 +502,14 @@ pub fn remove_worktree_if_empty(
         return Ok(false);
     }
 
+    // Never discard the only copy of legacy memory if migration fails.
+    if wt_path
+        .join(WORKTREE_MEMORY_FILE)
+        .symlink_metadata()
+        .is_ok()
+    {
+        anchor_worktree_memory(wt_path, "session")?;
+    }
     // Remove worktree
     let repo_path_str = repo_path.to_string_lossy().to_string();
     // git worktree remove --force <path>
@@ -666,6 +727,10 @@ fn force_remove_registered_worktree(rp: &Path, worktree_path: &str) -> Result<()
     if !branch.starts_with("crc/") {
         return Err("refusing to delete a non-CRC branch".into());
     }
+    let memory = Path::new(worktree_path).join(WORKTREE_MEMORY_FILE);
+    if memory.symlink_metadata().is_ok() {
+        anchor_worktree_memory(Path::new(worktree_path), "session")?;
+    }
     let repo = rp.to_string_lossy();
     let removed = Command::new("git")
         .args(["-C", &repo, "worktree", "remove", "--force", worktree_path])
@@ -814,7 +879,7 @@ pub struct Checkpoint {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CheckpointResult {
-    /// "committed" when a snapshot was taken, "clean" when the tree had no changes.
+    /// "committed" for a new internal snapshot, "unchanged" for a duplicate, or "clean".
     pub status: String,
     pub sha: Option<String>,
 }
@@ -858,58 +923,93 @@ pub fn create_checkpoint(
     create_checkpoint_in_repo(&path_str, &message)
 }
 
-fn create_checkpoint_in_repo(path_str: &str, message: &str) -> Result<CheckpointResult, String> {
-    let status = Command::new("git")
-        .args(["-C", &path_str, "status", "--porcelain"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !status.status.success() {
-        return Err(String::from_utf8_lossy(&status.stderr).trim().to_string());
+static CHECKPOINT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct TemporaryIndex(PathBuf);
+impl Drop for TemporaryIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(format!("{}.lock", self.0.display()));
     }
-    if String::from_utf8_lossy(&status.stdout).trim().is_empty() {
+}
+
+fn checkpoint_ref(path: &str) -> String {
+    format!("refs/kern/checkpoints/{}", local_path_key(Path::new(path)))
+}
+
+fn checkpoint_git(path: &str, args: &[&str], index: Option<&Path>) -> Result<String, String> {
+    let mut command = Command::new("git");
+    command.args(["-C", path]).args(args);
+    if let Some(index) = index {
+        command.env("GIT_INDEX_FILE", index);
+    }
+    let out = command.output().map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn create_checkpoint_in_repo(path_str: &str, message: &str) -> Result<CheckpointResult, String> {
+    let _guard = CHECKPOINT_LOCK
+        .lock()
+        .map_err(|_| "checkpoint lock poisoned")?;
+    if checkpoint_git(path_str, &["status", "--porcelain"], None)?.is_empty() {
         return Ok(CheckpointResult {
-            status: "clean".to_string(),
+            status: "clean".into(),
             sha: None,
         });
     }
-    let one_line = sanitize_checkpoint_message(&message);
-    let subject = if one_line.is_empty() {
-        "checkpoint".to_string()
-    } else {
-        format!("checkpoint: {one_line}")
-    };
-    // Note: per-worktree memory.md is excluded from git via the repository's
-    // .git/info/exclude, so `git add -A` never snapshots it.
-    let add = Command::new("git")
-        .args(["-C", &path_str, "add", "-A"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !add.status.success() {
-        return Err(format!(
-            "git add failed: {}",
-            String::from_utf8_lossy(&add.stderr).trim()
-        ));
+    let common =
+        worktree_common_git_dir(Path::new(path_str)).ok_or("checkpoint repository unavailable")?;
+    let folder = common.join("kern/indexes");
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let index = TemporaryIndex(folder.join(format!("{}-{nonce}.index", std::process::id())));
+    checkpoint_git(path_str, &["read-tree", "HEAD"], Some(&index.0))?;
+    checkpoint_git(path_str, &["add", "-A", "--", "."], Some(&index.0))?;
+    let tree = checkpoint_git(path_str, &["write-tree"], Some(&index.0))?;
+    let reference = checkpoint_ref(path_str);
+    let previous = checkpoint_git(path_str, &["rev-parse", "--verify", &reference], None).ok();
+    if let Some(previous) = &previous {
+        if checkpoint_git(
+            path_str,
+            &["rev-parse", &format!("{previous}^{{tree}}")],
+            None,
+        )? == tree
+        {
+            return Ok(CheckpointResult {
+                status: "unchanged".into(),
+                sha: Some(previous.clone()),
+            });
+        }
     }
-    let commit = Command::new("git")
-        .args(["-C", &path_str, "commit", "-m", &subject])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !commit.status.success() {
-        return Err(format!(
-            "git commit failed: {}",
-            String::from_utf8_lossy(&commit.stderr).trim()
-        ));
-    }
-    let sha_out = Command::new("git")
-        .args(["-C", &path_str, "rev-parse", "HEAD"])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !sha_out.status.success() {
-        return Err("checkpoint committed but HEAD lookup failed".to_string());
-    }
+    let parent = previous.unwrap_or(checkpoint_git(path_str, &["rev-parse", "HEAD"], None)?);
+    let subject = format!("checkpoint: {}", sanitize_checkpoint_message(message));
+    // A snapshot is an internal object, not an authored commit on the delivery branch.
+    let sha = checkpoint_git(
+        path_str,
+        &[
+            "-c",
+            "user.name=Kern Studio",
+            "-c",
+            "user.email=kern@localhost",
+            "commit-tree",
+            &tree,
+            "-p",
+            &parent,
+            "-m",
+            &subject,
+        ],
+        None,
+    )?;
+    checkpoint_git(path_str, &["update-ref", &reference, &sha], None)?;
     Ok(CheckpointResult {
-        status: "committed".to_string(),
-        sha: Some(String::from_utf8_lossy(&sha_out.stdout).trim().to_string()),
+        status: "committed".into(),
+        sha: Some(sha),
     })
 }
 
@@ -920,42 +1020,36 @@ pub fn list_checkpoints(worktree_path: String) -> Result<Vec<Checkpoint>, String
 }
 
 fn list_checkpoints_in_repo(path_str: &str) -> Result<Vec<Checkpoint>, String> {
-    let out = Command::new("git")
-        .args([
-            "-C",
-            &path_str,
-            "log",
-            "--grep=^checkpoint:",
-            "--format=%H%x00%ct%x00%s%x1e",
-            "-n",
-            "100",
-        ])
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    let reference = checkpoint_ref(path_str);
+    let mut refs = vec!["HEAD".to_string()];
+    if checkpoint_git(path_str, &["rev-parse", "--verify", &reference], None).is_ok() {
+        refs.push(reference);
     }
+    let mut args = vec![
+        "log",
+        "--grep=^checkpoint:",
+        "--format=%H%x00%ct%x00%s%x1e",
+        "-n",
+        "100",
+    ];
+    args.extend(refs.iter().map(String::as_str));
+    let output = checkpoint_git(path_str, &args, None)?;
     let mut checkpoints = Vec::new();
-    for record in String::from_utf8_lossy(&out.stdout).split('\u{1e}') {
-        let record = record.trim();
-        if record.is_empty() {
-            continue;
-        }
-        let mut parts = record.splitn(3, '\0');
+    for record in output.split('\u{1e}') {
+        let mut parts = record.trim().splitn(3, '\0');
         let (Some(sha), Some(timestamp), Some(subject)) =
             (parts.next(), parts.next(), parts.next())
         else {
             continue;
         };
-        let message = subject
-            .strip_prefix("checkpoint:")
-            .map(str::trim)
-            .unwrap_or(subject)
-            .to_string();
         checkpoints.push(Checkpoint {
             sha: sha.to_string(),
             timestamp: timestamp.parse::<i64>().unwrap_or(0),
-            message,
+            message: subject
+                .strip_prefix("checkpoint:")
+                .map(str::trim)
+                .unwrap_or(subject)
+                .to_string(),
         });
     }
     Ok(checkpoints)
@@ -977,6 +1071,9 @@ pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, 
 }
 
 fn restore_checkpoint_in_repo(path_str: &str, sha: &str) -> Result<String, String> {
+    let _guard = CHECKPOINT_LOCK
+        .lock()
+        .map_err(|_| "checkpoint lock poisoned")?;
     let kind = Command::new("git")
         .args(["-C", &path_str, "cat-file", "-t", &sha])
         .output()
@@ -1058,10 +1155,20 @@ mod tests {
             .output()
             .unwrap();
         std::fs::write(worktree.join("dirty"), "discard me").unwrap();
+        std::fs::write(
+            worktree.join(WORKTREE_MEMORY_FILE),
+            "prefers focused checks",
+        )
+        .unwrap();
 
         force_remove_registered_worktree(&repo, worktree.to_str().unwrap()).unwrap();
 
         assert!(!worktree.exists());
+        let memories = std::fs::read_dir(repo.join(".git/kern/memory"))
+            .unwrap()
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(memories, vec!["prefers focused checks"]);
         let branch = Command::new("git")
             .args([
                 "-C",
@@ -1272,6 +1379,25 @@ mod tests {
             remove_worktree_if_empty(&root, &repo, worktree.to_str().unwrap(), "main").unwrap();
         assert!(removed);
         assert!(!worktree.exists());
+        // Recreate the ephemeral checkout: durable memory returns, not a fresh template.
+        let out = Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "worktree",
+                "add",
+                worktree.to_str().unwrap(),
+                "crc/mem-test",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        ensure_worktree_memory(&worktree, "demo-repo");
+        assert!(std::fs::read_to_string(worktree.join("memory.md"))
+            .unwrap()
+            .contains("prefers tabs"));
+        #[cfg(unix)]
+        assert!(worktree.join("memory.md").is_symlink());
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1350,13 +1476,28 @@ mod tests {
         assert_eq!(clean.status, "clean");
         assert!(clean.sha.is_none());
 
-        // Dirty tree -> commit with sanitized single-line subject.
+        // Snapshot objects must leave the branch and staging byte-for-byte unchanged.
+        let head_before = checkpoint_git(&path, &["rev-parse", "HEAD"], None).unwrap();
+        std::fs::write(repo.join("staged.txt"), "staged content").unwrap();
+        checkpoint_git(&path, &["add", "staged.txt"], None).unwrap();
+        let index_path = repo.join(".git/index");
+        let index_before = std::fs::read(&index_path).unwrap();
+        // Dirty tree -> snapshot with sanitized single-line subject.
         std::fs::write(repo.join("tracked.txt"), "changed").unwrap();
         let made = create_checkpoint_in_repo(&path, "  user asked to tweak login\nmalicious\nline")
             .unwrap();
         assert_eq!(made.status, "committed");
         let sha = made.sha.clone().unwrap();
         assert!(is_valid_checkpoint_sha(&sha));
+        assert_eq!(
+            checkpoint_git(&path, &["rev-parse", "HEAD"], None).unwrap(),
+            head_before
+        );
+        assert_eq!(std::fs::read(&index_path).unwrap(), index_before);
+        let unchanged = create_checkpoint_in_repo(&path, "same contents").unwrap();
+        assert_eq!(unchanged.status, "unchanged");
+        assert_eq!(unchanged.sha.as_deref(), Some(sha.as_str()));
+        assert_eq!(std::fs::read(&index_path).unwrap(), index_before);
 
         // A non-checkpoint commit is filtered out of the listing.
         std::fs::write(repo.join("other.txt"), "x").unwrap();

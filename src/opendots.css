@@ -1561,17 +1561,36 @@ body,
 .chat-bubble-assistant > .markdown-body {
   background: transparent !important;
   color: var(--text-primary) !important;
-  font-size: 13.5px !important;
-  line-height: 1.65 !important;
+  width: 100%;
+  max-width: 72ch;
+  font-size: 15px !important;
+  line-height: 1.8 !important;
 }
 
 .chat-bubble-assistant > .markdown-body p {
   color: var(--text-primary) !important;
-  margin-bottom: 12px !important;
+  margin: 0 0 1em !important;
 }
 
-.chat-bubble-assistant > .markdown-body p:last-child {
+.chat-bubble-assistant > .markdown-body > :last-child,
+.chat-bubble-assistant > .markdown-body li > p:last-child {
   margin-bottom: 0 !important;
+}
+
+.chat-bubble-assistant > .markdown-body ul,
+.chat-bubble-assistant > .markdown-body ol {
+  margin: 1em 0 !important;
+  padding-left: 1.5em;
+}
+
+.chat-bubble-assistant > .markdown-body li {
+  padding-left: 0.25em;
+  margin: 0.6em 0;
+}
+
+.chat-bubble-assistant > .markdown-body li > ul,
+.chat-bubble-assistant > .markdown-body li > ol {
+  margin: 0.5em 0 !important;
 }
 
 .chat-bubble-assistant > .markdown-body h1,
@@ -1580,9 +1599,13 @@ body,
 .chat-bubble-assistant > .markdown-body h4 {
   color: var(--text-primary) !important;
   font-weight: 650 !important;
-  margin-top: 18px !important;
-  margin-bottom: 8px !important;
+  margin-top: 1.6em !important;
+  margin-bottom: 0.65em !important;
   letter-spacing: -0.2px !important;
+}
+
+.chat-bubble-assistant > .markdown-body > :first-child {
+  margin-top: 0 !important;
 }
 
 .chat-bubble-assistant > .markdown-body pre,
