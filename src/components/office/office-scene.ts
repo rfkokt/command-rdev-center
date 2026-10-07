@@ -1,9 +1,19 @@
 import * as THREE from "three";
-import { DISCUSSION_CENTER, STUDIO_COLORS } from "./office-layout";
+import {
+  DISCUSSION_CENTER,
+  OFFICE_VISITS,
+  STUDIO_COLORS,
+} from "./office-layout";
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { VOXEL_MODELS, OFFICE_PALETTE_BASE64 } from "./office-voxel-models";
 import { TEAM, damp, type Activity } from "./office-motion";
+import {
+  advanceOfficeRoutine,
+  createOfficeRoutine,
+  setRoutineReducedMotion,
+  setRoutineWorking,
+} from "./office-routine";
 
 export interface OfficeScene {
   setActivity(activity: Activity): void;
@@ -28,7 +38,7 @@ export function createOfficeScene(
   });
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
-  // Seated actors only sway slightly; refresh their anchored shadows on changes.
+  // Seated actors keep cached shadows; a moving visitor uses a cheap contact shadow.
   renderer.shadowMap.autoUpdate = false;
   renderer.shadowMap.needsUpdate = true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -594,12 +604,22 @@ export function createOfficeScene(
     room.add(mesh);
   });
 
-  function character(member: (typeof TEAM)[number]) {
+  const routine = createOfficeRoutine();
+  const contactGeometry = new THREE.CircleGeometry(0.57, 16);
+  const contactMaterial = new THREE.MeshBasicMaterial({
+    color: "#090b10",
+    transparent: true,
+    opacity: 0.24,
+    depthWrite: false,
+  });
+  function character(member: (typeof TEAM)[number], index: number) {
     const { root, body, head, arms, legs, knees } = createVoxelCharacter(
       member.id,
       () =>
         queueMicrotask(() => {
           if (!disposed) {
+            const actor = characters.find((other) => other.root === root);
+            if (actor) actor.shadowAnchored = null;
             renderer.shadowMap.needsUpdate = true;
             draw(0);
           }
@@ -620,8 +640,19 @@ export function createOfficeScene(
       ringMaterial,
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.045;
+    ring.position.y = 0.085;
     root.add(ring);
+    const contactShadow = new THREE.Mesh(contactGeometry, contactMaterial);
+    contactShadow.name = "visitor-shadow";
+    contactShadow.rotation.x = -Math.PI / 2;
+    contactShadow.scale.y = 0.7;
+    contactShadow.position.y = 0.075;
+    contactShadow.visible = false;
+    root.add(contactShadow);
+    const mug = voxelModel(body, "office_mug", [0.45, 1.15, 0.28], 0, 0.45);
+    mug.name = "coffee-mug";
+    mug.visible = false;
+    mug.castShadow = false;
     const label = document.createElement("div");
     label.className = "office-agent-label";
     label.style.setProperty("--agent-color", member.color);
@@ -644,10 +675,18 @@ export function createOfficeScene(
       knees,
       ring,
       ringMaterial,
+      contactShadow,
+      mug,
       label,
       bubble,
+      walker: routine.walkers[index],
+      sit: 1,
+      shadowAnchored: true as boolean | null,
+      projectedAt: { x: NaN, z: NaN, y: NaN },
       focused: false,
       bubbleUntil: 0,
+      activityText: "",
+      activityError: false,
     };
   }
   const characters = TEAM.map(character);
@@ -670,12 +709,12 @@ export function createOfficeScene(
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
     height = Math.max(1, canvas.parentElement?.clientHeight || 1);
-    // Stable pixel budget: native detail without a 7MP buffer on Retina displays.
+    // Leave GPU headroom for the moving visitor and composited labels on Retina.
     renderer.setPixelRatio(
       Math.min(
         window.devicePixelRatio || 1,
         1.25,
-        Math.sqrt(3_000_000 / (width * height)),
+        Math.sqrt(2_500_000 / (width * height)),
       ),
     );
     renderer.setSize(Math.ceil(width), Math.ceil(height), false);
@@ -710,6 +749,7 @@ export function createOfficeScene(
   }
   function setWorking(value: boolean) {
     working = value;
+    setRoutineWorking(routine, value);
     if (!working)
       characters.forEach((actor) => {
         actor.focused = false;
@@ -721,14 +761,14 @@ export function createOfficeScene(
   function setActivity(activity: Activity) {
     clearTimeout(bubbleTimeout);
     working = activity.working;
+    setRoutineWorking(routine, activity.working);
     characters.forEach((actor) => {
       actor.focused = activity.working && actor.member.id === activity.id;
       if (actor.member.id === activity.id) {
         const text = activity.text.replace(/\s+/g, " ").trim();
-        actor.bubble.textContent =
-          text.length > 58 ? `${text.slice(0, 57)}…` : text;
+        actor.activityText = text.length > 58 ? `${text.slice(0, 57)}…` : text;
         actor.bubbleUntil = elapsed + (activity.working ? 8 : 3.5);
-        actor.label.dataset.error = String(!!activity.error);
+        actor.activityError = !!activity.error;
       } else {
         actor.bubbleUntil = 0;
       }
@@ -758,28 +798,114 @@ export function createOfficeScene(
     workAmount = reduced ? 0 : damp(workAmount, targetWork, 8, dt);
     if (Math.abs(workAmount - targetWork) < 0.001) workAmount = targetWork;
     characters.forEach((actor, index) => {
-      const { member } = actor;
-      // Everyone stays seated. Animate the body as well as the fallback limbs:
-      // loaded GLBs are rigid meshes, so arm-only typing would be invisible.
+      actor.sit = reduced
+        ? 1
+        : damp(actor.sit, routine.stages[index] === "desk" ? 1 : 0, 8, dt);
+      if (actor.sit < 0.001) actor.sit = 0;
+      if (actor.sit > 0.999) actor.sit = 1;
+    });
+    advanceOfficeRoutine(
+      routine,
+      dt,
+      characters.map((actor) => actor.sit < 0.12),
+    );
+    characters.forEach((actor, index) => {
+      const { walker } = actor;
+      const stage = routine.stages[index];
+      const atDesk = stage === "desk";
+      const visiting = routine.active === index && stage === "visiting";
+      const visit = OFFICE_VISITS[routine.visit];
+      const walking = stage === "outbound" || stage === "returning";
+      if (atDesk || visiting) {
+        const heading = atDesk
+          ? Math.PI
+          : Math.atan2(
+              visit.lookAt.x - walker.position.x,
+              visit.lookAt.z - walker.position.z,
+            );
+        const turn = Math.atan2(
+          Math.sin(heading - walker.heading),
+          Math.cos(heading - walker.heading),
+        );
+        if (Math.abs(turn) < 0.001) walker.heading = heading;
+        else walker.heading += turn * (1 - Math.exp(-10 * dt));
+      }
+      actor.root.position.set(walker.position.x, 0, walker.position.z);
+      actor.root.rotation.y = walker.heading;
+      // Keep expensive caster updates to departure / return. The visitor's
+      // translucent footprint follows every step without another shadow pass.
+      if (actor.shadowAnchored !== atDesk) {
+        actor.root.traverse((object) => {
+          if (object instanceof THREE.Mesh && object !== actor.mug) {
+            const mats = Array.isArray(object.material)
+              ? object.material
+              : [object.material];
+            if (mats.some((mat) => mat instanceof THREE.MeshStandardMaterial))
+              object.castShadow = atDesk;
+          }
+        });
+        actor.shadowAnchored = atDesk;
+        renderer.shadowMap.needsUpdate = true;
+      }
+      actor.contactShadow.visible = !atDesk;
+      // Animate rigid GLBs as well as fallback limbs; their arms are not rigged.
       const phase = elapsed * (4.1 + index * 0.17) + index * 1.7;
       const breathe = reduced ? 0 : Math.sin(elapsed * 1.8 + index) * 0.009;
-      const typing = workAmount;
+      const typing = workAmount * actor.sit;
+      const pace = walking && !reduced ? Math.min(1, walker.speed / 1.25) : 0;
+      const gait = walker.distance * 8.5;
+      const sip =
+        visiting && visit.kind === "coffee"
+          ? Math.sin(Math.PI * (1 - routine.dwelling / visit.duration))
+          : 0;
+      const inspect =
+        visiting && visit.kind === "server"
+          ? Math.sin(Math.PI * (1 - routine.dwelling / visit.duration))
+          : 0;
       actor.body.position.y =
-        -0.24 + breathe + typing * Math.sin(phase) * 0.008;
-      actor.body.rotation.x = typing * (0.035 + Math.sin(phase) * 0.012);
-      actor.body.rotation.z = typing * Math.sin(phase * 0.6) * 0.008;
+        -actor.sit * 0.24 +
+        breathe +
+        typing * Math.sin(phase) * 0.008 +
+        Math.abs(Math.sin(gait)) * 0.035 * pace;
+      actor.body.rotation.x =
+        typing * (0.035 + Math.sin(phase) * 0.012) -
+        sip * 0.045 +
+        inspect * 0.08;
+      actor.body.rotation.z =
+        typing * Math.sin(phase * 0.6) * 0.008 + Math.sin(gait) * 0.03 * pace;
+      actor.body.rotation.y = reduced
+        ? 0
+        : typing *
+            Math.sin(elapsed * 0.65 + index) *
+            (actor.focused ? 0.12 : 0.035) +
+          inspect * Math.sin(elapsed * 1.2) * 0.16;
       actor.head.rotation.y = reduced
         ? 0
         : Math.sin(elapsed * 0.65 + index * 2) * (working ? 0.025 : 0.09);
       for (let side = 0; side < 2; side++) {
-        actor.legs[side].rotation.x = -1.23;
-        actor.knees[side].rotation.x = 1.38;
+        const stride = Math.sin(gait + side * Math.PI) * pace;
+        actor.legs[side].rotation.x =
+          -actor.sit * 1.23 + stride * 0.55 * (1 - actor.sit);
+        actor.knees[side].rotation.x =
+          actor.sit * 1.38 + Math.max(0, -stride) * 0.65 * (1 - actor.sit);
         actor.arms[side].rotation.x =
-          -0.8 +
+          -actor.sit * 0.8 -
+          stride * 0.42 -
+          (side === 1 ? sip * 0.8 : 0) +
           typing *
             Math.sin(elapsed * (9 + index * 0.4) + side * 1.8 + index) *
             0.07;
       }
+      actor.mug.visible =
+        routine.active === index &&
+        visit.kind === "coffee" &&
+        (stage === "visiting" || stage === "returning");
+      actor.mug.position.set(
+        0.45 - sip * 0.12,
+        1.15 + sip * 0.43,
+        0.28 + sip * 0.11,
+      );
+      actor.mug.rotation.x = -sip * 0.2;
       actor.ringMaterial.opacity = reduced
         ? actor.focused
           ? 0.65
@@ -794,16 +920,37 @@ export function createOfficeScene(
           : dark
             ? 0.4
             : 0.18;
+      const realBubble = actor.bubbleUntil > elapsed;
+      const ambientText =
+        !working && routine.active === index
+          ? stage === "outbound"
+            ? visit.outbound
+            : stage === "visiting"
+              ? visit.visiting
+              : "Back to my desk"
+          : "";
+      const text = realBubble ? actor.activityText : ambientText;
+      if (actor.bubble.textContent !== text) actor.bubble.textContent = text;
       for (const [key, value] of Object.entries({
         active: actor.focused,
-        working,
-        bubble: actor.bubbleUntil > elapsed,
+        working: working && atDesk,
+        bubble: !!text,
+        error: realBubble && actor.activityError,
       })) {
         const next = String(value);
         if (actor.label.dataset[key] !== next) actor.label.dataset[key] = next;
       }
-      if (labelsNeedLayout) {
-        projected.set(member.home.x, 1.44, member.home.z).project(camera);
+      const labelY = 1.62 - actor.sit * 0.18;
+      if (
+        labelsNeedLayout ||
+        actor.projectedAt.x !== walker.position.x ||
+        actor.projectedAt.z !== walker.position.z ||
+        actor.projectedAt.y !== labelY
+      ) {
+        actor.projectedAt = { ...walker.position, y: labelY };
+        projected
+          .set(walker.position.x, labelY, walker.position.z)
+          .project(camera);
         actor.label.style.transform = `translate3d(${(projected.x * 0.5 + 0.5) * width}px,${(-projected.y * 0.5 + 0.5) * height}px,0) translate(-50%,-100%)`;
         actor.label.style.visibility =
           projected.z > 1 || Math.abs(projected.x) > 0.98
@@ -833,6 +980,8 @@ export function createOfficeScene(
     resize,
     setReducedMotion(value) {
       reduced = value;
+      setRoutineReducedMotion(routine, value);
+      labelsNeedLayout = true;
       if (reduced) {
         camera.position.copy(baseCamera);
         camera.lookAt(lookAt);

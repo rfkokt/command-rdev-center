@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as THREE from "three";
 import { createOfficeScene, type OfficeScene } from "./office-scene";
 import { TEAM, activityFor } from "./office-motion";
+import { OFFICE_VISITS } from "./office-layout";
 
 const renderer = vi.hoisted(() => ({
   render: vi.fn(),
@@ -37,6 +38,13 @@ vi.mock("./voxel-character", () => ({
     root.add(body);
     body.add(head, ...arms, ...legs);
     legs.forEach((leg, i) => leg.add(knees[i]));
+    const model = new THREE.Mesh(
+      new THREE.BoxGeometry(),
+      new THREE.MeshStandardMaterial(),
+    );
+    model.name = "loaded-chibi";
+    model.castShadow = true;
+    body.add(model);
     return { root, body, head, arms, legs, knees };
   },
 }));
@@ -97,8 +105,8 @@ function expectAtDesks() {
   });
 }
 
-it("keeps everyone at their desks through prompts, tool activity, completion and idle", () => {
-  advance(30);
+it("keeps everyone at their desks through prompts, tool activity and completion", () => {
+  advance(1);
   expectAtDesks();
   office.setActivity(activityFor("crc-agent-prompt", { text: "Build it" })!);
   advance(10);
@@ -127,11 +135,65 @@ it("keeps everyone at their desks through prompts, tool activity, completion and
   office.setActivity(
     activityFor("crc-agent-activity", { type: "agent_settled" })!,
   );
-  advance(90);
+  advance(2);
   expectAtDesks();
   expect(
     labels.querySelectorAll('[data-working="true"], [data-active="true"]'),
   ).toHaveLength(0);
+});
+
+it("shows a coffee break and recalls the visitor to work on a prompt", () => {
+  advance(9);
+  const away = roots.filter(
+    (root, index) =>
+      root.position.x !== TEAM[index].home.x ||
+      root.position.z !== TEAM[index].home.z,
+  );
+  expect(away).toHaveLength(1);
+  expect(away[0]).toBe(roots[1]);
+  expect(
+    labels.querySelector('[data-bubble="true"] .office-agent-activity')
+      ?.textContent,
+  ).toBe("Coffee break");
+  office.setActivity(activityFor("crc-agent-prompt", { text: "Build it" })!);
+  advance(45);
+  expectAtDesks();
+  expect(labels.querySelectorAll('[data-working="true"]')).toHaveLength(6);
+});
+
+it("lifts a visible mug at the pantry and leaves motion still when reduced motion is enabled", () => {
+  const visitor = roots[1];
+  const mug = visitor.getObjectByName("coffee-mug")!;
+  for (let second = 0; second < 50 && !mug.visible; second++) advance(1);
+  expect(mug.visible).toBe(true);
+  expect(visitor.position.x).toBe(OFFICE_VISITS[0].destination.x);
+  expect(visitor.position.z).toBe(OFFICE_VISITS[0].destination.z);
+  advance(0.5);
+  expect(mug.position.y).toBeGreaterThan(1.15);
+  office.setReducedMotion(true);
+  expectAtDesks();
+  expect(mug.visible).toBe(false);
+  expect(visitor.children[0].position.y).toBe(-0.24);
+});
+
+it("moves the visitor's contact shadow without recalculating GPU shadows on each step", () => {
+  const visitor = roots[1];
+  const model = visitor.getObjectByName("loaded-chibi") as THREE.Mesh;
+  const shadow = visitor.getObjectByName("visitor-shadow")!;
+  const gpu = renderer.render.mock.contexts[
+    renderer.render.mock.contexts.length - 1
+  ] as { shadowMap: { needsUpdate: boolean } };
+  advance(8);
+  expect(model.castShadow).toBe(false);
+  expect(shadow.visible).toBe(true);
+  gpu.shadowMap.needsUpdate = false;
+  advance(1);
+  expect(gpu.shadowMap.needsUpdate).toBe(false);
+  office.setActivity(activityFor("crc-agent-prompt", { text: "Build it" })!);
+  advance(45);
+  expect(model.castShadow).toBe(true);
+  expect(shadow.visible).toBe(false);
+  expect(gpu.shadowMap.needsUpdate).toBe(true);
 });
 
 it("animates every rigid chibi body and fallback arm while working, then stops typing", () => {
@@ -167,7 +229,7 @@ it("bounds Retina render cost across window sizes and keeps the workstation fram
     viewport = { width, height };
     office.resize();
     const ratio = renderer.setPixelRatio.mock.lastCall![0] as number;
-    expect(width * height * ratio * ratio).toBeLessThanOrEqual(3_000_001);
+    expect(width * height * ratio * ratio).toBeLessThanOrEqual(2_500_001);
     expect(ratio).toBeLessThanOrEqual(1.25);
     expect(renderer.setSize).toHaveBeenLastCalledWith(width, height, false);
   }

@@ -40,6 +40,24 @@ export const STUDIO_COLORS = {
 } as const;
 
 export const DISCUSSION_CENTER: Point = { x: -5.3, z: 2.6 };
+export const OFFICE_VISITS = [
+  {
+    kind: "coffee",
+    destination: { x: -7.1, z: 3.3 },
+    lookAt: { x: -8.45, z: 2.95 },
+    duration: 4.6,
+    outbound: "Coffee break",
+    visiting: "Taking a sip…",
+  },
+  {
+    kind: "server",
+    destination: { x: -4.35, z: -1.65 },
+    lookAt: { x: -4.35, z: -4.5 },
+    duration: 5.2,
+    outbound: "Checking the servers",
+    visiting: "Inspecting the server room…",
+  },
+] as const;
 // Leave enough room for the widest chibi and clear approaches around the table.
 export const DISCUSSION_SPOTS: readonly Point[] = [
   { x: -6.7, z: 0.4 },

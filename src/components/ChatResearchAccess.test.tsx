@@ -136,9 +136,162 @@ function mockBackend(runs: unknown[] = []) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   invoke.mockReset();
   listeners.clear();
   vi.clearAllMocks();
+});
+
+describe("session startup recovery", () => {
+  it("starts the agent without waiting for a stalled optional graph scan", async () => {
+    vi.useFakeTimers();
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: any) => {
+      if (command === "get_graphify_settings")
+        return Promise.resolve({ enabled: true });
+      if (command === "get_graph_status") return new Promise(() => {});
+      return original(command, args);
+    });
+    render(<ChatView {...baseProps} sessionFile="/tmp/saved.jsonl" />);
+    await act(async () => {});
+    expect(
+      invoke.mock.calls.some(([command]) => command === "spawn_pi_rpc"),
+    ).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1501);
+    });
+    expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything());
+    expect(screen.getByText("RESTORING CHAT HISTORY")).toBeInTheDocument();
+  });
+
+  it("does not block history restore on dev-server status", async () => {
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args: any) => {
+      if (command === "ensure_worktree")
+        return Promise.resolve({ worktree_path: "/tmp/demo-worktree" });
+      if (command === "get_dev_server") return new Promise(() => {});
+      return original(command, args);
+    });
+    render(<ChatView {...baseProps} isGit sessionFile="/tmp/saved.jsonl" />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    await act(async () =>
+      listeners.get("pi-rpc-event")?.({
+        payload: {
+          session_id: "chat-chat-one",
+          raw: JSON.stringify({
+            type: "response",
+            command: "get_messages",
+            success: true,
+            data: {
+              messages: [{ role: "user", content: "Saved conversation" }],
+            },
+          }),
+        },
+      }),
+    );
+    expect(screen.getByText("Saved conversation")).toBeInTheDocument();
+    expect(screen.queryByText("LOADING SESSION")).not.toBeInTheDocument();
+  });
+
+  it("reports stalled startup and ignores its late completion", async () => {
+    vi.useFakeTimers();
+    mockBackend();
+    const original = invoke.getMockImplementation()!;
+    let finish!: () => void;
+    invoke.mockImplementation((command: string, args: any) => {
+      if (command === "spawn_pi_rpc")
+        return new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      return original(command, args);
+    });
+    render(<ChatView {...baseProps} sessionFile="/tmp/saved.jsonl" />);
+    await act(async () => {});
+    expect(screen.getByText("STARTING AGENT")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_001);
+    });
+    expect(screen.queryByText("LOADING SESSION")).not.toBeInTheDocument();
+    expect(baseProps.onToast).toHaveBeenCalledWith(
+      expect.stringContaining("startup timed out while starting the agent"),
+    );
+    const commands = invoke.mock.calls.filter(
+      ([command]) => command === "send_pi_command",
+    ).length;
+    await act(async () => finish());
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "send_pi_command"),
+    ).toHaveLength(commands);
+    invoke.mockImplementation((command: string, args: any) =>
+      command === "spawn_pi_rpc"
+        ? Promise.resolve("new-process")
+        : original(command, args),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "RESTART" }));
+    await act(async () => {});
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "spawn_pi_rpc"),
+    ).toHaveLength(2);
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "send_pi_command")
+        .length,
+    ).toBeGreaterThan(commands);
+    expect(
+      screen.queryByRole("button", { name: "CONNECTING…" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a history RPC failure immediately", async () => {
+    mockBackend();
+    render(<ChatView {...baseProps} sessionFile="/tmp/saved.jsonl" />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+    );
+    await act(async () =>
+      listeners.get("pi-rpc-event")?.({
+        payload: {
+          session_id: "chat-chat-one",
+          raw: JSON.stringify({
+            type: "response",
+            command: "get_messages",
+            success: false,
+            error: "Session file unavailable",
+          }),
+        },
+      }),
+    );
+    expect(screen.queryByText("LOADING SESSION")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Chat history could not be restored/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports listener connection failures instead of leaving the loader running", async () => {
+    mockBackend();
+    const original = listen.getMockImplementation()!;
+    listen.mockImplementation((event, handler) =>
+      event === "pi-rpc-event"
+        ? Promise.reject(new Error("Event bridge unavailable"))
+        : original(event, handler),
+    );
+    try {
+      render(<ChatView {...baseProps} sessionFile="/tmp/saved.jsonl" />);
+      await waitFor(() =>
+        expect(
+          screen.getByText(
+            /Agent connection failed: Error: Event bridge unavailable/,
+          ),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("LOADING SESSION")).not.toBeInTheDocument();
+    } finally {
+      listen.mockImplementation(original);
+    }
+  });
 });
 
 describe("chat-native Deep Research", () => {

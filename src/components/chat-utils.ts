@@ -343,7 +343,12 @@ export function isPiRuntimeIssue(text: string) {
 
 export function clearRestartErrors(messages: ChatMessage[]) {
   return messages.filter(
-    (message) => message.role !== "system" || !shouldOfferRestart(message.text),
+    (message) =>
+      message.role !== "system" ||
+      (!shouldOfferRestart(message.text) &&
+        !/agent startup timed out|agent connection failed|chat history could not be restored/i.test(
+          message.text,
+        )),
   );
 }
 

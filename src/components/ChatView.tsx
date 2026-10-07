@@ -26,6 +26,7 @@ import type {
   ApprovalRequest,
 } from "../lib/rpc";
 import { parseApprovalRequest } from "../lib/rpc";
+import { withTimeout } from "../lib/with-timeout";
 import {
   formatTokens,
   appendStreamingText,
@@ -391,6 +392,9 @@ export default function ChatView({
     Boolean(sessionFile),
   );
   const historyLoadedRef = useRef(!sessionFile);
+  const [historyLoadingStage, setHistoryLoadingStage] = useState(
+    "PREPARING WORKSPACE",
+  );
   const forkHistoryRequestRef = useRef<string | null>(null);
   const forkHistoryLoadingRef = useRef(false);
   const [isNewSessionLoading, setIsNewSessionLoading] = useState(false);
@@ -454,7 +458,7 @@ export default function ChatView({
     Array<{ id: string; type: string; detail: string; at: number }>
   >([]);
   const [driveDetached, setDriveDetached] = useState(false);
-  // Bumped after the user approves the Pi install so the spawn effect re-runs.
+  // Reconnect the startup effect after installation or a failed connection.
   const [piInstallRetry, setPiInstallRetry] = useState(0);
   const [models, setModels] = useState<string[]>([]);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
@@ -1225,8 +1229,34 @@ export default function ChatView({
   useEffect(() => {
     if (!globalChat && !repositoryMapLoaded) return;
     let mounted = true;
+    let startupExpired = false;
+    let startupStage = "connecting to the agent";
     const unlisteners: Array<() => void> = [];
     const retryIds: number[] = [];
+    const stopWithError = (error: string) => {
+      if (!mounted) return;
+      startupExpired = true;
+      window.clearTimeout(startupTimer);
+      historyLoadedRef.current = true;
+      setIsHistoryLoading(false);
+      setIsNewSessionLoading(false);
+      setAgentStatus("stopped");
+      setIsStreaming(false);
+      onAgentRunning(chatId, false);
+      setMessages((prev) => settleWithError(prev, error));
+      onToast(error);
+    };
+    const startupTimer = window.setTimeout(() => {
+      startupExpired = true;
+      stopWithError(
+        `Agent startup timed out while ${startupStage} — use Restart to reconnect. Chat history has not been changed.`,
+      );
+    }, 30_000);
+    retryIds.push(startupTimer);
+    const setStartupStage = (stage: string, label: string) => {
+      startupStage = stage;
+      if (mounted) setHistoryLoadingStage(label);
+    };
 
     function messageContent(message: Record<string, unknown> | undefined) {
       if (!message) return { text: "", thinking: "" };
@@ -1484,6 +1514,17 @@ export default function ChatView({
               );
               return;
             }
+          }
+          if (cmd === "get_messages" && ev.success === false) {
+            historyLoadedRef.current = true;
+            setIsHistoryLoading(false);
+            setMessages((prev) =>
+              settleWithError(
+                prev,
+                `Chat history could not be restored: ${String(ev.error ?? "Agent returned no history")} — use Restart to retry.`,
+              ),
+            );
+            return;
           }
           const data = ev.data as Record<string, unknown> | undefined;
           if (!data) return;
@@ -2091,26 +2132,17 @@ export default function ChatView({
     }
 
     async function run() {
+      setStartupStage("connecting to the agent", "CONNECTING TO AGENT");
       // listeners FIRST
       const u1 = await listen<PiEventPayload>("pi-rpc-event", (e) => {
         if (e.payload.session_id !== sessionId) return;
         handleRaw(e.payload.raw);
       });
-      if (!mounted) {
+      if (!mounted || startupExpired) {
         u1();
         return;
       }
       unlisteners.push(u1);
-      const stopWithError = (error: string) => {
-        historyLoadedRef.current = true;
-        setIsHistoryLoading(false);
-        setIsNewSessionLoading(false);
-        setAgentStatus("stopped");
-        setIsStreaming(false);
-        onAgentRunning(chatId, false);
-        setMessages((prev) => settleWithError(prev, error));
-        onToast(error);
-      };
       const u2 = await listen<{ session_id: string; cwd_exists: boolean }>(
         "pi-rpc-ended",
         (e) => {
@@ -2123,6 +2155,10 @@ export default function ChatView({
           );
         },
       );
+      if (!mounted || startupExpired) {
+        u2();
+        return;
+      }
       unlisteners.push(u2);
       const u3 = await listen<{ session_id: string; error: string }>(
         "pi-rpc-error",
@@ -2131,6 +2167,10 @@ export default function ChatView({
           stopWithError(e.payload.error);
         },
       );
+      if (!mounted || startupExpired) {
+        u3();
+        return;
+      }
       unlisteners.push(u3);
       const u4 = await listen<{ session_id: string; line: string }>(
         "pi-rpc-stderr",
@@ -2151,12 +2191,18 @@ export default function ChatView({
           onToast(`pi stderr: ${line.slice(0, 180)}`);
         },
       );
+      if (!mounted || startupExpired) {
+        u4();
+        return;
+      }
       unlisteners.push(u4);
 
       try {
         if (globalChat) {
           const globalCwd = await invoke<string>("get_global_chat_cwd");
+          if (!mounted || startupExpired) return;
           setCwd(globalCwd);
+          setStartupStage("starting the agent", "STARTING AGENT");
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
             sessionId,
@@ -2173,19 +2219,25 @@ export default function ChatView({
         } else {
           let graph: GraphStatus | null = null;
           try {
-            const settings = await invoke<{ enabled: boolean }>(
-              "get_graphify_settings",
+            const settings = await withTimeout(
+              invoke<{ enabled: boolean }>("get_graphify_settings"),
+              1500,
+              "Graphify settings check timed out",
             );
+            if (!mounted || startupExpired) return;
             setGraphEnabled(!!settings.enabled);
             if (settings.enabled) {
-              graph = await invoke<GraphStatus>("get_graph_status", {
-                projectPath,
-              });
+              graph = await withTimeout(
+                invoke<GraphStatus>("get_graph_status", { projectPath }),
+                1500,
+                "Graphify status check timed out",
+              );
             }
           } catch (e) {
             // Graphify is optional; coding continues without it.
             onToast(`Graphify unavailable; coding continues (${String(e)})`);
           }
+          if (!mounted || startupExpired) return;
           if (graph) {
             setGraphStatus(graph);
             graphReportRef.current = graph.report_path;
@@ -2197,11 +2249,14 @@ export default function ChatView({
           }
 
           if (isWorkspace) {
+            setStartupStage("preparing the workspace", "PREPARING WORKSPACE");
             const workspaceCwd = await invoke<string>(
               "ensure_workspace_session",
               { workspacePath: projectPath, slug },
             );
+            if (!mounted || startupExpired) return;
             setCwd(workspaceCwd);
+            setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
               sessionId,
@@ -2217,6 +2272,7 @@ export default function ChatView({
             });
           } else if (!isGit) {
             setCwd(projectPath);
+            setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
               sessionId,
@@ -2231,20 +2287,27 @@ export default function ChatView({
               projectName,
             });
           } else {
+            setStartupStage("preparing the worktree", "PREPARING WORKTREE");
             const wt = await invoke<WorktreeInfo>("ensure_worktree", {
               repoPath: projectPath,
               repoName: projectName,
               slug,
             });
-            if (!mounted) return;
+            if (!mounted || startupExpired) return;
             setWorktree(wt);
             setCwd(wt.worktree_path);
-            setDevRunner(
-              await invoke<DevRunnerInfo | null>("get_dev_server", {
-                chatId,
-                cwd: wt.worktree_path,
-              }),
-            );
+            // Dev-server status is independent of the agent connection.
+            void invoke<DevRunnerInfo | null>("get_dev_server", {
+              chatId,
+              cwd: wt.worktree_path,
+            })
+              .then((runner) => {
+                if (mounted) setDevRunner(runner);
+              })
+              .catch((error) => {
+                if (mounted) onToast(`Dev server status: ${String(error)}`);
+              });
+            setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
               sessionId,
@@ -2260,6 +2323,10 @@ export default function ChatView({
             });
           }
         }
+
+        if (!mounted || startupExpired) return;
+        window.clearTimeout(startupTimer);
+        setHistoryLoadingStage("RESTORING CHAT HISTORY");
 
         const initial = () => {
           sendRaw({ type: "get_available_models" });
@@ -2312,6 +2379,8 @@ export default function ChatView({
           ),
         );
       } catch (e) {
+        if (!mounted || startupExpired) return;
+        window.clearTimeout(startupTimer);
         const msg = String(e);
         historyLoadedRef.current = true;
         setIsHistoryLoading(false);
@@ -2357,7 +2426,11 @@ export default function ChatView({
       }
     }
 
-    run();
+    void run().catch((error) => {
+      window.clearTimeout(startupTimer);
+      if (!startupExpired)
+        stopWithError(`Agent connection failed: ${String(error)}`);
+    });
     return () => {
       mounted = false;
       setChatReady(false);
@@ -3021,6 +3094,16 @@ export default function ChatView({
       setBackgroundWork(null);
       try {
         await invoke("kill_pi_session", { sessionId }).catch(() => {});
+        if (!chatReady) {
+          // A failed bootstrap may not have installed all event listeners or
+          // prepared the worktree. Retry that entire flow, not only the process.
+          setMessages(clearRestartErrors);
+          setIsHistoryLoading(Boolean(sessionFileRef.current));
+          setAgentStatus("idle");
+          setPiInstallRetry((value) => value + 1);
+          onToast("Reconnecting agent session");
+          return;
+        }
         const [provider, ...modelParts] = modelRef.current.split("/");
         await invoke("spawn_pi_rpc", {
           sessionId,
@@ -3070,6 +3153,7 @@ export default function ChatView({
       cwd,
       globalChat,
       isRestarting,
+      chatReady,
       onToast,
       projectName,
       sendRaw,
@@ -3767,7 +3851,7 @@ export default function ChatView({
               LOADING SESSION
               <span className="pixel-loading-cursor" aria-hidden="true" />
             </strong>
-            <small>RESTORING CHAT HISTORY</small>
+            <small>{historyLoadingStage}</small>
           </div>
           <div className="pixel-loading-bar" aria-hidden="true">
             <span className="pixel-loading-bar-fill" />
