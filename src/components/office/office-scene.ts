@@ -1,18 +1,20 @@
 import * as THREE from "three";
+import {
+  DISCUSSION_SPOTS,
+  DISCUSSION_CENTER,
+  STUDIO_COLORS,
+} from "./office-layout";
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import {
-  VOXEL_MODELS,
-  OFFICE_PALETTE_BASE64,
-} from "./office-voxel-models";
+import { VOXEL_MODELS, OFFICE_PALETTE_BASE64 } from "./office-voxel-models";
 import {
   TEAM,
-  advanceWalker,
+  advanceWalkers,
+  routeWalkersTo,
   aisleRoute,
   createWalker,
   damp,
   type Activity,
-  type Point,
 } from "./office-motion";
 
 export interface OfficeScene {
@@ -40,19 +42,20 @@ export function createOfficeScene(
     Math.min(1.5, Math.max(1, window.devicePixelRatio || 1)),
   );
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color("#18252c");
-  const camera = new THREE.PerspectiveCamera(43, 1, 0.1, 90);
+  const C = STUDIO_COLORS;
+  scene.background = new THREE.Color(C.night);
+  const camera = new THREE.OrthographicCamera(-15, 15, 9, -9, 0.1, 90);
   const room = new THREE.Group();
   scene.add(room);
   const geometry = {
     box: new THREE.BoxGeometry(1, 1, 1),
     round: new THREE.BoxGeometry(1, 1, 1),
     ball: new THREE.BoxGeometry(2, 2, 2),
-    cylinder: new THREE.BoxGeometry(2, 1, 2),
+    cylinder: new THREE.CylinderGeometry(0.65, 1, 1, 8),
     leaf: new THREE.BoxGeometry(2, 2, 2),
   };
   const materials = new Map<string, THREE.MeshStandardMaterial>();
@@ -102,7 +105,9 @@ export function createOfficeScene(
   paletteImage.src = `data:image/png;base64,${OFFICE_PALETTE_BASE64}`;
   const paletteTexture = new THREE.Texture(paletteImage);
   paletteImage.onload = () => {
+    if (disposed) return;
     paletteTexture.needsUpdate = true;
+    draw(0);
   };
   paletteTexture.magFilter = THREE.NearestFilter;
   paletteTexture.minFilter = THREE.NearestFilter;
@@ -154,201 +159,364 @@ export function createOfficeScene(
     return mesh;
   }
 
-  // Continuous architecture, wood boards, skirting and a recessed acoustic wall.
-  box(room, "#81715c", [60, 0.3, 60], [20.8, -0.17, 23.8]);
-  for (let i = 0; i < 66; i++) {
-    for (let j = 0; j < 10; j++) {
+  // Hallmark · component: night studio · reference: user screenshot
+  // pre-emit critique: P4 H4 E4 S5 R4 V4
+  // A finite cutaway floor, with timber circulation and tiled work / pantry zones.
+  box(room, C.edge, [18.4, 0.3, 12.8], [0, -0.18, 0]);
+  for (let x = 0; x < 36; x++) {
+    for (let z = 0; z < 8; z++) {
       box(
         room,
-        ["#aa8964", "#b2936e", "#a78b6b", "#b79a76"][(i + j * 3) % 4],
-        [0.576, 0.028, 3.08],
-        [-8.85 + i * 0.59, 0, -4.66 + j * 3.1],
+        C.woodFloor[(x + z * 3) % 4],
+        [0.495, 0.035, 1.57],
+        [-8.75 + x * 0.5, 0, -5.6 + z * 1.6],
       );
     }
   }
-  box(room, "#d3c9b7", [60, 30, 0.24], [20.8, 14.9, -6.2]);
-  box(room, "#315354", [0.25, 30, 60], [-9.2, 14.9, 23.8]);
-  box(room, "#444c44", [60, 0.14, 0.12], [20.8, 0.14, -6.02]);
-  box(room, "#263e3c", [0.12, 0.14, 60], [-9.02, 0.14, 23.8]);
-  box(room, "#294c4d", [5.4, 3.65, 0.16], [-5.95, 2.2, -6.01]);
-  for (let i = 0; i < 24; i++)
-    box(room, "#446663", [0.055, 3.65, 0.1], [-8.5 + i * 0.22, 2.2, -5.89]);
-
-  // Large glazed windows with actual recesses, mullions and a quiet skyline.
-  const skyMaterial = material("#8cb8c9", 0.4);
-  const sky = box(
-    room,
-    "#8cb8c9",
-    [10.7, 3.55, 0.08],
-    [2.4, 3.1, -6.04],
-    false,
-    0.4,
-  );
-  sky.castShadow = false;
-  for (let i = 0; i < 18; i++) {
-    const h = 0.35 + ((i * 7) % 11) * 0.095;
-    box(
-      room,
-      i % 2 ? "#78959c" : "#698990",
-      [0.46, h, 0.03],
-      [-2.45 + i * 0.57, 1.38 + h / 2, -5.97],
-    );
+  function tileZone(x: number, z: number, columns: number, rows: number) {
+    for (let col = 0; col < columns; col++)
+      for (let row = 0; row < rows; row++)
+        box(
+          room,
+          C.tiles[(col + row) % 3],
+          [0.89, 0.025, 0.89],
+          [x + col * 0.92, 0.025, z + row * 0.92],
+        );
   }
-  for (let i = 0; i < 5; i++)
-    box(room, "#303d3f", [0.07, 3.7, 0.2], [-3.0 + i * 2.68, 3.1, -5.87]);
-  for (const y of [1.25, 3.55, 4.94])
-    box(room, "#303d3f", [10.85, 0.075, 0.2], [2.36, y, -5.87]);
-  box(room, "#e0d4bf", [11.1, 0.12, 0.48], [2.35, 1.21, -5.8]);
+  tileZone(-8.55, -0.7, 5, 8);
+  tileZone(-2.0, -2.9, 12, 3);
+  tileZone(-2.0, 2.0, 12, 4);
 
-  // A warm studio lounge on the left with voxel couch and coffee table.
-  box(room, "#53635e", [3.2, 0.045, 4.0], [-6.75, 0.04, 0.95], true);
-  voxelModel(room, "office_couch", [-7.4, 0, 0.95], Math.PI / 2, 1.1);
-  voxelModel(room, "office_coffee_table", [-6.1, 0, 0.95], Math.PI / 2, 1.0);
-  voxelModel(room, "office_mug", [-6.1, 0.5, 0.8], 0.4, 0.9);
-  voxelModel(room, "office_papers", [-6.1, 0.5, 1.2], -0.2, 0.9);
+  // Two low cutaway walls, coloured charcoal-plum against the midnight city.
+  box(room, C.wall, [18.4, 5.5, 0.22], [0, 2.75, -6.25]);
+  box(room, C.wall, [0.22, 5.5, 12.8], [-9.15, 2.75, 0]);
+  box(room, C.trim, [18.25, 0.16, 0.16], [0, 0.15, -6.08]);
+  box(room, C.trim, [0.16, 0.16, 12.5], [-9.0, 0.15, 0]);
+  box(room, C.trim, [18.4, 0.18, 0.3], [0, 5.52, -6.22]);
+  box(room, C.trim, [0.3, 0.18, 12.8], [-9.15, 5.52, 0]);
+  box(room, C.cyan, [0.04, 0.055, 12.2], [-9.0, 5.15, 0], false, 2.5);
+  box(room, C.amber, [17.9, 0.055, 0.04], [0, 5.15, -6.1], false, 2.5);
 
-  // Shelving and decor on the back wall.
-  box(room, "#b08356", [2.1, 0.12, 0.48], [-6.0, 3.25, -5.62]);
-  for (let i = 0; i < 8; i++)
-    box(
+  // Window panels: separate buildings and lit windows keep the skyline legible.
+  const skyMaterial = material(C.skyNight, 0.3);
+  for (const centerX of [0.0, 3.5, 7.0]) {
+    const pane = box(
       room,
-      ["#bb755f", "#789894", "#d2bc8d"][i % 3],
-      [0.14, 0.32 + (i % 3) * 0.07, 0.25],
-      [-6.8 + i * 0.17, 3.52, -5.62],
-    );
-
-  // Voxel potted plants in corners and along perimeter.
-  voxelModel(room, "office_plant_tall", [-8.2, 0, -4.95], 0, 1.15);
-  voxelModel(room, "office_plant_big", [8.0, 0, -5.1], 0.8, 1.3);
-  voxelModel(room, "office_plant_tall", [8.2, 0, 4.8], 1.5, 1.1);
-  voxelModel(room, "office_plant_big", [-8.3, 0, 4.8], 2.2, 1.25);
-
-  // Office storage, server rack, printer, and coffee station.
-  voxelModel(room, "office_cabinet", [5.8, 0, -5.45], 0, 1.1);
-  voxelModel(room, "office_printer", [4.6, 0, -5.45], 0, 1.0);
-  voxelModel(room, "office_trashcan", [7.0, 0, -5.45], 0, 1.1);
-  voxelModel(room, "office_corkboard", [-6.0, 1.8, -5.9], 0, 1.1);
-
-  // Server rack on the left wall with active LED indicators.
-  box(room, "#253c41", [1.25, 2.45, 0.8], [-8.2, 1.23, -2.8], true);
-  for (let i = 0; i < 7; i++) {
-    box(room, "#40575b", [1.02, 0.22, 0.04], [-8.2, 0.4 + i * 0.29, -2.37]);
-    box(
-      room,
-      "#7cc9aa",
-      [0.06, 0.035, 0.045],
-      [-7.79, 0.4 + i * 0.29, -2.33],
+      C.skyNight,
+      [2.85, 3.35, 0.06],
+      [centerX, 3.1, -6.09],
       false,
-      1.2,
+      0.3,
+    );
+    pane.castShadow = false;
+    for (let building = 0; building < 6; building++) {
+      const h = 1.1 + ((building * 7 + Math.round(centerX * 2)) % 9) * 0.19;
+      const bx = centerX - 1.17 + building * 0.46;
+      box(
+        room,
+        C.city[building % 3],
+        [0.4, h, 0.035],
+        [bx, 1.46 + h / 2, -6.035],
+      );
+      for (let row = 0; row < Math.floor(h / 0.21) - 1; row++)
+        for (let col = 0; col < 3; col++)
+          if ((row * 3 + col + building) % 4 !== 0)
+            box(
+              room,
+              (row + building) % 5 === 0 ? C.windowWarm : C.windowCool,
+              [0.055, 0.045, 0.018],
+              [bx - 0.12 + col * 0.12, 1.62 + row * 0.21, -6.009],
+              false,
+              0.55,
+            );
+    }
+    for (const dx of [-1.48, 1.48])
+      box(room, C.trim, [0.09, 3.55, 0.18], [centerX + dx, 3.1, -5.96]);
+    for (const y of [1.34, 4.86])
+      box(room, C.trim, [3.04, 0.09, 0.18], [centerX, y, -5.96]);
+    box(room, C.metal, [3.15, 0.1, 0.38], [centerX, 1.3, -5.87]);
+  }
+
+  // Glass server room occupies the rear-left corner. Glass is kept out of opaque batches.
+  const glassGroup = new THREE.Group();
+  scene.add(glassGroup);
+  const glassMaterial = new THREE.MeshStandardMaterial({
+    color: C.glass,
+    transparent: true,
+    opacity: 0.13,
+    roughness: 0.2,
+    metalness: 0,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  function glass(size: [number, number, number], at: [number, number, number]) {
+    const pane = new THREE.Mesh(geometry.box, glassMaterial);
+    pane.scale.set(...size);
+    pane.position.set(...at);
+    glassGroup.add(pane);
+  }
+  for (let col = 0; col < 7; col++)
+    for (let row = 0; row < 3; row++)
+      box(
+        room,
+        C.serverFloor[(col + row) % 2],
+        [0.88, 0.04, 0.98],
+        [-7.85 + col * 0.9, 0.035, -5.5 + row],
+      );
+  for (const x of [-7.75, -6.2, -4.65, -3.1]) {
+    box(room, C.serverBody, [1.24, 3.9, 0.85], [x, 2, -5.35]);
+    box(room, C.trim, [1.08, 3.64, 0.03], [x, 2.0, -4.9]);
+    for (let slot = 0; slot < 12; slot++) {
+      box(room, C.metal, [0.96, 0.18, 0.045], [x, 0.38 + slot * 0.28, -4.86]);
+      for (let led = 0; led < 5; led++)
+        box(
+          room,
+          led % 3 ? C.serverGreen : C.cyan,
+          [0.045, 0.038, 0.018],
+          [x - 0.36 + led * 0.12, 0.38 + slot * 0.28, -4.83],
+          false,
+          1.3,
+        );
+      box(
+        room,
+        C.serverBody,
+        [0.21, 0.038, 0.02],
+        [x + 0.32, 0.38 + slot * 0.28, -4.825],
+      );
+    }
+  }
+  // Sliding glass doorway on the left; the aisle in front stays open.
+  for (const x of [-8.35, -6.7, -5.05, -3.4, -1.75])
+    box(room, C.metal, [0.065, 4.7, 0.12], [x, 2.35, -2.75]);
+  for (const y of [0.09, 4.68])
+    box(room, C.metal, [6.7, 0.08, 0.14], [-5.05, y, -2.75]);
+  for (const x of [-7.525, -5.875, -4.225, -2.575]) {
+    glass([1.55, 4.5, 0.025], [x, 2.35, -2.75]);
+    box(
+      room,
+      C.glassEdge,
+      [0.025, 4.4, 0.025],
+      [x + 0.7, 2.35, -2.7],
+      false,
+      0.45,
     );
   }
-  // Coffee machine nook next to server rack.
-  box(room, "#4b5d59", [0.9, 0.9, 0.7], [-8.2, 0.45, -1.7], true);
-  voxelModel(room, "office_coffee_machine", [-8.2, 0.9, -1.7], Math.PI / 2, 0.85);
+  glass([0.025, 4.5, 3.2], [-1.75, 2.35, -4.4]);
+  box(room, C.metal, [0.08, 0.08, 3.4], [-1.75, 4.68, -4.4]);
+  box(room, C.metal, [0.045, 0.55, 0.08], [-7.0, 2.0, -2.65]);
+  box(room, C.cyan, [6.3, 0.04, 0.04], [-5.1, 4.5, -5.96], false, 1.8);
 
-  // Whiteboard along the back corridor.
-  voxelModel(room, "office_whiteboard", [-1.5, 0, -5.85], 0, 1.25);
+  // Pantry on the left wall: cupboards, sink, warm coffee machine and open shelves.
+  const pantry = new THREE.Group();
+  pantry.position.set(-8.45, 0, 2.0);
+  pantry.rotation.y = Math.PI / 2;
+  room.add(pantry);
+  box(pantry, C.woodDark, [5.8, 1.0, 0.85], [0, 0.5, 0]);
+  box(pantry, C.wood, [6.0, 0.1, 1.05], [0, 1.05, 0]);
+  for (let door = 0; door < 6; door++) {
+    box(pantry, C.wood, [0.88, 0.79, 0.04], [-2.4 + door * 0.96, 0.5, 0.45]);
+    box(pantry, C.metal, [0.045, 0.21, 0.05], [-2.1 + door * 0.96, 0.67, 0.49]);
+  }
+  box(pantry, C.metal, [1.12, 0.05, 0.72], [1.85, 1.12, 0]);
+  box(pantry, C.serverBody, [0.8, 0.055, 0.47], [1.85, 1.13, 0]);
+  box(pantry, C.silver, [0.07, 0.44, 0.07], [1.85, 1.34, -0.3]);
+  box(pantry, C.silver, [0.07, 0.07, 0.28], [1.85, 1.53, -0.19]);
+  voxelModel(pantry, "office_coffee_machine", [-0.95, 1.1, 0], 0, 1.0);
+  box(pantry, C.amber, [0.42, 0.25, 0.035], [-0.95, 1.46, 0.32], false, 1.2);
+  for (const x of [-2.3, 0.2, 0.65, 2.65])
+    voxelModel(pantry, "office_mug", [x, 1.11, 0.13], 0, 0.75);
+  for (const y of [2.0, 2.95]) {
+    box(pantry, C.wood, [4.8, 0.1, 0.5], [0.0, y, -0.16]);
+    for (let book = 0; book < 6; book++)
+      box(
+        pantry,
+        C.books[book % 4],
+        [0.14, 0.3 + (book % 3) * 0.06, 0.23],
+        [-1.65 + book * 0.19, y + 0.2, -0.16],
+      );
+    voxelModel(pantry, "office_plant_big", [1.6, y + 0.05, -0.16], 0, 0.65);
+  }
+  voxelModel(room, "office_plant_tall", [-7.2, 0, -1.6], 0, 1.15);
+  voxelModel(room, "office_plant_big", [8.3, 0, 5.65], 0.8, 1.0);
+
+  // Framed studio art is geometric, with no generated UI or fake window chrome.
+  for (const z of [-0.8, 4.7]) {
+    box(room, C.trim, [0.1, 1.18, 0.86], [-8.98, 3.85, z]);
+    box(room, C.art, [0.12, 0.99, 0.67], [-8.96, 3.85, z]);
+    for (let line = 0; line < 5; line++)
+      box(
+        room,
+        C.books[line % 4],
+        [0.025, 0.055, 0.25 + (line % 3) * 0.1],
+        [-8.88, 3.56 + line * 0.14, z],
+        false,
+        0.15,
+      );
+  }
 
   const screens: THREE.MeshStandardMaterial[] = [];
-  for (const member of TEAM) {
-    const { x, z } = member.home;
-    const station = new THREE.Group();
-    room.add(station);
-    if (z > 0) {
-      station.position.set(2 * x, 0, 2 * z);
-      station.rotation.y = Math.PI;
-    }
-    const deskZ = z - 0.9;
-    // 3D Voxel desk from pack (scale 0.83 gives width ~2.65m matching layout).
-    voxelModel(station, "office_table_desk", [x, 0, deskZ], 0, 0.83);
-
-    // Voxel PC setup (tower, monitor, keyboard) on desk.
-    voxelModel(station, "office_pc", [x, 0.91, deskZ], 0, 0.9);
-
-    // Dedicated emissive screen mesh for specialist color glow and editor activity.
+  function monitor(
+    parent: THREE.Object3D,
+    x: number,
+    z: number,
+    accent: string,
+  ) {
+    box(parent, C.trim, [0.76, 0.5, 0.065], [x, 1.49, z]);
     const screen = box(
-      station,
-      member.color,
-      [0.64, 0.38, 0.015],
-      [x, 1.44, deskZ - 0.16],
+      parent,
+      C.screen,
+      [0.67, 0.405, 0.01],
+      [x, 1.49, z + 0.04],
       false,
-      0.32,
+      0.35,
     );
-    screens.push(screen.material);
-
-    // Code/editor lines on screen.
-    for (let line = 0; line < 5; line++) {
+    // Each screen has its own material: activity brightness belongs to one agent.
+    screen.material = screen.material.clone();
+    box(parent, C.metal, [0.055, 0.2, 0.055], [x, 1.16, z]);
+    box(parent, C.trim, [0.34, 0.035, 0.23], [x, 1.075, z + 0.05]);
+    for (let line = 0; line < 7; line++)
       box(
-        station,
-        line % 3 ? "#c5e0d4" : "#f3d1a4",
-        [0.22 + (line % 3) * 0.09, 0.016, 0.005],
-        [x - 0.08 + (line % 2) * 0.06, 1.54 - line * 0.052, deskZ - 0.15],
+        parent,
+        line % 3 ? C.code : accent,
+        [0.18 + (line % 4) * 0.09, 0.013, 0.008],
+        [x - 0.12 + (line % 2) * 0.05, 1.62 - line * 0.043, z + 0.05],
         false,
-        0.35,
+        0.5,
+      );
+    return screen.material;
+  }
+  function officeChair(
+    parent: THREE.Object3D,
+    x: number,
+    z: number,
+    angle = 0,
+    scale = 1,
+  ) {
+    const chair = new THREE.Group();
+    chair.position.set(x, 0, z);
+    chair.rotation.y = angle;
+    chair.scale.setScalar(scale);
+    parent.add(chair);
+    box(chair, C.chair, [0.66, 0.13, 0.58], [0, 0.48, 0.04]);
+    box(chair, C.trim, [0.7, 0.66, 0.13], [0, 0.9, 0.37]);
+    box(chair, C.chair, [0.62, 0.58, 0.06], [0, 0.92, 0.285]);
+    box(chair, C.metal, [0.08, 0.3, 0.08], [0, 0.25, 0.04]);
+    for (const side of [-1, 1]) {
+      box(chair, C.trim, [0.06, 0.25, 0.06], [side * 0.36, 0.58, 0.1]);
+      box(chair, C.chair, [0.09, 0.065, 0.4], [side * 0.36, 0.72, 0.06]);
+    }
+    for (let spoke = 0; spoke < 5; spoke++) {
+      const angle = (spoke * Math.PI * 2) / 5;
+      const arm = box(
+        chair,
+        C.trim,
+        [0.055, 0.045, 0.36],
+        [Math.sin(angle) * 0.16, 0.12, 0.04 + Math.cos(angle) * 0.16],
+      );
+      arm.rotation.y = angle;
+      box(
+        chair,
+        C.trim,
+        [0.09, 0.09, 0.11],
+        [Math.sin(angle) * 0.32, 0.06, 0.04 + Math.cos(angle) * 0.32],
       );
     }
-
-    // Desk accessories: mug and documents.
-    voxelModel(station, "office_mug", [x + 0.9, 0.91, deskZ + 0.15], 0.5, 0.85);
-    voxelModel(station, "office_papers", [x - 0.85, 0.91, deskZ + 0.15], -0.2, 0.85);
-
-    // Voxel ergonomic office chair positioned at specialist station.
-    voxelModel(station, "office_chair", [x, 0, z + 0.1], 0, 0.82);
+  }
+  for (const member of TEAM) {
+    const { x, z } = member.home;
+    const deskZ = z - 0.95;
+    const station = new THREE.Group();
+    room.add(station);
+    box(station, C.wood, [2.7, 0.12, 1.15], [x, 1.0, deskZ]);
+    box(station, C.woodEdge, [2.7, 0.045, 1.15], [x, 0.92, deskZ]);
+    for (const dx of [-1.2, 1.2])
+      for (const dz of [-0.44, 0.44])
+        box(station, C.woodDark, [0.1, 0.92, 0.1], [x + dx, 0.46, deskZ + dz]);
+    screens.push(monitor(station, x - 0.46, deskZ - 0.23, member.color));
+    screens.push(monitor(station, x + 0.36, deskZ - 0.23, member.color));
+    box(station, C.trim, [0.9, 0.06, 0.32], [x, 1.1, deskZ + 0.22]);
+    for (let row = 0; row < 4; row++)
+      for (let key = 0; key < 12; key++)
+        box(
+          station,
+          C.key,
+          [0.052, 0.012, 0.045],
+          [x - 0.39 + key * 0.069, 1.138, deskZ + 0.12 + row * 0.065],
+        );
+    box(
+      station,
+      C.mousePad,
+      [0.42, 0.014, 0.37],
+      [x + 0.79, 1.065, deskZ + 0.22],
+    );
+    box(station, C.metal, [0.14, 0.06, 0.2], [x + 0.79, 1.1, deskZ + 0.21]);
+    box(station, C.serverBody, [0.38, 0.7, 0.7], [x + 0.98, 0.36, deskZ]);
+    box(
+      station,
+      member.color,
+      [0.025, 0.36, 0.025],
+      [x + 0.85, 0.4, deskZ + 0.36],
+      false,
+      0.75,
+    );
+    voxelModel(
+      station,
+      "office_mug",
+      [x - 1.05, 1.06, deskZ + 0.15],
+      0.5,
+      0.65,
+    );
+    officeChair(station, x, z + 0.1);
   }
 
-  // A shared briefing spot in the open right wing gives the team a visible place
-  // to gather and discuss without being covered by the central chat messages UI.
-  const discussionSpots = [
-    { x: 4.8, z: -0.9 },
-    { x: 6.8, z: -0.9 },
-    { x: 7.8, z: 0.6 },
-    { x: 3.8, z: 0.6 },
-    { x: 4.8, z: 2.1 },
-    { x: 6.8, z: 2.1 },
-  ] as const;
-  // Central corridor runner keeps the middle grounded now that the briefing table moved right.
-  box(room, "#3e4d4d", [2.6, 0.02, 4.2], [0, 0.02, 0.1], true);
+  // A small wooden break table provides the prompt discussion destination.
+  const discussionSpots = DISCUSSION_SPOTS;
+  const { x: tableX, z: tableZ } = DISCUSSION_CENTER;
+  box(room, C.wood, [2.05, 0.1, 1.55], [tableX, 0.88, tableZ]);
+  for (const dx of [-0.86, 0.86])
+    for (const dz of [-0.59, 0.59])
+      box(room, C.woodDark, [0.1, 0.84, 0.1], [tableX + dx, 0.42, tableZ + dz]);
+  for (const dz of [-1.3, 1.3])
+    for (const dx of [-0.6, 0.6])
+      officeChair(room, tableX + dx, tableZ + dz, dz < 0 ? Math.PI : 0, 0.8);
+  voxelModel(room, "office_mug", [tableX - 0.55, 0.94, tableZ], 0, 0.65);
 
-  // Briefing area rug, voxel meeting table, and briefing chairs.
-  box(room, "#4a5960", [4.8, 0.06, 3.6], [5.8, 0.035, 0.6], true);
-  voxelModel(room, "office_meeting_table", [5.8, 0, 0.6], 0, 0.72);
-  voxelModel(room, "office_papers", [5.4, 0.79, 0.6], 0.3, 0.9);
-  voxelModel(room, "office_mug", [6.2, 0.79, 0.6], -0.8, 0.9);
-
-  // Meeting chairs arranged around the briefing table facing inward.
-  discussionSpots.forEach((spot) => {
-    const angle = Math.atan2(5.8 - spot.x, 0.6 - spot.z);
-    voxelModel(room, "office_chair_white", [spot.x, 0, spot.z], angle + Math.PI, 0.68);
-  });
-  // Pendant fixtures, balanced daylight and warm practical illumination.
-  for (const x of [-4.9, 0.6, 5.8]) {
-    box(room, "#334342", [0.025, 0.75, 0.025], [x, 5.05, -0.4]);
-    box(room, "#344744", [3.0, 0.12, 0.32], [x, 4.64, -0.4], true);
-    box(room, "#ffe1a7", [2.8, 0.025, 0.25], [x, 4.56, -0.4], false, 1.8);
+  // Practical desk lamps and architectural strips carry the amber / cyan balance.
+  for (const z of [-2.55, 1.95]) {
+    const x = 2.4;
+    box(room, C.woodDark, [0.28, 0.035, 0.28], [x + 1.06, 1.08, z]);
+    box(room, C.amber, [0.045, 0.4, 0.045], [x + 1.06, 1.29, z]);
+    shape(room, "cylinder", C.lamp, [0.2, 0.27, 0.2], [x + 1.06, 1.56, z], 0.8);
+    const lamp = new THREE.PointLight(C.amber, 9, 4, 2);
+    lamp.position.set(x + 1.06, 1.7, z);
+    scene.add(lamp);
   }
-  const ambient = new THREE.HemisphereLight("#d7e9ee", "#897054", 2.1);
+  const ambient = new THREE.HemisphereLight(C.ambient, C.woodDark, 1.1);
   scene.add(ambient);
-  const sunlight = new THREE.DirectionalLight("#ffe5bc", 3.4);
+  const sunlight = new THREE.DirectionalLight(C.moon, 1.8);
   sunlight.position.set(3, 10, 4);
   sunlight.castShadow = true;
   sunlight.shadow.mapSize.set(1024, 1024);
   Object.assign(sunlight.shadow.camera, {
-    left: -12,
-    right: 12,
-    top: 10,
-    bottom: -10,
+    left: -14,
+    right: 14,
+    top: 12,
+    bottom: -12,
     near: 0.5,
-    far: 35,
+    far: 40,
   });
   sunlight.shadow.bias = 0.001;
   sunlight.shadow.normalBias = 0.05;
   scene.add(sunlight);
-  const fill = new THREE.DirectionalLight("#a2c4d6", 1.2);
+  const fill = new THREE.DirectionalLight(C.cyan, 0.6);
   fill.position.set(-5, 5, -5);
   scene.add(fill);
-  const warm = new THREE.PointLight("#ffc477", 38, 14, 2);
-  warm.position.set(5.8, 4, 0.6);
+  const warm = new THREE.PointLight(C.amber, 28, 10, 2);
+  warm.position.set(-7.5, 2.4, 1.8);
   scene.add(warm);
+  const serverLight = new THREE.PointLight(C.cyan, 18, 8, 2);
+  serverLight.position.set(-5, 3.5, -3.7);
+  scene.add(serverLight);
 
   // Bake static transforms into material batches: the room stays inexpensive to draw.
   room.updateMatrixWorld(true);
@@ -382,6 +550,10 @@ export function createOfficeScene(
   function character(member: (typeof TEAM)[number]) {
     const { root, body, head, arms, legs, knees } = createVoxelCharacter(
       member.id,
+      () =>
+        queueMicrotask(() => {
+          if (!disposed) draw(0);
+        }),
     );
     // Proportion scale: 0.76 aligns the character height (~1.48m) with the voxel furniture
     // (chair seat 0.45m, desk 0.9m) so the character doesn't look oversized.
@@ -412,7 +584,7 @@ export function createOfficeScene(
     labels.append(label);
     const walker = createWalker(member.home);
     root.position.set(member.home.x, 0, member.home.z);
-    root.rotation.y = member.home.z < 0 ? Math.PI : 0;
+    root.rotation.y = Math.PI;
     walker.heading = root.rotation.y;
     return {
       member,
@@ -447,11 +619,11 @@ export function createOfficeScene(
     previous = 0,
     width = 1,
     height = 1;
-  const cameraOffset = -1.6;
+  const cameraOffset = 0;
   const projected = new THREE.Vector3();
   const pointer = new THREE.Vector2();
   const baseCamera = new THREE.Vector3();
-  const lookAt = new THREE.Vector3(cameraOffset, 1.25, -0.5);
+  const lookAt = new THREE.Vector3(cameraOffset, 1.3, 0);
 
   function resize() {
     width = Math.max(1, canvas.parentElement?.clientWidth || 1);
@@ -460,14 +632,13 @@ export function createOfficeScene(
     // size. Half-resolution rasterization made the floor shimmer during resize
     // and pointer parallax.
     renderer.setSize(Math.ceil(width), Math.ceil(height), false);
-    camera.aspect = width / height;
-    // Narrow panes pull back instead of cropping specialists out of the room.
-    const distance = Math.max(1, 1.55 / camera.aspect);
-    baseCamera.set(
-      (9.8 + cameraOffset) * distance,
-      7.7 * distance,
-      13.5 * distance,
-    );
+    const aspect = width / height;
+    const halfHeight = Math.max(8.1, 12.3 / aspect);
+    camera.left = -halfHeight * aspect;
+    camera.right = halfHeight * aspect;
+    camera.top = halfHeight;
+    camera.bottom = -halfHeight;
+    baseCamera.set(17, 16, 21);
     camera.position.copy(baseCamera);
     camera.lookAt(lookAt);
     camera.updateProjectionMatrix();
@@ -475,14 +646,15 @@ export function createOfficeScene(
   }
   function setTheme(value: boolean) {
     dark = value;
-    scene.background = new THREE.Color(dark ? "#18252c" : "#cbd4cc");
-    ambient.intensity = dark ? 1.15 : 2.1;
-    sunlight.intensity = dark ? 1.65 : 3.4;
-    sunlight.color.set(dark ? "#b6cce8" : "#ffe5bc");
-    fill.intensity = dark ? 0.65 : 1.2;
-    warm.intensity = dark ? 55 : 25;
-    skyMaterial.color.set(dark ? "#355c78" : "#8cb8c9");
-    skyMaterial.emissive.set(dark ? "#355c78" : "#8cb8c9");
+    scene.background = new THREE.Color(dark ? C.night : C.day);
+    ambient.intensity = dark ? 1.05 : 2.0;
+    sunlight.intensity = dark ? 1.5 : 3.1;
+    sunlight.color.set(dark ? C.moon : C.daylight);
+    fill.intensity = dark ? 0.55 : 0.8;
+    warm.intensity = dark ? 28 : 10;
+    serverLight.intensity = dark ? 18 : 8;
+    skyMaterial.color.set(dark ? C.skyNight : C.skyDay);
+    skyMaterial.emissive.set(dark ? C.skyNight : C.skyDay);
     renderer.toneMappingExposure = dark ? 0.95 : 1.1;
     draw(0);
   }
@@ -502,40 +674,15 @@ export function createOfficeScene(
     actor.walker.route = aisleRoute(actor.walker.position, actor.member.home);
     actor.excursion = false;
   }
-  function routeLength(route: Point[], start: Point): number {
-    let dist = 0;
-    let prev = start;
-    for (const pt of route) {
-      dist += Math.hypot(pt.x - prev.x, pt.z - prev.z);
-      prev = pt;
-    }
-    return dist;
-  }
   function startDiscussion() {
     discussionActive = true;
-    const remainingActors = [...characters];
-    const availableSpots = [...discussionSpots];
-    while (remainingActors.length > 0 && availableSpots.length > 0) {
-      let bestA = 0;
-      let bestS = 0;
-      let minDistance = Infinity;
-      for (let a = 0; a < remainingActors.length; a++) {
-        const pos = remainingActors[a].walker.position;
-        for (let s = 0; s < availableSpots.length; s++) {
-          const r = aisleRoute(pos, availableSpots[s]);
-          const d = routeLength(r, pos);
-          if (d < minDistance) {
-            minDistance = d;
-            bestA = a;
-            bestS = s;
-          }
-        }
-      }
-      const [actor] = remainingActors.splice(bestA, 1);
-      const [spot] = availableSpots.splice(bestS, 1);
-      actor.walker.route = aisleRoute(actor.walker.position, spot);
+    routeWalkersTo(
+      characters.map((actor) => actor.walker),
+      discussionSpots,
+    );
+    characters.forEach((actor) => {
       actor.excursion = false;
-    }
+    });
   }
   function endDiscussion() {
     if (!discussionActive) return;
@@ -639,9 +786,10 @@ export function createOfficeScene(
       camera.lookAt(lookAt);
     }
     camera.updateMatrixWorld();
-    characters.forEach((actor, index) => {
-      const { walker, member } = actor;
-      if (!reduced) {
+    if (!reduced)
+      characters.forEach((actor, index) => {
+        const { walker, member } = actor;
+
         // One visitor at a time, routed through the aisle; tasks recall them to work.
         if (!working && !walker.route.length) {
           actor.idle -= dt;
@@ -653,7 +801,7 @@ export function createOfficeScene(
               ? member.home
               : {
                   x: member.home.x + (member.home.x > 0 ? -1.25 : 1.25),
-                  z: member.home.z < 0 ? -1.15 : 1.35,
+                  z: member.home.z + 1.25,
                 };
             walker.route = aisleRoute(walker.position, destination);
             actor.excursion = !actor.excursion;
@@ -666,53 +814,36 @@ export function createOfficeScene(
             walker.position.z - member.home.z,
           ) < 0.06 && !walker.route.length;
         actor.sit = damp(actor.sit, atHome ? 1 : 0, 7, dt);
-
-        if (actor.sit < 0.12 || !walker.route.length) {
-          advanceWalker(walker, dt);
-        }
-
-        // Mutual collision repulsion: if two characters are too close while en-route, gently push them apart laterally
-        // so they don't clip. Repulsion is disabled near the destination so characters can arrive cleanly at their spots.
-        if (walker.route.length > 0) {
-          const finalTarget = walker.route[walker.route.length - 1];
-          const distToFinal = Math.hypot(
-            walker.position.x - finalTarget.x,
-            walker.position.z - finalTarget.z,
-          );
-          // Only push apart while en-route, not when settling into designated spots
-          if (distToFinal > 0.45) {
-            const MIN_DIST = 0.85;
-            for (let o = 0; o < characters.length; o++) {
-              if (o === index) continue;
-              const other = characters[o];
-              const dx = walker.position.x - other.walker.position.x;
-              const dz = walker.position.z - other.walker.position.z;
-              const dist = Math.hypot(dx, dz);
-              if (dist > 0.001 && dist < MIN_DIST) {
-                const overlap = MIN_DIST - dist;
-                const pushFactor = other.walker.route.length === 0 ? 0.5 : 0.35;
-                walker.position.x += (dx / dist) * overlap * pushFactor * Math.min(1, dt * 8);
-                walker.position.z += (dz / dist) * overlap * pushFactor * Math.min(1, dt * 8);
-              }
-            }
-          }
-        }
-
+      });
+    if (!reduced)
+      advanceWalkers(
+        characters.map((actor) => actor.walker),
+        dt,
+        characters.map(
+          (actor) => actor.sit < 0.12 || !actor.walker.route.length,
+        ),
+      );
+    characters.forEach((actor, index) => {
+      const { walker, member } = actor;
+      if (!reduced) {
+        const atHome =
+          Math.hypot(
+            walker.position.x - member.home.x,
+            walker.position.z - member.home.z,
+          ) < 0.06 && !walker.route.length;
         if (atHome || (discussionActive && !walker.route.length)) {
           const target = discussionActive
-            ? { x: 5.8, z: 0.6 }
+            ? DISCUSSION_CENTER
             : {
                 x: member.home.x,
-                z: member.home.z < 0 ? member.home.z - 1 : member.home.z + 1,
+                z: member.home.z - 1,
               };
           const targetHeading = discussionActive
             ? Math.atan2(
                 target.x - walker.position.x,
                 target.z - walker.position.z,
               )
-            : member.home.z < 0
-              ? Math.PI
-              : 0;
+            : Math.PI;
           const turn = Math.atan2(
             Math.sin(targetHeading - walker.heading),
             Math.cos(targetHeading - walker.heading),
@@ -748,11 +879,9 @@ export function createOfficeScene(
           ? 0.65
           : 0
         : damp(actor.ringMaterial.opacity, actor.focused ? 0.65 : 0, 6, dt);
-      screens[index].emissiveIntensity = actor.focused
-        ? 0.7
-        : dark
-          ? 0.4
-          : 0.18;
+      screens[index * 2].emissiveIntensity = screens[
+        index * 2 + 1
+      ].emissiveIntensity = actor.focused ? 0.7 : dark ? 0.4 : 0.18;
       actor.label.dataset.active = String(actor.focused);
       actor.label.dataset.bubble = String(actor.bubbleUntil > elapsed);
       projected
@@ -808,7 +937,7 @@ export function createOfficeScene(
           actor.walker.route = [];
           actor.walker.position = { ...actor.member.home };
           actor.walker.speed = 0;
-          actor.walker.heading = actor.member.home.z < 0 ? Math.PI : 0;
+          actor.walker.heading = Math.PI;
           actor.sit = 1;
           actor.excursion = false;
         });
@@ -842,6 +971,8 @@ export function createOfficeScene(
       });
       allGeometry.forEach((item) => item.dispose());
       allMaterials.forEach((item) => item.dispose());
+      paletteTexture.dispose();
+      parsedGeometries.forEach((item) => item.dispose());
       sunlight.shadow.map?.dispose();
       renderer.dispose();
       labels.replaceChildren();

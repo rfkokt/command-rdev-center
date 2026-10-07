@@ -45,6 +45,55 @@ function attachChibiModel(
   parent.add(cloned);
 }
 
+/** GLTFLoader can resolve a model even when CSP blocked its embedded palette. */
+export function prepareChibiModel(model: THREE.Group): boolean {
+  const meshes: THREE.Mesh[] = [];
+  model.traverse((object) => {
+    if (object instanceof THREE.Mesh) meshes.push(object);
+  });
+  if (
+    !meshes.length ||
+    meshes.some((mesh) =>
+      (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).some(
+        (mat) =>
+          !(mat instanceof THREE.MeshStandardMaterial) || !mat.map?.image,
+      ),
+    )
+  )
+    return false;
+
+  for (const mesh of meshes) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (!mesh.geometry.getAttribute("normal"))
+      mesh.geometry.computeVertexNormals();
+    for (const mat of Array.isArray(mesh.material)
+      ? mesh.material
+      : [mesh.material]) {
+      const material = mat as THREE.MeshStandardMaterial;
+      material.roughness = 1;
+      material.metalness = 0;
+      material.flatShading = true;
+      const texture = material.map!;
+      texture.magFilter = THREE.NearestFilter;
+      texture.minFilter = THREE.NearestFilter;
+      texture.generateMipmaps = false;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      material.needsUpdate = true;
+    }
+  }
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const center = bounds.getCenter(new THREE.Vector3());
+  const scale = 1.95 / (size.y || 2.3);
+  model.scale.multiplyScalar(scale);
+  model.position.x -= center.x * scale;
+  model.position.y -= bounds.min.y * scale;
+  model.position.z -= center.z * scale;
+  return true;
+}
+
 /** Loads 3D chibi model (chibi-1.glb to chibi-6.glb) with voxel fallback. */
 export function createVoxelCharacter(id: AgentId, onLoaded?: () => void) {
   const profile = AGENT_PROFILES[id];
@@ -199,28 +248,12 @@ export function createVoxelCharacter(id: AgentId, onLoaded?: () => void) {
         chibiUrl,
         (gltf) => {
           const model = gltf.scene;
-          model.traverse((object) => {
-            if (object instanceof THREE.Mesh) {
-              object.castShadow = true;
-              object.receiveShadow = true;
-              if (object.material) {
-                const mats = Array.isArray(object.material)
-                  ? object.material
-                  : [object.material];
-                mats.forEach((m) => {
-                  m.roughness = 1.0;
-                  m.metalness = 0;
-                  m.flatShading = true;
-                });
-              }
-            }
-          });
-          const bounds = new THREE.Box3().setFromObject(model);
-          const size = bounds.getSize(new THREE.Vector3());
-          const targetHeight = 1.95;
-          const scale = targetHeight / (size.y || 2.3);
-          model.scale.setScalar(scale);
-          model.position.set(0, 0, 0);
+          if (!prepareChibiModel(model)) {
+            console.warn(
+              `Missing chibi palette for ${id}; keeping the colored voxel character.`,
+            );
+            return;
+          }
           glbCache.set(chibiUrl, model);
           attachChibiModel(body, model, voxelGroup);
           head.visible = false;
