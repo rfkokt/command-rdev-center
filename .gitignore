@@ -22,6 +22,7 @@ dist-ssr
 
 # rust
 src-tauri/target/
+**/api-contract-cache/
 
 # graphify (will be enforced per-project too — Phase 3)
 **/graphify-out/

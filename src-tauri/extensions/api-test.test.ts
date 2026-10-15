@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import api from "./api-test";
@@ -74,6 +74,8 @@ async function harness(contracts?: Contract[]) {
   const path = join(cwd, "contracts.json");
   writeFileSync(path, JSON.stringify(contracts || [a]));
   vi.stubEnv("CRC_API_CONTRACTS_PATH", path);
+  const sharedPath = join(cwd, "cache", "contracts.json");
+  vi.stubEnv("CRC_API_CONTRACT_CACHE_PATH", sharedPath);
   const tools = new Map<string, any>(),
     hooks = new Map<string, any>();
   await api({
@@ -97,7 +99,7 @@ async function harness(contracts?: Contract[]) {
   vi.stubGlobal("fetch", fetch);
   const call = (name: string, input: any) =>
     tools.get(name).execute("test", input, undefined, undefined, ctx);
-  return { call, ctx, fetch, hooks, a };
+  return { call, ctx, fetch, hooks, a, path, sharedPath, cwd };
 }
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -107,6 +109,332 @@ afterEach(() => {
     .forEach((folder) => rmSync(folder, { recursive: true, force: true }));
 });
 describe("Swagger tool execution", () => {
+  it("refreshes the actual searchable operation details and persists the new inventory", async () => {
+    const h = await harness();
+    const document = {
+      openapi: "3.0.3",
+      info: { title: "Updated", version: "2" },
+      servers: [{ url: "/v2" }],
+      paths: {
+        "/fresh": {
+          get: {
+            operationId: "fresh",
+            summary: "New endpoint",
+            responses: { 200: {} },
+          },
+        },
+      },
+    };
+    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify(document)));
+    const refreshed = await h.call("api_find_operations", { refresh: true });
+    expect(refreshed.details.totalOperations).toBe(1);
+    expect(refreshed.details.refresh).toMatchObject({
+      updated: 1,
+      failed: 0,
+      persisted: { session: true, sharedCache: true },
+    });
+    const metadata = refreshed.details.contracts[0];
+    expect(metadata.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(metadata.fetchedAt).toBeGreaterThan(0);
+    expect((h.fetch.mock.calls[0][1] as any).cache).toBe("no-store");
+    expect((h.fetch.mock.calls[0][1] as any).headers["cache-control"]).toBe(
+      "no-cache",
+    );
+    const detail = await h.call("api_operation_detail", {
+      operationId: "fresh",
+    });
+    expect(detail.details.summary).toBe("New endpoint");
+    expect(detail.details.contentHash).toBe(metadata.contentHash);
+    expect(
+      (await h.call("api_operation_detail", { operationId: "getEmployee" }))
+        .details.code,
+    ).toBe("operation_not_found");
+    for (const path of [h.path, h.sharedPath]) {
+      const saved = JSON.parse(readFileSync(path, "utf8"));
+      expect(saved[0].document).toEqual(document);
+      expect(saved[0].content_hash).toBe(metadata.contentHash);
+    }
+    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify(document)));
+    const unchanged = await h.call("api_find_operations", { refresh: true });
+    expect(unchanged.details.refresh.unchanged).toBe(1);
+    expect(unchanged.details.contracts[0].contentHash).toBe(
+      metadata.contentHash,
+    );
+    h.fetch.mockRejectedValueOnce(new Error("network offline"));
+    const failed = await h.call("api_find_operations", { refresh: true });
+    expect(failed.details.status).toBe("partial");
+    expect(failed.details.contracts[0]).toMatchObject({
+      stale: true,
+      refreshStatus: "failed",
+      contentHash: metadata.contentHash,
+    });
+    expect(failed.details.refresh.failed).toBe(1);
+    expect(failed.details.totalOperations).toBe(1);
+    expect(JSON.parse(readFileSync(h.sharedPath, "utf8"))[0].document).toEqual(
+      document,
+    );
+  });
+  it("discloses failed durable writes while still using the freshly fetched document", async () => {
+    const h = await harness();
+    const blocker = join(h.cwd, "blocker");
+    writeFileSync(blocker, "file");
+    vi.stubEnv("CRC_API_CONTRACT_CACHE_PATH", join(blocker, "contracts.json"));
+    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify(h.a.document)));
+    const refreshed = await h.call("api_find_operations", { refresh: true });
+    expect(refreshed.details.status).toBe("partial");
+    expect(refreshed.details.contracts[0].persistenceError).toContain(
+      "shared_cache_write_failed",
+    );
+    expect(refreshed.details.refresh.persisted).toEqual({
+      session: true,
+      sharedCache: false,
+    });
+    expect(refreshed.details.totalOperations).toBe(4);
+  });
+  it("opens authentication even when a saved Swagger source is unavailable", async () => {
+    const h = await harness([
+      {
+        id: "failed",
+        origin: "",
+        source_url: "https://api.example.com/swagger-ui/index.html",
+        document: {},
+        load_error: "Swagger UI document URL was not found",
+      },
+    ]);
+    const blocked = await h.call("api_request", {
+      method: "GET",
+      path: "/secure",
+      authenticated: true,
+    });
+    expect(blocked.details.code).toBe("contract_required");
+    expect(blocked.details.guidance).toContain("api_authenticate");
+    const auth = await h.call("api_authenticate", { action: "set" });
+    expect(auth.details.status).toBe("ok");
+    expect(auth.details.origin).toBe("https://api.example.com");
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(1);
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(JSON.stringify(auth)).not.toContain("private-token");
+  });
+  it("replaces a valid cached token without sending a request and uses the new identity", async () => {
+    const h = await harness();
+    await h.call("api_contract_test", { operationId: "secure" });
+    h.ctx.ui.input.mockResolvedValueOnce(" Bearer replacement-token ");
+    const auth = await h.call("api_authenticate", {
+      action: "set",
+      contractId: "a",
+    });
+    expect(auth.details.replaced).toBe(true);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    expect(h.ctx.ui.input.mock.calls[1][0]).toContain("Replace API token");
+    await h.call("api_contract_test", { operationId: "secure" });
+    expect((h.fetch.mock.calls[1][1] as any).headers.authorization).toBe(
+      "Bearer replacement-token",
+    );
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(auth)).not.toContain("replacement-token");
+  });
+  it("replaces documented header API keys using the same scheme as execution", async () => {
+    const h = await harness();
+    await h.call("api_contract_test", { method: "GET", path: "/api-key" });
+    h.ctx.ui.input.mockResolvedValueOnce("new-api-key");
+    await h.call("api_authenticate", {
+      action: "set",
+      method: "GET",
+      path: "/api-key",
+    });
+    await h.call("api_contract_test", { method: "GET", path: "/api-key" });
+    expect((h.fetch.mock.calls[1][1] as any).headers["x-api-key"]).toBe(
+      "new-api-key",
+    );
+    expect(
+      (h.fetch.mock.calls[1][1] as any).headers.authorization,
+    ).toBeUndefined();
+  });
+  it("clears all token schemes for the selected origin", async () => {
+    const h = await harness();
+    await h.call("api_contract_test", { operationId: "secure" });
+    await h.call("api_contract_test", { method: "GET", path: "/api-key" });
+    const cleared = await h.call("api_authenticate", { action: "clear" });
+    expect(cleared.details.status).toBe("ok");
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(2);
+    await h.call("api_contract_test", { operationId: "secure" });
+    await h.call("api_contract_test", { method: "GET", path: "/api-key" });
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(4);
+  });
+  it("does not clear another API's token on a different port of the same host", async () => {
+    const h = await harness([
+      { id: "default", origin: "https://api.example.com", document: {} },
+      {
+        id: "other-port",
+        origin: "https://api.example.com:8443",
+        document: {},
+      },
+    ]);
+    await h.call("api_authenticate", { action: "set", contractId: "default" });
+    h.ctx.ui.input.mockResolvedValueOnce("other-port-token");
+    await h.call("api_authenticate", {
+      action: "set",
+      contractId: "other-port",
+    });
+    await h.call("api_authenticate", {
+      action: "clear",
+      contractId: "default",
+    });
+    await h.call("api_request", {
+      method: "GET",
+      path: "/secure",
+      contractId: "other-port",
+    });
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(2);
+    expect((h.fetch.mock.calls[0][1] as any).headers.authorization).toBe(
+      "Bearer other-port-token",
+    );
+  });
+  it("can explicitly replace authentication when Swagger omits its security declaration", async () => {
+    const h = await harness();
+    await h.call("api_authenticate", { action: "set" });
+    h.ctx.ui.input.mockResolvedValueOnce("new-token");
+    const result = await h.call("api_contract_test", {
+      operationId: "getEmployee",
+      pathParams: { id: "1" },
+      refreshAuthentication: true,
+    });
+    expect(result.details.contractStatus).toBe("pass");
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(2);
+    expect((h.fetch.mock.calls[0][1] as any).headers.authorization).toBe(
+      "Bearer new-token",
+    );
+  });
+  it("stores operation tokens against the operation's server override", async () => {
+    const h = await harness([
+      {
+        id: "override",
+        origin: "https://api.example.com",
+        source_url: "https://api.example.com/openapi.json",
+        document: {
+          paths: {
+            "/secure": {
+              get: {
+                operationId: "secure",
+                servers: [{ url: "https://other.example.com/v2" }],
+                security: [{ bearer: [] }],
+                responses: { 200: {} },
+              },
+            },
+          },
+          components: {
+            securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+          },
+        },
+      },
+    ]);
+    const auth = await h.call("api_authenticate", {
+      action: "set",
+      operationId: "secure",
+    });
+    expect(auth.details.origin).toBe("https://other.example.com");
+    await h.call("api_contract_test", { operationId: "secure" });
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(1);
+    expect((h.fetch.mock.calls[0][1] as any).headers.authorization).toBe(
+      "Bearer private-token",
+    );
+  });
+  it("does not reuse the old identity after a canceled token replacement", async () => {
+    const h = await harness();
+    await h.call("api_contract_test", { operationId: "secure" });
+    h.ctx.ui.input.mockResolvedValueOnce("");
+    expect(
+      (await h.call("api_authenticate", { action: "set" })).details.code,
+    ).toBe("authentication_required");
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    h.ctx.ui.input.mockResolvedValueOnce("fresh-token");
+    await h.call("api_contract_test", { operationId: "secure" });
+    expect((h.fetch.mock.calls[1][1] as any).headers.authorization).toBe(
+      "Bearer fresh-token",
+    );
+    expect(h.ctx.ui.input).toHaveBeenCalledTimes(3);
+  });
+  it.each(["api_request", "api_contract_test"])(
+    "forces replacement before %s and stops execution if canceled",
+    async (tool) => {
+      const h = await harness();
+      const input = { method: "GET", path: "/secure" };
+      await h.call(tool, input);
+      h.ctx.ui.input.mockResolvedValueOnce("new-token");
+      await h.call(tool, { ...input, refreshAuthentication: true });
+      expect((h.fetch.mock.calls[1][1] as any).headers.authorization).toBe(
+        "Bearer new-token",
+      );
+      h.ctx.ui.input.mockResolvedValueOnce("");
+      const canceled = await h.call(tool, {
+        ...input,
+        refreshAuthentication: true,
+      });
+      expect(canceled.details.code).toBe("authentication_required");
+      expect(h.fetch).toHaveBeenCalledTimes(2);
+      const conflict = await h.call(tool, {
+        ...input,
+        refreshAuthentication: true,
+        expectedStatus: 401,
+      });
+      expect(conflict.details.code).toBe(
+        "authentication_refresh_conflicts_with_anonymous_test",
+      );
+      expect(h.ctx.ui.input).toHaveBeenCalledTimes(3);
+      expect(h.fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("requires an explicit origin when authentication spans different servers", async () => {
+    const h = await harness([
+      { id: "one", origin: "https://one.example.com", document: {} },
+      { id: "two", origin: "https://two.example.com", document: {} },
+    ]);
+    expect(
+      (await h.call("api_authenticate", { action: "set" })).details.code,
+    ).toBe("authentication_origin_required");
+    expect(
+      (
+        await h.call("api_authenticate", {
+          action: "set",
+          origin: "https://other.example.com",
+        })
+      ).details.code,
+    ).toBe("authentication_origin_required");
+    expect(h.ctx.ui.input).not.toHaveBeenCalled();
+    expect(
+      (await h.call("api_authenticate", { action: "set", contractId: "two" }))
+        .details.origin,
+    ).toBe("https://two.example.com");
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+  it("does not require a contract selector for duplicate sources with the same API base URL", async () => {
+    const h = await harness([
+      {
+        id: "one",
+        origin: "https://api.example.com",
+        base_url: "https://api.example.com/v1",
+        document: {},
+      },
+      {
+        id: "two",
+        origin: "https://api.example.com",
+        base_url: "https://api.example.com/v1",
+        document: {},
+      },
+    ]);
+    expect(
+      (
+        await h.call("api_request", {
+          method: "GET",
+          path: "/health",
+          authenticated: false,
+        })
+      ).details.httpStatus,
+    ).toBe(200);
+    expect(String(h.fetch.mock.calls[0][0])).toBe(
+      "https://api.example.com/v1/health",
+    );
+  });
   it("prompts privately after an unexpected 401 when Swagger omitted security, and reuses that token only after a challenge", async () => {
     const h = await harness();
     h.fetch

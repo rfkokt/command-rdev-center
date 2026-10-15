@@ -5,6 +5,12 @@ export type Contract = {
   source_url?: string;
   load_error?: string | null;
   stale?: boolean;
+  configured_source?: string;
+  fetched_at?: number;
+  checked_at?: number;
+  content_hash?: string;
+  refresh_status?: "updated" | "unchanged" | "failed" | "cached";
+  persistence_error?: string;
   document: any;
 };
 export type Operation = {
@@ -49,6 +55,12 @@ export function operations(contracts: Contract[]) {
   const items: Operation[] = [],
     issues: Array<{ contractId: string; source?: string; code: string }> = [];
   for (const contract of contracts) {
+    if (contract.persistence_error)
+      issues.push({
+        contractId: contract.id,
+        source: contract.source_url,
+        code: contract.persistence_error,
+      });
     if (contract.load_error || contract.stale)
       issues.push({
         contractId: contract.id,
@@ -121,6 +133,9 @@ export function operationSummary(item: Operation) {
     summary: item.operation.summary,
     tags: item.operation.tags,
     source: item.contract.source_url,
+    fetchedAt: item.contract.fetched_at || null,
+    contentHash: item.contract.content_hash || null,
+    refreshStatus: item.contract.refresh_status || "cached",
   };
 }
 export function searchOperations(
@@ -180,6 +195,12 @@ export function searchOperations(
     contracts: contracts.map((contract) => ({
       id: contract.id,
       source: contract.source_url,
+      configuredSource: contract.configured_source || contract.source_url,
+      fetchedAt: contract.fetched_at || null,
+      checkedAt: contract.checked_at || null,
+      contentHash: contract.content_hash || null,
+      refreshStatus: contract.refresh_status || "cached",
+      persistenceError: contract.persistence_error || null,
       origin: contract.origin,
       stale: !!contract.stale,
       loadError: contract.load_error || null,

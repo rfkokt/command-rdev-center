@@ -66,6 +66,40 @@ afterEach(() => {
 });
 
 describe("task verification evidence", () => {
+  it("allows a user-waived failed Sonar check to settle with an honest limitation", async () => {
+    const h = harness(repo());
+    await h.hooks.get("before_agent_start")({ prompt: "Fix and push" }, h.ctx);
+    await h.call("set_task_contract", {
+      goal: "Fix and push",
+      criteria: ["Requested change is complete"],
+      constraints: ["Project guidance requires Sonar before push"],
+    });
+    h.ctx.executeTool.mockResolvedValueOnce({
+      isError: true,
+      result: { content: [], structuredContent: { exit_code: 1 } },
+    } as any);
+    await h.call("run_check", { name: "Sonar", command: "sonar-scan" });
+    await h.hooks.get("before_agent_start")({ prompt: "skip sonar" }, h.ctx);
+    await expect(
+      h.call("report_task", {
+        outcome: "checks_passed",
+        acceptance: ["Requested change is complete"],
+        limitations: [],
+      }),
+    ).rejects.toThrow("failed");
+    const report = await h.call("report_task", {
+      outcome: "complete_with_limitations",
+      acceptance: ["Requested change is complete"],
+      limitations: [
+        "Sonar failed earlier and was then skipped at the user's explicit request.",
+      ],
+    });
+    expect(report.details.checks[0].exitCode).toBe(1);
+    const settled = await h.boundary();
+    expect(settled.continue).not.toBe(true);
+    expect(settled.entries[0].content).toContain("complete_with_limitations");
+    expect(settled.entries[0].content).toContain("skipped");
+  });
   it("does not fall back to a successful check after an interrupted rerun", async () => {
     const h = harness(repo());
     await h.call("set_task_contract", {

@@ -16,6 +16,7 @@ const TERMINAL_EXTENSION: &str = include_str!("../extensions/terminal-context.ts
 const WORKSPACE_EXTENSION: &str = include_str!("../extensions/workspace-repositories.ts");
 const TASK_VERIFICATION_EXTENSION: &str = include_str!("../extensions/task-verification.ts");
 const OPENAPI_CATALOG_EXTENSION: &str = include_str!("../extensions/openapi-catalog.ts");
+const OPENAPI_REFRESH_EXTENSION: &str = include_str!("../extensions/openapi-refresh.ts");
 const AUTO_FORMAT_EXTENSION: &str = include_str!("../extensions/auto-format.ts");
 const AGENT_REACH_EXTENSION: &str = include_str!("../extensions/agent-reach.ts");
 const AGENT_REACH_SECURITY: &str = include_str!("../extensions/agent-reach-security.ts");
@@ -279,6 +280,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("browser-tools.ts", BROWSER_TOOLS_EXTENSION),
         ("api-test.ts", API_TEST_EXTENSION),
         ("openapi-catalog.ts", OPENAPI_CATALOG_EXTENSION),
+        ("openapi-refresh.ts", OPENAPI_REFRESH_EXTENSION),
         ("jev-routing.ts", JEV_ROUTING_EXTENSION),
         ("jev-client.ts", JEV_CLIENT),
     ] {
@@ -893,35 +895,47 @@ fn url_cache_key(url: &str) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-fn fetch_url(url: &str) -> Result<String, String> {
-    fetch_url_with_limit(url, MAX_API_DOCUMENTATION_BYTES)
+fn fetch_url_with_limit(url: &str, limit: usize) -> Result<String, String> {
+    fetch_url_with_limit_mode(url, limit, false)
 }
 
-fn fetch_url_with_limit(url: &str, limit: usize) -> Result<String, String> {
+fn fetch_url_with_limit_mode(
+    url: &str,
+    limit: usize,
+    force_refresh: bool,
+) -> Result<String, String> {
     let cache_dir = std::env::temp_dir().join("crc-url-cache");
     let cache_file = cache_dir.join(format!("{}.json", url_cache_key(url)));
 
-    if let Ok(metadata) = std::fs::metadata(&cache_file) {
-        if let Ok(modified) = metadata.modified() {
-            if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
-                if let Ok(cached) = std::fs::read_to_string(&cache_file) {
-                    if !cached.is_empty() && cached.len() <= limit {
-                        return Ok(cached);
+    if !force_refresh {
+        if let Ok(metadata) = std::fs::metadata(&cache_file) {
+            if let Ok(modified) = metadata.modified() {
+                if modified.elapsed().unwrap_or_default().as_secs() < 3600 {
+                    if let Ok(cached) = std::fs::read_to_string(&cache_file) {
+                        if !cached.is_empty() && cached.len() <= limit {
+                            return Ok(cached);
+                        }
                     }
                 }
             }
         }
     }
-
-    let output = Command::new("curl")
-        .args(["-fsSL", "--connect-timeout", "2", "--max-time", "3", url])
+    let mut command = Command::new("curl");
+    command.args(["-fsSL", "--connect-timeout", "5", "--max-time", "15"]);
+    if force_refresh {
+        command.args(["-H", "Cache-Control: no-cache", "-H", "Pragma: no-cache"]);
+    }
+    let output = command
+        .arg(url)
         .output()
         .map_err(|error| format!("API documentation fetch: {error}"))?;
     if !output.status.success() {
-        if let Ok(cached) = std::fs::read_to_string(&cache_file) {
-            if !cached.is_empty() && cached.len() <= limit {
-                eprintln!("Using cached API documentation for {url} after fetch failure");
-                return Ok(cached);
+        if !force_refresh {
+            if let Ok(cached) = std::fs::read_to_string(&cache_file) {
+                if !cached.is_empty() && cached.len() <= limit {
+                    eprintln!("Using cached API documentation for {url} after fetch failure");
+                    return Ok(cached);
+                }
             }
         }
         return Err(format!(
@@ -934,8 +948,11 @@ fn fetch_url_with_limit(url: &str, limit: usize) -> Result<String, String> {
     }
     let body = String::from_utf8(output.stdout)
         .map_err(|_| "API documentation is not UTF-8".to_string())?;
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let _ = std::fs::write(&cache_file, &body);
+    let saved =
+        std::fs::create_dir_all(&cache_dir).and_then(|_| std::fs::write(&cache_file, &body));
+    if force_refresh {
+        saved.map_err(|error| format!("API documentation cache write: {error}"))?;
+    }
     Ok(body)
 }
 
@@ -1024,19 +1041,55 @@ fn swagger_config_document_urls(
 }
 
 fn swagger_document_urls(url: &str) -> Result<Vec<String>, String> {
-    let source = fetch_url_with_limit(url, MAX_SWAGGER_DOCUMENT_BYTES)?;
+    swagger_document_urls_mode(url, false)
+}
+
+fn swagger_document_urls_mode(url: &str, force_refresh: bool) -> Result<Vec<String>, String> {
+    let fetch = |target: &str, limit| fetch_url_with_limit_mode(target, limit, force_refresh);
+    let source = fetch(url, MAX_SWAGGER_DOCUMENT_BYTES)?;
     if serde_json::from_str::<serde_json::Value>(&source)
         .ok()
         .is_some_and(|document| document.get("paths").is_some())
     {
         return Ok(vec![url.to_owned()]);
     }
+    if let Ok(config) = serde_json::from_str::<serde_json::Value>(&source) {
+        return swagger_config_document_urls(&config, url);
+    }
+    let query: HashMap<_, _> = url::Url::parse(url)
+        .map_err(|error| error.to_string())?
+        .query_pairs()
+        .into_owned()
+        .collect();
+    if let Some(target) = query.get("url") {
+        return Ok(vec![absolute_url(url, target)?]);
+    }
+    if let Some(target) = query
+        .get("configUrl")
+        .cloned()
+        .or_else(|| swagger_config_literal(&source, "configUrl"))
+    {
+        let config_url = absolute_url(url, &target)?;
+        let config: serde_json::Value =
+            serde_json::from_str(&fetch(&config_url, MAX_API_DOCUMENTATION_BYTES)?)
+                .map_err(|_| "Swagger config is not valid JSON")?;
+        return swagger_config_document_urls(&config, &config_url);
+    }
+    let inline = swagger_config_literals(&source, "url");
+    if !inline.is_empty() {
+        return inline
+            .iter()
+            .map(|target| absolute_url(url, target))
+            .collect();
+    }
     let initializer = absolute_url(url, "swagger-initializer.js")?;
-    let initializer_source = fetch_url(&initializer).unwrap_or_else(|_| source.clone());
+    let initializer_source =
+        fetch(&initializer, MAX_API_DOCUMENTATION_BYTES).unwrap_or_else(|_| source.clone());
     if let Some(config) = swagger_config_literal(&initializer_source, "configUrl") {
         let config_url = absolute_url(&initializer, &config)?;
-        let config: serde_json::Value = serde_json::from_str(&fetch_url(&config_url)?)
-            .map_err(|_| "Swagger config is not valid JSON")?;
+        let config: serde_json::Value =
+            serde_json::from_str(&fetch(&config_url, MAX_API_DOCUMENTATION_BYTES)?)
+                .map_err(|_| "Swagger config is not valid JSON")?;
         return swagger_config_document_urls(&config, &config_url);
     }
     // Standard SwaggerUIBundle({ url: "..." }) and inline urls dropdowns.
@@ -1077,14 +1130,20 @@ fn api_documentation_context(
 ) -> Result<String, String> {
     let mut context = String::new();
     for url in swagger_urls {
-        for document_url in swagger_document_urls(url)? {
+        for document_url in swagger_document_urls_mode(url, true)? {
+            let body = fetch_url_with_limit_mode(&document_url, MAX_SWAGGER_DOCUMENT_BYTES, true)?;
+            let document: serde_json::Value =
+                serde_json::from_str(&body).map_err(|error| format!("Swagger JSON: {error}"))?;
+            if !document
+                .get("paths")
+                .is_some_and(serde_json::Value::is_object)
+            {
+                return Err("Swagger document has no paths object".into());
+            }
             context.push_str("## Swagger/OpenAPI contract\nSource: ");
             context.push_str(&document_url);
             context.push_str("\n```json\n");
-            context.push_str(&fetch_url_with_limit(
-                &document_url,
-                MAX_SWAGGER_DOCUMENT_BYTES,
-            )?);
+            context.push_str(&body);
             context.push_str("\n```\n");
         }
     }
@@ -1108,7 +1167,11 @@ fn api_documentation_context(
         context.push_str("## Postman collection\nSource: ");
         context.push_str(url);
         context.push_str("\n```json\n");
-        context.push_str(&fetch_url(url)?);
+        context.push_str(&fetch_url_with_limit_mode(
+            url,
+            MAX_API_DOCUMENTATION_BYTES,
+            true,
+        )?);
         context.push_str("\n```\n");
     }
     Ok(context)
@@ -1132,6 +1195,8 @@ fn refresh_api_documentation_context(config: &mut StoredConfig, key: &str) -> Re
         config.postman_collection_jsons.get(key).map(String::as_str),
         config.api_list_sheets.get(key),
     )?;
+    // An explicit settings refresh supersedes snapshots saved by older chats.
+    let _ = std::fs::remove_file(api_contract_cache_path(Path::new(key)));
     if context.is_empty() {
         config.api_documentation_contexts.remove(key);
     } else {
@@ -1176,7 +1241,7 @@ pub(crate) fn compact_swagger_context(context: &str) -> String {
     result
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct ApiContract {
     id: String,
     origin: String,
@@ -1188,6 +1253,16 @@ pub struct ApiContract {
     load_error: Option<String>,
     #[serde(default)]
     stale: bool,
+    #[serde(default)]
+    configured_source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fetched_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checked_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refresh_status: Option<String>,
 }
 
 fn swagger_server_url(document: &serde_json::Value, document_url: &str) -> Result<String, String> {
@@ -1269,6 +1344,11 @@ fn swagger_contract(document: serde_json::Value, source_url: &str) -> Result<Api
     let cache = std::env::temp_dir()
         .join("crc-url-cache")
         .join(format!("{}.json", url_cache_key(source_url)));
+    let fetched_at = std::fs::metadata(&cache)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|time| time.as_millis() as u64);
     let stale = std::fs::metadata(cache)
         .and_then(|m| m.modified())
         .ok()
@@ -1282,16 +1362,65 @@ fn swagger_contract(document: serde_json::Value, source_url: &str) -> Result<Api
         source_url: source_url.to_owned(),
         load_error,
         stale,
+        fetched_at,
+        refresh_status: Some("cached".into()),
+        ..Default::default()
     })
+}
+
+pub fn api_contract_cache_path(path: &Path) -> PathBuf {
+    config_path()
+        .with_file_name("api-contract-cache")
+        .join(format!(
+            "{}.json",
+            url_cache_key(&canonicalize_or_original(path).to_string_lossy())
+        ))
+}
+
+fn recent_contract_snapshot(saved: &[ApiContract], configured: &str, now: u64) -> Vec<ApiContract> {
+    let group: Vec<_> = saved
+        .iter()
+        .filter(|contract| contract.configured_source == configured)
+        .collect();
+    if group.iter().any(|contract| {
+        !contract
+            .fetched_at
+            .is_some_and(|fetched| now.saturating_sub(fetched) < 3_600_000)
+    }) {
+        return Vec::new();
+    }
+    group
+        .into_iter()
+        .cloned()
+        .map(|mut contract| {
+            if !contract.stale {
+                contract.refresh_status = Some("cached".into());
+            }
+            contract
+        })
+        .collect()
 }
 
 pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, String> {
     let urls = swagger_urls_for_project(path)?;
+    let saved: Vec<ApiContract> = std::fs::read(api_contract_cache_path(path))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let mut contracts = Vec::new();
     let mut seen = std::collections::HashSet::new();
     // Raw documents are cached per source URL. A project-only parsed cache used
     // to retain the old inventory even after its configured Swagger URLs changed.
     for configured in urls {
+        let snapshot = recent_contract_snapshot(&saved, &configured, now);
+        if !snapshot.is_empty() {
+            contracts.extend(snapshot);
+            continue;
+        }
         let documents = match swagger_document_urls(&configured) {
             Ok(urls) => urls,
             Err(error) => {
@@ -1300,9 +1429,11 @@ pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, St
                     origin: String::new(),
                     base_url: String::new(),
                     document: serde_json::json!({}),
-                    source_url: configured,
+                    source_url: configured.clone(),
+                    configured_source: configured.clone(),
                     load_error: Some(error),
-                    stale: false,
+                    stale: true,
+                    ..Default::default()
                 });
                 continue;
             }
@@ -1315,15 +1446,21 @@ pub fn swagger_documents_for_project(path: &Path) -> Result<Vec<ApiContract>, St
                 .and_then(|body| {
                     serde_json::from_str(&body).map_err(|e| format!("Swagger JSON: {e}"))
                 })
-                .and_then(|document| swagger_contract(document, &document_url));
+                .and_then(|document| swagger_contract(document, &document_url))
+                .map(|mut contract| {
+                    contract.configured_source = configured.clone();
+                    contract
+                });
             contracts.push(result.unwrap_or_else(|error| ApiContract {
                 id: format!("unavailable-{}", url_cache_key(&document_url)),
                 origin: String::new(),
                 base_url: String::new(),
                 document: serde_json::json!({}),
                 source_url: document_url,
+                configured_source: configured.clone(),
                 load_error: Some(error),
-                stale: false,
+                stale: true,
+                ..Default::default()
             }));
         }
     }
@@ -1805,6 +1942,72 @@ pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn serve_swagger(responses: Vec<String>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let source = format!("http://{}/openapi.json", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut buffer = [0; 8192];
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(String::from_utf8_lossy(&buffer[..read])
+                    .to_lowercase()
+                    .contains("cache-control: no-cache"));
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        (source, server)
+    }
+
+    #[test]
+    fn explicit_swagger_refresh_bypasses_recent_cache_and_does_not_hide_network_failure() {
+        let new = r#"{"openapi":"3.0.3","paths":{"/new":{"get":{}}}}"#;
+        let old = r#"{"openapi":"3.0.3","paths":{"/old":{"get":{}}}}"#;
+        let (source, server) = serve_swagger(vec![new.into(), new.into()]);
+        let cache = std::env::temp_dir()
+            .join("crc-url-cache")
+            .join(format!("{}.json", url_cache_key(&source)));
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(&cache, old).unwrap();
+        assert_eq!(fetch_url_with_limit(&source, 8192).unwrap(), old);
+        let context = api_documentation_context(&[source.clone()], None, None, None).unwrap();
+        assert!(context.contains("/new"));
+        assert!(!context.contains("/old"));
+        server.join().unwrap();
+        assert_eq!(fetch_url_with_limit(&source, 8192).unwrap(), new);
+        assert!(fetch_url_with_limit_mode(&source, 8192, true).is_err());
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), new);
+        let _ = std::fs::remove_file(cache);
+    }
+
+    #[test]
+    fn shared_swagger_snapshot_survives_restart_without_claiming_a_live_check() {
+        let configured = "https://api.example.com/swagger-ui/index.html";
+        let saved = serde_json::json!([{
+            "id":"updated", "origin":"https://api.example.com", "base_url":"https://api.example.com/v2",
+            "configured_source":configured, "source_url":"https://api.example.com/spec.json",
+            "document":{"paths":{"/new":{"get":{}}}}, "fetched_at":5000,
+            "checked_at":5000, "content_hash":"hash", "refresh_status":"updated", "stale":false
+        }]);
+        let decoded: Vec<ApiContract> = serde_json::from_value(saved).unwrap();
+        let restored = recent_contract_snapshot(&decoded, configured, 6000);
+        assert_eq!(restored.len(), 1);
+        assert!(restored[0].document["paths"]["/new"].is_object());
+        assert_eq!(restored[0].content_hash.as_deref(), Some("hash"));
+        assert_eq!(restored[0].refresh_status.as_deref(), Some("cached"));
+        assert!(recent_contract_snapshot(&decoded, "https://other.example.com", 6000).is_empty());
+        assert!(recent_contract_snapshot(&decoded, configured, 3_605_000).is_empty());
+        let mut mixed = decoded.clone();
+        let mut expired = decoded[0].clone();
+        expired.fetched_at = Some(0);
+        mixed.push(expired);
+        assert!(recent_contract_snapshot(&mixed, configured, 3_604_999).is_empty());
+    }
 
     #[test]
     fn swagger_servers_support_relative_variables_defaults_and_v2() {

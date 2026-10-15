@@ -433,7 +433,7 @@ pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, Stri
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing response, including progress updates and the final answer, in clean Markdown. Lead with the result or current finding. Keep progress updates to one or two concise sentences; do not narrate every investigation step. Keep paragraphs short (two to four sentences), separated by a blank line. Use `##` headings only for distinct sections of a longer answer, and `-` lists for grouped findings or next steps, with a blank line before each list. Summarize the evidence and relevant limitations in the final answer instead of repeating the running investigation. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known; include only the relevant excerpt. Never expose scratchpad, internal planning, or raw provider errors.\n";
-const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions.";
+const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. When the user asks to enter, replace, or remove an API token, call api_authenticate directly; it does not require a resolved operation or send an API request. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions.";
 
 fn api_documentation_system_prompt(project: &Path) -> String {
     let context = crate::projects::api_documentation_context_for_project(project)
@@ -911,7 +911,7 @@ pub fn spawn_pi_rpc(
                     allowed.push(',');
                 }
                 allowed.push_str(
-                    "api_find_operations,api_operation_detail,api_request,api_contract_test",
+                    "api_find_operations,api_operation_detail,api_request,api_contract_test,api_authenticate",
                 );
             }
         }
@@ -980,6 +980,10 @@ pub fn spawn_pi_rpc(
     }
     if let Some(path) = api_contracts_path {
         command.env("CRC_API_CONTRACTS_PATH", path);
+        command.env(
+            "CRC_API_CONTRACT_CACHE_PATH",
+            crate::projects::api_contract_cache_path(&owning_project),
+        );
     }
     if !global_chat {
         let workspace_root = crate::projects::registered_workspace(&owning_project)

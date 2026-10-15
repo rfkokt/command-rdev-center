@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { lookup } from "node:dns/promises";
 import { readFile } from "node:fs/promises";
 import { isPublicIp } from "./agent-reach-security";
+import { refreshContracts, saveContracts } from "./openapi-refresh";
 import {
   operations,
   searchOperations,
@@ -12,17 +13,20 @@ import {
   parameters,
   reference,
   requiredFields,
-  serverUrl,
   type Contract,
+  type Operation,
 } from "./openapi-catalog";
 
 const MAX_BODY = 100_000;
 const API_AUTH_WORKFLOW = `## Direct API testing and authentication
-For Swagger/backend API tests, call api_find_operations, api_operation_detail, and api_contract_test directly. Browser login, a working browser host, workspace credentials, and access to the application's frontend are not prerequisites.
+For Swagger/backend API tests, start with api_find_operations(refresh:true), then call api_operation_detail and api_contract_test directly. To inspect or update the latest Swagger, always refresh the saved sources; report fetchedAt, contentHash, operation counts, refreshStatus, and persistence results. Never claim latest or saved data when a fetch or write failed. An unchanged hash is a successful live verification, not a failure to refresh. Browser login, a working browser host, workspace credentials, and access to the application's frontend are not prerequisites.
 Never search .env files, browser cookies, or workspace files for a user's access token. Never ask the user to log in through the browser or generate a JWT. Call the API tool: it owns a private token dialog and retries authentication when needed. Set authenticated:true when the task explicitly requires a bearer token even if Swagger omits its security declaration. Set authenticated:false only for an intentional anonymous/unauthorized test; expectedStatus:401 prevents token prompting for that negative test.
+When the user asks to enter, change, switch, or remove a token, call api_authenticate directly with action:set or action:clear. This tool works independently of operation resolution and does not send an API request. A saved token is reused by authenticated:true; use refreshAuthentication:true on a request to replace it before execution. Never claim there is no tool to reopen the dialog. If contract_required occurs, inspect its inventory and select contractId or origin; use api_find_operations with refresh:true to retry loading saved sources before asking the user to change project settings.
 If the user cancels the token dialog, report authentication_required. If an authenticated request still fails, report the actual HTTP response. A browser_host_closing error does not block direct API testing. Use browser tools when the user explicitly requests UI/browser verification.`;
 const tokens = new Map<string, string>();
 const mutationOrigins = new Set<string>();
+const authenticationKey = (origin: string, header: string, prefix: string) =>
+  JSON.stringify([origin, header, prefix]);
 const result = (data: unknown, isError = false) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data) }],
   details: data,
@@ -34,6 +38,58 @@ function privateAddress(address: string) {
 }
 function apiUrl(path: string, baseUrl: string) {
   return new URL(path.replace(/^\/+/, ""), `${baseUrl.replace(/\/?$/, "/")}`);
+}
+
+function operationAuthentication(selected: Operation) {
+  const document = selected.contract.document;
+  const security = selected.operation.security ?? document.security ?? [];
+  const anonymous =
+    !security.length ||
+    security.some((option: object) => !Object.keys(option).length);
+  const schemes =
+    document.components?.securitySchemes || document.securityDefinitions || {};
+  const authentication = security
+    .map((option: object) => {
+      const names = Object.keys(option);
+      if (names.length !== 1) return undefined;
+      const scheme = reference(schemes[names[0]], document);
+      if (
+        scheme?.type === "oauth2" ||
+        scheme?.type === "openIdConnect" ||
+        (scheme?.type === "http" &&
+          String(scheme.scheme).toLowerCase() === "bearer")
+      )
+        return { authHeader: "authorization", authPrefix: "Bearer " };
+      if (
+        scheme?.type === "apiKey" &&
+        scheme.in === "header" &&
+        typeof scheme.name === "string"
+      )
+        return { authHeader: scheme.name.toLowerCase(), authPrefix: "" };
+      return undefined;
+    })
+    .find(Boolean);
+  return { security, anonymous, authentication };
+}
+
+async function promptToken(
+  ctx: any,
+  origin: string,
+  authHeader: string,
+  authPrefix: string,
+  replacing = false,
+) {
+  let token =
+    (
+      await ctx.ui.input(
+        `${replacing ? "Replace API token" : "Backend API authentication"} · ${origin} · ${authHeader}`,
+        authPrefix
+          ? "Paste the token only (kept in memory for this chat only)"
+          : `Paste the exact ${authHeader} header value, including its required prefix (kept in memory for this chat only)`,
+      )
+    )?.trim() || "";
+  if (authPrefix === "Bearer ") token = token.replace(/^Bearer\s+/i, "").trim();
+  return token;
 }
 async function validateUrl(raw: string, allowedOrigin: string) {
   if (!allowedOrigin) throw new Error("api_origin_not_allowed");
@@ -79,6 +135,7 @@ async function request(
     path: string;
     body?: unknown;
     authenticated?: boolean;
+    refreshAuthentication?: boolean;
     authenticateOnChallenge?: boolean;
     origin?: string;
     headers?: Record<string, string>;
@@ -91,6 +148,17 @@ async function request(
   ctx: any,
   onUpdate?: (update: ReturnType<typeof result>) => void,
 ) {
+  if (
+    input.refreshAuthentication &&
+    (input.authenticated === false || input.expectedStatus === 401)
+  )
+    return result(
+      {
+        status: "blocked",
+        code: "authentication_refresh_conflicts_with_anonymous_test",
+      },
+      true,
+    );
   const update = (stage: string, activity: string, status?: number) =>
     onUpdate?.(
       result({
@@ -116,23 +184,21 @@ async function request(
   if (!readOnly) mutationOrigins.add(url.origin);
   const authHeader = input.authHeader || "authorization";
   const authPrefix = input.authPrefix ?? "Bearer ";
-  const tokenKey = `${url.origin}:${authHeader}:${authPrefix}`;
+  const tokenKey = authenticationKey(url.origin, authHeader, authPrefix);
   const shouldAuthenticate =
-    input.authenticated ?? input.expectedStatus !== 401;
+    input.refreshAuthentication ||
+    (input.authenticated ?? input.expectedStatus !== 401);
+  if (input.refreshAuthentication) tokens.delete(tokenKey);
   let authToken = shouldAuthenticate ? tokens.get(tokenKey) || "" : "";
   if (shouldAuthenticate && !authToken) {
     update("authentication", "Waiting for private authentication");
-    authToken =
-      (
-        await ctx.ui.input(
-          `Backend API authentication · ${url.origin} · ${authHeader}`,
-          authPrefix
-            ? "Paste the token only (kept in memory for this chat only)"
-            : `Paste the exact ${authHeader} header value, including its required prefix (kept in memory for this chat only)`,
-        )
-      )?.trim() || "";
-    if (authPrefix === "Bearer ")
-      authToken = authToken.replace(/^Bearer\s+/i, "");
+    authToken = await promptToken(
+      ctx,
+      url.origin,
+      authHeader,
+      authPrefix,
+      input.refreshAuthentication,
+    );
     if (!authToken)
       return result(
         { status: "blocked", code: "authentication_required" },
@@ -181,15 +247,13 @@ async function request(
         "authentication",
         "API requires authentication · Waiting for a token",
       );
-      authToken =
-        (
-          await ctx.ui.input(
-            `${tokenWasSent ? "API session expired" : "Backend API authentication"} · ${url.origin} · ${authHeader}`,
-            authPrefix
-              ? "Paste the token only (kept in memory for this chat only)"
-              : `Paste the exact ${authHeader} header value, including its required prefix (kept in memory for this chat only)`,
-          )
-        )?.trim() || "";
+      authToken = await promptToken(
+        ctx,
+        url.origin,
+        authHeader,
+        authPrefix,
+        tokenWasSent,
+      );
     }
     if (authPrefix === "Bearer ")
       authToken = authToken.replace(/^Bearer\s+/i, "");
@@ -317,10 +381,119 @@ export default async function (pi: ExtensionAPI) {
     };
   };
   pi.registerTool({
+    name: "api_authenticate",
+    label: "Set, replace, or clear API token",
+    description:
+      "Open the private token dialog to set or replace a token, or clear saved tokens for an API origin. Works even when a saved Swagger source cannot load; does not execute an HTTP request or require an operation. Select contractId or origin if multiple API origins exist. Supply an exact operation selector for its documented header API key scheme; otherwise uses bearer authentication. Never pass the token in tool arguments or chat.",
+    parameters: Type.Object({
+      ...selector,
+      action: Type.Union([Type.Literal("set"), Type.Literal("clear")]),
+    }),
+    async execute(_id, input, _signal, _onUpdate, ctx) {
+      try {
+        const contract = contracts.find((item) => item.id === input.contractId);
+        if (input.contractId && !contract)
+          return result({ status: "error", code: "contract_not_found" }, true);
+        let selected: Operation | undefined;
+        if (input.operationId || input.method || input.path) {
+          const selection = find(input);
+          if (selection.error) return selection.error;
+          selected = selection.selected;
+        }
+        const candidates = selected
+          ? [selected.contract]
+          : contract
+            ? [contract]
+            : contracts;
+        // A failed contract still has a configured source origin. Collecting a
+        // token there does not authorize HTTP execution against that source.
+        const origins = new Set(
+          selected
+            ? [new URL(operationBaseUrl(selected)).origin]
+            : candidates
+                .map((item) => {
+                  const target =
+                    item.origin || item.base_url || item.source_url;
+                  return target ? new URL(target).origin : "";
+                })
+                .filter(Boolean),
+        );
+        const origin = input.origin
+          ? new URL(input.origin).origin
+          : origins.size === 1
+            ? [...origins][0]
+            : "";
+        if (!origin || !origins.has(origin))
+          return result(
+            {
+              status: "blocked",
+              code: "authentication_origin_required",
+              origins: [...origins],
+              inventory: searchOperations(contracts, { limit: 5 }),
+              guidance:
+                "Select a configured contractId or origin, then call api_authenticate again. A loaded operation is not required.",
+            },
+            true,
+          );
+        const url = new URL(origin);
+        if (
+          !["http:", "https:"].includes(url.protocol) ||
+          url.origin === "null"
+        )
+          return result({ status: "blocked", code: "api_url_blocked" }, true);
+        if (input.action === "clear") {
+          for (const key of tokens.keys())
+            if (JSON.parse(key)[0] === origin) tokens.delete(key);
+          return result({ status: "ok", action: "clear", origin });
+        }
+        const auth = selected ? operationAuthentication(selected) : undefined;
+        if (auth && !auth.anonymous && !auth.authentication)
+          return result(
+            {
+              status: "blocked",
+              code: "security_scheme_not_supported",
+              security: auth.security,
+            },
+            true,
+          );
+        const { authHeader, authPrefix } = auth?.authentication || {
+          authHeader: "authorization",
+          authPrefix: "Bearer ",
+        };
+        const key = authenticationKey(origin, authHeader, authPrefix);
+        const replacing = tokens.has(key);
+        // Canceling replacement must not silently retain the previous identity.
+        tokens.delete(key);
+        const token = await promptToken(
+          ctx,
+          origin,
+          authHeader,
+          authPrefix,
+          replacing,
+        );
+        if (!token)
+          return result(
+            { status: "blocked", code: "authentication_required", origin },
+            true,
+          );
+        tokens.set(key, token);
+        return result({
+          status: "ok",
+          action: "set",
+          origin,
+          authHeader,
+          replaced: replacing,
+        });
+      } catch (error) {
+        return result({ status: "error", code: String(error) }, true);
+      }
+    },
+  });
+  pi.registerTool({
     name: "api_find_operations",
     label: "Search all Swagger operations",
     description:
-      "Search the complete saved Swagger/OpenAPI inventory by operation ID, path, summary, description, tags, or parameter names. Empty query lists all operations. Results are paginated; load failures and stale contracts are disclosed. Use refresh before concluding an endpoint is absent.",
+      "Search the complete saved Swagger/OpenAPI inventory by operation ID, path, summary, description, tags, or parameter names. Empty query lists all operations. Results are paginated; load failures and stale contracts are disclosed. Set refresh:true to fetch saved JSON/Swagger UI sources from the network with cache revalidation, update the full inventory, and persist it for this session and app restarts. Reports fetchedAt, checkedAt, contentHash, refreshStatus, and persistence results; unchanged means verified with identical content, failed retains stale data. Cached data alone does not prove it is latest. Refresh before concluding an endpoint is absent.",
     parameters: Type.Object({
       query: Type.Optional(Type.String({ maxLength: 500 })),
       contractId: selector.contractId,
@@ -330,68 +503,74 @@ export default async function (pi: ExtensionAPI) {
       refresh: Type.Optional(Type.Boolean()),
     }),
     async execute(_id, input, signal) {
+      let refresh: unknown;
       if (input.refresh) {
-        // Refresh only saved sources. Model input cannot supply a destination.
-        contracts = await Promise.all(
-          contracts.map(async (contract) => {
-            if (!contract.source_url)
-              return {
-                ...contract,
-                stale: true,
-                load_error:
-                  "saved_source_url_unavailable; refresh project API settings",
-              };
-            try {
-              const url = new URL(contract.source_url);
-              if (
-                !["http:", "https:"].includes(url.protocol) ||
-                url.username ||
-                url.password
+        try {
+          const sources = new Set(
+            contracts
+              .filter(
+                (contract) =>
+                  !input.contractId || contract.id === input.contractId,
               )
-                throw new Error("document_url_blocked");
-              const response = await fetch(url, {
-                redirect: "error",
-                signal: signal
-                  ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-                  : AbortSignal.timeout(10_000),
-              });
-              if (!response.ok)
-                throw new Error(`document_http_${response.status}`);
-              const raw = await response.text();
-              if (raw.length > 8 * 1024 * 1024)
-                throw new Error("document_exceeds_8_MB");
-              const document = JSON.parse(raw);
-              if (!document.paths || typeof document.paths !== "object")
-                throw new Error("document_paths_unavailable");
-              try {
-                const base_url = serverUrl(document, contract.source_url);
-                return {
-                  ...contract,
-                  document,
-                  base_url,
-                  origin: new URL(base_url).origin,
-                  stale: false,
-                  load_error: null,
-                };
-              } catch (error) {
-                // The document was loaded. Keep its searchable operations even
-                // when connectivity metadata cannot yet construct a target URL.
-                return {
-                  ...contract,
-                  document,
-                  base_url: "",
-                  origin: "",
-                  stale: false,
-                  load_error: `API server unavailable: ${String(error)}`,
-                };
-              }
+              .map(
+                (contract) => contract.configured_source || contract.source_url,
+              ),
+          );
+          contracts = await refreshContracts(contracts, input, signal);
+          const persistence = { session: false, sharedCache: false };
+          const cachePath = process.env.CRC_API_CONTRACT_CACHE_PATH;
+          let persistenceError: string | undefined;
+          if (cachePath) {
+            try {
+              await saveContracts(cachePath, contracts);
+              persistence.sharedCache = true;
             } catch (error) {
-              return { ...contract, stale: true, load_error: String(error) };
+              persistenceError = `shared_cache_write_failed: ${String(error)}`;
             }
-          }),
-        );
+          }
+          if (persistenceError)
+            contracts = contracts.map((contract) => ({
+              ...contract,
+              persistence_error: persistenceError,
+            }));
+          try {
+            await saveContracts(contractsPath, contracts);
+            persistence.session = true;
+          } catch (error) {
+            contracts = contracts.map((contract) => ({
+              ...contract,
+              persistence_error: [
+                contract.persistence_error,
+                `session_cache_write_failed: ${String(error)}`,
+              ]
+                .filter(Boolean)
+                .join("; "),
+            }));
+          }
+          const checked = contracts.filter((contract) =>
+            sources.has(contract.configured_source || contract.source_url),
+          );
+          refresh = {
+            checkedAt: Date.now(),
+            updated: checked.filter(
+              (contract) => contract.refresh_status === "updated",
+            ).length,
+            unchanged: checked.filter(
+              (contract) => contract.refresh_status === "unchanged",
+            ).length,
+            failed: checked.filter(
+              (contract) => contract.refresh_status === "failed",
+            ).length,
+            persisted: persistence,
+          };
+        } catch (error) {
+          return result({ status: "error", code: String(error) }, true);
+        }
       }
-      return result(searchOperations(contracts, input));
+      return result({
+        ...searchOperations(contracts, input),
+        ...(refresh && { refresh }),
+      });
     },
   });
   pi.registerTool({
@@ -413,7 +592,7 @@ export default async function (pi: ExtensionAPI) {
     name: "api_request",
     label: "Test backend API",
     description:
-      "Send one HTTP request to a configured API origin. Prefer api_contract_test for documented operations; raw api_request can exercise deliberate invalid-input cases that contract preflight blocks. Select contractId when multiple contracts exist. Tokens are collected privately per origin; mutations require confirmation. A successful response alone does not prove business behavior.",
+      "Send one HTTP request to a configured API origin. Prefer api_contract_test for documented operations; raw api_request can exercise deliberate invalid-input cases that contract preflight blocks. Select contractId when multiple API base URLs exist. Tokens are collected privately per origin; use refreshAuthentication:true to replace a cached token before execution, or api_authenticate to manage tokens without a request. Mutations require confirmation. A successful response alone does not prove business behavior.",
     parameters: Type.Object({
       method: Type.Union(
         ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"].map(
@@ -423,6 +602,7 @@ export default async function (pi: ExtensionAPI) {
       path: Type.String({ minLength: 1, maxLength: 4000 }),
       body: Type.Optional(Type.Unknown()),
       authenticated: Type.Optional(Type.Boolean()),
+      refreshAuthentication: Type.Optional(Type.Boolean()),
       expectedStatus: Type.Optional(
         Type.Integer({ minimum: 100, maximum: 599 }),
       ),
@@ -437,13 +617,14 @@ export default async function (pi: ExtensionAPI) {
         if (input.contractId && !contract)
           return result({ status: "error", code: "contract_not_found" }, true);
         const available = contracts.filter((contract) => contract.origin);
+        const baseUrls = [
+          ...new Set(available.map((item) => item.base_url || item.origin)),
+        ];
         const origin =
           input.origin ||
           contract?.base_url ||
           contract?.origin ||
-          (available.length === 1
-            ? available[0].base_url || available[0].origin
-            : "");
+          (baseUrls.length === 1 ? baseUrls[0] : "");
         if (
           !origin ||
           !available.some(
@@ -455,6 +636,8 @@ export default async function (pi: ExtensionAPI) {
               status: "error",
               code: "contract_required",
               inventory: searchOperations(contracts, { limit: 5 }),
+              guidance:
+                "Select contractId or an available API origin from the inventory. If sources failed to load, call api_find_operations with refresh:true. To enter or replace a token independently, call api_authenticate; authentication does not require a loaded operation.",
             },
             true,
           );
@@ -468,7 +651,7 @@ export default async function (pi: ExtensionAPI) {
     name: "api_contract_test",
     label: "Test Swagger operation",
     description:
-      "Execute one exact saved Swagger/OpenAPI operation after api_operation_detail. Call directly; no browser login or workspace token search is needed. Credentials are collected in a private token dialog. If Swagger omits security, an unexpected 401 opens the dialog and retries once. Use authenticated:true to request a bearer token up front, authenticated:false for an intentional anonymous test. Checks required parameters, top-level body fields, and documented HTTP status; full response schemas and business rules need separate assertions. Supply explicit expectedStatus for a negative test.",
+      "Execute one exact saved Swagger/OpenAPI operation after api_operation_detail. Call directly; no browser login or workspace token search is needed. Credentials are collected in a private token dialog. If Swagger omits security, an unexpected 401 opens the dialog and retries once. Use authenticated:true to request a bearer token up front, refreshAuthentication:true to replace a cached token, authenticated:false for an intentional anonymous test. Use api_authenticate to manage tokens without executing an operation. Checks required parameters, top-level body fields, and documented HTTP status; full response schemas and business rules need separate assertions. Supply explicit expectedStatus for a negative test.",
     parameters: Type.Object({
       ...selector,
       pathParams: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -476,6 +659,7 @@ export default async function (pi: ExtensionAPI) {
       headers: Type.Optional(Type.Record(Type.String(), Type.String())),
       body: Type.Optional(Type.Unknown()),
       authenticated: Type.Optional(Type.Boolean()),
+      refreshAuthentication: Type.Optional(Type.Boolean()),
       expectedStatus: Type.Optional(
         Type.Integer({ minimum: 100, maximum: 599 }),
       ),
@@ -606,38 +790,8 @@ export default async function (pi: ExtensionAPI) {
             },
             true,
           );
-        const security = selected.operation.security ?? document.security ?? [];
-        const anonymous =
-          !security.length ||
-          security.some((option: object) => !Object.keys(option).length);
-        const schemes =
-          document.components?.securitySchemes ||
-          document.securityDefinitions ||
-          {};
-        const authentication = security
-          .map((option: object) => {
-            const names = Object.keys(option);
-            if (names.length !== 1) return undefined;
-            const scheme = reference(schemes[names[0]], document);
-            if (
-              scheme?.type === "oauth2" ||
-              scheme?.type === "openIdConnect" ||
-              (scheme?.type === "http" &&
-                String(scheme.scheme).toLowerCase() === "bearer")
-            )
-              return { authHeader: "authorization", authPrefix: "Bearer " };
-            if (
-              scheme?.type === "apiKey" &&
-              scheme.in === "header" &&
-              typeof scheme.name === "string"
-            )
-              return {
-                authHeader: scheme.name.toLowerCase(),
-                authPrefix: "",
-              };
-            return undefined;
-          })
-          .find(Boolean);
+        const { security, anonymous, authentication } =
+          operationAuthentication(selected);
         if (
           !anonymous &&
           !authentication &&
@@ -709,9 +863,11 @@ export default async function (pi: ExtensionAPI) {
                   type === "application/json" || type.endsWith("+json"),
               ),
             ...authentication,
+            refreshAuthentication: input.refreshAuthentication,
             authenticated:
               input.authenticated ??
-              (input.expectedStatus === 401 ? false : !anonymous),
+              (input.refreshAuthentication ||
+                (input.expectedStatus === 401 ? false : !anonymous)),
             authenticateOnChallenge:
               input.authenticated === undefined && anonymous,
             origin,
@@ -758,6 +914,8 @@ export default async function (pi: ExtensionAPI) {
             responseSchemaValidation: "not_performed",
             businessValidation: "not_performed",
             contractStale: !!selected.contract.stale,
+            contractFetchedAt: selected.contract.fetched_at || null,
+            contractContentHash: selected.contract.content_hash || null,
           },
           !pass,
         );
