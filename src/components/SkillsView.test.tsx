@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SkillsView from "./SkillsView";
@@ -45,6 +51,7 @@ const catalog = {
 describe("SkillsView", () => {
   beforeEach(() => {
     cleanup();
+    vi.clearAllMocks();
     vi.mocked(invoke).mockResolvedValue(catalog);
   });
   it("shows counts, filters, and skill details", async () => {
@@ -72,5 +79,73 @@ describe("SkillsView", () => {
       expect.objectContaining({ detail: "valid" }),
     );
     window.removeEventListener("crc-use-skill", onUse);
+  });
+
+  it("wraps preview and installation form values in the backend request argument", async () => {
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "preview_git_skills") {
+        return {
+          repository: "https://github.com/rfkokt/motion-web-design.git",
+          reference: "main",
+          skills: [catalog.skills[0]],
+        };
+      }
+      if (command === "install_git_skills") {
+        return {
+          installed: ["valid"],
+          target: "/home/me/.pi/agent/skills",
+          log: [],
+        };
+      }
+      return catalog;
+    });
+    render(<SkillsView />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Install Skill" }),
+    );
+    fireEvent.change(
+      screen.getByLabelText("Repository URL or owner/repository"),
+      {
+        target: { value: "rfkokt/motion-web-design" },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Preview & validate" }));
+    await screen.findByText("Review the selected SKILL.md before installing.");
+    expect(invoke).toHaveBeenCalledWith("preview_git_skills", {
+      request: {
+        url: "rfkokt/motion-web-design",
+        reference: null,
+        path: null,
+        selectedPaths: [],
+        replace: false,
+        sourceType: "git",
+      },
+    });
+
+    fireEvent.click(
+      screen.getByLabelText(/Replace an existing same-name skill/),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Install selected" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("install_git_skills", {
+        request: {
+          url: "rfkokt/motion-web-design",
+          reference: null,
+          path: null,
+          selectedPaths: ["valid"],
+          replace: true,
+          sourceType: "git",
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(invoke)
+          .mock.calls.filter(([command]) => command === "list_pi_skills")
+          .length,
+      ).toBe(2),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

@@ -57,7 +57,9 @@ function InstallSkill({
     setStatus("Cloning a read-only preview…");
     setPreview(null);
     try {
-      const next = await invoke<Preview>("preview_git_skills", request());
+      const next = await invoke<Preview>("preview_git_skills", {
+        request: request(),
+      });
       setPreview(next);
       setSelected(
         next.skills.length === 1 && next.skills[0].valid
@@ -80,7 +82,7 @@ function InstallSkill({
         installed: string[];
         target: string;
         log: string[];
-      }>("install_git_skills", request());
+      }>("install_git_skills", { request: request() });
       setStatus(`Installed ${result.installed.join(", ")} to ${result.target}`);
       onInstalled();
     } catch (error) {
