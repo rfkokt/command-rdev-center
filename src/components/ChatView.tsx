@@ -141,6 +141,13 @@ const VIRTUOSO_COMPONENTS = {
 };
 
 type PiEventPayload = { session_id: string; raw: string };
+type HarnessOption = {
+  id: string;
+  label: string;
+  protocol: "native" | "acp";
+  available: boolean;
+  is_default: boolean;
+};
 export type WorktreeInfo = {
   worktree_path: string;
   branch: string;
@@ -339,6 +346,8 @@ export default function ChatView({
   initialModel,
   initialThinking,
   initialInterrupted,
+  initialHarness,
+  onHarnessChange,
   resumableSessions,
   onSessionFile,
   onFirstMessage,
@@ -369,6 +378,9 @@ export default function ChatView({
   initialModel?: string;
   initialThinking?: string;
   initialInterrupted?: boolean;
+  /** Agent harness chosen for this chat before its first message. */
+  initialHarness?: string;
+  onHarnessChange?: (chatId: string, harness: string) => void;
   resumableSessions: Array<{ title: string; sessionFile: string }>;
   onSessionFile: (chatId: string, sessionFile: string) => void;
   onFirstMessage: (chatId: string, message: string) => void;
@@ -604,6 +616,12 @@ export default function ChatView({
       .finally(() => setRepositoryMapLoaded(true));
   }, [globalChat, projectPath, repositories, onToast]);
   const sessionId = useRef(`chat-${chatId}`).current;
+  // Harness for this chat. Undefined means the Settings default. The backend
+  // only honours it when no session file exists yet, so a started chat always
+  // reopens with the agent it began with.
+  const [harness, setHarness] = useState<string | undefined>(initialHarness);
+  const harnessRef = useRef<string | undefined>(initialHarness);
+  const [harnessOptions, setHarnessOptions] = useState<HarnessOption[]>([]);
   const slug = useRef(
     chatId
       .toLowerCase()
@@ -2528,6 +2546,7 @@ export default function ChatView({
           setStartupStage("starting the agent", "STARTING AGENT");
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
+            harness: harnessRef.current,
             sessionId,
             cwd: globalCwd,
             sessionFile: sessionFileRef.current,
@@ -2583,6 +2602,7 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              harness: harnessRef.current,
               sessionId,
               cwd: workspaceCwd,
               sessionFile: sessionFileRef.current,
@@ -2599,6 +2619,7 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              harness: harnessRef.current,
               sessionId,
               cwd: projectPath,
               sessionFile: sessionFileRef.current,
@@ -2638,6 +2659,7 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              harness: harnessRef.current,
               sessionId,
               cwd: wt.worktree_path,
               sessionFile: sessionFileRef.current,
@@ -3446,6 +3468,7 @@ export default function ChatView({
         }
         const [provider, ...modelParts] = modelRef.current.split("/");
         await invoke("spawn_pi_rpc", {
+          harness: harnessRef.current,
           sessionId,
           cwd,
           sessionFile: sessionFileRef.current,
@@ -3467,7 +3490,7 @@ export default function ChatView({
         updateCompaction(null);
         setAgentStatus("idle");
         setMessages(clearRestartErrors);
-        onToast(retry ? "Agent retrying" : "Pi agent reloaded");
+        onToast(retry ? "Agent retrying" : "Agent reloaded");
         setTimeout(() => {
           sendRaw({ type: "get_available_models" });
           sendRaw({ type: "get_commands" });
@@ -3500,6 +3523,53 @@ export default function ChatView({
       sendRaw,
       sessionId,
       updateCompaction,
+    ],
+  );
+
+  // Installed agents for the composer's agent picker.
+  useEffect(() => {
+    let active = true;
+    invoke<HarnessOption[] | null>("list_harnesses")
+      .then((list) => {
+        if (active && Array.isArray(list))
+          setHarnessOptions(list.filter((item) => item.available));
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const hasUserMessage = messages.some((message) => message.role === "user");
+  const agentLocked =
+    hasUserMessage || Boolean(sessionFileRef.current?.startsWith("acp:"));
+  const currentHarness =
+    harness ?? harnessOptions.find((item) => item.is_default)?.id ?? "pi";
+
+  /** Switch agents on a chat that has not started yet: drop the empty session
+   * and start the chosen agent in its place. */
+  const changeHarness = useCallback(
+    (next: string) => {
+      if (agentLocked || next === currentHarness) return;
+      setHarness(next);
+      harnessRef.current = next;
+      sessionFileRef.current = undefined;
+      onSessionFile(chatId, "");
+      onHarnessChange?.(chatId, next);
+      const label =
+        harnessOptions.find((item) => item.id === next)?.label ?? next;
+      onToast(`Starting ${label}…`);
+      void handleRestart();
+    },
+    [
+      agentLocked,
+      chatId,
+      currentHarness,
+      handleRestart,
+      harnessOptions,
+      onHarnessChange,
+      onSessionFile,
+      onToast,
     ],
   );
 
@@ -5805,6 +5875,10 @@ export default function ChatView({
           onRemoveTable={handleRemoveTable}
           onSetThinking={handleSetThinking}
           status={composerStatus}
+          agentOptions={harnessOptions}
+          agentValue={currentHarness}
+          agentLocked={agentLocked}
+          onAgentChange={changeHarness}
         />
       </div>
       {!globalChat &&

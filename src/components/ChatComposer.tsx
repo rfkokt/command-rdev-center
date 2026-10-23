@@ -1,4 +1,12 @@
-import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import type { ChatImage } from "../lib/rpc";
 import type { ChatFile, SlashCommand } from "./ChatView";
@@ -48,7 +56,118 @@ export type ChatComposerProps = {
   /** Cursor-style Plan/Build mode. Plan mode prefixes the pi-bound message. */
   planMode: boolean;
   onPlanModeChange: (value: boolean) => void;
+  /** Installed agent harnesses; the picker shows until the first message. */
+  agentOptions?: Array<{ id: string; label: string; protocol: string }>;
+  agentValue?: string;
+  agentLocked?: boolean;
+  onAgentChange?: (id: string) => void;
 };
+
+const QUICK_PROMPTS = [
+  {
+    label: "Brainstorm",
+    detail: "Explore ideas",
+    insert: "Brainstorm ideas for: ",
+  },
+  { label: "Web search", detail: "/research", insert: "/research " },
+  { label: "Review code", detail: "Find issues", insert: "Review this code: " },
+  { label: "Use a skill", detail: "/skill:", insert: "/skill:" },
+];
+
+const THINKING_OPTIONS = [
+  { value: "off", label: "No thinking", description: "Answer directly" },
+  { value: "minimal", label: "Minimal", description: "Quick shallow checks" },
+  { value: "low", label: "Low", description: "Light reasoning" },
+  { value: "medium", label: "Medium", description: "Balanced effort" },
+  { value: "high", label: "High", description: "Deep analysis and planning" },
+  { value: "xhigh", label: "Extra high", description: "Maximum effort" },
+];
+
+/** "+" menu: attach files and insert a quick prompt. */
+function AddMenu({
+  disabled,
+  onAttach,
+  onInsert,
+}: {
+  disabled: boolean;
+  onAttach: () => void;
+  onInsert: (text: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  return (
+    <div className="kc-add" ref={rootRef}>
+      <button
+        type="button"
+        className="kc-icon"
+        aria-label="Add files or a quick prompt"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Attach files or insert a quick prompt"
+        disabled={disabled}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <path d="M7 2v10M2 7h10" />
+        </svg>
+      </button>
+      {open && (
+        <div className="kc-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              onAttach();
+            }}
+          >
+            <span>Attach files</span>
+            <small>Images, text, PDFs</small>
+          </button>
+          <div className="kc-menu-sep" role="separator" />
+          {QUICK_PROMPTS.map((prompt) => (
+            <button
+              type="button"
+              role="menuitem"
+              key={prompt.label}
+              onClick={() => {
+                setOpen(false);
+                onInsert(prompt.insert);
+              }}
+            >
+              <span>{prompt.label}</span>
+              <small>{prompt.detail}</small>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ChatComposer({
   globalChat,
@@ -89,22 +208,25 @@ export default function ChatComposer({
   status,
   planMode,
   onPlanModeChange,
+  agentOptions = [],
+  agentValue,
+  agentLocked = true,
+  onAgentChange,
 }: ChatComposerProps) {
+  const inputDisabled =
+    driveDetached || agentStatus === "stopped" || isNewSessionLoading;
+  const sendLabel = !chatReady
+    ? "Connecting…"
+    : researchBusy
+      ? "Starting…"
+      : isNewSessionLoading
+        ? "Loading…"
+        : agentStatus === "running"
+          ? "Queue"
+          : "Send";
   return (
     <div className="chat-composer-dock">
-      <div
-        className="chat-composer"
-        style={{
-          maxWidth: 880,
-          margin: "0 auto",
-          padding: "var(--spacing-md)",
-          position: "relative",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "var(--spacing-md)",
-          alignItems: "flex-end",
-        }}
-      >
+      <div className="chat-composer kc">
         {slashCommands.length > 0 && (
           <div className="slash-menu" role="listbox">
             {slashCommands.map((command, index) => (
@@ -308,160 +430,108 @@ export default function ChatComposer({
               : undefined
           }
           rows={1}
-          className="text-input body-md"
-          style={{
-            flex: 1,
-            maxHeight: 180,
-            overflowY: "auto",
-            padding: "var(--spacing-sm) 0",
-            resize: "none",
-          }}
+          className="kc-input"
         />
-        <div className="composer-actions">
-          <button
-            onClick={() => void onAttachFiles()}
-            disabled={
-              driveDetached || agentStatus === "stopped" || isNewSessionLoading
-            }
-            className="small-icon-button"
-            title="Attach files"
-            aria-label="Attach files"
-          >
-            📎
-          </button>
-          <div
-            className="composer-chips"
-            role="toolbar"
-            aria-label="Quick prompts"
-          >
-            {[
-              {
-                label: "\uD83D\uDCA1 Brainstorm",
-                insert: "Brainstorm ideas for: ",
-              },
-              { label: "\uD83C\uDF10 Web search", insert: "/research " },
-              { label: "</> Code", insert: "Review this code: " },
-              { label: "\uFF0B Skill", insert: "/skill:" },
-            ].map((chip) => (
-              <button
-                key={chip.label}
-                className="composer-chip"
-                onClick={() => {
-                  setInput(
-                    (current) => (current ? `${current} ` : "") + chip.insert,
-                  );
-                  inputRef.current?.focus();
-                }}
-                disabled={
-                  driveDetached ||
-                  agentStatus === "stopped" ||
-                  isNewSessionLoading
-                }
-              >
-                {chip.label}
-              </button>
-            ))}
-          </div>
-          <CustomSelect
-            className="thinking-effort"
-            value={currentThinking || "medium"}
-            onChange={(level) => void onSetThinking(level)}
-            disabled={
-              driveDetached || agentStatus === "stopped" || isNewSessionLoading
-            }
-            ariaLabel="Thinking effort"
-            placement="top"
-            options={[
-              {
-                value: "off",
-                label: "No thinking",
-                description: "Direct response without reasoning",
-              },
-              {
-                value: "minimal",
-                label: "Minimal",
-                description: "Quick shallow checks",
-              },
-              {
-                value: "low",
-                label: "Low",
-                description: "Light reasoning",
-              },
-              {
-                value: "medium",
-                label: "Medium",
-                description: "Balanced reasoning effort",
-              },
-              {
-                value: "high",
-                label: "High",
-                description: "Deep analysis and planning",
-              },
-              {
-                value: "xhigh",
-                label: "Extra high",
-                description: "Maximum reasoning effort",
-              },
-            ]}
-          />
-          <div
-            className="composer-mode"
-            role="group"
-            aria-label="Plan or build mode"
-            title={
-              planMode
-                ? "Plan mode: the agent writes a plan, no code or edits"
-                : "Build mode: the agent implements directly"
-            }
-          >
-            {(
-              [
-                { value: false, label: "Build" },
-                { value: true, label: "Plan" },
-              ] as const
-            ).map((option) => {
-              const active = planMode === option.value;
-              return (
+        <div className="kc-bar">
+          <div className="kc-left">
+            <AddMenu
+              disabled={inputDisabled}
+              onAttach={() => void onAttachFiles()}
+              onInsert={(text) => {
+                setInput((current) => (current ? `${current} ` : "") + text);
+                inputRef.current?.focus();
+              }}
+            />
+            {!agentLocked && onAgentChange && agentOptions.length > 1 && (
+              <CustomSelect
+                className="kc-select"
+                value={agentValue ?? ""}
+                onChange={onAgentChange}
+                disabled={inputDisabled}
+                ariaLabel="Agent"
+                placement="top"
+                options={agentOptions.map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                  description:
+                    option.protocol === "native"
+                      ? "Every Kern feature"
+                      : "Connected over ACP",
+                }))}
+              />
+            )}
+            <CustomSelect
+              className="kc-select thinking-effort"
+              value={currentThinking || "medium"}
+              onChange={(level) => void onSetThinking(level)}
+              disabled={inputDisabled}
+              ariaLabel="Thinking effort"
+              placement="top"
+              options={THINKING_OPTIONS}
+            />
+            <div
+              className="kc-mode"
+              role="group"
+              aria-label="Plan or build mode"
+              title={
+                planMode
+                  ? "Plan: the agent writes a plan, no edits"
+                  : "Build: the agent implements directly"
+              }
+            >
+              {(
+                [
+                  { value: false, label: "Build" },
+                  { value: true, label: "Plan" },
+                ] as const
+              ).map((option) => (
                 <button
+                  type="button"
                   key={option.label}
                   onClick={() => onPlanModeChange(option.value)}
-                  disabled={
-                    driveDetached ||
-                    agentStatus === "stopped" ||
-                    isNewSessionLoading
-                  }
-                  className="composer-chip"
-                  aria-pressed={active}
+                  disabled={inputDisabled}
+                  aria-pressed={planMode === option.value}
                 >
                   {option.label}
                 </button>
-              );
-            })}
+              ))}
+            </div>
           </div>
-          {status && <div className="composer-status">{status}</div>}
-          <button
-            onClick={() => onSubmit()}
-            disabled={
-              !chatReady ||
-              driveDetached ||
-              agentStatus === "stopped" ||
-              isNewSessionLoading ||
-              isAborting ||
-              researchBusy ||
-              (!input.trim() && images.length === 0 && files.length === 0)
-            }
-            className="button-primary chat-action"
-          >
-            {!chatReady
-              ? "Connecting…"
-              : researchBusy
-                ? "Starting…"
-                : isNewSessionLoading
-                  ? "Loading…"
-                  : agentStatus === "running"
-                    ? "Queue"
-                    : "Send"}
-          </button>
+          <div className="kc-right">
+            {status && <div className="kc-status">{status}</div>}
+            <button
+              type="button"
+              onClick={() => onSubmit()}
+              disabled={
+                !chatReady ||
+                inputDisabled ||
+                isAborting ||
+                researchBusy ||
+                (!input.trim() && images.length === 0 && files.length === 0)
+              }
+              className="kc-send"
+              aria-label={sendLabel}
+              title={sendLabel}
+            >
+              {sendLabel === "Send" || sendLabel === "Queue" ? (
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M7 12V2M2.5 6.5 7 2l4.5 4.5" />
+                </svg>
+              ) : (
+                <span className="kc-send-busy" aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>

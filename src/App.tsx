@@ -70,6 +70,8 @@ import "./sidebar-rail.css";
 import "./typography.css";
 import "./settings.css";
 import "./toast.css";
+import "./composer.css";
+import "./right-sidebar.css";
 
 type Config = {
   pi_path: string;
@@ -88,6 +90,7 @@ type Tab = {
   model?: string;
   thinking?: string;
   interrupted?: boolean;
+  harness?: string;
   unread?: number;
   initialPrompt?: string;
   initialDraft?: string;
@@ -271,6 +274,12 @@ export default function App() {
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
     setTabs((prev) =>
       prev.map((item) => (item.id === tabId ? { ...item, sessionFile } : item)),
+    );
+  }, []);
+
+  const saveHarness = useCallback((tabId: string, harness: string) => {
+    setTabs((prev) =>
+      prev.map((item) => (item.id === tabId ? { ...item, harness } : item)),
     );
   }, []);
 
@@ -1004,6 +1013,8 @@ export default function App() {
                         initialModel={tab.model}
                         initialThinking={tab.thinking}
                         initialInterrupted={tab.interrupted}
+                        initialHarness={tab.harness}
+                        onHarnessChange={saveHarness}
                         resumableSessions={tabs
                           .filter(
                             (candidate) =>

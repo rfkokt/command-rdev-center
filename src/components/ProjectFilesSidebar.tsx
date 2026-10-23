@@ -3,17 +3,18 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import MarkdownMessage from "./MarkdownMessage";
 import { useModalFocus } from "./useModalFocus";
+import { CopyIcon } from "./Icons";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
   CloseIcon,
-  CopyIcon,
+  CollapseIcon,
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
   RefreshIcon,
-  SettingsIcon,
-} from "./Icons";
+  SearchIcon,
+} from "./ui-icons";
 
 type ProjectFile = {
   name: string;
@@ -223,7 +224,7 @@ export default function ProjectFilesSidebar({
     >
       <div className="pfs-toolbar">
         <label className="pfs-search">
-          <span aria-hidden>⌕</span>
+          <SearchIcon size={14} />
           <input
             aria-label="Filter project files"
             placeholder="Search files"
@@ -239,7 +240,7 @@ export default function ProjectFilesSidebar({
           title="Collapse folders"
           aria-label="Collapse all folders"
         >
-          −
+          <CollapseIcon size={14} />
         </button>
         <button
           onClick={reload}
@@ -248,7 +249,7 @@ export default function ProjectFilesSidebar({
           title="Refresh files"
           aria-label="Refresh files"
         >
-          <RefreshIcon />
+          <RefreshIcon size={14} />
         </button>
       </div>
 
@@ -284,11 +285,11 @@ export default function ProjectFilesSidebar({
       )}
 
       {loading ? (
-        <div className="pfs-loading">LOADING FILES…</div>
+        <div className="pfs-loading">Loading files…</div>
       ) : filteredFiles ? (
         filteredFiles.length === 0 ? (
           <div className="pfs-empty">
-            <span>NO MATCH</span>
+            <span>No matching files</span>
           </div>
         ) : (
           <ul className="pfs-list pfs-flat" role="list">
@@ -319,7 +320,7 @@ export default function ProjectFilesSidebar({
         )
       ) : !tree || (tree.files.length === 0 && tree.folders.size === 0) ? (
         <div className="pfs-empty">
-          <span>NO FILES</span>
+          <span>No files yet</span>
           <small>1MB max · ignored: node_modules, target, dist, etc</small>
         </div>
       ) : (
@@ -441,7 +442,7 @@ export default function ProjectFilesSidebar({
               <style>{`.clickable-import:hover { color: var(--accent) !important; background: #2a2b27; border-radius: 2px; cursor: pointer; }`}</style>
               {previewLoading ? (
                 <div style={{ margin: "auto", color: "var(--colors-muted)" }}>
-                  LOADING FILE…
+                  Loading file…
                 </div>
               ) : (
                 preview &&
@@ -593,10 +594,14 @@ function TreeFolder({
         aria-expanded={isExpanded}
       >
         <span className="pfs-folder-chevron" aria-hidden>
-          {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          {isExpanded ? (
+            <ChevronDownIcon size={12} />
+          ) : (
+            <ChevronRightIcon size={12} />
+          )}
         </span>
         <span className="pfs-folder-icon" aria-hidden>
-          {isExpanded ? <FolderOpenIcon /> : <FolderIcon />}
+          {isExpanded ? <FolderOpenIcon size={14} /> : <FolderIcon size={14} />}
         </span>
         <span className="pfs-folder-name">{folder.name}</span>
         <small className="pfs-folder-count">
@@ -627,56 +632,9 @@ function fileKind(name: string) {
   );
 }
 
-function iconFor(name: string) {
-  const kind = fileKind(name);
-  switch (kind) {
-    case "md":
-    case "mdx":
-      return "M↓";
-    case "json":
-    case "package":
-      return "{}";
-    case "csv":
-      return "▤";
-    case "txt":
-      return "≡";
-    case "ts":
-      return "TS";
-    case "tsx":
-      return "TX";
-    case "js":
-      return "JS";
-    case "jsx":
-      return "JX";
-    case "rs":
-      return "RS";
-    case "css":
-    case "scss":
-    case "sass":
-      return "#";
-    case "html":
-      return "<>";
-    case "toml":
-    case "yaml":
-    case "yml":
-    case "env":
-      return <SettingsIcon />;
-    case "svg":
-    case "png":
-    case "jpg":
-    case "jpeg":
-    case "gif":
-    case "webp":
-    case "bmp":
-    case "ico":
-      return "▧";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return ">_";
-    default:
-      return <FileIcon />;
-  }
+/** One outline file glyph; the file-<kind> class on its wrapper tints it. */
+function iconFor(_name: string) {
+  return <FileIcon size={14} />;
 }
 
 function highlightCode(code: string) {

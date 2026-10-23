@@ -1,4 +1,4 @@
-import { ChangesIcon, ExplorerIcon } from "./Icons";
+import { BranchIcon, CloseIcon, FilesIcon } from "./ui-icons";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import SourceControlPanel from "./SourceControlPanel";
 import { confirm } from "./ConfirmDialog";
@@ -39,76 +39,28 @@ export default function ChatRightSidebar({
   onWorktreeDiffChange,
   onToast,
 }: ChatRightSidebarProps) {
+  const changeCount = worktreeDiff?.files.length ?? 0;
+  const canShowChanges = Boolean(worktree || isWorkspace);
+  const toggle = (next: "explorer" | "scm") => {
+    if (open && activity === next) onOpenChange(false);
+    else {
+      onOpenChange(true);
+      onActivityChange(next);
+    }
+  };
+  const branch = isWorkspace
+    ? `${repositoryStatuses.length} repositories`
+    : (worktree?.branch ?? "");
+
   return (
-    <div
-      className={`code-sidebar-rail${open ? " open" : ""}`}
-      style={{
-        position: "absolute",
-        top: 52,
-        bottom: 32,
-        right: 0,
-        zIndex: 12,
-        display: "flex",
-        pointerEvents: "none",
-      }}
-    >
-      <div className="activity-rail vscode-rail">
-        <button
-          className={open && activity === "explorer" ? "active" : ""}
-          onClick={() => {
-            if (open && activity === "explorer") onOpenChange(false);
-            else {
-              onOpenChange(true);
-              onActivityChange("explorer");
-            }
-          }}
-          title={
-            open && activity === "explorer"
-              ? "Hide Explorer"
-              : "Explorer · Project files"
-          }
-          aria-label="Explorer"
-          aria-expanded={open && activity === "explorer"}
-        >
-          <ExplorerIcon />
-        </button>
-        {(worktree || isWorkspace) && (
-          <button
-            className={open && activity === "scm" ? "active" : ""}
-            onClick={() => {
-              if (open && activity === "scm") onOpenChange(false);
-              else {
-                onOpenChange(true);
-                onActivityChange("scm");
-              }
-            }}
-            title={
-              open && activity === "scm"
-                ? "Hide Changes"
-                : "Source Control · Changes"
-            }
-            aria-label={`Changes${worktreeDiff?.files.length ? ` (${worktreeDiff.files.length})` : ""}`}
-            aria-expanded={open && activity === "scm"}
-          >
-            <ChangesIcon />
-            {Boolean(worktreeDiff?.files.length) && (
-              <span className="activity-badge">
-                {worktreeDiff?.files.length}
-              </span>
-            )}
-          </button>
-        )}
-      </div>
+    <div className={`krs${open ? " open" : ""}`}>
       <div
-        className="code-sidebar-panel"
+        className="krs-panel"
         hidden={!open}
-        style={{
-          width: open ? panelWidth : 0,
-          position: "relative",
-        }}
+        style={{ width: open ? panelWidth : 0 }}
       >
         <div
-          className="code-sidebar-resize-handle"
+          className="krs-resize"
           role="separator"
           aria-label="Resize code sidebar"
           aria-orientation="vertical"
@@ -141,23 +93,32 @@ export default function ChatRightSidebar({
             };
           }}
         />
-        {activity === "explorer" ? (
-          <section className="code-sidebar-section">
-            <div className="code-section-toggle">
-              <small>Explorer</small>
-              <strong>{projectName}</strong>
-            </div>
-            <div className="code-section-body">
-              <ProjectFilesSidebar
-                projectPath={cwd}
-                projectName={projectName}
-                refreshKey={worktreeDiff?.files.length ?? 0}
-                onOpenAt={onOpenDiff}
-              />
-            </div>
-          </section>
-        ) : (
-          <section className="code-sidebar-section">
+        <header className="krs-head">
+          <div className="krs-head-text">
+            <strong>{activity === "explorer" ? "Files" : "Changes"}</strong>
+            <small title={activity === "explorer" ? projectName : branch}>
+              {activity === "explorer" ? projectName : branch || projectName}
+            </small>
+          </div>
+          <button
+            type="button"
+            className="krs-icon"
+            onClick={() => onOpenChange(false)}
+            title="Hide panel"
+            aria-label="Hide panel"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </header>
+        <div className="krs-body">
+          {activity === "explorer" ? (
+            <ProjectFilesSidebar
+              projectPath={cwd}
+              projectName={projectName}
+              refreshKey={changeCount}
+              onOpenAt={onOpenDiff}
+            />
+          ) : (
             <SourceControlPanel
               cwd={isWorkspace ? cwd : (worktree?.worktree_path ?? cwd)}
               repositories={isWorkspace ? repositoryStatuses : []}
@@ -177,9 +138,38 @@ export default function ChatRightSidebar({
               confirm={confirm}
               toast={onToast}
             />
-          </section>
-        )}
+          )}
+        </div>
       </div>
+      <nav className="krs-rail" aria-label="Code panels">
+        <button
+          type="button"
+          className={open && activity === "explorer" ? "active" : ""}
+          onClick={() => toggle("explorer")}
+          title={open && activity === "explorer" ? "Hide files" : "Files"}
+          aria-label="Explorer"
+          aria-expanded={open && activity === "explorer"}
+        >
+          <FilesIcon size={18} />
+        </button>
+        {canShowChanges && (
+          <button
+            type="button"
+            className={open && activity === "scm" ? "active" : ""}
+            onClick={() => toggle("scm")}
+            title={open && activity === "scm" ? "Hide changes" : "Changes"}
+            aria-label={`Changes${changeCount ? ` (${changeCount})` : ""}`}
+            aria-expanded={open && activity === "scm"}
+          >
+            <BranchIcon size={18} />
+            {changeCount > 0 && (
+              <span className="krs-badge">
+                {changeCount > 99 ? "99+" : changeCount}
+              </span>
+            )}
+          </button>
+        )}
+      </nav>
     </div>
   );
 }

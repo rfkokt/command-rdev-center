@@ -1,0 +1,324 @@
+/*
+ * Chat composer. One input, one quiet toolbar: "+" (attach and quick
+ * prompts), agent (until the first message), thinking, Build/Plan, then
+ * session status and a round send button. Imported last.
+ */
+
+.app-shell .chat-composer.kc {
+  display: flex !important;
+  flex-direction: column !important;
+  flex-wrap: nowrap !important;
+  align-items: stretch !important;
+  gap: 6px !important;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 10px 10px 8px 14px !important;
+  position: relative;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 10px !important;
+  background: var(--surface) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16) !important;
+  transform: none !important;
+  transition: border-color var(--dur-fast, 150ms) !important;
+}
+
+.app-shell .chat-composer.kc:focus-within {
+  border-color: color-mix(
+    in srgb,
+    var(--accent) 55%,
+    var(--line-strong)
+  ) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16) !important;
+  transform: none !important;
+}
+
+.app-shell .chat-composer.kc .kc-input {
+  order: 0 !important;
+  flex: none !important;
+  width: 100% !important;
+  min-height: 24px;
+  max-height: 200px;
+  padding: 4px 0 !important;
+  overflow-y: auto;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--text-strong) !important;
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-ui) !important;
+  line-height: 1.55 !important;
+  resize: none;
+  outline: none;
+  box-shadow: none !important;
+}
+
+.app-shell .chat-composer.kc .kc-input::placeholder {
+  color: var(--text-quiet) !important;
+}
+
+/* ---------------------------------------------------------------- bar */
+
+.app-shell .kc-bar {
+  order: 1 !important;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-shell .kc-left,
+.app-shell .kc-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-shell .kc-right {
+  flex-shrink: 1;
+  justify-content: flex-end;
+}
+
+/* icon buttons and compact selects share one 26px height */
+.app-shell .kc-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.app-shell .kc-icon:hover:not(:disabled),
+.app-shell .kc-icon[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .kc-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.app-shell .kc-select.opendots-select {
+  width: auto !important;
+  min-width: 0 !important;
+}
+
+.app-shell .kc-select .opendots-select-trigger {
+  width: auto !important;
+  height: 26px !important;
+  min-height: 0 !important;
+  gap: 4px !important;
+  padding: 0 6px 0 8px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-quiet) !important;
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
+}
+
+.app-shell .kc-select .opendots-select-trigger:hover:not(:disabled),
+.app-shell .kc-select.is-open .opendots-select-trigger {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+/* Build / Plan */
+.app-shell .kc-mode {
+  display: inline-flex;
+  margin-left: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface-raised);
+}
+
+.app-shell .kc-mode button {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-quiet);
+  font-family: var(--font-ui);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.app-shell .kc-mode button[aria-pressed="true"] {
+  background: var(--surface-card);
+  color: var(--text-strong);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.app-shell .kc-mode button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* status: branch · pipeline · context, as quiet text */
+.app-shell .kc-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+  white-space: nowrap;
+}
+
+.app-shell .kc-status > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-shell .kc-status .composer-branch {
+  max-width: 180px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.app-shell .kc-status button {
+  height: auto !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-quiet) !important;
+  font: inherit !important;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.app-shell .kc-status button:hover {
+  color: var(--text-strong) !important;
+}
+
+/* send */
+.app-shell .kc-send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+  transition: opacity var(--dur-fast, 150ms);
+}
+
+.app-shell .kc-send:disabled {
+  background: var(--surface-raised);
+  color: var(--text-quiet);
+  cursor: default;
+}
+
+.app-shell .kc-send-busy {
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: kc-spin 0.8s linear infinite;
+}
+
+@keyframes kc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* "+" menu */
+.app-shell .kc-add {
+  position: relative;
+}
+
+.app-shell .kc-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop, 0 12px 32px rgba(0, 0, 0, 0.3));
+}
+
+.app-shell .kc-menu button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-body);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .kc-menu button:hover,
+.app-shell .kc-menu button:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+  outline: none;
+}
+
+.app-shell .kc-menu small {
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+}
+
+.app-shell .kc-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+/* hint under the composer */
+.app-shell .chat-composer-help {
+  margin: 6px auto 0 !important;
+  max-width: 880px;
+  font-size: var(--fs-caption) !important;
+  color: var(--text-quiet) !important;
+  text-align: center;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+.app-shell .chat-composer-help kbd {
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+@media (max-width: 640px) {
+  .app-shell .kc-status {
+    display: none;
+  }
+}

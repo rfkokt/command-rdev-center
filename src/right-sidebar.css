@@ -1,0 +1,800 @@
+/*
+ * Right sidebar (Files, Changes). Mirrors the left sidebar: a 48px icon
+ * rail on the outer edge, a flat panel with one header, rows without fills,
+ * and the 2px amber bar for whatever is active. Imported last.
+ */
+
+.app-shell .krs {
+  position: absolute;
+  top: 52px;
+  bottom: 32px;
+  right: 0;
+  z-index: 12;
+  display: flex;
+  pointer-events: none;
+}
+
+.app-shell .krs > * {
+  pointer-events: auto;
+}
+
+/* ---------------------------------------------------------------- rail */
+
+.app-shell .krs-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 48px;
+  padding: 10px 0;
+  border-left: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 60%, var(--surface));
+}
+
+.app-shell .krs-rail button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.app-shell .krs-rail button:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .krs-rail button.active {
+  color: var(--accent-ink, var(--accent));
+}
+
+/* bar on the outer (right) edge, mirroring the left rail */
+.app-shell .krs-rail button.active::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.app-shell .krs-badge {
+  position: absolute;
+  top: 3px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.app-shell .krs-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  color: var(--text-body);
+}
+
+.app-shell .krs-panel[hidden] {
+  display: none;
+}
+
+.app-shell .krs-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+
+.app-shell .krs-resize:hover,
+.app-shell .krs-resize:focus-visible {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  outline: none;
+}
+
+.app-shell .krs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 48px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-shell .krs-head-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell .krs-head-text strong {
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+.app-shell .krs-head-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+}
+
+.app-shell .krs-icon,
+.app-shell .kscm-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+  list-style: none;
+}
+
+.app-shell .kscm-icon::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell .krs-icon:hover,
+.app-shell .kscm-icon:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .krs-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---------------------------------------------------------------- files */
+
+.app-shell .krs .project-files-sidebar {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.app-shell .krs .pfs-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 2px !important;
+  padding: 8px 8px 6px 10px !important;
+  border: 0 !important;
+  background: transparent !important;
+}
+
+.app-shell .krs .pfs-search {
+  flex: 1 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: 28px !important;
+  padding: 0 8px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 6px !important;
+  background: var(--surface-card) !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .krs .pfs-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line)) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .krs .pfs-filter {
+  flex: 1 !important;
+  min-width: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--text-strong) !important;
+  font: inherit !important;
+  font-size: var(--fs-small) !important;
+  outline: none !important;
+}
+
+.app-shell .krs .pfs-search small {
+  font-size: var(--fs-caption) !important;
+  color: var(--text-quiet) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .krs .pfs-refresh {
+  display: grid !important;
+  place-items: center !important;
+  width: 26px !important;
+  height: 26px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 5px !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .krs .pfs-refresh:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .krs .pfs-recent > summary,
+.app-shell .krs .pfs-loading,
+.app-shell .krs .pfs-empty {
+  padding: 6px 14px !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .krs .pfs-tree,
+.app-shell .krs .pfs-list {
+  padding: 2px 6px 12px !important;
+}
+
+.app-shell .krs .pfs-folder,
+.app-shell .krs .pfs-file,
+.app-shell .krs .pfs-recent-item {
+  position: relative;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  width: 100% !important;
+  min-height: 26px !important;
+  border: 0 !important;
+  border-radius: 5px !important;
+  background: transparent !important;
+  color: var(--text-body) !important;
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-regular) !important;
+  text-align: left !important;
+  box-shadow: none !important;
+}
+
+.app-shell .krs .pfs-folder:hover,
+.app-shell .krs .pfs-file:hover,
+.app-shell .krs .pfs-recent-item:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .krs .pfs-file.active {
+  background: transparent !important;
+  color: var(--text-strong) !important;
+  font-weight: var(--fw-medium) !important;
+}
+
+.app-shell .krs .pfs-file.active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.app-shell .krs .pfs-folder.repository-root .pfs-folder-name {
+  font-weight: var(--fw-medium) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .krs .pfs-folder-chevron,
+.app-shell .krs .pfs-folder-icon,
+.app-shell .krs .pfs-file-icon {
+  flex: none !important;
+  display: grid !important;
+  place-items: center !important;
+  width: 14px !important;
+  height: 14px !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-size: 0 !important;
+}
+
+.app-shell .krs .pfs-folder-chevron {
+  width: 12px !important;
+}
+
+.app-shell .krs .pfs-folder-icon {
+  color: color-mix(in srgb, var(--accent) 70%, var(--text-quiet)) !important;
+}
+
+/* file tints by kind */
+.app-shell .krs .pfs-file-icon.file-ts,
+.app-shell .krs .pfs-file-icon.file-tsx {
+  color: #4f8fd8 !important;
+}
+.app-shell .krs .pfs-file-icon.file-js,
+.app-shell .krs .pfs-file-icon.file-jsx,
+.app-shell .krs .pfs-file-icon.file-mjs {
+  color: #d9b23f !important;
+}
+.app-shell .krs .pfs-file-icon.file-rs {
+  color: #d27a4c !important;
+}
+.app-shell .krs .pfs-file-icon.file-py {
+  color: #5a9fd4 !important;
+}
+.app-shell .krs .pfs-file-icon.file-css,
+.app-shell .krs .pfs-file-icon.file-scss {
+  color: #a77fd8 !important;
+}
+.app-shell .krs .pfs-file-icon.file-json,
+.app-shell .krs .pfs-file-icon.file-package,
+.app-shell .krs .pfs-file-icon.file-toml,
+.app-shell .krs .pfs-file-icon.file-yaml,
+.app-shell .krs .pfs-file-icon.file-yml,
+.app-shell .krs .pfs-file-icon.file-env {
+  color: #c9a24a !important;
+}
+.app-shell .krs .pfs-file-icon.file-html {
+  color: #d9774f !important;
+}
+.app-shell .krs .pfs-file-icon.file-md,
+.app-shell .krs .pfs-file-icon.file-mdx {
+  color: #7ea3c9 !important;
+}
+
+.app-shell .krs .pfs-file-name,
+.app-shell .krs .pfs-folder-name {
+  flex: 1 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.app-shell .krs .pfs-file-meta,
+.app-shell .krs .pfs-folder-count {
+  flex: none;
+  font-size: var(--fs-caption) !important;
+  color: var(--text-quiet) !important;
+  opacity: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .krs .pfs-file:hover .pfs-file-meta,
+.app-shell .krs .pfs-folder:hover .pfs-folder-count {
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------- changes */
+
+.app-shell .krs .kscm {
+  padding: 10px 0 16px;
+}
+
+.app-shell .kscm-repo > summary,
+.app-shell .kscm-group > summary {
+  list-style: none;
+}
+
+.app-shell .kscm-repo > summary::-webkit-details-marker,
+.app-shell .kscm-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell .kscm-repo-head[hidden] {
+  display: none !important;
+}
+
+.app-shell .kscm-repo-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+
+.app-shell .kscm-chevron {
+  flex: none;
+  color: var(--text-quiet);
+  transition: transform var(--dur-fast, 150ms);
+}
+
+.app-shell details[open] > summary > .kscm-chevron {
+  transform: rotate(90deg);
+}
+
+.app-shell .kscm-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px;
+}
+
+.app-shell .kscm-commit textarea {
+  width: 100%;
+  min-height: 52px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-card);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-small);
+  line-height: 1.45;
+  resize: vertical;
+  outline: none;
+}
+
+.app-shell .kscm-commit textarea:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.app-shell .kscm-commit-button {
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+}
+
+.app-shell .kscm-commit-button:disabled {
+  background: var(--surface-raised);
+  color: var(--text-quiet);
+  cursor: default;
+}
+
+.app-shell .kscm-sync {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-shell .kscm-branch {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: var(--text-quiet);
+}
+
+.app-shell .kscm-branch:hover {
+  background: var(--surface-hover);
+}
+
+.app-shell .kscm-branch select {
+  flex: 1;
+  min-width: 0;
+  height: 24px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: var(--text-body);
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  appearance: none;
+  outline: none;
+  cursor: pointer;
+}
+
+.app-shell .kscm-sync-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-quiet);
+  font: inherit;
+  font-size: var(--fs-caption);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.app-shell .kscm-sync-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .kscm-more {
+  position: relative;
+}
+
+.app-shell .kscm-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop, 0 12px 32px rgba(0, 0, 0, 0.3));
+}
+
+.app-shell .kscm-menu button {
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  font-size: var(--fs-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .kscm-menu button:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .kscm-empty {
+  margin: 0;
+  padding: 14px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.app-shell .kscm-group {
+  padding: 6px 0 2px;
+}
+
+.app-shell .kscm-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px 0 10px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.app-shell .kscm-group > summary b {
+  font-weight: var(--fw-medium);
+  color: var(--text-body);
+}
+
+.app-shell .kscm-count {
+  flex: 1;
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .kscm-group-action {
+  opacity: 0;
+}
+
+.app-shell .kscm-group > summary:hover .kscm-group-action,
+.app-shell .kscm-group-action:focus-visible {
+  opacity: 1;
+}
+
+.app-shell .kscm-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 10px 0 28px;
+}
+
+.app-shell .kscm-file:hover {
+  background: var(--surface-hover);
+}
+
+.app-shell .kscm-file-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  font-size: var(--fs-ui);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.app-shell .kscm-file-base {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-shell .kscm-file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+}
+
+.app-shell .kscm-file-actions {
+  display: none;
+  gap: 0;
+}
+
+.app-shell .kscm-file:hover .kscm-file-actions,
+.app-shell .kscm-file:focus-within .kscm-file-actions {
+  display: flex;
+}
+
+.app-shell .kscm-status {
+  flex: none;
+  width: 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  text-align: center;
+}
+
+.app-shell .kscm-status.modified {
+  color: var(--status-amber);
+}
+.app-shell .kscm-status.added {
+  color: var(--online-green);
+}
+.app-shell .kscm-status.deleted {
+  color: var(--status-red);
+}
+.app-shell .kscm-status.renamed {
+  color: var(--signal);
+}
+
+/* history */
+.app-shell .kscm-history {
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.app-shell .kscm-commit-item {
+  position: relative;
+}
+
+.app-shell .kscm-commit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 5px 12px 5px 28px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .kscm-commit-row:hover {
+  background: var(--surface-hover);
+}
+
+.app-shell .kscm-commit-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 6px;
+  height: 30px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.app-shell .kscm-commit-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-ui);
+  color: var(--text-body);
+}
+
+.app-shell .kscm-commit-item.selected .kscm-commit-subject {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.app-shell .kscm-commit-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+}
+
+.app-shell .kscm-commit-files {
+  padding: 2px 0 6px;
+}
+
+.app-shell .kscm-commit-files button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 24px;
+  padding: 0 12px 0 40px;
+  border: 0;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .kscm-commit-files button:hover {
+  background: var(--surface-hover);
+}
+
+.app-shell .kscm-diffstat {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-caption);
+}
+
+.app-shell .kscm-diffstat i {
+  font-style: normal;
+  color: var(--online-green);
+}
+
+.app-shell .kscm-diffstat em {
+  font-style: normal;
+  color: var(--status-red);
+}
