@@ -185,7 +185,8 @@ export const TOOLS = [
         const status = task.status?.trim().toLowerCase() || "backlog";
         return (
           (!input.pic ||
-            task.pic?.trim().toLowerCase() === input.pic.trim().toLowerCase()) &&
+            task.pic?.trim().toLowerCase() ===
+              input.pic.trim().toLowerCase()) &&
           (requested ? status === requested : ready.has(status))
         );
       });
@@ -203,7 +204,9 @@ export const TOOLS = [
     },
     run: async (input, env) => {
       const data = await tasks(env);
-      const taskNo = String(input.taskNo ?? "").trim().replace(/^#/, "");
+      const taskNo = String(input.taskNo ?? "")
+        .trim()
+        .replace(/^#/, "");
       const matching = data.items.filter(
         (item) => String(item.no).trim() === taskNo,
       );
@@ -356,7 +359,10 @@ export async function handle(message, env = process.env) {
       const input = params?.arguments ?? {};
       const invalid = checkInput(tool, input);
       if (invalid)
-        return reply({ content: [{ type: "text", text: invalid }], isError: true });
+        return reply({
+          content: [{ type: "text", text: invalid }],
+          isError: true,
+        });
       try {
         const text = await tool.run(input, env);
         return reply({ content: [{ type: "text", text }] });
