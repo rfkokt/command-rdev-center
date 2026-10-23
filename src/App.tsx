@@ -29,6 +29,7 @@ const SkillsView = lazy(() => import("./components/SkillsView"));
 const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
+import { checkAgentUpdatesOnStartup } from "./lib/agent-updates";
 import {
   BookIcon,
   ChatIcon,
@@ -241,6 +242,12 @@ export default function App() {
         addToast(`Update ${update.version} is available`);
       })
       .catch(() => {});
+    // Agent CLIs drift independently of the app; check them off the
+    // startup path so launch is not waiting on npm/git.
+    const agentCheck = setTimeout(() => {
+      void checkAgentUpdatesOnStartup(addToast);
+    }, 5000);
+    return () => clearTimeout(agentCheck);
   }, [addToast]);
 
   useEffect(() => {

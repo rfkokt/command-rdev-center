@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Group, ItemRow, Subhead, SwitchField } from "./settings-ui";
+import { describeVersion, type AgentUpdate } from "../lib/agent-updates";
 
 export type HarnessInfo = {
   id: string;
@@ -30,11 +32,23 @@ export default function HarnessSettings({
   const [error, setError] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   const [installLog, setInstallLog] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoUpdate, setAutoUpdate] = useState(false);
+  const [updates, setUpdates] = useState<AgentUpdate[] | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [updating, setUpdating] = useState<string | null>(null);
+  const [updateLog, setUpdateLog] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const list = await invoke<HarnessInfo[]>("list_harnesses");
+      const [list, approve, update] = await Promise.all([
+        invoke<HarnessInfo[]>("list_harnesses"),
+        invoke<boolean>("get_auto_approve"),
+        invoke<boolean>("get_auto_update"),
+      ]);
       setHarnesses(list);
+      setAutoApprove(approve === true);
+      setAutoUpdate(update === true);
       setSelected(list.find((item) => item.is_default)?.id ?? "pi");
       setError("");
     } catch (e) {
@@ -42,9 +56,25 @@ export default function HarnessSettings({
     }
   }, []);
 
+  // Separate from `load`: the check hits npm/git and can take seconds.
+  const checkUpdates = useCallback(async (refresh: boolean) => {
+    setChecking(true);
+    try {
+      const list = await invoke<AgentUpdate[]>("check_agent_updates", {
+        refresh,
+      });
+      setUpdates(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void checkUpdates(false);
+  }, [load, checkUpdates]);
 
   const current = harnesses.find((item) => item.is_default)?.id ?? "pi";
   const chosen = harnesses.find((item) => item.id === selected);
@@ -58,6 +88,46 @@ export default function HarnessSettings({
       await load();
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  async function toggleAutoApprove(enabled: boolean) {
+    try {
+      await invoke("set_auto_approve", { enabled });
+      setAutoApprove(enabled);
+      onToast(
+        enabled
+          ? "Agents now run tools without asking."
+          : "Agents ask before running tools.",
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function toggleAutoUpdate(enabled: boolean) {
+    try {
+      await invoke("set_auto_update", { enabled });
+      setAutoUpdate(enabled);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function applyUpdate(item: AgentUpdate) {
+    setUpdating(item.id);
+    setUpdateLog("");
+    try {
+      const list = await invoke<AgentUpdate[]>("apply_agent_update", {
+        id: item.id,
+      });
+      setUpdates(list);
+      onToast(`Updated ${item.label}`);
+      await load();
+    } catch (e) {
+      setUpdateLog(String(e));
+    } finally {
+      setUpdating(null);
     }
   }
 
@@ -195,6 +265,72 @@ export default function HarnessSettings({
         </button>
         <span>Existing chats keep the agent they started with.</span>
       </div>
+
+      <Group label="Approvals">
+        <SwitchField
+          label="Auto-approve tool calls"
+          detail="ACP agents run commands and edits without asking. Applies to every chat, including ones already open."
+          checked={autoApprove}
+          onChange={(enabled) => void toggleAutoApprove(enabled)}
+        />
+      </Group>
+
+      <Subhead
+        actions={
+          <button
+            type="button"
+            disabled={checking || updating !== null}
+            onClick={() => void checkUpdates(true)}
+          >
+            {checking ? "Checking…" : "Check now"}
+          </button>
+        }
+      >
+        Updates
+      </Subhead>
+      <Group label="Agent updates">
+        <SwitchField
+          label="Auto-install updates"
+          detail="When Kern starts, install agent updates it finds instead of only notifying."
+          checked={autoUpdate}
+          onChange={(enabled) => void toggleAutoUpdate(enabled)}
+        />
+        {updates === null ? (
+          <ItemRow title="Checking installed agents…" />
+        ) : (
+          updates.map((item) => (
+            <ItemRow
+              key={item.id}
+              title={item.label}
+              detail={[
+                describeVersion(item),
+                item.notice,
+                item.detail,
+                item.available ? null : "up to date",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            >
+              {item.available && (
+                <button
+                  type="button"
+                  className="kset-row-button"
+                  disabled={updating !== null}
+                  aria-label={`Update ${item.label}`}
+                  onClick={() => void applyUpdate(item)}
+                >
+                  {updating === item.id ? "Updating…" : "Update"}
+                </button>
+              )}
+            </ItemRow>
+          ))
+        )}
+      </Group>
+      {updateLog && (
+        <pre className="kset-log kset-log--standalone" role="alert">
+          {updateLog}
+        </pre>
+      )}
 
       <h3 className="kset-subhead">Add another ACP agent</h3>
       <div className="kset-group">

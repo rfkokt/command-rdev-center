@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
 mod acp_bridge;
+mod agent_updates;
 mod browser_spike;
 mod connections;
 mod deep_research;
@@ -203,8 +204,14 @@ pub fn run() {
             harness::list_harnesses,
             harness::install_harness,
             harness::set_default_harness,
+            harness::get_auto_approve,
+            harness::set_auto_approve,
             harness::save_custom_harness,
             harness::delete_custom_harness,
+            agent_updates::check_agent_updates,
+            agent_updates::apply_agent_update,
+            agent_updates::get_auto_update,
+            agent_updates::set_auto_update,
             pi_rpc::send_pi_command,
             pi_rpc::get_session_tree,
             pi_rpc::fork_session,

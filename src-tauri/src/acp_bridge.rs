@@ -102,6 +102,9 @@ pub struct AcpBridge {
     /// along with the first prompt of each fresh session.
     preamble: Option<String>,
     preamble_pending: bool,
+    /// Answer `session/request_permission` with an allow option instead of
+    /// asking the user (global "Auto-approve" setting).
+    auto_approve: bool,
 }
 
 fn line(value: Value) -> String {
@@ -300,12 +303,17 @@ impl AcpBridge {
             usage: None,
             preamble: None,
             preamble_pending: false,
+            auto_approve: false,
         }
     }
 
     pub fn with_preamble(mut self, preamble: Option<String>) -> Self {
         self.preamble = preamble.filter(|text| !text.trim().is_empty());
         self
+    }
+
+    pub fn set_auto_approve(&mut self, enabled: bool) {
+        self.auto_approve = enabled;
     }
 
     // ---------------------------------------------------------------- output
@@ -871,6 +879,22 @@ impl AcpBridge {
                     .collect()
             })
             .unwrap_or_default();
+        if self.auto_approve {
+            // Prefer a one-off allow: `allow_always` makes some adapters
+            // persist rules into the agent's own settings.
+            let allow = ["allow_once", "allow"].iter().find_map(|prefix| {
+                options
+                    .iter()
+                    .find(|(_, _, kind)| kind.starts_with(prefix))
+                    .map(|(_, option_id, _)| option_id.clone())
+            });
+            if let Some(option_id) = allow {
+                return vec![Out::Agent(line(json!({
+                    "jsonrpc": "2.0", "id": rpc_id,
+                    "result": { "outcome": { "outcome": "selected", "optionId": option_id } }
+                })))];
+            }
+        }
         let tool = params.get("toolCall").cloned().unwrap_or(Value::Null);
         let title = tool
             .get("title")
@@ -1565,6 +1589,45 @@ mod tests {
             &json!({ "type": "extension_ui_response", "id": ui_id, "cancelled": true }).to_string(),
         ));
         assert_eq!(answer[0]["result"]["outcome"]["outcome"], "cancelled");
+    }
+
+    #[test]
+    fn auto_approve_answers_permission_without_dialog() {
+        let mut bridge = ready_bridge(false);
+        bridge.set_auto_approve(true);
+        bridge.on_ui(r#"{"type":"prompt","message":"rm"}"#);
+        let request = |options: Value| {
+            json!({
+                "jsonrpc": "2.0", "id": 7, "method": "session/request_permission",
+                "params": { "sessionId": "s1", "toolCall": { "toolCallId": "t1" }, "options": options }
+            })
+            .to_string()
+        };
+        let out = bridge.on_agent(&request(json!([
+            { "optionId": "always", "name": "Always allow", "kind": "allow_always" },
+            { "optionId": "ok", "name": "Allow", "kind": "allow_once" },
+            { "optionId": "no", "name": "Reject", "kind": "reject_once" }
+        ])));
+        assert!(ui(&out).is_empty());
+        let answer = agent(&out);
+        assert_eq!(answer[0]["id"], 7);
+        assert_eq!(
+            answer[0]["result"]["outcome"],
+            json!({ "outcome": "selected", "optionId": "ok" })
+        );
+
+        // Only `allow_always` offered → still approved.
+        let answer = agent(&bridge.on_agent(&request(json!([
+            { "optionId": "always", "name": "Always allow", "kind": "allow_always" },
+            { "optionId": "no", "name": "Reject", "kind": "reject_once" }
+        ]))));
+        assert_eq!(answer[0]["result"]["outcome"]["optionId"], "always");
+
+        // No allow option at all → fall back to the dialog.
+        let dialog = ui(&bridge.on_agent(&request(json!([
+            { "optionId": "no", "name": "Reject", "kind": "reject_once" }
+        ]))));
+        assert_eq!(dialog[0]["type"], "extension_ui_request");
     }
 
     #[test]

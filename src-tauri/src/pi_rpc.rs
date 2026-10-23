@@ -40,6 +40,18 @@ fn sessions_map() -> &'static Mutex<HashMap<String, SharedSessionHandle>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Apply the auto-approve setting to every running ACP chat.
+pub(crate) fn set_acp_auto_approve(enabled: bool) {
+    let Ok(map) = sessions_map().lock() else {
+        return;
+    };
+    for handle in map.values() {
+        if let Some(Ok(mut bridge)) = handle.bridge.as_ref().map(|bridge| bridge.lock()) {
+            bridge.set_auto_approve(enabled);
+        }
+    }
+}
+
 fn read_pi_config() -> Result<(String, serde_json::Value), String> {
     let raw = std::fs::read_to_string(crate::projects::config_path()).map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -319,7 +331,7 @@ fn latest_pi_version_cached(refresh: bool) -> Option<String> {
 /// Blocking runtime check. Runs `pi --version` once per candidate (the result
 /// doubles as the installed version) while the npm lookup runs on its own
 /// thread, so the slowest step bounds the call instead of their sum.
-fn runtime_status(refresh_latest: bool) -> Result<PiRuntimeStatus, String> {
+pub(crate) fn runtime_status(refresh_latest: bool) -> Result<PiRuntimeStatus, String> {
     let (configured, _) = read_pi_config()?;
     thread::scope(|scope| {
         let latest = scope.spawn(|| latest_pi_version_cached(refresh_latest));
@@ -479,7 +491,7 @@ fn verify_installer_checksum(installer: &Path) -> Result<(), String> {
     }
 }
 
-fn install_pi_via_curl() -> Result<(), String> {
+pub(crate) fn install_pi_via_curl() -> Result<(), String> {
     // SECURITY: the caller must hold explicit user consent before invoking this —
     // it downloads and executes a remote shell script. See `approve_pi_install`.
     let installer = std::env::temp_dir().join(format!("pi-install-{}.sh", std::process::id()));
@@ -1607,6 +1619,7 @@ fn spawn_acp_session(
         initial_model,
     )
     .with_preamble(Some(preamble));
+    bridge.set_auto_approve(crate::harness::read_settings().auto_approve);
     let start = bridge.start();
     let handle: SharedSessionHandle = Arc::new(SessionHandle {
         child: Mutex::new(Some(child)),

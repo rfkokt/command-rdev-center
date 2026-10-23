@@ -41,6 +41,10 @@ pub struct HarnessSettings {
     pub default: Option<String>,
     /// Extra ACP agents, e.g. `{ "id": "kimi", "label": "Kimi CLI", "command": "kimi", "args": ["--acp"] }`.
     pub custom: Vec<HarnessSpec>,
+    /// Approve ACP permission requests without asking.
+    pub auto_approve: bool,
+    /// Install agent updates found by the startup check without asking.
+    pub auto_update: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,8 +106,17 @@ pub fn builtin_acp() -> Vec<HarnessSpec> {
             "@oh-my-pi/pi-coding-agent",
         ),
         npm(
-            spec("codex", "Codex", "codex-acp", &[], "npm i -g @zed-industries/codex-acp"),
-            "@zed-industries/codex-acp",
+            // @zed-industries/codex-acp is frozen at 0.16 (its bundled Codex
+            // rejects newer models/efforts); this successor bundles a current
+            // @openai/codex and keeps the same `codex-acp` bin.
+            spec(
+                "codex",
+                "Codex",
+                "codex-acp",
+                &[],
+                "npm i -g @agentclientprotocol/codex-acp (uninstall @zed-industries/codex-acp first if present)",
+            ),
+            "@agentclientprotocol/codex-acp",
         ),
         npm(
             spec("gemini", "Gemini CLI", "gemini", &["--acp"], "npm i -g @google/gemini-cli"),
@@ -141,7 +154,7 @@ pub fn read_settings() -> HarnessSettings {
         .unwrap_or_default()
 }
 
-fn write_settings(settings: &HarnessSettings) -> Result<(), String> {
+pub(crate) fn write_settings(settings: &HarnessSettings) -> Result<(), String> {
     let path = settings_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -339,6 +352,20 @@ pub fn set_default_harness(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn get_auto_approve() -> bool {
+    read_settings().auto_approve
+}
+
+#[tauri::command]
+pub fn set_auto_approve(enabled: bool) -> Result<(), String> {
+    let mut settings = read_settings();
+    settings.auto_approve = enabled;
+    write_settings(&settings)?;
+    crate::pi_rpc::set_acp_auto_approve(enabled);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn save_custom_harness(harness: HarnessSpec) -> Result<(), String> {
     if !valid_id(&harness.id) || harness.id == PI {
         return Err("Harness id must be lowercase letters, digits or dashes".into());
@@ -373,6 +400,7 @@ mod tests {
         HarnessSettings {
             default: default.map(str::to_string),
             custom: vec![spec("kimi", "Kimi", "kimi", &["--acp"], "")],
+            ..Default::default()
         }
     }
 
@@ -438,6 +466,7 @@ mod tests {
                 spec("Bad Id", "Bad", "bad", &[], ""),
                 spec("ok-1", "Ok", "ok", &[], ""),
             ],
+            ..Default::default()
         };
         let all = all_acp(&s);
         assert_eq!(all.iter().filter(|h| h.id == "opencode").count(), 1);
