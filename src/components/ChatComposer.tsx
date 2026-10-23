@@ -1,4 +1,4 @@
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch, ReactNode, RefObject, SetStateAction } from "react";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import type { ChatImage } from "../lib/rpc";
 import type { ChatFile, SlashCommand } from "./ChatView";
@@ -16,7 +16,6 @@ export type ChatComposerProps = {
   isAborting: boolean;
   researchBusy: boolean;
   researchUsageError: boolean;
-  pendingMessageCount: number;
   projectPath: string;
   inputPlaceholder?: string;
   input: string;
@@ -44,6 +43,8 @@ export type ChatComposerProps = {
   onFilePick: (file: { name: string; path: string; relative: string }) => void;
   onRemoveTable: () => void;
   onSetThinking: (level: string) => Promise<void>;
+  /** Session status (branch, pipeline, context) shown in the action row. */
+  status?: ReactNode;
   /** Cursor-style Plan/Build mode. Plan mode prefixes the pi-bound message. */
   planMode: boolean;
   onPlanModeChange: (value: boolean) => void;
@@ -58,7 +59,6 @@ export default function ChatComposer({
   isAborting,
   researchBusy,
   researchUsageError,
-  pendingMessageCount,
   projectPath,
   inputPlaceholder,
   input,
@@ -86,6 +86,7 @@ export default function ChatComposer({
   onFilePick,
   onRemoveTable,
   onSetThinking,
+  status,
   planMode,
   onPlanModeChange,
 }: ChatComposerProps) {
@@ -104,81 +105,6 @@ export default function ChatComposer({
           alignItems: "flex-end",
         }}
       >
-        <div
-          className="composer-chips"
-          role="toolbar"
-          aria-label="Quick prompts"
-        >
-          {[
-            {
-              label: "\uD83D\uDCA1 Brainstorm",
-              insert: "Brainstorm ideas for: ",
-            },
-            { label: "\uD83C\uDF10 Web search", insert: "/research " },
-            { label: "</> Code", insert: "Review this code: " },
-            { label: "\uFF0B Skill", insert: "/skill:" },
-          ].map((chip) => (
-            <button
-              key={chip.label}
-              className="composer-chip"
-              onClick={() => {
-                setInput(
-                  (current) => (current ? `${current} ` : "") + chip.insert,
-                );
-                inputRef.current?.focus();
-              }}
-              disabled={
-                driveDetached ||
-                agentStatus === "stopped" ||
-                isNewSessionLoading
-              }
-            >
-              {chip.label}
-            </button>
-          ))}
-          <CustomSelect
-            className="thinking-effort"
-            value={currentThinking || "medium"}
-            onChange={(level) => void onSetThinking(level)}
-            disabled={
-              driveDetached || agentStatus === "stopped" || isNewSessionLoading
-            }
-            ariaLabel="Thinking effort"
-            placement="top"
-            options={[
-              {
-                value: "off",
-                label: "No thinking",
-                description: "Direct response without reasoning",
-              },
-              {
-                value: "minimal",
-                label: "Minimal",
-                description: "Quick shallow checks",
-              },
-              {
-                value: "low",
-                label: "Low",
-                description: "Light reasoning",
-              },
-              {
-                value: "medium",
-                label: "Medium",
-                description: "Balanced reasoning effort",
-              },
-              {
-                value: "high",
-                label: "High",
-                description: "Deep analysis and planning",
-              },
-              {
-                value: "xhigh",
-                label: "Extra high",
-                description: "Maximum reasoning effort",
-              },
-            ]}
-          />
-        </div>
         {slashCommands.length > 0 && (
           <div className="slash-menu" role="listbox">
             {slashCommands.map((command, index) => (
@@ -304,24 +230,6 @@ export default function ChatComposer({
             <code>/research compare Tauri and Electron</code>.
           </p>
         )}
-        {agentStatus === "running" && (
-          <div
-            className={`queue-status pixel-queue-status${pendingMessageCount ? " has-queue" : ""}`}
-            role="status"
-          >
-            <div className="pixel-queue-label">
-              <span className="pixel-blink-dot" />
-              <strong>
-                {pendingMessageCount
-                  ? `${pendingMessageCount} MESSAGE${pendingMessageCount === 1 ? "" : "S"} QUEUED`
-                  : "AI AGENT OFFICE AT WORK"}
-              </strong>
-            </div>
-            <span>
-              Enter queues next turn · Option/Alt + Enter steers current turn
-            </span>
-          </div>
-        )}
         <textarea
           ref={inputRef}
           value={input}
@@ -385,7 +293,7 @@ export default function ChatComposer({
               : agentStatus === "stopped"
                 ? "Restart the session to continue"
                 : agentStatus === "running"
-                  ? "Write a follow-up…"
+                  ? "Follow-up: Enter queues it · Option/Alt + Enter steers now"
                   : inputPlaceholder || "Message the agent…"
           }
           disabled={
@@ -409,82 +317,152 @@ export default function ChatComposer({
             resize: "none",
           }}
         />
-        <button
-          onClick={() => void onAttachFiles()}
-          disabled={
-            driveDetached || agentStatus === "stopped" || isNewSessionLoading
-          }
-          className="small-icon-button"
-          title="Attach files"
-          aria-label="Attach files"
-        >
-          📎
-        </button>
-        <div
-          role="group"
-          aria-label="Plan or build mode"
-          title={
-            planMode
-              ? "Plan mode: the agent writes a plan, no code or edits"
-              : "Build mode: the agent implements directly"
-          }
-          style={{ display: "flex", gap: 4 }}
-        >
-          {(
-            [
-              { value: false, label: "BUILD" },
-              { value: true, label: "PLAN" },
-            ] as const
-          ).map((option) => {
-            const active = planMode === option.value;
-            return (
+        <div className="composer-actions">
+          <button
+            onClick={() => void onAttachFiles()}
+            disabled={
+              driveDetached || agentStatus === "stopped" || isNewSessionLoading
+            }
+            className="small-icon-button"
+            title="Attach files"
+            aria-label="Attach files"
+          >
+            📎
+          </button>
+          <div
+            className="composer-chips"
+            role="toolbar"
+            aria-label="Quick prompts"
+          >
+            {[
+              {
+                label: "\uD83D\uDCA1 Brainstorm",
+                insert: "Brainstorm ideas for: ",
+              },
+              { label: "\uD83C\uDF10 Web search", insert: "/research " },
+              { label: "</> Code", insert: "Review this code: " },
+              { label: "\uFF0B Skill", insert: "/skill:" },
+            ].map((chip) => (
               <button
-                key={option.label}
-                onClick={() => onPlanModeChange(option.value)}
+                key={chip.label}
+                className="composer-chip"
+                onClick={() => {
+                  setInput(
+                    (current) => (current ? `${current} ` : "") + chip.insert,
+                  );
+                  inputRef.current?.focus();
+                }}
                 disabled={
                   driveDetached ||
                   agentStatus === "stopped" ||
                   isNewSessionLoading
                 }
-                className="composer-chip"
-                aria-pressed={active}
-                style={{
-                  minHeight: 30,
-                  fontSize: 11,
-                  letterSpacing: "0.08em",
-                  borderColor: active ? "var(--accent)" : undefined,
-                  color: active ? "var(--accent)" : undefined,
-                  background: active ? "var(--surface-selected)" : undefined,
-                }}
               >
-                {option.label}
+                {chip.label}
               </button>
-            );
-          })}
+            ))}
+          </div>
+          <CustomSelect
+            className="thinking-effort"
+            value={currentThinking || "medium"}
+            onChange={(level) => void onSetThinking(level)}
+            disabled={
+              driveDetached || agentStatus === "stopped" || isNewSessionLoading
+            }
+            ariaLabel="Thinking effort"
+            placement="top"
+            options={[
+              {
+                value: "off",
+                label: "No thinking",
+                description: "Direct response without reasoning",
+              },
+              {
+                value: "minimal",
+                label: "Minimal",
+                description: "Quick shallow checks",
+              },
+              {
+                value: "low",
+                label: "Low",
+                description: "Light reasoning",
+              },
+              {
+                value: "medium",
+                label: "Medium",
+                description: "Balanced reasoning effort",
+              },
+              {
+                value: "high",
+                label: "High",
+                description: "Deep analysis and planning",
+              },
+              {
+                value: "xhigh",
+                label: "Extra high",
+                description: "Maximum reasoning effort",
+              },
+            ]}
+          />
+          <div
+            className="composer-mode"
+            role="group"
+            aria-label="Plan or build mode"
+            title={
+              planMode
+                ? "Plan mode: the agent writes a plan, no code or edits"
+                : "Build mode: the agent implements directly"
+            }
+          >
+            {(
+              [
+                { value: false, label: "Build" },
+                { value: true, label: "Plan" },
+              ] as const
+            ).map((option) => {
+              const active = planMode === option.value;
+              return (
+                <button
+                  key={option.label}
+                  onClick={() => onPlanModeChange(option.value)}
+                  disabled={
+                    driveDetached ||
+                    agentStatus === "stopped" ||
+                    isNewSessionLoading
+                  }
+                  className="composer-chip"
+                  aria-pressed={active}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+          {status && <div className="composer-status">{status}</div>}
+          <button
+            onClick={() => onSubmit()}
+            disabled={
+              !chatReady ||
+              driveDetached ||
+              agentStatus === "stopped" ||
+              isNewSessionLoading ||
+              isAborting ||
+              researchBusy ||
+              (!input.trim() && images.length === 0 && files.length === 0)
+            }
+            className="button-primary chat-action"
+          >
+            {!chatReady
+              ? "Connecting…"
+              : researchBusy
+                ? "Starting…"
+                : isNewSessionLoading
+                  ? "Loading…"
+                  : agentStatus === "running"
+                    ? "Queue"
+                    : "Send"}
+          </button>
         </div>
-        <button
-          onClick={() => onSubmit()}
-          disabled={
-            !chatReady ||
-            driveDetached ||
-            agentStatus === "stopped" ||
-            isNewSessionLoading ||
-            isAborting ||
-            researchBusy ||
-            (!input.trim() && images.length === 0 && files.length === 0)
-          }
-          className="button-primary chat-action"
-        >
-          {!chatReady
-            ? "CONNECTING…"
-            : researchBusy
-              ? "STARTING…"
-              : isNewSessionLoading
-                ? "LOADING…"
-                : agentStatus === "running"
-                  ? "QUEUE"
-                  : "SEND"}
-        </button>
       </div>
     </div>
   );

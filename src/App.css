@@ -4495,6 +4495,154 @@ select:focus-visible {
 .graphify-model-field > label {
   display: block;
 }
+/* Model connections (ConnectionsSettings) */
+.connection-list,
+.connection-assignments {
+  display: grid;
+  border: 1px solid var(--colors-hairline-strong);
+}
+.connection-assignments > strong {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--colors-hairline);
+  color: var(--colors-muted);
+  letter-spacing: 0.12em;
+}
+.connection-row,
+.graphify-settings .connection-assignment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--colors-hairline);
+  color: var(--colors-on-dark);
+  letter-spacing: 0;
+}
+.graphify-settings .connection-assignment {
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+}
+.connection-row:last-child,
+.graphify-settings .connection-assignment:last-child {
+  border-bottom: 0;
+}
+.connection-row span,
+.connection-assignment span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.connection-row small,
+.connection-assignment small {
+  overflow: hidden;
+  color: var(--colors-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-assignment em {
+  color: var(--colors-muted);
+  font-size: 12px;
+  font-style: normal;
+  text-align: right;
+}
+.connection-row button,
+.connection-form-head button {
+  padding: 4px 10px;
+  border: 1px solid #393a32;
+  background: transparent;
+  color: var(--colors-muted);
+  font-size: 12px;
+}
+.connection-form-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--colors-muted);
+  letter-spacing: 0.12em;
+}
+.connection-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.connections-settings .graphify-model-field > label small {
+  display: block;
+  margin-top: 4px;
+}
+.connections-settings textarea {
+  flex: 1;
+  min-height: 92px;
+  padding: 10px 12px;
+  border: 1px solid #393a32;
+  background: #10110e;
+  color: var(--colors-on-dark);
+  font: inherit;
+  letter-spacing: 0;
+  resize: vertical;
+}
+.connections-settings textarea:focus {
+  border-color: var(--accent);
+}
+.connections-settings .graphify-model-row {
+  align-items: flex-start;
+}
+.connections-settings .graphify-model-row > button {
+  min-height: 42px;
+}
+/* Agent harness picker (HarnessSettings) */
+.harness-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--colors-hairline-strong);
+}
+.graphify-settings .harness-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--colors-hairline);
+  color: var(--colors-on-dark);
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.graphify-settings .harness-option:last-child {
+  border-bottom: 0;
+}
+.graphify-settings .harness-option input {
+  width: 16px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.graphify-settings .harness-option:has(input:disabled) {
+  cursor: default;
+  color: var(--colors-muted);
+}
+.harness-option span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.harness-option small {
+  overflow: hidden;
+  color: var(--colors-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.harness-remove {
+  padding: 4px 10px;
+  border: 1px solid #393a32;
+  background: transparent;
+  color: var(--colors-muted);
+  font-size: 12px;
+}
 .graphify-settings input,
 .graphify-settings select {
   min-height: 42px;
@@ -4518,9 +4666,9 @@ select:focus-visible {
 }
 .graphify-model-row button {
   padding: 0 12px;
-  border: 1px solid #393a32;
-  background: #1a1b17;
-  color: var(--colors-on-dark);
+  border: 1px solid var(--colors-hairline-strong, #393a32);
+  background: transparent;
+  color: inherit;
   white-space: nowrap;
 }
 .graphify-model-picker {

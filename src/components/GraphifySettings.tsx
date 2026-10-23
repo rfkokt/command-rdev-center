@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import type { ConnectionProfile, ConnectionsView } from "./ConnectionsSettings";
 
 type GraphifyConfig = {
   enabled: boolean;
   base_url: string;
   model: string;
   has_api_key: boolean;
+  connection_id?: string | null;
 };
 
 export default function GraphifySettings({
@@ -31,20 +33,43 @@ export default function GraphifySettings({
     model.toLowerCase().includes(modelSearch.toLowerCase()),
   );
 
+  const [connections, setConnections] = useState<ConnectionProfile[]>([]);
+  const connectionId = config.connection_id ?? "";
+
   useEffect(() => {
     invoke<GraphifyConfig>("get_graphify_settings")
       .then(setConfig)
       .catch((e) => setError(String(e)));
+    invoke<ConnectionsView>("list_connections")
+      .then((view) =>
+        setConnections(
+          (view?.profiles ?? []).filter(
+            (profile) =>
+              profile.protocol !== "anthropic" && profile.has_api_key,
+          ),
+        ),
+      )
+      .catch(() => setConnections([]));
   }, []);
 
   async function fetchModels() {
     setFetching(true);
     setError("");
     try {
-      const next = await invoke<string[]>("fetch_graphify_models", {
-        baseUrl: config.base_url,
-        apiKey: apiKey || null,
-      });
+      const connection = connections.find(
+        (profile) => profile.id === connectionId,
+      );
+      const next = connection
+        ? await invoke<string[]>("fetch_connection_models", {
+            protocol: connection.protocol,
+            baseUrl: connection.base_url,
+            apiKey: null,
+            id: connection.id,
+          })
+        : await invoke<string[]>("fetch_graphify_models", {
+            baseUrl: config.base_url,
+            apiKey: apiKey || null,
+          });
       setModels(next);
       setModelSearch("");
       setModelsOpen(next.length > 0);
@@ -65,7 +90,8 @@ export default function GraphifySettings({
         enabled: config.enabled,
         baseUrl: config.base_url,
         model: config.model,
-        apiKey: apiKey || null,
+        apiKey: connectionId ? null : apiKey || null,
+        connectionId: connectionId || null,
       });
       setConfig(next);
       setApiKey("");
@@ -96,29 +122,53 @@ export default function GraphifySettings({
         enabled. API key is stored in macOS Keychain, never in this repo or
         settings JSON.
       </div>
-      <label>
-        BASE URL
-        <input
-          type="url"
-          value={config.base_url}
-          onChange={(e) => setConfig({ ...config, base_url: e.target.value })}
-          placeholder="https://9router.example/v1"
-        />
-      </label>
-      <label>
-        API KEY
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={
-            config.has_api_key
-              ? "Saved — leave blank to keep current key"
-              : "Required"
-          }
-          autoComplete="new-password"
-        />
-      </label>
+      {connections.length > 0 && (
+        <label>
+          CONNECTION
+          <select
+            value={connectionId}
+            onChange={(e) =>
+              setConfig({ ...config, connection_id: e.target.value || null })
+            }
+          >
+            <option value="">Custom endpoint</option>
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connection.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {!connectionId && (
+        <>
+          <label>
+            BASE URL
+            <input
+              type="url"
+              value={config.base_url}
+              onChange={(e) =>
+                setConfig({ ...config, base_url: e.target.value })
+              }
+              placeholder="https://9router.example/v1"
+            />
+          </label>
+          <label>
+            API KEY
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                config.has_api_key
+                  ? "Saved — leave blank to keep current key"
+                  : "Required"
+              }
+              autoComplete="new-password"
+            />
+          </label>
+        </>
+      )}
       <div className="graphify-model-field">
         <label htmlFor="graphify-model">MODEL</label>
         <div className="graphify-model-row">
@@ -143,8 +193,8 @@ export default function GraphifySettings({
             onClick={fetchModels}
             disabled={
               fetching ||
-              !config.base_url.trim() ||
-              (!apiKey && !config.has_api_key)
+              (!connectionId &&
+                (!config.base_url.trim() || (!apiKey && !config.has_api_key)))
             }
           >
             {fetching ? "FETCHING…" : "FETCH MODELS"}

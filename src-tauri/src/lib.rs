@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+mod acp_bridge;
 mod browser_spike;
+mod connections;
 mod deep_research;
 mod dev_runner;
 mod diff;
 mod files;
 mod graph;
+mod harness;
 mod kanban;
 mod pi_rpc;
 mod pipeline;
@@ -188,6 +191,15 @@ pub fn run() {
             skills::preview_git_skills,
             skills::install_git_skills,
             pi_rpc::spawn_pi_rpc,
+            connections::list_connections,
+            connections::save_connection,
+            connections::delete_connection,
+            connections::set_connection_assignment,
+            connections::fetch_connection_models,
+            harness::list_harnesses,
+            harness::set_default_harness,
+            harness::save_custom_harness,
+            harness::delete_custom_harness,
             pi_rpc::send_pi_command,
             pi_rpc::get_session_tree,
             pi_rpc::fork_session,

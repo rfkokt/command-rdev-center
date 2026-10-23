@@ -1104,7 +1104,7 @@ export default function ProjectList({
                     className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
                     onClick={() => onResume(tab.id, project)}
                   >
-                    <span>{tab.title ?? "UNTITLED SESSION"}</span>
+                    <span>{tab.title ?? "Untitled session"}</span>
                     {tab.interrupted ? (
                       <span
                         className="agent-working-mark"

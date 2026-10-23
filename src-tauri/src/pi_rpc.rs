@@ -26,6 +26,10 @@ struct SessionHandle {
     /// Awaiting RPC round-trips keyed by request `id`; the stdout reader
     /// thread delivers `{"type": "response", "id": ...}` lines here.
     pending: Mutex<HashMap<String, std::sync::mpsc::Sender<serde_json::Value>>>,
+    /// Set for ACP harnesses: UI commands go through the bridge instead of
+    /// being written to stdin verbatim (ADR-0007).
+    bridge: Option<Mutex<crate::acp_bridge::AcpBridge>>,
+    app: Option<tauri::AppHandle>,
 }
 
 type SharedSessionHandle = Arc<SessionHandle>;
@@ -68,6 +72,17 @@ pub fn list_available_models() -> Result<Vec<String>, String> {
     models.sort();
     models.dedup();
     Ok(models)
+}
+
+/// Configured `pi_path` (for harness listings).
+pub(crate) fn configured_pi_path() -> Result<String, String> {
+    read_pi_config().map(|(path, _)| path)
+}
+
+/// PATH used for agent processes: the command's own dir plus the usual
+/// npm/bun/brew locations a GUI-launched app would otherwise miss.
+pub(crate) fn search_path(command: &str) -> std::ffi::OsString {
+    path_for_pi(command)
 }
 
 fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
@@ -587,6 +602,7 @@ pub fn spawn_pi_rpc(
     global_chat: Option<bool>,
     custom_system_prompt: Option<String>,
     project_name: Option<String>,
+    harness: Option<String>,
 ) -> Result<String, String> {
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
@@ -620,6 +636,50 @@ pub fn spawn_pi_rpc(
             "cwd deleted, resume the chat to re-anchor (nearest live: {})",
             live.display()
         ));
+    }
+    if let Some((spec, resume)) = crate::harness::select(
+        harness.as_deref(),
+        session_file.as_deref(),
+        &session_id,
+        &crate::harness::read_settings(),
+    )? {
+        let initial_model = model.as_ref().map(|model| match provider.as_deref() {
+            Some(provider) if !provider.is_empty() => format!("{provider}/{model}"),
+            _ => model.clone(),
+        });
+        let preamble = [
+            (!global_chat)
+                .then(|| worktree_system_prompt(Path::new(&cwd), &owning_project))
+                .flatten(),
+            custom_system_prompt
+                .clone()
+                .filter(|prompt| !prompt.trim().is_empty() && prompt.len() <= 1_000_000),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+        let mcp_servers = if global_chat {
+            serde_json::json!([])
+        } else {
+            serde_json::json!(kern_mcp_server(
+                &owning_project,
+                project_name.as_deref(),
+                &session_id
+            )
+            .into_iter()
+            .collect::<Vec<_>>())
+        };
+        return spawn_acp_session(
+            app,
+            session_id,
+            cwd,
+            spec,
+            resume,
+            initial_model,
+            mcp_servers,
+            preamble,
+        );
     }
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
@@ -938,6 +998,7 @@ pub fn spawn_pi_rpc(
 
     let mut command = Command::new(&pi_path);
     apply_user_token_env(&mut command);
+    crate::connections::apply_env(&mut command, crate::harness::PI);
     let mut jev_generation = if !global_chat {
         crate::settings::apply_jev_env(&mut command)
     } else {
@@ -1038,6 +1099,7 @@ pub fn spawn_pi_rpc(
                     Ok(new_pi) => {
                         command = Command::new(&new_pi);
                         apply_user_token_env(&mut command);
+                        crate::connections::apply_env(&mut command, crate::harness::PI);
                         if !global_chat {
                             jev_generation = crate::settings::apply_jev_env(&mut command);
                         }
@@ -1094,6 +1156,8 @@ pub fn spawn_pi_rpc(
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(Some(stdin)),
         pending: Mutex::new(HashMap::new()),
+        bridge: None,
+        app: None,
     });
     if let Ok(mut map) = sessions_map().lock() {
         map.insert(session_id.clone(), handle);
@@ -1209,6 +1273,272 @@ pub fn spawn_pi_rpc(
     Ok(session_id)
 }
 
+/// Write raw bytes + LF to an agent's stdin.
+fn write_stdin(handle: &SessionHandle, line: &str) -> Result<(), String> {
+    let mut guard = handle
+        .stdin
+        .lock()
+        .map_err(|_| "poisoned stdin".to_string())?;
+    let stdin = guard
+        .as_mut()
+        .ok_or_else(|| "Agent process stdin is closed. Restart the chat session.".to_string())?;
+    let mut payload = line.as_bytes().to_vec();
+    payload.push(b'\n');
+    stdin
+        .write_all(&payload)
+        .and_then(|_| stdin.flush())
+        .map_err(|error| {
+            *guard = None;
+            format!("write to agent failed: {error}")
+        })
+}
+
+/// Deliver bridge output: JSON-RPC frames to the agent, pi-shaped events to the UI.
+fn dispatch_acp(
+    handle: &SessionHandle,
+    app: &tauri::AppHandle,
+    session_id: &str,
+    outs: Vec<crate::acp_bridge::Out>,
+) -> Result<(), String> {
+    use crate::acp_bridge::Out;
+    let mut result = Ok(());
+    for out in outs {
+        match out {
+            Out::Agent(line) => {
+                if let Err(error) = write_stdin(handle, &line) {
+                    result = Err(error);
+                }
+            }
+            Out::Ui(line) => {
+                route_rpc_response(session_id, &line);
+                let _ = app.emit(
+                    "pi-rpc-event",
+                    RpcEvent {
+                        session_id: session_id.to_string(),
+                        raw: line,
+                    },
+                );
+            }
+            Out::Fatal(error) => {
+                let _ = app.emit(
+                    "pi-rpc-error",
+                    serde_json::json!({ "session_id": session_id, "error": error }),
+                );
+            }
+        }
+    }
+    result
+}
+
+fn acp_stderr_is_error(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    [
+        "error",
+        "fatal",
+        "panic",
+        "exception",
+        "unauthorized",
+        "not authenticated",
+        "api key",
+        "api_key",
+        "login",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+/// ACP `McpServerStdio` entry for Kern's own tools (`extensions/kern-mcp.mjs`).
+/// `None` when node is unavailable: the chat still works, without Kern tools.
+fn kern_mcp_server(
+    owning_project: &Path,
+    project_name: Option<&str>,
+    session_id: &str,
+) -> Option<serde_json::Value> {
+    let node = crate::harness::resolve_binary("node").or_else(|| {
+        eprintln!("crc: node not found; Kern MCP tools unavailable for {session_id}");
+        None
+    })?;
+    let script = crate::projects::ensure_extensions()
+        .map_err(|error| eprintln!("crc: Kern MCP tools unavailable: {error}"))
+        .ok()?
+        .join("kern-mcp.mjs");
+    let project_name = project_name
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            owning_project
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
+    let task_dir = crate::kanban::task_dir().ok()?;
+    let task_source =
+        crate::projects::get_project_task_source(owning_project.to_string_lossy().into_owned())
+            .map(|source| source.kind)
+            .unwrap_or_else(|_| "local".into());
+    let env = [
+        ("CRC_PROJECT_NAME", project_name),
+        (
+            "CRC_PROJECT_ROOT",
+            owning_project.to_string_lossy().into_owned(),
+        ),
+        ("CRC_TASK_DIR", task_dir.to_string_lossy().into_owned()),
+        ("CRC_TASK_SOURCE_KIND", task_source),
+        ("CRC_SESSION_ID", session_id.to_string()),
+    ];
+    Some(serde_json::json!({
+        "name": "kern",
+        "command": node.to_string_lossy(),
+        "args": [script.to_string_lossy()],
+        "env": env
+            .iter()
+            .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// Spawn an ACP harness (OpenCode, Claude Code, oh-my-pi, …) behind the pi
+/// protocol bridge. Emits the same `pi-rpc-*` events as a pi session.
+fn spawn_acp_session(
+    app: tauri::AppHandle,
+    session_id: String,
+    cwd: String,
+    spec: crate::harness::HarnessSpec,
+    resume: Option<String>,
+    initial_model: Option<String>,
+    mcp_servers: serde_json::Value,
+    preamble: String,
+) -> Result<String, String> {
+    let binary = crate::harness::resolve_binary(&spec.command).ok_or_else(|| {
+        format!(
+            "{} is not installed (`{}` not found). Install: {}",
+            spec.label, spec.command, spec.install_hint
+        )
+    })?;
+
+    // Same replace-and-restart semantics as pi chats.
+    if let Ok(mut map) = sessions_map().lock() {
+        if let Some(old) = map.remove(&session_id) {
+            if let Ok(mut maybe_child) = old.child.lock() {
+                if let Some(child) = maybe_child.as_mut() {
+                    let _ = child.kill();
+                }
+            }
+        }
+    }
+
+    let mut command = Command::new(&binary);
+    apply_user_token_env(&mut command);
+    crate::connections::apply_env(&mut command, &spec.id);
+    command
+        .args(&spec.args)
+        .current_dir(&cwd)
+        .env("PATH", search_path(&binary.to_string_lossy()))
+        .env("CRC_SESSION_ID", &session_id)
+        .env("CRC_HARNESS", &spec.id)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start {}: {error}", spec.label))?;
+    let process_id = child.id();
+    let stdout = child.stdout.take().ok_or("no stdout")?;
+    let stderr = child.stderr.take().ok_or("no stderr")?;
+    let stdin = child.stdin.take().ok_or("no stdin")?;
+
+    let mut bridge = crate::acp_bridge::AcpBridge::new(
+        spec.id.clone(),
+        cwd.clone(),
+        mcp_servers,
+        resume,
+        initial_model,
+    )
+    .with_preamble(Some(preamble));
+    let start = bridge.start();
+    let handle: SharedSessionHandle = Arc::new(SessionHandle {
+        child: Mutex::new(Some(child)),
+        stdin: Mutex::new(Some(stdin)),
+        pending: Mutex::new(HashMap::new()),
+        bridge: Some(Mutex::new(bridge)),
+        app: Some(app.clone()),
+    });
+    if let Ok(mut map) = sessions_map().lock() {
+        map.insert(session_id.clone(), handle.clone());
+    }
+    dispatch_acp(&handle, &app, &session_id, start)?;
+
+    let sid = session_id.clone();
+    let app_out = app.clone();
+    let reader_handle = handle.clone();
+    let session_cwd = cwd.clone();
+    thread::spawn(move || {
+        let mut reader = LfLineReader::new(stdout);
+        while let Some(line) = reader.next_line() {
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => {
+                    let _ = app_out.emit(
+                        "pi-rpc-error",
+                        serde_json::json!({ "session_id": sid, "error": error }),
+                    );
+                    break;
+                }
+            };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let outs = match reader_handle.bridge.as_ref().map(|bridge| bridge.lock()) {
+                Some(Ok(mut bridge)) => bridge.on_agent(&line),
+                _ => break,
+            };
+            let _ = dispatch_acp(&reader_handle, &app_out, &sid, outs);
+        }
+        let is_current = sessions_map()
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&sid).cloned())
+            .and_then(|handle| {
+                handle
+                    .child
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().map(Child::id))
+            })
+            == Some(process_id);
+        if is_current {
+            let _ = app_out.emit(
+                "pi-rpc-ended",
+                serde_json::json!({
+                    "session_id": sid,
+                    "cwd_exists": Path::new(&session_cwd).exists()
+                }),
+            );
+        }
+    });
+
+    // ACP adapters log heavily on stderr. Only error-looking lines reach the
+    // chat (as pi stderr does); the rest goes to the app log.
+    let sid = session_id.clone();
+    let label = spec.label.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if acp_stderr_is_error(&line) {
+                let _ = app.emit(
+                    "pi-rpc-stderr",
+                    serde_json::json!({ "session_id": sid, "line": format!("{label}: {line}") }),
+                );
+            } else {
+                eprintln!("crc: {sid} [{label}] {line}");
+            }
+        }
+    });
+
+    Ok(session_id)
+}
+
 /// Look up the session, drop it if the pi process already exited, and write one
 /// JSONL frame to its stdin. Shared by fire-and-forget `send_pi_command` and
 /// the awaiting `rpc_roundtrip`.
@@ -1235,6 +1565,13 @@ fn write_session_line(session_id: &str, json_line: &str) -> Result<(), String> {
             .map_err(|_| "poisoned sessions lock".to_string())?
             .remove(session_id);
         return Err("Pi process exited before receiving the command. Restart the chat session and send again.".into());
+    }
+    if let (Some(bridge), Some(app)) = (h.bridge.as_ref(), h.app.as_ref()) {
+        let outs = bridge
+            .lock()
+            .map_err(|_| "poisoned bridge".to_string())?
+            .on_ui(json_line);
+        return dispatch_acp(&h, app, session_id, outs);
     }
     let mut guard = h.stdin.lock().map_err(|_| "poisoned stdin".to_string())?;
     let stdin = guard.as_mut().ok_or_else(|| {
@@ -1682,6 +2019,14 @@ mod tests {
     }
 
     #[test]
+    fn acp_stderr_only_surfaces_errors() {
+        assert!(acp_stderr_is_error("Error: 401 Unauthorized"));
+        assert!(acp_stderr_is_error("ANTHROPIC_API_KEY is not set"));
+        assert!(!acp_stderr_is_error("[info] session started"));
+        assert!(!acp_stderr_is_error("loading plugins"));
+    }
+
+    #[test]
     fn routes_long_session_entries_response() {
         let id = "long-session-entries";
         let request = "entries-request";
@@ -1694,6 +2039,8 @@ mod tests {
                 child: Mutex::new(None),
                 stdin: Mutex::new(None),
                 pending: Mutex::new(pending),
+                bridge: None,
+                app: None,
             }),
         );
         let entries: Vec<_> = (0..3000).map(|index| serde_json::json!({

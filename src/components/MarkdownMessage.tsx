@@ -125,7 +125,7 @@ function CodeBlock({
       <header>
         <span>{language || "text"}</span>
         <button onClick={copy} disabled={isStreaming}>
-          {copied ? "COPIED" : "COPY"}
+          {copied ? "Copied" : "Copy"}
         </button>
       </header>
       {isStreaming ? (

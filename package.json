@@ -14,6 +14,7 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@fontsource-variable/instrument-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@fontsource/merriweather": "^5.3.0",
     "@ninzapp/solar-icons": "^1.0.5",

@@ -43,6 +43,68 @@ test("Graphify defaults off and can opt in without a semantic provider", async (
       baseUrl: "",
       model: "",
       apiKey: null,
+      connectionId: null,
+    }),
+  );
+});
+
+test("Graphify can reuse an OpenAI-compatible connection", async () => {
+  const config = {
+    enabled: true,
+    base_url: "",
+    model: "",
+    has_api_key: false,
+  };
+  invoke.mockImplementation((command: string) => {
+    if (command === "list_connections")
+      return Promise.resolve({
+        profiles: [
+          {
+            id: "openrouter",
+            name: "OpenRouter",
+            protocol: "openai-chat",
+            base_url: "https://openrouter.ai/api/v1",
+            models: [],
+            has_api_key: true,
+          },
+          {
+            id: "zai",
+            name: "Z.ai",
+            protocol: "anthropic",
+            base_url: "https://api.z.ai/api/anthropic",
+            models: [],
+            has_api_key: true,
+          },
+        ],
+        assignments: {},
+        compatibility: {},
+        assignment_required: [],
+      });
+    if (command === "fetch_connection_models")
+      return Promise.resolve(["deepseek/deepseek-v4"]);
+    return Promise.resolve(config);
+  });
+  render(<GraphifySettings onToast={vi.fn()} />);
+  const select = await screen.findByLabelText("CONNECTION");
+  expect(
+    Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+  ).toEqual(["Custom endpoint", "OpenRouter"]);
+  fireEvent.change(select, { target: { value: "openrouter" } });
+  expect(screen.queryByLabelText("BASE URL")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "FETCH MODELS" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "deepseek/deepseek-v4" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "SAVE GRAPHIFY SETTINGS" }),
+  );
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("save_graphify_settings", {
+      enabled: true,
+      baseUrl: "",
+      model: "deepseek/deepseek-v4",
+      apiKey: null,
+      connectionId: "openrouter",
     }),
   );
 });

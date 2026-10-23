@@ -1,0 +1,662 @@
+/*
+ * Kern refine layer — typography, reading surface, motion.
+ * Imported last so it owns the cascade (same pattern as quiet-native/opendots).
+ *
+ * Principles
+ * 1. The voxel office is the identity; the conversation is the work. Keep the
+ *    reading column calm and opaque, let the office show at the edges.
+ * 2. One family (Instrument Sans) with a real scale. Semi-condensed, heavier
+ *    headings carry the "technical, bold, controlled" voice; mono is reserved
+ *    for code and machine output.
+ * 3. Motion only answers something: a message arrives, text streams, a tool
+ *    finishes, a control takes focus. Nothing moves for decoration.
+ */
+
+/* ------------------------------------------------------------ tokens */
+
+:root,
+[data-color-theme="kern"],
+[data-color-theme="classic"] {
+  --font-sans:
+    "Instrument Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif !important;
+  --font-display: var(--font-sans) !important;
+  --font-body: var(--font-sans) !important;
+
+  /* Type scale (minor third from a 15.5px reading size) */
+  --type-meta: 12px;
+  --type-ui: 13.5px;
+  --type-read: 15.5px;
+  --type-h3: 17.5px;
+  --type-h2: 20.5px;
+  --type-h1: 24.5px;
+  --leading-read: 1.62;
+  --measure-read: 68ch;
+
+  /* Headings: semi-condensed + heavy = the product's voice */
+  --heading-stretch: 87.5%;
+  --heading-weight: 660;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 150ms;
+  --dur-state: 220ms;
+  --dur-arrive: 320ms;
+
+  /* Reading band behind the conversation */
+  --reading-band: rgba(248, 247, 244, 0.86);
+  --reading-band-edge: rgba(248, 247, 244, 0);
+  --bubble-solid: #ffffff;
+  --inline-code-bg: rgba(51, 54, 65, 0.07);
+  --inline-code-ink: #2b2e38;
+  --text-strong: #1f2129;
+  --text-body: #333641;
+  --text-quiet: #6c6e79;
+}
+
+[data-theme="dark"],
+[data-color-theme="kern"][data-theme="dark"],
+[data-color-theme="classic"][data-theme="dark"] {
+  --reading-band: rgba(16, 17, 21, 0.8);
+  --reading-band-edge: rgba(16, 17, 21, 0);
+  --bubble-solid: rgba(27, 28, 36, 0.96);
+  --inline-code-bg: rgba(255, 255, 255, 0.07);
+  --inline-code-ink: #e6e5ee;
+  --text-strong: #f6f5fa;
+  --text-body: #e2e1e9;
+  --text-quiet: #a4a5b1;
+}
+
+/* ------------------------------------------------------------ base type */
+
+html,
+body,
+.app-shell,
+.app-shell button,
+.app-shell input,
+.app-shell select,
+.app-shell textarea {
+  font-family: var(--font-sans) !important;
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Code and machine output stay mono, without ligatures that change meaning
+   (JetBrains Mono turns `-<` into an arrow). */
+.app-shell code,
+.app-shell pre,
+.app-shell kbd,
+.app-shell .agent-working-detail,
+.app-shell .chat-status,
+.app-shell .chat-status button,
+.app-shell .usage-summary {
+  font-family: var(--font-mono) !important;
+  font-variant-ligatures: none !important;
+  font-feature-settings:
+    "calt" 0,
+    "liga" 0 !important;
+}
+
+/* ------------------------------------------------------------ reading band */
+
+.app-shell .chat-content {
+  background: linear-gradient(
+    90deg,
+    var(--reading-band-edge) calc(50% - 560px),
+    var(--reading-band) calc(50% - 470px),
+    var(--reading-band) calc(50% + 470px),
+    var(--reading-band-edge) calc(50% + 560px)
+  ) !important;
+}
+
+/* ------------------------------------------------------------ messages */
+
+.app-shell .chat-bubble-assistant {
+  background: var(--bubble-solid) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 22px 28px 20px !important;
+  border-radius: 14px !important;
+  color: var(--text-body) !important;
+}
+
+[data-theme="dark"] .app-shell .chat-bubble-assistant:hover {
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+.app-shell .chat-bubble-user {
+  border-radius: 14px !important;
+}
+
+.app-shell .chat-bubble-user > .markdown-body p {
+  font-size: var(--type-read) !important;
+  line-height: 1.55 !important;
+}
+
+.app-shell .assistant-bubble-header {
+  margin-bottom: 12px !important;
+  padding-bottom: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.app-shell .assistant-author-name {
+  font-size: var(--type-ui) !important;
+  font-weight: 650 !important;
+  letter-spacing: 0 !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body {
+  font-size: var(--type-read) !important;
+  line-height: var(--leading-read) !important;
+  color: var(--text-body) !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body p,
+.app-shell .chat-bubble-assistant > .markdown-body li {
+  font-size: var(--type-read) !important;
+  line-height: var(--leading-read) !important;
+  color: var(--text-body) !important;
+  max-width: var(--measure-read);
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body p {
+  margin: 0 0 0.85em !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body li {
+  margin: 0.3em 0 !important;
+  padding-left: 0.2em !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body li::marker {
+  color: var(--text-quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body strong {
+  color: var(--text-strong) !important;
+  font-weight: 650 !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body h1,
+.app-shell .chat-bubble-assistant > .markdown-body h2,
+.app-shell .chat-bubble-assistant > .markdown-body h3,
+.app-shell .chat-bubble-assistant > .markdown-body h4 {
+  font-family: var(--font-display) !important;
+  font-stretch: var(--heading-stretch) !important;
+  font-weight: var(--heading-weight) !important;
+  letter-spacing: -0.012em !important;
+  line-height: 1.22 !important;
+  color: var(--text-strong) !important;
+  margin: 1.5em 0 0.55em !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body > :first-child {
+  margin-top: 0 !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body h1 {
+  font-size: var(--type-h1) !important;
+}
+.app-shell .chat-bubble-assistant > .markdown-body h2 {
+  font-size: var(--type-h2) !important;
+}
+.app-shell .chat-bubble-assistant > .markdown-body h3 {
+  font-size: var(--type-h3) !important;
+}
+.app-shell .chat-bubble-assistant > .markdown-body h4 {
+  font-size: var(--type-read) !important;
+}
+
+/* Inline code reads as part of the sentence, not a sticker on it. */
+.app-shell .markdown-body :not(pre) > code {
+  font-size: 0.86em !important;
+  padding: 0.12em 0.38em !important;
+  border: 0 !important;
+  border-radius: 5px !important;
+  background: var(--inline-code-bg) !important;
+  color: var(--inline-code-ink) !important;
+  white-space: break-spaces;
+}
+
+.app-shell .chat-bubble-user > .markdown-body :not(pre) > code {
+  background: rgba(255, 255, 255, 0.18) !important;
+  color: inherit !important;
+}
+
+.app-shell .markdown-body pre,
+.app-shell .markdown-body pre code {
+  font-size: 13px !important;
+  line-height: 1.6 !important;
+}
+
+.app-shell .markdown-code-block > header,
+.app-shell .markdown-code-block > header * {
+  font-size: var(--type-meta) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .markdown-body table {
+  font-size: 14.5px !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .markdown-body th {
+  font-weight: 650 !important;
+  font-size: 13.5px !important;
+  color: var(--text-strong) !important;
+}
+
+/* Message footer: quiet, sentence-case actions */
+.app-shell .chat-actions button,
+.app-shell .chat-actions summary {
+  font-size: var(--type-meta) !important;
+  font-weight: 550 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .chat-message-meta,
+.app-shell .chat-message-meta time {
+  font-size: var(--type-meta) !important;
+  color: var(--text-quiet) !important;
+}
+
+/* ------------------------------------------------------------ chrome labels */
+
+.app-shell .projects-heading span,
+.app-shell .sidebar-nav-label {
+  font-size: var(--type-meta) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .sidebar-profile-status,
+.app-shell .appearance-control button,
+.app-shell .app-version {
+  font-size: 11.5px !important;
+}
+
+.app-shell .dev-control,
+.app-shell .chat-header-actions .caption-uppercase {
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+/* Short sentence-case labels fit at every window width; the narrow-window
+   "↻" glyph swap mislabelled Stop as reload. */
+.app-shell .chat-header-actions .caption-uppercase::after {
+  content: none !important;
+}
+
+.app-shell .workspace-title strong,
+.app-shell .chat-session-name {
+  font-stretch: var(--heading-stretch) !important;
+  font-weight: 650 !important;
+  letter-spacing: -0.005em !important;
+  text-transform: none !important;
+}
+
+.app-shell .workspace-title strong {
+  font-size: 15px !important;
+}
+
+.app-shell .workspace-title small {
+  font-size: var(--type-meta) !important;
+}
+
+.app-shell .mode-badge {
+  font-size: 10.5px !important;
+  letter-spacing: 0.06em !important;
+}
+
+/* Light theme: selected segmented controls must stay legible. */
+[data-theme="light"] .app-shell .appearance-control button.active,
+[data-theme="light"] .app-shell .appearance-control .active {
+  color: var(--blue-dark) !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="light"] .app-shell .color-theme-control .active,
+[data-theme="light"] .app-shell .color-theme-control .active * {
+  color: var(--blue-dark) !important;
+  font-weight: 650 !important;
+}
+
+[data-theme="light"] .app-shell .mode-badge.live {
+  color: #3d7446 !important;
+}
+
+.app-shell .toolbar-button-primary:disabled *,
+.app-shell .button-primary.chat-action:disabled * {
+  color: inherit !important;
+}
+
+.app-shell .thinking-block summary,
+.app-shell .thinking-block summary *,
+.app-shell .tool-stack summary,
+.app-shell .tool-stack summary * {
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .tool-stack summary strong,
+.app-shell .thinking-block summary span {
+  font-size: var(--type-ui) !important;
+  font-weight: 650 !important;
+}
+
+/* ------------------------------------------------------------ activity */
+
+.app-shell .agent-working-meta strong {
+  font-size: 14px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .agent-badge-tag,
+.app-shell .pixel-step-type {
+  font-size: 10.5px !important;
+  letter-spacing: 0.02em !important;
+  text-transform: none !important;
+}
+
+.app-shell .pixel-step-text,
+.app-shell .agent-activity-log summary {
+  font-size: 12.5px !important;
+}
+
+/* One run panel: status row + collapsible step list in a single card.
+   Replaces three stacked widgets (status card, task log, composer banner). */
+.app-shell .agent-run {
+  margin: 4px 0 12px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-left: 3px solid var(--agent-color, var(--accent)) !important;
+  border-radius: 12px !important;
+  background: var(--bubble-solid) !important;
+  box-shadow: var(--shadow-card) !important;
+  overflow: hidden;
+}
+
+.app-shell .agent-run > .pixel-activity-card {
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  padding: 12px 14px !important;
+}
+
+.app-shell .agent-run > .pixel-activity-card {
+  justify-content: flex-start !important;
+}
+
+.app-shell .agent-run .agent-working-content {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+}
+
+.app-shell .agent-run .agent-working-detail {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .agent-run > .pixel-activity-log {
+  margin: 0 !important;
+  border: 0 !important;
+  border-top: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.app-shell .agent-run > .pixel-activity-log > summary {
+  font-family: var(--font-sans) !important;
+  font-size: var(--type-meta) !important;
+  font-weight: 600 !important;
+  color: var(--text-quiet) !important;
+  padding: 7px 14px !important;
+  list-style: none;
+}
+
+.app-shell .agent-run > .pixel-activity-log > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-shell .agent-run > .pixel-activity-log > summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-state) var(--ease-out);
+  margin-right: 4px;
+}
+
+.app-shell .agent-run > .pixel-activity-log[open] > summary::before {
+  transform: rotate(45deg);
+}
+
+.app-shell .agent-run > .pixel-activity-log > summary:hover {
+  color: var(--text-strong) !important;
+}
+
+.app-shell .agent-run > .pixel-activity-log[open] .pixel-agent-transcript {
+  animation: kern-arrive var(--dur-state) var(--ease-out) both;
+  padding: 2px 14px 10px !important;
+}
+
+.app-shell .agent-run-queued {
+  color: var(--accent) !important;
+  font-weight: 600;
+}
+
+/* ------------------------------------------------------------ composer */
+
+.app-shell .chat-composer textarea {
+  font-size: 14.5px !important;
+  line-height: 1.5 !important;
+}
+
+.app-shell .composer-chip,
+.app-shell .chat-composer .chat-action {
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .chat-composer .chat-action {
+  font-size: var(--type-ui) !important;
+  font-weight: 650 !important;
+}
+
+/* Primary actions must look actionable when they are, and inert when not. */
+.app-shell .button-primary.chat-action:not(:disabled),
+.app-shell .toolbar-button-primary:not(:disabled) {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  color: var(--accent-contrast) !important;
+  opacity: 1 !important;
+}
+
+.app-shell .button-primary.chat-action:disabled,
+.app-shell .toolbar-button-primary:disabled {
+  background: transparent !important;
+  border: 1px solid var(--line-strong) !important;
+  color: var(--text-quiet) !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+
+/* ------------------------------------------------------------ motion */
+
+@keyframes kern-caret {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes kern-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+@keyframes kern-pop {
+  0% {
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes kern-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* A message arriving: short rise, once. */
+.app-shell .chat-bubble-assistant,
+.app-shell .chat-bubble-user {
+  animation: kern-arrive var(--dur-arrive) var(--ease-out) both !important;
+}
+
+/* Streaming: a caret at the end of the text being written. */
+.app-shell
+  .chat-bubble-assistant.is-streaming
+  > .markdown-body
+  > :is(p, h1, h2, h3, h4):last-child::after,
+.app-shell
+  .chat-bubble-assistant.is-streaming
+  > .markdown-body
+  > :is(ul, ol):last-child
+  > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 3px;
+  vertical-align: -0.16em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: kern-caret 1s steps(1, end) infinite;
+}
+
+/* Waiting states shimmer instead of sitting still. */
+.app-shell .sidebar-profile-status.working,
+.app-shell .assistant-streaming-indicator,
+.app-shell .agent-working.phase-thinking .agent-working-meta strong,
+.app-shell .agent-working.phase-writing .agent-working-meta strong {
+  background: linear-gradient(
+      90deg,
+      var(--text-quiet) 0%,
+      var(--text-quiet) 40%,
+      var(--text-strong) 50%,
+      var(--text-quiet) 60%,
+      var(--text-quiet) 100%
+    )
+    0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  animation: kern-shimmer 1.8s linear infinite;
+}
+
+/* A tool step finishing gets one small pop on its check. */
+.app-shell .pixel-step-badge.step-done {
+  animation: kern-pop var(--dur-state) var(--ease-spring) both;
+}
+
+/* Controls answer the pointer. */
+.app-shell button,
+.app-shell .composer-chip,
+.app-shell .dev-control {
+  transition:
+    background-color var(--dur-fast) ease-out,
+    border-color var(--dur-fast) ease-out,
+    color var(--dur-fast) ease-out,
+    box-shadow var(--dur-fast) ease-out,
+    transform 100ms ease-out !important;
+}
+
+.app-shell button:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.app-shell .chat-composer {
+  transition:
+    border-color var(--dur-state) var(--ease-out),
+    box-shadow var(--dur-state) var(--ease-out) !important;
+}
+
+.app-shell .chat-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent),
+    var(--shadow-soft) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *,
+  .app-shell *::before,
+  .app-shell *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .app-shell .chat-bubble-assistant,
+  .app-shell .chat-bubble-user,
+  .app-shell .pixel-step-badge.step-done {
+    animation: none !important;
+  }
+  .app-shell button,
+  .app-shell .composer-chip,
+  .app-shell .dev-control,
+  .app-shell .chat-composer {
+    transition: none !important;
+  }
+  .app-shell button:not(:disabled):active {
+    transform: none;
+  }
+  .app-shell .sidebar-profile-status.working,
+  .app-shell .assistant-streaming-indicator,
+  .app-shell .agent-working .agent-working-meta strong {
+    background: none;
+    color: var(--text-quiet) !important;
+  }
+}

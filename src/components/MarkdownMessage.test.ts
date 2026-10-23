@@ -58,9 +58,9 @@ describe("MarkdownMessage", () => {
     const { getByRole } = render(
       createElement(MarkdownMessage, null, "```ts\nconst answer = 42;\n```"),
     );
-    fireEvent.click(getByRole("button", { name: "COPY" }));
+    fireEvent.click(getByRole("button", { name: "Copy" }));
     expect(execCommand).toHaveBeenCalledWith("copy");
-    expect(await getByRole("button", { name: "COPIED" })).toBeTruthy();
+    expect(await getByRole("button", { name: "Copied" })).toBeTruthy();
     delete (document as { execCommand?: unknown }).execCommand;
   });
 

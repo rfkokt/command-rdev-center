@@ -85,7 +85,7 @@ vi.mock("./components/ChatView", async () => {
   };
 });
 
-import App from "./App";
+import App, { sameSessionHarness } from "./App";
 
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -136,11 +136,11 @@ test("never deletes worktrees as startup housekeeping", async () => {
 test("persists explicit appearance and removes storage for system mode", () => {
   render(<App />);
 
-  fireEvent.click(screen.getByRole("button", { name: "☾ Dark" }));
+  fireEvent.click(screen.getByRole("button", { name: "Dark" }));
   expect(localStorage.getItem("crc-appearance")).toBe("dark");
   expect(document.documentElement).toHaveAttribute("data-theme", "dark");
 
-  fireEvent.click(screen.getByRole("button", { name: "◐ System" }));
+  fireEvent.click(screen.getByRole("button", { name: "System" }));
   expect(localStorage.getItem("crc-appearance")).toBeNull();
   expect(document.documentElement).toHaveAttribute("data-theme", "light");
 });
@@ -267,7 +267,7 @@ test("creates and lists multiple Global Chat sessions", () => {
   fireEvent.click(screen.getByRole("button", { name: "Open global chat" }));
   fireEvent.click(screen.getByRole("button", { name: "New Global Chat" }));
 
-  expect(screen.getAllByText("UNTITLED SESSION")).toHaveLength(2);
+  expect(screen.getAllByText("Untitled session")).toHaveLength(2);
 });
 
 test("creates a project session after switching from Global Chat to a project", () => {
@@ -381,4 +381,19 @@ test("lazy-mounts saved chats when first activated", () => {
 
   expect(chatProps.some((props) => props.chatId === "chat-1")).toBe(true);
   expect(screen.getAllByText("Chat view")).toHaveLength(2);
+});
+
+test("/resume only offers sessions from the same agent harness", () => {
+  expect(sameSessionHarness("acp:opencode:a", "acp:opencode:b")).toBe(true);
+  expect(sameSessionHarness("acp:opencode:a", "acp:claude-code:b")).toBe(false);
+  expect(
+    sameSessionHarness("/h/.pi/agent/sessions/a.jsonl", "acp:opencode:b"),
+  ).toBe(false);
+  expect(
+    sameSessionHarness(
+      "/h/.pi/agent/sessions/a.jsonl",
+      "/h/.pi/agent/sessions/b.jsonl",
+    ),
+  ).toBe(true);
+  expect(sameSessionHarness("acp:opencode:a", undefined)).toBe(true);
 });

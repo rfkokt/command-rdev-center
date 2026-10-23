@@ -195,21 +195,26 @@ export default function ProjectFilesSidebar({
     });
   }, []);
 
-  if (!projectPath || projectPath === "global") return null;
-
   const q = filter.trim().toLowerCase();
-  const filteredFiles = q
-    ? files.filter(
-        (f) =>
-          f.relative.toLowerCase().includes(q) ||
-          f.name.toLowerCase().includes(q),
-      )
-    : null;
-
+  const filteredFiles = useMemo(
+    () =>
+      q
+        ? files.filter(
+            (f) =>
+              f.relative.toLowerCase().includes(q) ||
+              f.name.toLowerCase().includes(q),
+          )
+        : null,
+    [files, q],
+  );
   const tree = useMemo(
     () => (filteredFiles ? null : buildTree(files)),
     [files, filteredFiles],
   );
+
+  // Hooks must all run before this early return: switching from the global
+  // chat to a project chat otherwise crashes with "Rendered more hooks".
+  if (!projectPath || projectPath === "global") return null;
 
   return (
     <section

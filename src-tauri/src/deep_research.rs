@@ -729,6 +729,7 @@ fn launch(
         Some(true),
         None,
         None,
+        Some(crate::harness::PI.into()),
     )?;
     let running = match mutate(&run.id, |r| {
         r.state = RunState::Running;

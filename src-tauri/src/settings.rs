@@ -194,6 +194,10 @@ pub struct GraphifySettings {
     pub model: String,
     #[serde(default)]
     pub has_api_key: bool,
+    /// Use a shared connection profile (Settings → Connections) instead of
+    /// Graphify's own base URL and key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_id: Option<String>,
 }
 
 /// Opt-in: Graphify integration only activates when the user enables it.
@@ -295,6 +299,10 @@ pub fn graphify_env() -> Option<(String, String, String)> {
     if !settings.enabled {
         return None;
     }
+    if let Some(id) = settings.connection_id.as_deref() {
+        let (base_url, key) = crate::connections::openai_endpoint(id)?;
+        return (!settings.model.trim().is_empty()).then(|| (base_url, settings.model, key));
+    }
     let key = keychain_key().ok()?;
     (!key.is_empty() && validate_graphify_settings(&settings).is_ok())
         .then(|| (settings.base_url, settings.model, key))
@@ -373,6 +381,7 @@ fn fetch_graphify_models_blocking(
         base_url: base_url.trim().trim_end_matches('/').to_string(),
         model: "placeholder".into(),
         has_api_key: false,
+        connection_id: None,
     };
     validate_graphify_settings(&settings)?;
     let key = api_key
@@ -439,13 +448,26 @@ fn save_graphify_settings_blocking(
     base_url: String,
     model: String,
     api_key: Option<String>,
+    connection_id: Option<String>,
 ) -> Result<GraphifySettings, String> {
+    let connection_id = connection_id.filter(|id| !id.trim().is_empty());
     let settings = GraphifySettings {
         enabled,
         base_url: base_url.trim().trim_end_matches('/').to_string(),
         model: model.trim().to_string(),
         has_api_key: false,
+        connection_id: connection_id.clone(),
     };
+    if let Some(id) = &connection_id {
+        if crate::connections::openai_endpoint(id).is_none() {
+            return Err("Pick an OpenAI-compatible connection that has an API key".into());
+        }
+        if enabled && settings.model.is_empty() {
+            return Err("Model is required".into());
+        }
+        write_graphify_settings_file(&settings)?;
+        return get_graphify_settings();
+    }
     if enabled && (!settings.base_url.is_empty() || !settings.model.is_empty() || api_key.is_some())
     {
         validate_graphify_settings(&settings)?;
@@ -460,13 +482,17 @@ fn save_graphify_settings_blocking(
     } else if enabled && keychain_key().is_err() {
         return Err("API key is required".into());
     }
+    write_graphify_settings_file(&settings)?;
+    get_graphify_settings()
+}
+
+fn write_graphify_settings_file(settings: &GraphifySettings) -> Result<(), String> {
     let path = graphify_settings_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, format!("{raw}\n")).map_err(|e| e.to_string())?;
-    get_graphify_settings()
+    let raw = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
+    std::fs::write(path, format!("{raw}\n")).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -475,9 +501,10 @@ pub async fn save_graphify_settings(
     base_url: String,
     model: String,
     api_key: Option<String>,
+    connection_id: Option<String>,
 ) -> Result<GraphifySettings, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        save_graphify_settings_blocking(enabled, base_url, model, api_key)
+        save_graphify_settings_blocking(enabled, base_url, model, api_key, connection_id)
     })
     .await
     .map_err(|e| format!("Failed to save Graphify settings: {e}"))?
@@ -572,12 +599,23 @@ mod tests {
     }
 
     #[test]
+    fn graphify_connection_id_is_optional_in_stored_json() {
+        let legacy: GraphifySettings =
+            serde_json::from_str(r#"{"enabled":true,"base_url":"https://x","model":"m"}"#).unwrap();
+        assert_eq!(legacy.connection_id, None);
+        assert!(!serde_json::to_string(&legacy)
+            .unwrap()
+            .contains("connection_id"));
+    }
+
+    #[test]
     fn graphify_url_requires_https_or_localhost() {
         let valid = GraphifySettings {
             enabled: true,
             base_url: "https://router.example/v1".into(),
             model: "model".into(),
             has_api_key: false,
+            connection_id: None,
         };
         assert!(validate_graphify_settings(&valid).is_ok());
         assert!(validate_graphify_settings(&GraphifySettings {

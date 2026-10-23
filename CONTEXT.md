@@ -54,6 +54,12 @@ The chatbox is the same pi agent — the engine is literally a `pi --mode rpc` p
 - **`/login` `/logout`** — no RPC command; credentials configured via env **before** spawning pi.
 - **`/llama`, `/share`, `/import`, `/trust`, built-in `/settings`/`/hotkeys`** — **skipped** for now (`/settings`/keybindings are intentionally replaced by the app's own UI).
 
+**Harness**:
+The coding-agent program a Chat runs. Default **pi** (native RPC). Other agents — OpenCode, Claude Code, oh-my-pi, Codex, Gemini CLI, or a custom command — run in ACP mode behind `acp_bridge.rs`, which translates ACP ↔ pi RPC so the chat UI is unchanged (ADR-0007). Chosen in Settings → Agent for new chats; a saved Chat always reopens in its own harness via its `sessionFile` (`acp:<harness>:<sessionId>`). Deep Research is always pi.
+
+**Connection**:
+A model endpoint profile (protocol + base URL + Keychain key + models) configured once in Settings → Connections and applied to every harness: as `kern-<id>` providers for pi, oh-my-pi and OpenCode, or as routing env for Claude Code and Codex when assigned (ADR-0007).
+
 ## Example dialogue
 
 > **Dev:** "If I close a **Chat** that made no edits, what happens to its **Session**?"

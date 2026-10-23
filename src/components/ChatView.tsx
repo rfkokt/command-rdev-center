@@ -10,6 +10,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -349,6 +350,7 @@ export default function ChatView({
   onOpenPipeline,
   onOpenResearch,
   isActive,
+  headerSlot,
   globalChat = false,
   customSystemPrompt,
   inputPlaceholder,
@@ -378,6 +380,8 @@ export default function ChatView({
   onOpenPipeline: () => void;
   onOpenResearch: (runId: string) => void;
   isActive: boolean;
+  /** App header element to render this chat's header into (single header bar). */
+  headerSlot?: HTMLElement | null;
   globalChat?: boolean;
   customSystemPrompt?: string;
   inputPlaceholder?: string;
@@ -848,7 +852,7 @@ export default function ChatView({
 
     let assignedName = "Kern";
     let assignedRole = "Lead Agent";
-    let title = "THINKING";
+    let title = "Thinking";
     let detail = activeReq
       ? `Working on: ${activeReq.slice(0, 48)}${activeReq.length > 48 ? "…" : ""}`
       : "Analyzing request";
@@ -893,13 +897,13 @@ export default function ChatView({
         assignedName = "Alan";
         assignedRole = "Research Agent";
       }
-      title = activeTool.name.replace(/^functions\./, "").toUpperCase();
+      title = activeTool.name.replace(/^functions\./, "");
       detail = describeToolActivity(activeTool);
     } else if (lastMsg && lastMsg.role === "assistant" && lastMsg.text) {
       phase = "writing";
       assignedName = "Kern";
       assignedRole = "Lead Agent";
-      title = "RESPONDING";
+      title = "Responding";
       const lastLine =
         lastMsg.text.split("\n").filter(Boolean).pop()?.slice(0, 45) || "";
       detail = lastLine ? `Writing: ${lastLine}…` : "Drafting response";
@@ -907,7 +911,7 @@ export default function ChatView({
       phase = "thinking";
       assignedName = "Kern";
       assignedRole = "Lead Agent";
-      title = "REASONING";
+      title = "Reasoning";
       const lastLine =
         lastMsg.thinking.split("\n").filter(Boolean).pop()?.slice(0, 45) || "";
       detail = lastLine ? `Thinking: ${lastLine}…` : "Evaluating solution";
@@ -4335,10 +4339,10 @@ export default function ChatView({
               ? `chat-bubble-user body-md${m.images?.length ? " has-images" : ""}${!m.text ? " image-only" : ""}`
               : m.role === "system"
                 ? "chat-notice body-sm"
-                : "chat-bubble-assistant body-md"
+                : `chat-bubble-assistant body-md${m.isStreaming ? " is-streaming" : ""}`
           }
         >
-          {m.role === "system" && <small>PI CONTEXT</small>}
+          {m.role === "system" && <small>Agent context</small>}
           {m.role === "assistant" && (
             <div className="assistant-bubble-header">
               <div className="assistant-avatar-badge">
@@ -4442,8 +4446,8 @@ export default function ChatView({
                       {tools.some((tool) => tool.phase !== "end") ? "◌" : "✓"}
                     </span>
                     <strong>
-                      {tools.length} TOOL{" "}
-                      {tools.length === 1 ? "CALL" : "CALLS"}
+                      {tools.length} tool{" "}
+                      {tools.length === 1 ? "call" : "calls"}
                     </strong>
                     <span>
                       {tools
@@ -4453,7 +4457,7 @@ export default function ChatView({
                         )
                         .join(" · ")}
                     </span>
-                    <small>DETAILS</small>
+                    <small>Details</small>
                   </summary>
                   <div className="tool-stack-items">
                     {tools.map((tool) => (
@@ -4508,7 +4512,7 @@ export default function ChatView({
                 aria-label="Copy assistant response"
                 title="Copy response"
               >
-                {copiedMessageId === m.id ? "✓ COPIED" : "⧉ COPY"}
+                {copiedMessageId === m.id ? "Copied" : "Copy"}
               </button>
               <button
                 className="chat-retry-inline"
@@ -4524,12 +4528,12 @@ export default function ChatView({
                 aria-label="Try again with last prompt"
                 title="Copy last prompt back to composer"
               >
-                ↻ TRY AGAIN
+                Try again
               </button>
               {globalChat && (
                 <details className="chat-save">
                   <summary>
-                    {savingMessageId === m.id ? "SAVING…" : "+ SAVE AS"}
+                    {savingMessageId === m.id ? "Saving…" : "Save as"}
                   </summary>
                   <div
                     className="chat-save-options"
@@ -4647,7 +4651,7 @@ export default function ChatView({
             )}
           {m.id === lastAssistantId && terminalApproval && (
             <section className="terminal-command-approval" role="alert">
-              <small>AGENT REQUEST · TERMINAL COMMAND</small>
+              <small>Agent request · terminal command</small>
               <pre>{terminalApproval.data}</pre>
               <div>
                 <button
@@ -4928,19 +4932,19 @@ export default function ChatView({
           } else {
             const kind = activityKind(activeTool.name);
             if (kind === "process") {
-              title = "RUNNING SESSION";
+              title = "Running session";
               detail = "Interactive shell";
               icon = "terminal";
             } else if (kind === "index") {
-              title = "INDEXING";
+              title = "Indexing";
               detail = "Building knowledge graph";
               icon = "graph";
             } else if (kind === "loop") {
-              title = "ITERATING";
+              title = "Iterating";
               detail = "Autonomous pass";
               icon = "loop";
             } else {
-              title = "EXECUTING";
+              title = "Executing";
               detail = describeToolActivity(activeTool);
               icon = "meter";
             }
@@ -4955,7 +4959,7 @@ export default function ChatView({
           };
           const lastLine =
             streamingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
-          title = "RESPONDING";
+          title = "Responding";
           detail = lastLine
             ? `${lastLine}${lastLine.length >= 55 ? "…" : ""}`
             : "Writing response";
@@ -4971,13 +4975,13 @@ export default function ChatView({
           const lastLine =
             thinkingText.split("\n").filter(Boolean).pop()?.slice(0, 55) || "";
           if (lastLine) {
-            title = "REASONING";
+            title = "Reasoning";
             detail = `${lastLine}${lastLine.length >= 55 ? "…" : ""}`;
           } else if (lastCompleted) {
-            title = "PLANNING NEXT";
+            title = "Planning next step";
             detail = describeToolActivity(lastCompleted);
           } else {
-            title = "THINKING";
+            title = "Thinking";
             detail = activeRequest
               ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
               : "Preparing next step";
@@ -5010,14 +5014,14 @@ export default function ChatView({
         const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
         return (
           <section
-            className="agent-activity pixel-activity-section"
+            className="agent-activity pixel-activity-section agent-run"
             aria-label="Agent activity"
+            style={{ "--agent-color": assignedAgent.color } as CSSProperties}
           >
             <div
               className={`agent-working pixel-activity-card activity-${icon} phase-${phase}`}
               role="status"
               aria-live="polite"
-              style={{ borderLeft: `3px solid ${assignedAgent.color}` }}
             >
               <div
                 className="pixel-agent-avatar-tag"
@@ -5096,6 +5100,11 @@ export default function ChatView({
                     {completedCount !== 1 ? "s" : ""}
                   </span>
                 ) : null}
+                {pendingMessageCount > 0 && (
+                  <span className="agent-run-queued">
+                    {pendingMessageCount} queued
+                  </span>
+                )}
                 <span>
                   <ElapsedLabel
                     startedAt={taskStartedAtRef.current ?? Date.now()}
@@ -5104,15 +5113,14 @@ export default function ChatView({
                 </span>
               </span>
               <button onClick={handleAbort} disabled={isAborting}>
-                {isAborting ? "ABORTING…" : "ABORT"}
+                {isAborting ? "Stopping…" : "Stop"}
               </button>
             </div>
-            <details className="agent-activity-log pixel-activity-log" open>
+            <details className="agent-activity-log pixel-activity-log">
               <summary>
-                <span className="pixel-summary-icon">⚡</span>
                 {agentTranscript.length
-                  ? `${agentTranscript.length} task${agentTranscript.length === 1 ? "" : "s"} active`
-                  : "Preparing task"}
+                  ? `${agentTranscript.length} step${agentTranscript.length === 1 ? "" : "s"}`
+                  : "Preparing"}
               </summary>
               <ul
                 className="agent-transcript pixel-agent-transcript"
@@ -5179,6 +5187,51 @@ export default function ChatView({
 
   if (!isActive) return null;
 
+  const inAppHeader = (node: ReactNode) =>
+    headerSlot ? createPortal(node, headerSlot) : node;
+
+  const composerStatus = (
+    <>
+      <span
+        className="composer-branch"
+        title={
+          worktree?.branch
+            ? `Isolated worktree on ${worktree.branch}`
+            : isGit || isWorkspace
+              ? undefined
+              : "Edits apply directly to the project folder"
+        }
+      >
+        ⑂{" "}
+        {worktree?.branch ??
+          (isWorkspace
+            ? `${repositories.length} repositories`
+            : isGit
+              ? "main"
+              : globalChat
+                ? "global"
+                : "not isolated")}
+      </span>
+      {pipelineStatus && (
+        <button className="pipeline-chat-status" onClick={onOpenPipeline}>
+          Pipeline · {pipelineStatus.step} · {pipelineStatus.completed}/
+          {pipelineStatus.total}
+        </button>
+      )}
+      {sessionStats && (
+        <button
+          className="usage-summary"
+          onClick={() => setUsageOpen(true)}
+          title="Show token usage"
+        >
+          {sessionStats.contextUsage?.percent == null
+            ? "Context —"
+            : `${Math.round(sessionStats.contextUsage.percent)}% context`}
+        </button>
+      )}
+    </>
+  );
+
   return (
     <div
       className="chat-view"
@@ -5198,197 +5251,206 @@ export default function ChatView({
         touchAction: "pan-y",
       }}
     >
-      <div
-        className={`chat-header ${
-          globalChat
-            ? ""
-            : rightSidebarOpen
-              ? "has-code-rail-rail-open"
-              : "has-code-rail"
-        }`}
-        style={{
-          paddingRight: !globalChat
-            ? rightSidebarOpen
-              ? rightPanelWidth + 48
-              : 48
-            : 24,
-          boxSizing: "border-box",
-          maxWidth: "100%",
-          overflowX: "hidden",
-        }}
-      >
-        <div className="chat-header-left">
-          <div className="chat-session-badge">
-            <span className="chat-session-dot" />
-            <strong className="chat-session-name">{projectName}</strong>
-            <button
-              onClick={handleClose}
-              className="chat-session-close"
-              title="Close chat"
-              aria-label="Close chat"
-            >
-              ✕
-            </button>
-          </div>
-          {!globalChat && !isGit && !isWorkspace && (
-            <span className="category-tag">NOT ISOLATED</span>
-          )}
-          {driveDetached && (
-            <span
-              className="category-tag"
-              style={{ color: "var(--colors-muted-soft)" }}
-            >
-              DRIVE DETACHED
-            </span>
-          )}
-          {agentStatus === "stopped" && (
-            <span
-              className="category-tag"
-              style={{ color: "var(--colors-muted-soft)" }}
-            >
-              AGENT STOPPED
-            </span>
-          )}
-          {approval && (
-            <output className="follow-up-badge">● INPUT REQUIRED</output>
-          )}
-          {!globalChat && graphEnabled && graphStatus && (
-            <>
-              <span
-                className="category-tag graph-status"
-                title={graphStatus.tracked_warning ?? "Graphify status"}
-              >
-                GRAPH {graphStatus.state}
-              </span>
-              <button
-                className="dev-control"
-                disabled={graphBusy}
-                onClick={() =>
-                  refreshGraph(
-                    graphStatus.state === "none" || graphStatus.docs_stale,
-                  )
+      {inAppHeader(
+        <div
+          className={`chat-header ${
+            headerSlot
+              ? "in-app-header"
+              : globalChat
+                ? ""
+                : rightSidebarOpen
+                  ? "has-code-rail-rail-open"
+                  : "has-code-rail"
+          }`}
+          style={
+            headerSlot
+              ? undefined
+              : {
+                  paddingRight: !globalChat
+                    ? rightSidebarOpen
+                      ? rightPanelWidth + 48
+                      : 48
+                    : 24,
+                  boxSizing: "border-box",
+                  maxWidth: "100%",
+                  overflowX: "hidden",
                 }
-              >
-                {graphBusy && (
-                  <span className="graph-spinner" aria-hidden="true" />
-                )}
-                {graphBusy
-                  ? "GRAPHIFYING…"
-                  : graphStatus.state === "none"
-                    ? "BUILD GRAPH"
-                    : "UPDATE GRAPH"}
-              </button>
-            </>
-          )}
-          {graphError && (
-            <span className="dev-error" title={graphError}>
-              GRAPH ERROR: {graphError}
-            </span>
-          )}
-          {graphBusy && graphProgress && (
-            <div className="graph-progress" role="status" aria-live="polite">
-              <span>
-                <b>
-                  {graphProgress.index}/{graphProgress.total}
-                </b>{" "}
-                {graphProgress.repository}
-              </span>
-              <small title={graphProgress.activity}>
-                {graphProgress.activity}
-              </small>
-              <small>
-                {graphProgress.index < graphProgress.total
-                  ? `${graphProgress.total - graphProgress.index} repositories remaining · `
-                  : "Finalizing repository · "}
-                {Math.floor(graphElapsed / 60)}:
-                {String(graphElapsed % 60).padStart(2, "0")} elapsed · CHAT
-                AVAILABLE
-              </small>
-              <i
-                style={{
-                  width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%`,
-                }}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="chat-header-actions">
-          <button
-            onClick={openModelPicker}
-            className="dev-control dev-control-model"
-            title="Change model (Ctrl+L or /model) — works in Global and project chat"
-            aria-label="Change model"
-          >
-            {currentModel
-              ? (currentModel.split("/").pop()?.toUpperCase().slice(0, 18) ??
-                "MODEL")
-              : "MODEL"}
-          </button>
-          {!globalChat && !devRunner && (
-            <button
-              onClick={handleRunDev}
-              className="dev-control run dev-control-run"
-            >
-              RUN DEV
-            </button>
-          )}
-          <button
-            onClick={handleOpenTerminal}
-            className={`dev-control open dev-control-term${showTerminal ? " active" : ""}`}
-          >
-            TERMINAL
-          </button>
-          <button
-            onClick={() => setSessionTreeOpen(true)}
-            className="dev-control dev-control-tree"
-            title="Session tree — fork a new branch from a past user message"
-            aria-label="Open session tree"
-          >
-            TREE
-          </button>
-          {!globalChat && devRunner && (
-            <>
-              <button onClick={handleStopDev} className="dev-control stop">
-                STOP
-              </button>
+          }
+        >
+          <div className="chat-header-left">
+            <div className="chat-session-badge">
+              <span className="chat-session-dot" />
+              <strong className="chat-session-name">
+                {globalChat ? "Global chat" : projectName}
+              </strong>
               <button
-                onClick={() => openUrl(devRunner.url)}
-                className="dev-control open"
+                onClick={handleClose}
+                className="chat-session-close"
+                title="Close chat"
+                aria-label="Close chat"
               >
-                {devRunner.url}
+                ✕
               </button>
-            </>
-          )}
-          {!globalChat && devError && (
-            <span className="dev-error" title={devError}>
-              RUN DEV ERROR: {devError}
-            </span>
-          )}
-          {agentStatus === "running" && (
+            </div>
+            {!globalChat && !isGit && !isWorkspace && (
+              <span className="category-tag">NOT ISOLATED</span>
+            )}
+            {driveDetached && (
+              <span
+                className="category-tag"
+                style={{ color: "var(--colors-muted-soft)" }}
+              >
+                DRIVE DETACHED
+              </span>
+            )}
+            {agentStatus === "stopped" && (
+              <span
+                className="category-tag"
+                style={{ color: "var(--colors-muted-soft)" }}
+              >
+                AGENT STOPPED
+              </span>
+            )}
+            {approval && (
+              <output className="follow-up-badge">● INPUT REQUIRED</output>
+            )}
+            {!globalChat && graphEnabled && graphStatus && (
+              <>
+                <span
+                  className="category-tag graph-status"
+                  title={graphStatus.tracked_warning ?? "Graphify status"}
+                >
+                  GRAPH {graphStatus.state}
+                </span>
+                <button
+                  className="dev-control"
+                  disabled={graphBusy}
+                  onClick={() =>
+                    refreshGraph(
+                      graphStatus.state === "none" || graphStatus.docs_stale,
+                    )
+                  }
+                >
+                  {graphBusy && (
+                    <span className="graph-spinner" aria-hidden="true" />
+                  )}
+                  {graphBusy
+                    ? "GRAPHIFYING…"
+                    : graphStatus.state === "none"
+                      ? "BUILD GRAPH"
+                      : "UPDATE GRAPH"}
+                </button>
+              </>
+            )}
+            {graphError && (
+              <span className="dev-error" title={graphError}>
+                GRAPH ERROR: {graphError}
+              </span>
+            )}
+            {graphBusy && graphProgress && (
+              <div className="graph-progress" role="status" aria-live="polite">
+                <span>
+                  <b>
+                    {graphProgress.index}/{graphProgress.total}
+                  </b>{" "}
+                  {graphProgress.repository}
+                </span>
+                <small title={graphProgress.activity}>
+                  {graphProgress.activity}
+                </small>
+                <small>
+                  {graphProgress.index < graphProgress.total
+                    ? `${graphProgress.total - graphProgress.index} repositories remaining · `
+                    : "Finalizing repository · "}
+                  {Math.floor(graphElapsed / 60)}:
+                  {String(graphElapsed % 60).padStart(2, "0")} elapsed · CHAT
+                  AVAILABLE
+                </small>
+                <i
+                  style={{
+                    width: `${Math.max(5, ((graphProgress.index - 1) / graphProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="chat-header-actions">
             <button
-              onClick={handleAbort}
-              disabled={isAborting}
-              className="caption-uppercase"
+              onClick={openModelPicker}
+              className="dev-control dev-control-model"
+              title="Change model (Ctrl+L or /model) — works in Global and project chat"
+              aria-label="Change model"
             >
-              {isAborting ? "ABORTING…" : "ABORT"}
+              {currentModel
+                ? (currentModel.split("/").pop()?.slice(0, 24) ?? "Model")
+                : "Model"}
             </button>
-          )}
-          {agentStatus !== "running" && (
+            {!globalChat && !devRunner && (
+              <button
+                onClick={handleRunDev}
+                className="dev-control run dev-control-run"
+              >
+                Run dev
+              </button>
+            )}
             <button
-              onClick={() => handleRestart()}
-              className="caption-uppercase"
-              disabled={isRestarting}
+              onClick={handleOpenTerminal}
+              className={`dev-control open dev-control-term${showTerminal ? " active" : ""}`}
             >
-              {isRestarting
-                ? "RELOADING…"
-                : agentStatus === "stopped"
-                  ? "RESTART"
-                  : "RELOAD PI"}
+              Terminal
             </button>
-          )}
-        </div>
-      </div>
+            <button
+              onClick={() => setSessionTreeOpen(true)}
+              className="dev-control dev-control-tree"
+              title="Session tree — fork a new branch from a past user message"
+              aria-label="Open session tree"
+            >
+              Tree
+            </button>
+            {!globalChat && devRunner && (
+              <>
+                <button onClick={handleStopDev} className="dev-control stop">
+                  Stop
+                </button>
+                <button
+                  onClick={() => openUrl(devRunner.url)}
+                  className="dev-control open"
+                >
+                  {devRunner.url}
+                </button>
+              </>
+            )}
+            {!globalChat && devError && (
+              <span className="dev-error" title={devError}>
+                Dev server failed: {devError}
+              </span>
+            )}
+            {agentStatus === "running" && (
+              <button
+                onClick={handleAbort}
+                disabled={isAborting}
+                className="caption-uppercase"
+              >
+                {isAborting ? "Stopping…" : "Stop"}
+              </button>
+            )}
+            {agentStatus !== "running" && (
+              <button
+                onClick={() => handleRestart()}
+                className="caption-uppercase"
+                disabled={isRestarting}
+              >
+                {isRestarting
+                  ? "Reloading…"
+                  : agentStatus === "stopped"
+                    ? "Restart"
+                    : "Reload agent"}
+              </button>
+            )}
+          </div>
+        </div>,
+      )}
 
       {terminalMounted && (
         <Suspense fallback={null}>
@@ -5709,7 +5771,6 @@ export default function ChatView({
           isAborting={isAborting}
           researchBusy={researchBusy}
           researchUsageError={researchUsageError}
-          pendingMessageCount={pendingMessageCount}
           projectPath={projectPath}
           inputPlaceholder={inputPlaceholder}
           input={input}
@@ -5737,6 +5798,7 @@ export default function ChatView({
           onFilePick={handleFilePick}
           onRemoveTable={handleRemoveTable}
           onSetThinking={handleSetThinking}
+          status={composerStatus}
         />
       </div>
       {!globalChat &&
@@ -5777,69 +5839,6 @@ export default function ChatView({
           onToast={onToast}
         />
       )}
-      <footer
-        className="chat-status"
-        style={{
-          paddingRight: !globalChat
-            ? rightSidebarOpen
-              ? rightPanelWidth + 24
-              : 48
-            : 18,
-          boxSizing: "border-box",
-          maxWidth: "100%",
-          overflowX: "hidden",
-        }}
-      >
-        <span>
-          ⑂{" "}
-          {worktree?.branch ??
-            (isWorkspace
-              ? `${repositories.length} repositories`
-              : isGit
-                ? "main"
-                : "not isolated")}
-        </span>
-        {pipelineStatus && (
-          <button className="pipeline-chat-status" onClick={onOpenPipeline}>
-            PIPELINE · {pipelineStatus.step} · {pipelineStatus.completed}/
-            {pipelineStatus.total} · OPEN VIEW ↗
-          </button>
-        )}
-        {sessionStats && (
-          <button
-            className="usage-summary"
-            onClick={() => setUsageOpen(true)}
-            title="Show token usage"
-          >
-            CONTEXT{" "}
-            {sessionStats.contextUsage?.percent == null
-              ? "—"
-              : `${Math.round(sessionStats.contextUsage.percent)}%`}{" "}
-            · ↑ {formatTokens(sessionStats.tokens.input)} · ↓{" "}
-            {formatTokens(sessionStats.tokens.output)}
-          </button>
-        )}
-        <button
-          className="chat-status-model"
-          onClick={openModelPicker}
-          title="Change model — Ctrl+L or /model"
-          style={
-            {
-              background: "transparent",
-              border: "1px solid transparent",
-              color: "inherit",
-              cursor: "pointer",
-              padding: "2px 6px",
-              fontSize: "inherit",
-              fontFamily: "inherit",
-              letterSpacing: "0.08em",
-            } as React.CSSProperties
-          }
-        >
-          {currentModel ? currentModel.replace("/", " | ") : "model loading…"}
-          {currentThinking ? ` | ${currentThinking}` : ""}
-        </button>
-      </footer>
       {usageOpen && sessionStats && (
         <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
           <section

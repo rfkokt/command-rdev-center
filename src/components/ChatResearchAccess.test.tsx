@@ -231,7 +231,7 @@ describe("session startup recovery", () => {
         ? Promise.resolve("new-process")
         : original(command, args),
     );
-    fireEvent.click(screen.getByRole("button", { name: "RESTART" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restart" }));
     await act(async () => {});
     expect(
       invoke.mock.calls.filter(([command]) => command === "spawn_pi_rpc"),
@@ -486,7 +486,7 @@ describe("chat-native Deep Research", () => {
             command === "send_pi_command" &&
             JSON.parse(args.jsonLine).type === "get_messages",
         ).length;
-        fireEvent.click(screen.getByRole("button", { name: "RELOAD PI" }));
+        fireEvent.click(screen.getByRole("button", { name: "Reload agent" }));
         await waitFor(() =>
           expect(
             invoke.mock.calls.filter(
@@ -508,7 +508,7 @@ describe("chat-native Deep Research", () => {
         );
         expect(screen.getByText("Reloaded fork history")).toBeInTheDocument();
       }
-      expect(screen.getByRole("button", { name: "SEND" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
     },
   );
 
@@ -539,7 +539,7 @@ describe("chat-native Deep Research", () => {
       fireEvent.change(screen.getByRole("textbox"), {
         target: { value: "Update login" },
       });
-      fireEvent.click(screen.getByRole("button", { name: "SEND" }));
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
       await waitFor(() => expect(finishCheckpoint).toBeDefined());
       const prompts = () =>
         invoke.mock.calls.filter(
@@ -643,7 +643,7 @@ describe("chat-native Deep Research", () => {
     await waitFor(() =>
       expect(screen.getByText("Calling functions.bash")).toBeInTheDocument(),
     );
-    expect(screen.getByText("1 task active")).toBeInTheDocument();
+    expect(screen.getByText("1 step")).toBeInTheDocument();
     expect(screen.queryByText(/assistantMessageEvent/)).not.toBeInTheDocument();
   });
 

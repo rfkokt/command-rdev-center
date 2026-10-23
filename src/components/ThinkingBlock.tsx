@@ -30,9 +30,9 @@ function ThinkingBlock({ children, isStreaming = false }: ThinkingBlockProps) {
       open={isStreaming}
     >
       <summary>
-        <span>THINKING</span>
-        <small className="thinking-show">SHOW</small>
-        <small className="thinking-hide">HIDE</small>
+        <span>Thinking</span>
+        <small className="thinking-show">Show</small>
+        <small className="thinking-hide">Hide</small>
       </summary>
       <pre>{formatThinking(children)}</pre>
     </details>

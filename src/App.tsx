@@ -2,6 +2,7 @@ import "@fontsource/merriweather/400.css";
 import "@fontsource/merriweather/400-italic.css";
 import "@fontsource/merriweather/700.css";
 import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource-variable/instrument-sans/wdth.css";
 import {
   lazy,
   Suspense,
@@ -43,9 +44,7 @@ import {
   applyAppearance,
   applyColorTheme,
   readAppearance,
-  readColorTheme,
   type Appearance,
-  type ColorTheme,
 } from "./theme";
 import { Mascot } from "./components/Mascot";
 import BackgroundMotion from "./components/BackgroundMotion";
@@ -61,6 +60,8 @@ import "./kern-theme.css";
 import "./quiet-native.css";
 // OpenDots design system & animations — takes priority
 import "./opendots.css";
+import "./kern-refine.css";
+import "./night-shift.css";
 
 type Config = {
   pi_path: string;
@@ -99,6 +100,23 @@ const GLOBAL_PROJECT: ProjectInfo = {
   is_git: false,
 };
 
+type Dashboard =
+  | "kanban"
+  | "pipeline"
+  | "knowledge"
+  | "skills"
+  | "research"
+  | "engines";
+
+const DASHBOARD_TITLES: Record<Dashboard, string> = {
+  kanban: "Tasks",
+  pipeline: "Pipeline",
+  knowledge: "Knowledge",
+  skills: "Skills",
+  research: "Deep research",
+  engines: "Prompt engines",
+};
+
 const CHAT_TABS_KEY = "crc-chat-tabs";
 const SIDEBAR_WIDTH_KEY = "crc-sidebar-width";
 const SIDEBAR_MIN_WIDTH = 220;
@@ -120,9 +138,18 @@ function savedTabs(): Tab[] {
   }
 }
 
+/** `/resume` can only switch between sessions of the same agent harness. */
+export function sameSessionHarness(candidate: string, current?: string) {
+  if (!current) return true;
+  const harness = (file: string) =>
+    file.startsWith("acp:") ? file.split(":")[1] : "pi";
+  return harness(candidate) === harness(current);
+}
+
 export default function App() {
   const [configErr, setConfigErr] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tab[]>(savedTabs);
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null);
   const [activeTabId, setActiveTabId] = useState<string | null>(() => {
     const tabs = savedTabs();
     return tabs[tabs.length - 1]?.id ?? null;
@@ -144,15 +171,7 @@ export default function App() {
   const [settingsProject, setSettingsProject] = useState<ProjectInfo | null>(
     null,
   );
-  const [dashboard, setDashboard] = useState<
-    | "kanban"
-    | "pipeline"
-    | "knowledge"
-    | "skills"
-    | "research"
-    | "engines"
-    | null
-  >(null);
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [researchRunId, setResearchRunId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -160,7 +179,6 @@ export default function App() {
   const [availableVersion, setAvailableVersion] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(savedSidebarWidth);
   const [appearance, setAppearance] = useState<Appearance>(readAppearance);
-  const [colorTheme, setColorTheme] = useState<ColorTheme>(readColorTheme);
   const [bgBlurred, setBgBlurred] = useState(() => {
     try {
       return localStorage.getItem("crc_bg_blurred") === "true";
@@ -227,19 +245,15 @@ export default function App() {
   }, [appearance]);
 
   useEffect(() => {
-    applyColorTheme(colorTheme);
-  }, [colorTheme]);
+    // One theme now (Night shift); clear the retired Classic/Kern choice.
+    localStorage.removeItem(COLOR_THEME_KEY);
+    applyColorTheme("classic");
+  }, []);
 
   function chooseAppearance(value: Appearance) {
     setAppearance(value);
     if (value === "system") localStorage.removeItem(APPEARANCE_KEY);
     else localStorage.setItem(APPEARANCE_KEY, value);
-  }
-
-  function chooseColorTheme(value: ColorTheme) {
-    setColorTheme(value);
-    if (value === "classic") localStorage.removeItem(COLOR_THEME_KEY);
-    else localStorage.setItem(COLOR_THEME_KEY, value);
   }
 
   const saveSessionFile = useCallback((tabId: string, sessionFile: string) => {
@@ -561,23 +575,6 @@ export default function App() {
             <PanelIcon />
           </button>
         </div>
-        <div className="sidebar-profile">
-          <Mascot
-            small
-            identity={activeTab?.id ?? workspaceProject?.name ?? "kern"}
-            state={activeTab?.interrupted ? "working" : "idle"}
-            decorative
-          />
-          <div className="sidebar-profile-info">
-            <strong>{workspaceProject?.name ?? "Kern Assistant"}</strong>
-            <span
-              className={`sidebar-profile-status ${activeTab?.interrupted ? "working" : ""}`}
-            >
-              <span className="online-dot" />
-              {activeTab?.interrupted ? "Thinking…" : "Online"}
-            </span>
-          </div>
-        </div>
         <button
           className="sidebar-new-action"
           onClick={() => {
@@ -590,7 +587,7 @@ export default function App() {
           title="New session"
         >
           <PlusIcon />
-          <span>New session</span>
+          <span>New chat</span>
         </button>
 
         <div className="sidebar-label">
@@ -650,7 +647,7 @@ export default function App() {
                       activateTab(tab.id);
                     }}
                   >
-                    <span>{tab.title ?? "UNTITLED SESSION"}</span>
+                    <span>{tab.title ?? "Untitled session"}</span>
                     {tab.interrupted ? (
                       <span
                         className="agent-working-mark"
@@ -677,7 +674,7 @@ export default function App() {
           )}
         </div>
         <nav className="sidebar-nav" aria-label="Workspace views">
-          <div className="sidebar-nav-label">Global</div>
+          <div className="sidebar-nav-label">Tools</div>
           <button
             title="Chat"
             className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`}
@@ -724,24 +721,6 @@ export default function App() {
             <span>Skills</span>
           </button>
           <div className="sidebar-system">
-            <div className="sidebar-nav-label">System</div>
-            <div
-              className="color-theme-control"
-              role="group"
-              aria-label="Color theme"
-            >
-              {(["classic", "kern"] as const).map((value) => (
-                <button
-                  key={value}
-                  className={colorTheme === value ? "active" : ""}
-                  aria-pressed={colorTheme === value}
-                  onClick={() => chooseColorTheme(value)}
-                >
-                  <i className={`theme-swatch ${value}`} aria-hidden="true" />
-                  <span>{value}</span>
-                </button>
-              ))}
-            </div>
             <div
               className="appearance-control"
               role="group"
@@ -756,12 +735,27 @@ export default function App() {
                   onClick={() => chooseAppearance(value)}
                 >
                   {value === "system"
-                    ? "◐ System"
+                    ? "System"
                     : value === "light"
-                      ? "☀ Light"
-                      : "☾ Dark"}
+                      ? "Light"
+                      : "Dark"}
                 </button>
               ))}
+            </div>
+            <div className="sidebar-footer-row">
+              <button
+                className={`sidebar-icon-toggle${bgBlurred ? " is-active" : ""}`}
+                onClick={() => setBgBlurred((prev) => !prev)}
+                title={
+                  bgBlurred
+                    ? "Show the office background"
+                    : "Blur the office background"
+                }
+                aria-label="Blur background"
+                aria-pressed={bgBlurred}
+              >
+                <BlurIcon active={bgBlurred} />
+              </button>
             </div>
             <button
               title="Check Update"
@@ -825,21 +819,33 @@ export default function App() {
             />
             <div>
               <strong>
-                {dashboard ?? activeTab?.project.name ?? "No project selected"}
+                {dashboard
+                  ? DASHBOARD_TITLES[dashboard]
+                  : (activeTab?.title ??
+                    (activeTab?.global
+                      ? "Global chat"
+                      : activeTab?.project.name) ??
+                    "No session open")}
               </strong>
               <small>
-                {activeTab
-                  ? "Local workspace · Ready"
-                  : "Local workspace · Idle"}
+                {dashboard
+                  ? (workspaceProject?.name ?? "Workspace")
+                  : activeTab?.global
+                    ? "Global chat"
+                    : (activeTab?.project.name ??
+                      "Pick a project or start a chat")}
               </small>
             </div>
-            <span
-              className={`mode-badge ${activeTab?.interrupted ? "live" : ""}`}
-            >
-              <span className="pulse-dot" />
-              {activeTab?.interrupted ? "Working" : "Live"}
-            </span>
+            {activeTab && dashboard === null && (
+              <span
+                className={`mode-badge ${activeTab.interrupted ? "live" : ""}`}
+              >
+                <span className="pulse-dot" />
+                {activeTab.interrupted ? "Working" : "Ready"}
+              </span>
+            )}
           </div>
+          <div className="toolbar-chat-slot" ref={setHeaderSlot} />
           <div className="toolbar-actions">
             {workspaceProject && (
               <nav
@@ -877,42 +883,15 @@ export default function App() {
                 </span>
               </button>
             )}
-            <button
-              className={`toolbar-button toolbar-button-blur${bgBlurred ? " is-active" : ""}`}
-              onClick={() => {
-                setBgBlurred((prev) => {
-                  const next = !prev;
-                  addToast(
-                    next
-                      ? "Latar belakang diblur (Focus mode aktif)"
-                      : "Blur latar belakang dinonaktifkan",
-                  );
-                  return next;
-                });
-              }}
-              title={
-                bgBlurred
-                  ? "Nonaktifkan blur latar belakang"
-                  : "Blur gambar belakang agar tidak terdistraksi"
-              }
-              aria-label={
-                bgBlurred
-                  ? "Nonaktifkan blur latar belakang"
-                  : "Blur gambar belakang"
-              }
-              aria-pressed={bgBlurred}
-            >
-              <BlurIcon active={bgBlurred} />
-              <span>{bgBlurred ? "Blur: On" : "Blur BG"}</span>
-            </button>
-            <button
-              className="toolbar-button toolbar-button-primary"
-              disabled={!workspaceProject}
-              onClick={() => void openInVsCode()}
-            >
-              <span>Open VS Code</span>
-              <ExternalIcon />
-            </button>
+            {workspaceProject && (
+              <button
+                className="toolbar-button toolbar-button-secondary"
+                onClick={() => void openInVsCode()}
+              >
+                <span>Open VS Code</span>
+                <ExternalIcon />
+              </button>
+            )}
           </div>
         </header>
 
@@ -1048,7 +1027,11 @@ export default function App() {
                               candidate.id !== tab.id &&
                               candidate.global === tab.global &&
                               candidate.project.path === tab.project.path &&
-                              candidate.sessionFile,
+                              candidate.sessionFile &&
+                              sameSessionHarness(
+                                candidate.sessionFile,
+                                tab.sessionFile,
+                              ),
                           )
                           .map((candidate) => ({
                             title: candidate.title ?? "Untitled session",
@@ -1090,6 +1073,7 @@ export default function App() {
                           setDashboard("research");
                         }}
                         isActive={tab.id === activeTabId}
+                        headerSlot={dashboard === null ? headerSlot : null}
                       />
                     </div>
                   );

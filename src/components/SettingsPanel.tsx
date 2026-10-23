@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import ConnectionsSettings from "./ConnectionsSettings";
 import GraphifySettings from "./GraphifySettings";
+import HarnessSettings from "./HarnessSettings";
 import JevSettings from "./JevSettings";
 import McpSettings from "./McpSettings";
 import PipelineSettings from "./PipelineSettings";
@@ -83,7 +85,14 @@ export default function SettingsPanel({
   onToast: (message: string) => void;
 }) {
   const [page, setPage] = useState<
-    "pi" | "graphify" | "jev" | "mcp" | "rag" | "pipeline"
+    | "pi"
+    | "agent"
+    | "connections"
+    | "graphify"
+    | "jev"
+    | "mcp"
+    | "rag"
+    | "pipeline"
   >(initialPage);
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
@@ -262,15 +271,19 @@ export default function SettingsPanel({
               <strong id="settings-title">
                 {page === "pi"
                   ? "Pi Settings"
-                  : page === "graphify"
-                    ? "Graphify Settings"
-                    : page === "jev"
-                      ? "Jev Settings"
-                      : page === "mcp"
-                        ? "MCP Settings"
-                        : page === "rag"
-                          ? "RAG Settings"
-                          : "Pipeline Settings"}
+                  : page === "agent"
+                    ? "Agent Harness"
+                    : page === "connections"
+                      ? "Model Connections"
+                      : page === "graphify"
+                        ? "Graphify Settings"
+                        : page === "jev"
+                          ? "Jev Settings"
+                          : page === "mcp"
+                            ? "MCP Settings"
+                            : page === "rag"
+                              ? "RAG Settings"
+                              : "Pipeline Settings"}
               </strong>
               <span className="settings-page-tag">{page.toUpperCase()}</span>
             </div>
@@ -305,6 +318,20 @@ export default function SettingsPanel({
               onClick={() => setPage("pi")}
             >
               Pi
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "agent" ? "active" : ""}`}
+              onClick={() => setPage("agent")}
+            >
+              Agent
+            </button>
+            <button
+              type="button"
+              className={`settings-scope-tab ${page === "connections" ? "active" : ""}`}
+              onClick={() => setPage("connections")}
+            >
+              Connections
             </button>
             <button
               type="button"
@@ -382,7 +409,11 @@ export default function SettingsPanel({
           )}
         </div>
 
-        {page === "graphify" ? (
+        {page === "agent" ? (
+          <HarnessSettings onToast={onToast} />
+        ) : page === "connections" ? (
+          <ConnectionsSettings onToast={onToast} />
+        ) : page === "graphify" ? (
           <GraphifySettings onToast={onToast} />
         ) : page === "jev" ? (
           <JevSettings onToast={onToast} />

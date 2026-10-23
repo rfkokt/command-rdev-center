@@ -1,0 +1,1285 @@
+/*
+ * Night shift — Kern Studio's single theme.
+ *
+ * The palette comes from the voxel office behind the chat: night-window navy
+ * for surfaces, desk-lamp amber for the one primary action, monitor cyan for
+ * live state. Imported last; owns colour tokens, the component kit and the
+ * shell layout. Typography and motion stay in kern-refine.css.
+ */
+
+/* ================================================================ tokens */
+
+:root,
+[data-color-theme="kern"],
+[data-color-theme="classic"] {
+  /* Light: paper under a desk lamp */
+  --canvas: #f2f0eb !important;
+  --surface: #f8f7f3 !important;
+  --surface-solid: #f8f7f3 !important;
+  --surface-card: #ffffff !important;
+  --surface-raised: #ece9e2 !important;
+  --surface-selected: #fbe9cf !important;
+  --surface-hover: #efece5 !important;
+  --line: #e3dfd6 !important;
+  --line-strong: #cfc9bd !important;
+  --separator: var(--line) !important;
+  --separator-strong: var(--line-strong) !important;
+
+  --ink: #1a2233 !important;
+  --text-primary: #1a2233 !important;
+  --text-secondary: #5d6576 !important;
+  --muted: #5d6576 !important;
+
+  --accent: #f0a23a !important; /* lamp amber, used as a fill */
+  --blue: var(--accent) !important;
+  --blue-dark: #a35a00 !important;
+  --accent-ink: #a35a00; /* amber as text on light surfaces */
+  --accent-hover: #e0902a;
+  --accent-contrast: #1d1306 !important;
+  --lavender: #fbe9cf !important;
+
+  --signal: #0e8aa1; /* monitor cyan: live / running */
+  --running: var(--signal) !important;
+  --online-green: #2f8f5b !important;
+  --status-red: #c4473b !important;
+  --status-amber: #a35a00 !important;
+  --code: #f1eee7 !important;
+  --code-text: #1a2233 !important;
+
+  --user-bubble: #1f2a40;
+  --user-ink: #f3f5fa;
+
+  --shadow-soft: 0 6px 24px rgba(26, 34, 51, 0.08) !important;
+  --shadow-card: 0 1px 2px rgba(26, 34, 51, 0.06) !important;
+  --shadow-pop: 0 12px 32px rgba(26, 34, 51, 0.16);
+
+  --radius-control: 8px !important;
+  --radius-card: 12px !important;
+  --radius-pill: 9999px !important;
+  --control-h: 32px;
+  --control-h-sm: 28px;
+
+  /* kern-refine reading tokens */
+  --reading-band: rgba(242, 240, 235, 0.9);
+  --reading-band-edge: rgba(242, 240, 235, 0);
+  --bubble-solid: #ffffff;
+  --inline-code-bg: rgba(26, 34, 51, 0.07);
+  --inline-code-ink: #1a2233;
+  --text-strong: #111827;
+  --text-body: #1f2937;
+  --text-quiet: #5d6576;
+
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+}
+
+[data-theme="dark"],
+[data-color-theme="kern"][data-theme="dark"],
+[data-color-theme="classic"][data-theme="dark"] {
+  /* Dark: the office after hours */
+  --canvas: #0d121c !important;
+  --surface: #111827 !important;
+  --surface-solid: #111827 !important;
+  --surface-card: #162033 !important;
+  --surface-raised: #1c2740 !important;
+  --surface-selected: #2a2416 !important;
+  --surface-hover: #182238 !important;
+  --line: #1e293d !important;
+  --line-strong: #2c3a53 !important;
+  --separator: var(--line) !important;
+  --separator-strong: var(--line-strong) !important;
+
+  --ink: #e8ecf4 !important;
+  --text-primary: #e8ecf4 !important;
+  --text-secondary: #98a3b8 !important;
+  --muted: #98a3b8 !important;
+
+  --accent: #ffb454 !important;
+  --blue: var(--accent) !important;
+  --blue-dark: #f29a2e !important;
+  --accent-ink: #ffbe6b;
+  --accent-hover: #ffc272;
+  --accent-contrast: #1d1306 !important;
+  --lavender: #2a2416 !important;
+
+  --signal: #5ad1e6;
+  --running: var(--signal) !important;
+  --online-green: #6fd39a !important;
+  --status-red: #ff7a6b !important;
+  --status-amber: #ffb454 !important;
+  --code: #0f1726 !important;
+  --code-text: #e8ecf4 !important;
+
+  --user-bubble: #23314b;
+  --user-ink: #eef2f9;
+
+  --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.35) !important;
+  --shadow-card:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 2px 10px rgba(0, 0, 0, 0.25) !important;
+  --shadow-pop: 0 18px 40px rgba(0, 0, 0, 0.5);
+
+  --reading-band: rgba(11, 16, 26, 0.84);
+  --reading-band-edge: rgba(11, 16, 26, 0);
+  --bubble-solid: #141d2e;
+  --inline-code-bg: rgba(255, 255, 255, 0.07);
+  --inline-code-ink: #e8ecf4;
+  --text-strong: #f4f6fb;
+  --text-body: #dde3ee;
+  --text-quiet: #98a3b8;
+}
+
+/* ================================================================ base */
+
+body,
+.app-shell {
+  background: var(--canvas) !important;
+  color: var(--text-body);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.app-shell ::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.app-shell :focus-visible {
+  outline: none !important;
+  box-shadow: var(--focus-ring) !important;
+}
+
+/* ================================================================ buttons
+ * Three levels, one height scale, one radius:
+ *   primary   — amber fill, the single main action in a region
+ *   secondary — outlined, for real actions
+ *   ghost     — text-only, for navigation and low-stakes actions
+ */
+
+.app-shell .button-primary,
+.app-shell .save-settings,
+.app-shell .sidebar-new-action,
+.app-shell .empty-state button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  min-height: var(--control-h) !important;
+  padding: 0 14px !important;
+  border: 1px solid var(--accent) !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--accent) !important;
+  color: var(--accent-contrast) !important;
+  font-size: var(--type-ui) !important;
+  font-weight: 650 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+
+.app-shell .button-primary *,
+.app-shell .save-settings *,
+.app-shell .sidebar-new-action *,
+.app-shell .empty-state button * {
+  color: inherit !important;
+}
+
+.app-shell .button-primary:hover:not(:disabled),
+.app-shell .save-settings:hover:not(:disabled),
+.app-shell .sidebar-new-action:hover:not(:disabled),
+.app-shell .empty-state button:hover:not(:disabled) {
+  background: var(--accent-hover) !important;
+  border-color: var(--accent-hover) !important;
+}
+
+.app-shell .button-primary:disabled,
+.app-shell .save-settings:disabled,
+.app-shell .button-primary.chat-action:disabled {
+  background: transparent !important;
+  border-color: var(--line-strong) !important;
+  color: var(--text-quiet) !important;
+  cursor: not-allowed !important;
+}
+
+.app-shell .toolbar-button,
+.app-shell .dev-control,
+.app-shell .chat-header-actions .caption-uppercase,
+.app-shell .chat-actions button,
+.app-shell .chat-actions summary,
+.app-shell .agent-working > button,
+.app-shell .graphify-model-row > button,
+.app-shell .connection-row button,
+.app-shell .connection-form-head button,
+.app-shell .harness-remove {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-height: var(--control-h-sm) !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-control) !important;
+  background: transparent !important;
+  color: var(--text-body) !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .toolbar-button *,
+.app-shell .dev-control * {
+  color: inherit !important;
+}
+
+.app-shell .toolbar-button:hover:not(:disabled),
+.app-shell .dev-control:hover:not(:disabled),
+.app-shell .chat-header-actions .caption-uppercase:hover:not(:disabled),
+.app-shell .chat-actions button:hover:not(:disabled),
+.app-shell .chat-actions summary:hover,
+.app-shell .agent-working > button:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  border-color: var(--text-quiet) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .dev-control.active,
+.app-shell .dev-control[aria-pressed="true"] {
+  background: var(--surface-selected) !important;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+  color: var(--accent-ink) !important;
+}
+
+/* The model switcher is a value, not an action: show it as a quiet select. */
+.app-shell .dev-control-model {
+  border-color: transparent !important;
+  background: var(--surface-raised) !important;
+  color: var(--text-strong) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+.app-shell .dev-control-model::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  opacity: 0.6;
+}
+
+/* Stop is the one destructive control on screen while a run is active. */
+.app-shell .chat-header-actions .caption-uppercase:not(:disabled):is(:hover),
+.app-shell .agent-working > button:hover:not(:disabled) {
+  border-color: var(--status-red) !important;
+  color: var(--status-red) !important;
+}
+
+/* ================================================================ chips & segmented */
+
+.app-shell .composer-chip,
+.app-shell .opendots-select-trigger {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  min-height: var(--control-h-sm) !important;
+  padding: 0 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--surface-raised) !important;
+  color: var(--text-body) !important;
+  font-size: 12.5px !important;
+  font-weight: 550 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  box-shadow: none !important;
+}
+
+.app-shell .composer-chip:hover:not(:disabled),
+.app-shell .opendots-select-trigger:hover {
+  background: var(--surface-hover) !important;
+  border-color: var(--line-strong) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .composer-mode,
+.app-shell .appearance-control {
+  display: inline-flex !important;
+  gap: 2px !important;
+  padding: 2px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: calc(var(--radius-control) + 2px) !important;
+  background: var(--surface-raised) !important;
+}
+
+.app-shell .composer-mode .composer-chip,
+.app-shell .appearance-control button {
+  min-height: 24px !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .composer-mode .composer-chip[aria-pressed="true"],
+.app-shell .appearance-control button.active {
+  background: var(--surface-card) !important;
+  color: var(--text-strong) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+/* ================================================================ inputs */
+
+.app-shell input[type="text"],
+.app-shell input[type="url"],
+.app-shell input[type="password"],
+.app-shell input:not([type]),
+.app-shell select,
+.app-shell .settings-panel textarea {
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-control) !important;
+  background: var(--surface-card) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell input::placeholder,
+.app-shell textarea::placeholder {
+  color: var(--text-quiet) !important;
+  opacity: 0.85;
+}
+
+/* ================================================================ status */
+
+.app-shell .mode-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  height: 22px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.app-shell .mode-badge .pulse-dot {
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 50% !important;
+  background: var(--online-green) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .mode-badge.live {
+  border-color: color-mix(in srgb, var(--signal) 45%, transparent) !important;
+  background: color-mix(in srgb, var(--signal) 12%, transparent) !important;
+  color: var(--signal) !important;
+}
+
+.app-shell .mode-badge.live .pulse-dot {
+  background: var(--signal) !important;
+  animation: ns-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ns-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--signal) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal) 0%, transparent);
+  }
+}
+
+/* ================================================================ shell: sidebar */
+
+.app-shell .sidebar {
+  background: var(--surface) !important;
+  border-right: 1px solid var(--line) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  gap: 4px !important;
+  padding: 12px 10px 10px !important;
+}
+
+.app-shell .sidebar-brand {
+  padding: 2px 4px 10px !important;
+  border: 0 !important;
+}
+
+.app-shell .wordmark-text strong {
+  font-stretch: var(--heading-stretch);
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .wordmark-text small {
+  color: var(--text-quiet) !important;
+  font-weight: 600 !important;
+}
+
+.app-shell .wordmark-dot {
+  color: var(--accent) !important;
+  background: transparent !important;
+}
+
+.app-shell .dotted-logo i {
+  background-color: var(--accent) !important;
+}
+
+.app-shell .dotted-logo i:nth-child(2),
+.app-shell .dotted-logo i:nth-child(3) {
+  background-color: var(--signal) !important;
+}
+
+.app-shell .sidebar-new-action {
+  width: 100% !important;
+  min-height: 34px !important;
+  margin: 0 0 10px !important;
+}
+
+.app-shell .sidebar-label {
+  display: none !important; /* "Sessions" rule duplicated the Projects heading */
+}
+
+.app-shell .projects-heading {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 28px !important;
+  padding: 0 6px 0 8px !important;
+  margin-top: 6px !important;
+}
+
+.app-shell .projects-heading button {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 6px !important;
+  color: var(--text-quiet) !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.app-shell .projects-heading button:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+/* Navigation rows: ghost buttons with a clear selected state */
+.app-shell .project-row,
+.app-shell .conversation-row,
+.app-shell .settings-button {
+  min-height: 30px !important;
+  padding: 0 8px !important;
+  border: 0 !important;
+  border-radius: var(--radius-control) !important;
+  background: transparent !important;
+  color: var(--text-body) !important;
+  font-size: 13px !important;
+  font-weight: 550 !important;
+  box-shadow: none !important;
+}
+
+.app-shell .project-row:hover,
+.app-shell .conversation-row:hover,
+.app-shell .settings-button:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .conversation-row.active,
+.app-shell .settings-button.active {
+  background: var(--surface-selected) !important;
+  color: var(--text-strong) !important;
+  box-shadow: inset 2px 0 0 var(--accent) !important;
+}
+
+.app-shell .conversation-row.active *,
+.app-shell .settings-button.active * {
+  color: inherit !important;
+}
+
+.app-shell .settings-button.active .settings-icon {
+  color: var(--accent-ink) !important;
+}
+
+.app-shell .conversation-row {
+  font-size: 12.5px !important;
+  font-weight: 500 !important;
+  color: var(--text-quiet) !important;
+}
+
+/* Lists take their natural height (and scroll when long); tools and the
+   system row sit at the bottom instead of leaving gaps between sections. */
+.app-shell .sidebar > .projects-panel {
+  flex: 0 1 auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+}
+
+.app-shell .sidebar-nav {
+  margin-top: auto !important;
+  border-top: 1px solid var(--line) !important;
+  padding-top: 10px !important;
+  gap: 1px !important;
+}
+
+.app-shell .sidebar-nav-label {
+  padding: 0 8px 4px !important;
+}
+
+.app-shell .sidebar-system {
+  display: grid !important;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 6px !important;
+  margin-top: 8px !important;
+  padding-top: 10px !important;
+  border-top: 1px solid var(--line) !important;
+}
+
+.app-shell .sidebar-system > .settings-button {
+  grid-column: 1 / -1;
+}
+
+.app-shell .sidebar-system > .appearance-control {
+  grid-column: 1 / 3;
+  justify-self: start;
+}
+
+.app-shell .sidebar-system > .appearance-control button {
+  min-width: 0 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  justify-content: center !important;
+}
+
+.app-shell .sidebar-footer-row {
+  display: inline-flex;
+  justify-self: end;
+}
+
+.app-shell .sidebar-icon-toggle {
+  display: grid !important;
+  place-items: center !important;
+  width: 30px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-control) !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .sidebar-icon-toggle:hover {
+  color: var(--text-strong) !important;
+  background: var(--surface-hover) !important;
+}
+
+.app-shell .sidebar-icon-toggle.is-active {
+  background: var(--surface-selected) !important;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
+  color: var(--accent-ink) !important;
+}
+
+.app-shell .app-version {
+  color: var(--text-quiet) !important;
+  opacity: 0.7;
+  text-align: left !important;
+  padding: 4px 8px 0 !important;
+}
+
+/* ================================================================ shell: header */
+
+.app-shell .app-toolbar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-height: 56px !important;
+  padding: 0 16px !important;
+  background: var(--surface) !important;
+  border-bottom: 1px solid var(--line) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+.app-shell .workspace-title {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  min-width: 0 !important;
+  flex: 0 1 auto !important;
+}
+
+.app-shell .workspace-title > div {
+  display: grid !important;
+  min-width: 0 !important;
+}
+
+.app-shell .workspace-title strong {
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .workspace-title small {
+  color: var(--text-quiet) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .toolbar-chat-slot {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.app-shell .toolbar-chat-slot:empty {
+  display: none;
+}
+
+.app-shell .toolbar-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  margin-left: auto;
+}
+
+.app-shell .toolbar-chat-slot ~ .toolbar-actions {
+  margin-left: 0;
+}
+
+.app-shell .project-workspace-nav {
+  display: inline-flex !important;
+  gap: 2px !important;
+  padding: 2px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: calc(var(--radius-control) + 2px) !important;
+  background: var(--surface-raised) !important;
+}
+
+.app-shell .project-workspace-nav button {
+  min-height: 24px !important;
+  padding: 0 10px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-size: 12.5px !important;
+  font-weight: 600 !important;
+}
+
+.app-shell .project-workspace-nav button.active {
+  background: var(--surface-card) !important;
+  color: var(--text-strong) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+/* The chat's own header, rendered into the app header. */
+.app-shell .chat-header.in-app-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  width: 100%;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  position: static !important;
+}
+
+/* Flatten the left group so status tags sit beside the actions and the
+   close control can move to the far right. */
+.app-shell .chat-header.in-app-header .chat-header-left {
+  display: contents !important;
+}
+
+.app-shell .chat-header.in-app-header .chat-header-actions {
+  order: 50;
+}
+
+/* Title already lives in the app header; keep only the close control. */
+.app-shell .chat-header.in-app-header .chat-session-badge {
+  order: 99;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .chat-header.in-app-header .chat-session-name,
+.app-shell .chat-header.in-app-header .chat-session-dot {
+  display: none !important;
+}
+
+.app-shell .chat-header.in-app-header .chat-header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.app-shell .chat-session-close {
+  display: grid !important;
+  place-items: center !important;
+  width: var(--control-h-sm) !important;
+  height: var(--control-h-sm) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--radius-control) !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-size: 12px !important;
+}
+
+.app-shell .chat-session-close:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .category-tag,
+.app-shell .follow-up-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 22px !important;
+  padding: 0 8px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  white-space: nowrap;
+}
+
+.app-shell .follow-up-badge {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent) !important;
+  background: var(--surface-selected) !important;
+  color: var(--accent-ink) !important;
+}
+
+/* ================================================================ chat surface */
+
+.app-shell .workspace-body,
+.app-shell .chat-view {
+  background: transparent !important;
+}
+
+.app-shell .chat-bubble-assistant {
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-card) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.app-shell .chat-bubble-assistant:hover {
+  border-color: var(--line-strong) !important;
+  box-shadow: var(--shadow-card) !important;
+}
+
+.app-shell .chat-bubble-user {
+  background: var(--user-bubble) !important;
+  border: 0 !important;
+  border-radius: var(--radius-card) var(--radius-card) 4px var(--radius-card) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .chat-bubble-user,
+.app-shell .chat-bubble-user .markdown-body,
+.app-shell .chat-bubble-user .markdown-body p,
+.app-shell .chat-bubble-user time {
+  color: var(--user-ink) !important;
+}
+
+.app-shell .chat-bubble-user time,
+.app-shell .chat-bubble-user small {
+  opacity: 0.65;
+}
+
+.app-shell .assistant-avatar-badge {
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--line) !important;
+}
+
+.app-shell .assistant-streaming-indicator {
+  font-family: var(--font-sans) !important;
+  font-size: var(--type-meta) !important;
+}
+
+.app-shell .thinking-block,
+.app-shell .tool-stack,
+.app-shell .tool-call {
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: var(--surface-raised) !important;
+  box-shadow: none !important;
+}
+
+.app-shell .thinking-block pre,
+.app-shell .thinking-block .thinking-content {
+  color: var(--text-quiet) !important;
+}
+
+/* Code blocks are monitors: dark in both themes, which also matches the
+   dark syntax palette (vscDarkPlus) the highlighter always uses. */
+[data-theme] .app-shell .markdown-code-block,
+[data-theme] .app-shell .markdown-body pre {
+  border: 1px solid #1e293d !important;
+  border-radius: 10px !important;
+  background: #0f1726 !important;
+  color: #dbe2ee !important;
+}
+
+[data-theme] .app-shell .markdown-code-block > header {
+  background: #131d30 !important;
+  border-bottom: 1px solid #1e293d !important;
+  color: #98a3b8 !important;
+}
+
+[data-theme] .app-shell .markdown-code-block > header button {
+  color: #98a3b8 !important;
+  border-color: #2c3a53 !important;
+  background: transparent !important;
+}
+
+[data-theme] .app-shell .markdown-code-block pre,
+[data-theme] .app-shell .markdown-code-block pre > div,
+[data-theme] .app-shell .markdown-code-block code {
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.app-shell .markdown-body table,
+.app-shell .markdown-body th,
+.app-shell .markdown-body td {
+  border-color: var(--line) !important;
+}
+
+.app-shell .markdown-body th {
+  background: var(--surface-raised) !important;
+}
+
+.app-shell .markdown-body a {
+  color: var(--accent-ink) !important;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* Run panel accent follows the agent; the default is the lamp. */
+.app-shell .agent-run {
+  border-color: var(--line) !important;
+  border-left-color: var(--agent-color, var(--accent)) !important;
+}
+
+.app-shell .agent-badge-tag {
+  background: transparent !important;
+}
+
+/* ================================================================ composer */
+
+.app-shell .chat-composer-dock {
+  padding-bottom: 14px !important;
+}
+
+.app-shell .chat-composer {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 10px 10px 10px 14px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 14px !important;
+  background: var(--surface-card) !important;
+  box-shadow: var(--shadow-soft) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Everything that is not part of the action row stays above the input. */
+.app-shell .chat-composer > * {
+  order: 0;
+}
+
+.app-shell .chat-composer > textarea {
+  order: 1;
+  flex: 1 1 100% !important;
+  min-height: 44px;
+  padding: 6px 2px !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.app-shell .composer-actions > .small-icon-button {
+  width: var(--control-h-sm) !important;
+  height: var(--control-h-sm) !important;
+  border-radius: var(--radius-control) !important;
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.app-shell .composer-actions > .small-icon-button:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+}
+
+.app-shell .composer-actions > .composer-chips {
+  flex: 0 1 auto !important;
+  width: auto !important;
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.app-shell .composer-actions > .composer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-quiet);
+  font-size: var(--type-meta);
+  white-space: nowrap;
+}
+
+.app-shell .composer-actions > .chat-action {
+  min-width: 76px;
+}
+
+.app-shell .composer-actions > .composer-mode + .chat-action {
+  margin-left: auto;
+}
+
+.app-shell .composer-status .composer-branch {
+  font-family: var(--font-mono) !important;
+  font-size: 11.5px !important;
+}
+
+.app-shell .composer-status .usage-summary,
+.app-shell .composer-status .pipeline-chat-status {
+  min-height: 24px !important;
+  padding: 0 8px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--radius-pill) !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0 !important;
+}
+
+.app-shell .composer-status .usage-summary:hover,
+.app-shell .composer-status .pipeline-chat-status:hover {
+  color: var(--text-strong) !important;
+  border-color: var(--line-strong) !important;
+}
+
+.app-shell .chat-composer-help {
+  color: var(--text-quiet) !important;
+  font-size: var(--type-meta) !important;
+  text-align: center;
+  margin: 6px 0 0 !important;
+}
+
+.app-shell .chat-composer-help kbd {
+  font-family: var(--font-mono);
+  padding: 0 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface-card);
+}
+
+/* ================================================================ empty state */
+
+/* The empty state sits on the office; give it a card so it reads. */
+.app-shell .empty-state {
+  width: min(420px, calc(100% - 48px)) !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  flex: 0 0 auto !important;
+  align-self: center !important;
+  justify-self: center !important;
+  margin: auto !important;
+  padding: 28px 28px 24px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 16px !important;
+  background: color-mix(in srgb, var(--surface) 94%, transparent) !important;
+  box-shadow: var(--shadow-pop) !important;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.app-shell .empty-state .mascot {
+  width: 72px !important;
+  height: 72px !important;
+}
+
+.app-shell .empty-state strong {
+  font-stretch: var(--heading-stretch);
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .empty-state > span {
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .empty-status {
+  border: 1px solid var(--line-strong) !important;
+  background: var(--surface) !important;
+}
+
+/* ================================================================ overlays */
+
+.app-shell .settings-panel,
+.app-shell .usage-dialog,
+.app-shell .approval-dialog,
+.app-shell .confirm-dialog,
+.app-shell .model-picker-dialog {
+  background: var(--surface) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 14px !important;
+  box-shadow: var(--shadow-pop) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.app-shell .settings-scope-tab {
+  border-radius: var(--radius-control) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+.app-shell .settings-scope-tab.active {
+  background: var(--surface-selected) !important;
+  color: var(--text-strong) !important;
+  box-shadow: inset 0 -2px 0 var(--accent) !important;
+}
+
+.app-shell .settings-notice {
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  color: var(--text-body) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .mode-badge.live .pulse-dot {
+    animation: none !important;
+  }
+}
+
+/* ================================================================ fit & finish */
+
+/* The button kit forces display:inline-flex; never let it unhide [hidden]. */
+.app-shell [hidden] {
+  display: none !important;
+}
+
+/* Header controls stay on one line; long dev-server errors truncate. */
+.app-shell .toolbar-button,
+.app-shell .dev-control {
+  white-space: nowrap !important;
+  flex-shrink: 0;
+}
+
+.app-shell .chat-header.in-app-header .dev-error {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--type-meta) !important;
+}
+
+/* The action row never wraps: quick-prompt chips scroll sideways when space
+   runs out and the branch pill truncates, so Send always stays on the row. */
+.app-shell .composer-actions {
+  order: 2;
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.app-shell .composer-actions > * {
+  flex-shrink: 0;
+}
+
+.app-shell .composer-actions > .composer-chips {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
+}
+
+.app-shell .composer-actions > .composer-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.app-shell .composer-actions > .composer-chips > * {
+  flex-shrink: 0 !important;
+}
+
+.app-shell .composer-actions > .composer-status {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  overflow: hidden;
+}
+
+.app-shell .composer-status > * {
+  flex-shrink: 0;
+}
+
+.app-shell .composer-status > .composer-branch {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Header: the title keeps a readable minimum, chat controls scroll sideways
+   rather than overlapping it, and app actions never shrink. */
+.app-shell .workspace-title {
+  min-width: 140px !important;
+}
+
+.app-shell .workspace-title .mode-badge {
+  flex-shrink: 0;
+}
+
+.app-shell .toolbar-chat-slot {
+  flex: 1 1 0px !important;
+}
+
+.app-shell .chat-header.in-app-header {
+  min-width: 0 !important;
+}
+
+.app-shell .chat-header.in-app-header .chat-header-actions {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-shell .chat-header.in-app-header .chat-header-actions::-webkit-scrollbar {
+  display: none;
+}
+
+.app-shell .toolbar-actions {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1279px) {
+  /* The dev-server failure is also shown as a toast; drop the inline copy. */
+  .app-shell .chat-header.in-app-header .dev-error {
+    display: none !important;
+  }
+}
+
+/* One primary action per header: secondary header actions are outlined. */
+.app-shell .skills-header-actions > .save-settings:not(:nth-child(2)) {
+  background: transparent !important;
+  border: 1px solid var(--line-strong) !important;
+  color: var(--text-body) !important;
+}
+
+/* Toasts sit under the header, clear of the composer. */
+.app-shell .toast-container {
+  top: 68px !important;
+  right: 16px !important;
+  bottom: auto !important;
+  max-width: min(380px, calc(100vw - 32px));
+}
+
+.app-shell .toast {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 8px !important;
+  padding: 10px 10px 10px 14px !important;
+  border: 1px solid var(--line-strong) !important;
+  border-left: 3px solid var(--accent) !important;
+  border-radius: var(--radius-card) !important;
+  background: var(--surface-card) !important;
+  box-shadow: var(--shadow-soft) !important;
+  color: var(--text-body) !important;
+  font-size: 13px !important;
+  line-height: 1.45 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: ns-toast-in 220ms var(--ease-out, ease-out) both;
+}
+
+.app-shell .toast span {
+  flex: 1;
+  white-space: pre-wrap;
+}
+
+.app-shell .toast button {
+  display: grid !important;
+  place-items: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .toast button:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+@keyframes ns-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell .toast {
+    animation: none;
+  }
+}
