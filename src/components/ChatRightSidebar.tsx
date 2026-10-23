@@ -1,12 +1,15 @@
-import { BranchIcon, CloseIcon, FilesIcon } from "./ui-icons";
+import { BranchIcon, CloseIcon, FilesIcon, GaugeIcon } from "./ui-icons";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import SourceControlPanel from "./SourceControlPanel";
+import QuotaPanel from "./QuotaPanel";
 import { confirm } from "./ConfirmDialog";
 import type { ChatRepository, WorktreeDiff, WorktreeInfo } from "./ChatView";
 
+export type RightActivity = "explorer" | "scm" | "usage";
+
 export type ChatRightSidebarProps = {
   open: boolean;
-  activity: "explorer" | "scm";
+  activity: RightActivity;
   panelWidth: number;
   worktree: WorktreeInfo | null;
   isWorkspace: boolean;
@@ -15,11 +18,17 @@ export type ChatRightSidebarProps = {
   projectName: string;
   repositoryStatuses: ChatRepository[];
   onOpenChange: (open: boolean) => void;
-  onActivityChange: (activity: "explorer" | "scm") => void;
+  onActivityChange: (activity: RightActivity) => void;
   onPanelWidthChange: (width: number) => void;
   onOpenDiff: (key: string) => void;
   onWorktreeDiffChange: (diff: WorktreeDiff) => void;
   onToast: (message: string) => void;
+};
+
+const TITLES: Record<RightActivity, string> = {
+  explorer: "Files",
+  scm: "Changes",
+  usage: "Usage",
 };
 
 export default function ChatRightSidebar({
@@ -41,7 +50,7 @@ export default function ChatRightSidebar({
 }: ChatRightSidebarProps) {
   const changeCount = worktreeDiff?.files.length ?? 0;
   const canShowChanges = Boolean(worktree || isWorkspace);
-  const toggle = (next: "explorer" | "scm") => {
+  const toggle = (next: RightActivity) => {
     if (open && activity === next) onOpenChange(false);
     else {
       onOpenChange(true);
@@ -95,9 +104,13 @@ export default function ChatRightSidebar({
         />
         <header className="krs-head">
           <div className="krs-head-text">
-            <strong>{activity === "explorer" ? "Files" : "Changes"}</strong>
-            <small title={activity === "explorer" ? projectName : branch}>
-              {activity === "explorer" ? projectName : branch || projectName}
+            <strong>{TITLES[activity]}</strong>
+            <small title={activity === "scm" ? branch : projectName}>
+              {activity === "usage"
+                ? "Subscription quota"
+                : activity === "explorer"
+                  ? projectName
+                  : branch || projectName}
             </small>
           </div>
           <button
@@ -111,7 +124,9 @@ export default function ChatRightSidebar({
           </button>
         </header>
         <div className="krs-body">
-          {activity === "explorer" ? (
+          {activity === "usage" ? (
+            <QuotaPanel onToast={onToast} />
+          ) : activity === "explorer" ? (
             <ProjectFilesSidebar
               projectPath={cwd}
               projectName={projectName}
@@ -169,6 +184,16 @@ export default function ChatRightSidebar({
             )}
           </button>
         )}
+        <button
+          type="button"
+          className={open && activity === "usage" ? "active" : ""}
+          onClick={() => toggle("usage")}
+          title={open && activity === "usage" ? "Hide usage" : "Usage"}
+          aria-label="Usage"
+          aria-expanded={open && activity === "usage"}
+        >
+          <GaugeIcon size={18} />
+        </button>
       </nav>
     </div>
   );

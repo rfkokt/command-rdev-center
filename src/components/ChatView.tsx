@@ -81,7 +81,7 @@ import { useModalFocus } from "./useModalFocus";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
-import ChatRightSidebar from "./ChatRightSidebar";
+import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel from "./SessionTreePanel";
 import Mascot from "./Mascot";
@@ -493,9 +493,7 @@ export default function ChatView({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [rightActivity, setRightActivity] = useState<"explorer" | "scm">(
-    "explorer",
-  );
+  const [rightActivity, setRightActivity] = useState<RightActivity>("explorer");
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });

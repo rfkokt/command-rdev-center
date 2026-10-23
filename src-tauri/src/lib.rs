@@ -16,6 +16,7 @@ mod pi_rpc;
 mod pipeline;
 mod projects;
 mod prompt_engines;
+mod quota;
 mod rag;
 mod scm;
 mod settings;
@@ -212,6 +213,10 @@ pub fn run() {
             agent_updates::apply_agent_update,
             agent_updates::get_auto_update,
             agent_updates::set_auto_update,
+            quota::get_quota,
+            quota::redeem_quota_reset,
+            quota::get_quota_settings,
+            quota::save_quota_settings,
             pi_rpc::send_pi_command,
             pi_rpc::get_session_tree,
             pi_rpc::fork_session,

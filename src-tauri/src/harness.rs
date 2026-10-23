@@ -45,6 +45,17 @@ pub struct HarnessSettings {
     pub auto_approve: bool,
     /// Install agent updates found by the startup check without asking.
     pub auto_update: bool,
+    /// Show Claude subscription quota (reads Claude Code's Keychain login).
+    /// `None` = on.
+    pub quota_claude: Option<bool>,
+    /// 9router gateway for account quotas; `None` = `quota::DEFAULT_ROUTER_URL`.
+    pub router_url: Option<String>,
+}
+
+impl HarnessSettings {
+    pub fn quota_claude_enabled(&self) -> bool {
+        self.quota_claude.unwrap_or(true)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

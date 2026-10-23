@@ -44,6 +44,14 @@ export const BranchIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const GaugeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.25 11.5a5.75 5.75 0 1 1 11.5 0" />
+    <path d="M8 11.5l2.75-3.5" />
+    <circle cx="8" cy="11.5" r="0.75" />
+  </Icon>
+);
+
 export const RefreshIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" />

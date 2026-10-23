@@ -30,6 +30,7 @@ const DeepResearchView = lazy(() => import("./components/DeepResearchView"));
 const PromptEnginesView = lazy(() => import("./components/PromptEnginesView"));
 import { ConfirmHost } from "./components/ConfirmDialog";
 import { checkAgentUpdatesOnStartup } from "./lib/agent-updates";
+import { startQuotaPolling } from "./lib/quota";
 import {
   BookIcon,
   ChatIcon,
@@ -247,7 +248,12 @@ export default function App() {
     const agentCheck = setTimeout(() => {
       void checkAgentUpdatesOnStartup(addToast);
     }, 5000);
-    return () => clearTimeout(agentCheck);
+    // Quota resets (scheduled, redeemed or granted) surface as toasts.
+    const stopQuota = startQuotaPolling(addToast);
+    return () => {
+      clearTimeout(agentCheck);
+      stopQuota();
+    };
   }, [addToast]);
 
   useEffect(() => {

@@ -56,9 +56,15 @@ enum Pending {
 
 #[derive(Default)]
 struct Turn {
+    /// Text and thinking of the open assistant message (segment).
     text: String,
     thinking: String,
     used_tool: bool,
+    /// An ACP turn is one prompt, but pi emits one assistant message per model
+    /// call. Text before a tool call closes the segment so the UI separates
+    /// it from the text that follows, as it does for pi.
+    closed: Vec<Value>,
+    segment_closed: bool,
 }
 
 struct PermissionRequest {
@@ -1109,37 +1115,77 @@ impl AcpBridge {
         }
     }
 
-    fn finish_turn(&mut self, reason: &str, error: Option<String>) -> Vec<Out> {
-        let turn = self.turn.take().unwrap_or_default();
+    fn segment_message(&mut self, text: &str, thinking: &str, stop: &str) -> Value {
         let mut content = Vec::new();
-        if !turn.thinking.is_empty() {
-            content.push(json!({ "type": "thinking", "thinking": turn.thinking }));
+        if !thinking.is_empty() {
+            content.push(json!({ "type": "thinking", "thinking": thinking }));
         }
-        if !turn.text.is_empty() {
-            content.push(json!({ "type": "text", "text": turn.text }));
+        if !text.is_empty() {
+            content.push(json!({ "type": "text", "text": text }));
         }
-        let mut assistant = json!({
+        json!({
             "id": self.next_seq("acp-assistant"),
             "role": "assistant",
             "content": content,
-            "stopReason": if error.is_some() || reason == "refusal" { "error" } else if turn.used_tool && turn.text.is_empty() { "toolUse" } else { stop_reason(reason) },
+            "stopReason": stop,
             "timestamp": now_ms(),
-        });
+        })
+    }
+
+    /// Close the open segment before a tool call when it holds output.
+    fn close_segment(&mut self) -> Option<Out> {
+        let turn = self.turn.as_mut()?;
+        if turn.segment_closed || (turn.text.is_empty() && turn.thinking.is_empty()) {
+            return None;
+        }
+        let text = std::mem::take(&mut turn.text);
+        let thinking = std::mem::take(&mut turn.thinking);
+        turn.segment_closed = true;
+        let message = self.segment_message(&text, &thinking, "toolUse");
+        self.history.push(message.clone());
+        if let Some(turn) = self.turn.as_mut() {
+            turn.closed.push(message.clone());
+        }
+        Some(Self::ui(
+            json!({ "type": "message_end", "message": message }),
+        ))
+    }
+
+    fn finish_turn(&mut self, reason: &str, error: Option<String>) -> Vec<Out> {
+        let turn = self.turn.take().unwrap_or_default();
+        let stop = if error.is_some() || reason == "refusal" {
+            "error"
+        } else if turn.used_tool && turn.text.is_empty() {
+            "toolUse"
+        } else {
+            stop_reason(reason)
+        };
+        let mut assistant = self.segment_message(&turn.text, &turn.thinking, stop);
         if let Some(error) = &error {
             assistant["errorMessage"] = json!(error);
         } else if reason == "refusal" {
             assistant["errorMessage"] = json!(format!("{} refused to continue", self.harness));
         }
-        if !turn.text.is_empty() || !turn.thinking.is_empty() {
+        let has_output = !turn.text.is_empty() || !turn.thinking.is_empty();
+        if has_output {
             self.history.push(assistant.clone());
         }
         // Pending permission prompts belong to the finished turn.
         self.permissions.clear();
-        let mut out = vec![
-            Self::ui(json!({ "type": "message_end", "message": assistant })),
-            Self::ui(json!({ "type": "agent_end", "messages": [assistant] })),
-            Self::ui(json!({ "type": "agent_settled" })),
-        ];
+        let mut messages = turn.closed;
+        let mut out = Vec::new();
+        // A closed segment with nothing after it already had its message_end;
+        // a fresh empty one would only add a blank bubble (errors still show).
+        if !turn.segment_closed || has_output || assistant.get("errorMessage").is_some() {
+            out.push(Self::ui(
+                json!({ "type": "message_end", "message": assistant }),
+            ));
+            messages.push(assistant);
+        }
+        out.push(Self::ui(
+            json!({ "type": "agent_end", "messages": messages }),
+        ));
+        out.push(Self::ui(json!({ "type": "agent_settled" })));
         if let Some((message, images)) = self.queued_prompts.pop_front() {
             out.push(self.queue_update());
             out.extend(self.start_prompt(message, images));
@@ -1189,6 +1235,16 @@ impl AcpBridge {
                 let Some(turn) = self.turn.as_mut() else {
                     return Vec::new();
                 };
+                if kind == "user_message_chunk" {
+                    return Vec::new();
+                }
+                let mut out = Vec::new();
+                if turn.segment_closed {
+                    turn.segment_closed = false;
+                    out.push(Self::ui(
+                        json!({ "type": "message_start", "message": { "role": "assistant" } }),
+                    ));
+                }
                 let delta_type = match kind {
                     "agent_message_chunk" => {
                         turn.text.push_str(text);
@@ -1200,10 +1256,11 @@ impl AcpBridge {
                     }
                     _ => return Vec::new(),
                 };
-                vec![Self::ui(json!({
+                out.push(Self::ui(json!({
                     "type": "message_update",
                     "assistantMessageEvent": { "type": delta_type, "delta": text }
-                }))]
+                })));
+                out
             }
             "tool_call" => {
                 if self.replaying {
@@ -1216,13 +1273,14 @@ impl AcpBridge {
                 let args = tool_args(update);
                 self.tools
                     .insert(call_id.to_string(), (name.clone(), args.clone()));
+                let mut out: Vec<Out> = self.close_segment().into_iter().collect();
                 if let Some(turn) = self.turn.as_mut() {
                     turn.used_tool = true;
                 }
-                let mut out = vec![Self::ui(json!({
+                out.push(Self::ui(json!({
                     "type": "tool_execution_start",
                     "toolCallId": call_id, "toolName": name, "args": args
-                }))];
+                })));
                 let finished = matches!(
                     update.get("status").and_then(Value::as_str),
                     Some("completed" | "failed")
@@ -1242,6 +1300,10 @@ impl AcpBridge {
                 };
                 let mut out = Vec::new();
                 if !self.tools.contains_key(call_id) {
+                    out.extend(self.close_segment());
+                    if let Some(turn) = self.turn.as_mut() {
+                        turn.used_tool = true;
+                    }
                     let name = tool_name(update);
                     let args = tool_args(update);
                     self.tools
@@ -1486,6 +1548,57 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0]["role"], "user");
         assert_eq!(messages[1]["role"], "assistant");
+    }
+
+    #[test]
+    fn tool_calls_split_text_into_separate_assistant_messages() {
+        let mut bridge = ready_bridge(false);
+        let id = agent(&bridge.on_ui(r#"{"type":"prompt","message":"x"}"#))[0]["id"]
+            .as_u64()
+            .unwrap();
+        let text = |t: &str| {
+            update(json!({
+                "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": t }
+            }))
+        };
+        let kinds = |out: &[Out]| -> Vec<String> {
+            ui(out)
+                .iter()
+                .map(|e| e["type"].as_str().unwrap().to_string())
+                .collect()
+        };
+        bridge.on_agent(&text("Checking:"));
+        let tool = bridge.on_agent(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "t1", "title": "ls", "status": "pending"
+        })));
+        assert_eq!(kinds(&tool)[..2], ["message_end", "tool_execution_start"]);
+        assert_eq!(ui(&tool)[0]["message"]["content"][0]["text"], "Checking:");
+        // A second tool with no text in between does not emit an empty message.
+        let second = bridge.on_agent(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "t2", "title": "cat", "status": "pending"
+        })));
+        assert_eq!(kinds(&second)[0], "tool_execution_start");
+        assert_eq!(
+            kinds(&bridge.on_agent(&text("Done."))),
+            ["message_start", "message_update"]
+        );
+
+        let settled = ui(&bridge.on_agent(&reply(id, json!({ "stopReason": "end_turn" }))));
+        assert_eq!(settled[0]["type"], "message_end");
+        assert_eq!(settled[0]["message"]["content"][0]["text"], "Done.");
+        let ended = settled[1]["messages"].as_array().unwrap();
+        assert_eq!(ended.len(), 2);
+
+        // Ending right after a closed segment adds no blank message.
+        let id = agent(&bridge.on_ui(r#"{"type":"prompt","message":"y"}"#))[0]["id"]
+            .as_u64()
+            .unwrap();
+        bridge.on_agent(&text("Running:"));
+        bridge.on_agent(&update(json!({
+            "sessionUpdate": "tool_call", "toolCallId": "t3", "title": "ls", "status": "completed"
+        })));
+        let settled = bridge.on_agent(&reply(id, json!({ "stopReason": "end_turn" })));
+        assert_eq!(kinds(&settled), ["agent_end", "agent_settled"]);
     }
 
     #[test]
