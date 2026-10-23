@@ -11,6 +11,8 @@ export type QuotaWindow = {
 /** Mirrors `quota::QuotaAccount`. */
 export type QuotaAccount = {
   id: string;
+  /** Panel heading: "Claude" or the 9router's name. */
+  group: string;
   source: "claude" | "9router";
   provider: string;
   name: string;
@@ -23,7 +25,8 @@ export type QuotaAccount = {
 
 export type QuotaSnapshot = {
   accounts: QuotaAccount[];
-  router_configured: boolean;
+  /** 9routers with a stored password. */
+  routers: number;
   checked_at: number;
 };
 

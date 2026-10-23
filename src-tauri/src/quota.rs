@@ -1,6 +1,7 @@
 //! Subscription quota: how much of each plan window is used and when it
 //! resets, for the Claude login Claude Code keeps in the Keychain and for
-//! every account connected to a 9router gateway.
+//! every account connected to the user's 9router gateways (e.g. a local one
+//! and one on a VPS).
 //!
 //! Providers expose percentages per window (5-hour, weekly), not remaining
 //! tokens. Reset credits are redeemed through 9router's own routes, so Kern
@@ -9,17 +10,25 @@
 //! Secrets (the Claude access token, the 9router password and session
 //! cookie) reach curl through `--config -` on stdin, never argv.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+/// One Keychain entry per router, keyed by `RouterConfig::id`.
 const ROUTER_KEYCHAIN_SERVICE: &str = "command-rdev-center.9router";
-const ROUTER_KEYCHAIN_ACCOUNT: &str = "dashboard";
-pub const DEFAULT_ROUTER_URL: &str = "http://localhost:20128";
+
+/// A 9router gateway, stored in `harnesses.json` (password in the Keychain).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RouterConfig {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct QuotaWindow {
@@ -31,8 +40,10 @@ pub struct QuotaWindow {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct QuotaAccount {
-    /// `"claude"` or `"9router:<connection id>"`.
+    /// `"claude"` or `"9router:<router id>:<connection id>"`.
     pub id: String,
+    /// Heading the panel groups this account under ("Claude", router name).
+    pub group: String,
     /// `"claude"` (Keychain) or `"9router"`.
     pub source: String,
     /// Provider id: `claude`, `codex`, `antigravity`, …
@@ -49,7 +60,8 @@ pub struct QuotaAccount {
 #[derive(Debug, Clone, Serialize)]
 pub struct QuotaSnapshot {
     pub accounts: Vec<QuotaAccount>,
-    pub router_configured: bool,
+    /// Routers with a stored password.
+    pub routers: usize,
     /// Unix seconds.
     pub checked_at: i64,
 }
@@ -191,6 +203,7 @@ fn parse_claude_usage(usage: &Value) -> Vec<QuotaWindow> {
 fn claude_account() -> QuotaAccount {
     let mut account = QuotaAccount {
         id: "claude".into(),
+        group: "Claude".into(),
         source: "claude".into(),
         provider: "claude".into(),
         name: "Claude".into(),
@@ -252,26 +265,25 @@ fn claude_account() -> QuotaAccount {
 
 // ----------------------------------------------------------------- 9router
 
-static ROUTER_SESSION: Mutex<Option<(Instant, String)>> = Mutex::new(None);
+static ROUTER_SESSIONS: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 const ROUTER_SESSION_TTL: Duration = Duration::from_secs(20 * 60 * 60);
 
-fn router_password() -> Option<String> {
-    security_framework::passwords::get_generic_password(
-        ROUTER_KEYCHAIN_SERVICE,
-        ROUTER_KEYCHAIN_ACCOUNT,
-    )
-    .ok()
-    .and_then(|bytes| String::from_utf8(bytes).ok())
-    .filter(|password| !password.is_empty())
+fn routers() -> Vec<RouterConfig> {
+    crate::harness::read_settings().routers
 }
 
-fn router_url() -> String {
-    crate::harness::read_settings()
-        .router_url
-        .filter(|url| !url.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_ROUTER_URL.into())
-        .trim_end_matches('/')
-        .to_string()
+fn router_password(id: &str) -> Option<String> {
+    security_framework::passwords::get_generic_password(ROUTER_KEYCHAIN_SERVICE, id)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .filter(|password| !password.is_empty())
+}
+
+fn forget_session(id: &str) {
+    if let Ok(mut sessions) = ROUTER_SESSIONS.lock() {
+        sessions.remove(id);
+    }
 }
 
 fn router_login(base: &str, password: &str) -> Result<String, String> {
@@ -281,12 +293,12 @@ fn router_login(base: &str, password: &str) -> Result<String, String> {
         quoted(&format!("{base}/api/auth/login")),
         quoted(&body)
     );
-    let reply = curl(&config).map_err(|e| format!("9router: {e}"))?;
+    let reply = curl(&config)?;
     if reply.status == 401 || reply.status == 403 {
-        return Err("9router rejected the password".into());
+        return Err("password rejected".into());
     }
     if reply.status != 200 {
-        return Err(format!("9router login returned HTTP {}", reply.status));
+        return Err(format!("login returned HTTP {}", reply.status));
     }
     reply
         .headers
@@ -297,56 +309,52 @@ fn router_login(base: &str, password: &str) -> Result<String, String> {
             let value = cookie.strip_prefix("auth_token=")?;
             Some(value.split(';').next()?.to_string())
         })
-        .ok_or_else(|| "9router login returned no session".into())
+        .ok_or_else(|| "login returned no session".into())
 }
 
-/// Authenticated request to 9router, logging in (again) when needed.
-fn router_request(method: &str, path: &str) -> Result<Value, String> {
-    let password = router_password().ok_or("9router password is not set")?;
-    let base = router_url();
+/// Authenticated request to one router, logging in (again) when needed.
+fn router_request(router: &RouterConfig, method: &str, path: &str) -> Result<Value, String> {
+    let password = router_password(&router.id).ok_or("password is not set")?;
     for attempt in 0..2 {
-        let cached = ROUTER_SESSION
+        let cached = ROUTER_SESSIONS
             .lock()
             .ok()
-            .and_then(|guard| guard.clone())
+            .and_then(|sessions| sessions.get(&router.id).cloned())
             .filter(|(at, _)| attempt == 0 && at.elapsed() < ROUTER_SESSION_TTL)
             .map(|(_, token)| token);
         let token = match cached {
             Some(token) => token,
             None => {
-                let token = router_login(&base, &password)?;
-                if let Ok(mut guard) = ROUTER_SESSION.lock() {
-                    *guard = Some((Instant::now(), token.clone()));
+                let token = router_login(&router.url, &password)?;
+                if let Ok(mut sessions) = ROUTER_SESSIONS.lock() {
+                    sessions.insert(router.id.clone(), (Instant::now(), token.clone()));
                 }
                 token
             }
         };
         let config = format!(
             "url = {}\nrequest = {}\nheader = {}\n",
-            quoted(&format!("{base}{path}")),
+            quoted(&format!("{}{path}", router.url)),
             quoted(method),
             quoted(&format!("Cookie: auth_token={token}"))
         );
-        let reply = curl(&config).map_err(|e| format!("9router: {e}"))?;
+        let reply = curl(&config)?;
         if reply.status == 401 && attempt == 0 {
-            if let Ok(mut guard) = ROUTER_SESSION.lock() {
-                *guard = None;
-            }
+            forget_session(&router.id);
             continue;
         }
         let value: Value = serde_json::from_str(&reply.body).unwrap_or(Value::Null);
         if reply.status >= 400 {
-            let message = value
+            return Err(value
                 .get("message")
                 .or_else(|| value.get("error"))
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .unwrap_or_else(|| format!("HTTP {}", reply.status));
-            return Err(format!("9router: {message}"));
+                .unwrap_or_else(|| format!("HTTP {}", reply.status)));
         }
         return Ok(value);
     }
-    Err("9router session expired".into())
+    Err("session expired".into())
 }
 
 fn title_case(key: &str) -> String {
@@ -408,8 +416,8 @@ fn parse_router_usage(usage: &Value) -> (Vec<QuotaWindow>, u32, Option<String>) 
     (windows, credits, plan)
 }
 
-fn router_accounts() -> Result<Vec<QuotaAccount>, String> {
-    let supported: Vec<String> = router_request("GET", "/api/usage/providers")?
+fn router_accounts(router: &RouterConfig) -> Result<Vec<QuotaAccount>, String> {
+    let supported: Vec<String> = router_request(router, "GET", "/api/usage/providers")?
         .get("providers")
         .and_then(Value::as_array)
         .map(|items| {
@@ -419,7 +427,7 @@ fn router_accounts() -> Result<Vec<QuotaAccount>, String> {
                 .collect()
         })
         .unwrap_or_default();
-    let connections: Vec<Value> = router_request("GET", "/api/providers")?
+    let connections: Vec<Value> = router_request(router, "GET", "/api/providers")?
         .get("connections")
         .and_then(Value::as_array)
         .cloned()
@@ -443,7 +451,8 @@ fn router_accounts() -> Result<Vec<QuotaAccount>, String> {
                         .and_then(Value::as_str)
                         .unwrap_or("");
                     let mut account = QuotaAccount {
-                        id: format!("9router:{id}"),
+                        id: format!("9router:{}:{id}", router.id),
+                        group: router.name.clone(),
                         source: "9router".into(),
                         provider: provider.into(),
                         name: connection
@@ -458,7 +467,7 @@ fn router_accounts() -> Result<Vec<QuotaAccount>, String> {
                         note: None,
                         error: None,
                     };
-                    match router_request("GET", &format!("/api/usage/{id}")) {
+                    match router_request(router, "GET", &format!("/api/usage/{id}")) {
                         Ok(usage) => {
                             let (windows, credits, plan) = parse_router_usage(&usage);
                             account.windows = windows;
@@ -482,38 +491,62 @@ static CACHE: Mutex<Option<(Instant, QuotaSnapshot)>> = Mutex::new(None);
 /// Matches the frontend poll so several panels share one lookup.
 const CACHE_TTL: Duration = Duration::from_secs(4 * 60);
 
+fn clear_cache() {
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = None;
+    }
+}
+
 fn snapshot() -> QuotaSnapshot {
     let settings = crate::harness::read_settings();
-    let router_configured = router_password().is_some();
-    let (claude, router) = std::thread::scope(|scope| {
+    let routers: Vec<RouterConfig> = settings
+        .routers
+        .iter()
+        .filter(|router| router_password(&router.id).is_some())
+        .cloned()
+        .collect();
+    let (claude, per_router) = std::thread::scope(|scope| {
         let claude = settings
             .quota_claude_enabled()
             .then(|| scope.spawn(claude_account));
-        let router = router_configured.then(|| scope.spawn(router_accounts));
+        let jobs: Vec<_> = routers
+            .iter()
+            .map(|router| (router, scope.spawn(move || router_accounts(router))))
+            .collect();
         (
             claude.and_then(|job| job.join().ok()),
-            router.and_then(|job| job.join().ok()),
+            jobs.into_iter()
+                .map(|(router, job)| {
+                    (
+                        router,
+                        job.join()
+                            .unwrap_or_else(|_| Err("lookup crashed".to_string())),
+                    )
+                })
+                .collect::<Vec<_>>(),
         )
     });
     let mut accounts: Vec<QuotaAccount> = claude.into_iter().collect();
-    match router {
-        Some(Ok(list)) => accounts.extend(list),
-        Some(Err(error)) => accounts.push(QuotaAccount {
-            id: "9router".into(),
-            source: "9router".into(),
-            provider: "9router".into(),
-            name: "9router".into(),
-            plan: None,
-            windows: Vec::new(),
-            reset_credits: 0,
-            note: None,
-            error: Some(error),
-        }),
-        None => {}
+    for (router, result) in per_router {
+        match result {
+            Ok(list) => accounts.extend(list),
+            Err(error) => accounts.push(QuotaAccount {
+                id: format!("9router:{}", router.id),
+                group: router.name.clone(),
+                source: "9router".into(),
+                provider: "9router".into(),
+                name: router.name.clone(),
+                plan: None,
+                windows: Vec::new(),
+                reset_credits: 0,
+                note: None,
+                error: Some(format!("{}: {error}", router.name)),
+            }),
+        }
     }
     QuotaSnapshot {
         accounts,
-        router_configured,
+        routers: routers.len(),
         checked_at: now_secs(),
     }
 }
@@ -537,26 +570,32 @@ pub async fn get_quota(refresh: Option<bool>) -> Result<QuotaSnapshot, String> {
     .await
 }
 
+fn safe_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
 /// Redeem one reset credit. Only from an explicit, confirmed click.
 #[tauri::command]
 pub async fn redeem_quota_reset(account_id: String) -> Result<String, String> {
     crate::pi_rpc::off_main_thread(move || {
-        let connection = account_id
+        let (router_id, connection) = account_id
             .strip_prefix("9router:")
+            .and_then(|rest| rest.split_once(':'))
             .ok_or("Only 9router accounts can be reset from Kern")?;
-        if !connection
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
-        {
+        if !safe_id(router_id) || !safe_id(connection) {
             return Err("Invalid account".into());
         }
+        let router = routers()
+            .into_iter()
+            .find(|router| router.id == router_id)
+            .ok_or("That 9router is no longer configured")?;
         let reply = router_request(
+            &router,
             "POST",
             &format!("/api/usage/{connection}/codex-reset-credits"),
-        )?;
-        if let Ok(mut guard) = CACHE.lock() {
-            *guard = None;
-        }
+        )
+        .map_err(|e| format!("{}: {e}", router.name))?;
+        clear_cache();
         if reply.get("reset").and_then(Value::as_bool) == Some(false) {
             return Err(reply
                 .get("message")
@@ -574,10 +613,17 @@ pub async fn redeem_quota_reset(account_id: String) -> Result<String, String> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RouterView {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub password_set: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct QuotaSettings {
     pub claude: bool,
-    pub router_url: String,
-    pub router_password_set: bool,
+    pub routers: Vec<RouterView>,
 }
 
 #[tauri::command]
@@ -585,60 +631,99 @@ pub fn get_quota_settings() -> QuotaSettings {
     let settings = crate::harness::read_settings();
     QuotaSettings {
         claude: settings.quota_claude_enabled(),
-        router_url: router_url(),
-        router_password_set: router_password().is_some(),
+        routers: settings
+            .routers
+            .into_iter()
+            .map(|router| RouterView {
+                password_set: router_password(&router.id).is_some(),
+                id: router.id,
+                name: router.name,
+                url: router.url,
+            })
+            .collect(),
     }
 }
 
-/// `password`: `None` keeps the stored one, `Some("")` removes it.
 #[tauri::command]
-pub async fn save_quota_settings(
-    claude: bool,
-    router_url: String,
+pub fn set_quota_claude(enabled: bool) -> Result<QuotaSettings, String> {
+    let mut settings = crate::harness::read_settings();
+    settings.quota_claude = Some(enabled);
+    crate::harness::write_settings(&settings)?;
+    clear_cache();
+    Ok(get_quota_settings())
+}
+
+/// URL without a trailing slash; must be http(s).
+fn normalize_url(url: &str) -> Result<String, String> {
+    let url = url.trim().trim_end_matches('/').to_string();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        Ok(url)
+    } else {
+        Err("9router URL must start with http:// or https://".into())
+    }
+}
+
+/// Add (`id: None`) or update a router. `password: None` keeps the stored
+/// one. The login is checked before anything is saved.
+#[tauri::command]
+pub async fn save_router(
+    id: Option<String>,
+    name: String,
+    url: String,
     password: Option<String>,
 ) -> Result<QuotaSettings, String> {
     crate::pi_rpc::off_main_thread(move || {
-        let url = router_url.trim().trim_end_matches('/').to_string();
-        if !(url.is_empty() || url.starts_with("http://") || url.starts_with("https://")) {
-            return Err("9router URL must start with http:// or https://".into());
-        }
-        if let Some(password) = password.as_deref() {
-            if password.is_empty() {
-                let _ = security_framework::passwords::delete_generic_password(
-                    ROUTER_KEYCHAIN_SERVICE,
-                    ROUTER_KEYCHAIN_ACCOUNT,
-                );
-            } else {
-                // Check before storing so a typo is caught here, not on the next poll.
-                router_login(
-                    if url.is_empty() {
-                        DEFAULT_ROUTER_URL
-                    } else {
-                        &url
-                    },
-                    password,
-                )?;
-                security_framework::passwords::set_generic_password(
-                    ROUTER_KEYCHAIN_SERVICE,
-                    ROUTER_KEYCHAIN_ACCOUNT,
-                    password.as_bytes(),
-                )
-                .map_err(|e| format!("Keychain: {e}"))?;
-            }
-        }
+        let url = normalize_url(&url)?;
+        let name = match name.trim() {
+            "" => url.split("://").nth(1).unwrap_or(&url).to_string(),
+            name => name.to_string(),
+        };
         let mut settings = crate::harness::read_settings();
-        settings.quota_claude = Some(claude);
-        settings.router_url = (!url.is_empty() && url != DEFAULT_ROUTER_URL).then_some(url);
+        let id = match id {
+            Some(id) if settings.routers.iter().any(|router| router.id == id) => id,
+            Some(_) => return Err("That 9router is no longer configured".into()),
+            None => format!("r{}", now_secs().unsigned_abs() % 1_000_000_000),
+        };
+        let password = password.filter(|password| !password.is_empty());
+        let check = password.clone().or_else(|| router_password(&id));
+        let Some(check) = check else {
+            return Err("Enter the 9router dashboard password".into());
+        };
+        router_login(&url, &check).map_err(|e| format!("{name}: {e}"))?;
+        if let Some(password) = password {
+            security_framework::passwords::set_generic_password(
+                ROUTER_KEYCHAIN_SERVICE,
+                &id,
+                password.as_bytes(),
+            )
+            .map_err(|e| format!("Keychain: {e}"))?;
+        }
+        let entry = RouterConfig {
+            id: id.clone(),
+            name,
+            url,
+        };
+        match settings.routers.iter_mut().find(|router| router.id == id) {
+            Some(existing) => *existing = entry,
+            None => settings.routers.push(entry),
+        }
         crate::harness::write_settings(&settings)?;
-        if let Ok(mut guard) = ROUTER_SESSION.lock() {
-            *guard = None;
-        }
-        if let Ok(mut guard) = CACHE.lock() {
-            *guard = None;
-        }
+        forget_session(&id);
+        clear_cache();
         Ok(get_quota_settings())
     })
     .await
+}
+
+#[tauri::command]
+pub fn delete_router(id: String) -> Result<QuotaSettings, String> {
+    let mut settings = crate::harness::read_settings();
+    settings.routers.retain(|router| router.id != id);
+    crate::harness::write_settings(&settings)?;
+    let _ = security_framework::passwords::delete_generic_password(ROUTER_KEYCHAIN_SERVICE, &id);
+    forget_session(&id);
+    clear_cache();
+    Ok(get_quota_settings())
 }
 
 #[cfg(test)]
@@ -714,6 +799,18 @@ mod tests {
         };
         assert_eq!(used("Claude Gpt Weekly"), Some(60.0));
         assert_eq!(used("Gemini (Weekly)"), Some(100.0));
+    }
+
+    #[test]
+    fn router_urls_and_ids_are_validated() {
+        assert_eq!(
+            normalize_url(" https://9router.example.com/ "),
+            Ok("https://9router.example.com".to_string())
+        );
+        assert!(normalize_url("localhost:20128").is_err());
+        assert!(safe_id("a6eca261-6fbb-45cb"));
+        assert!(!safe_id("../etc"));
+        assert!(!safe_id(""));
     }
 
     #[test]

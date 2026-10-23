@@ -10,6 +10,14 @@ import {
   type QuotaSnapshot,
 } from "../lib/quota";
 
+/** Accounts grouped by source, in first-seen order. */
+function groups(accounts: QuotaAccount[]): Array<[string, QuotaAccount[]]> {
+  const map = new Map<string, QuotaAccount[]>();
+  for (const account of accounts)
+    map.set(account.group, [...(map.get(account.group) ?? []), account]);
+  return [...map.entries()];
+}
+
 function severity(percent: number) {
   if (percent >= 90) return " is-critical";
   if (percent >= 70) return " is-high";
@@ -139,21 +147,26 @@ export default function QuotaPanel({
           {loading ? "Checking…" : "Refresh"}
         </button>
       </div>
-      {snapshot?.accounts.map((account) => (
-        <Account
-          key={account.id}
-          account={account}
-          busy={resetting === account.id}
-          onReset={(item) => void reset(item)}
-        />
+      {groups(snapshot?.accounts ?? []).map(([group, accounts]) => (
+        <div className="kq-group" key={group}>
+          <h4>{group}</h4>
+          {accounts.map((account) => (
+            <Account
+              key={account.id}
+              account={account}
+              busy={resetting === account.id}
+              onReset={(item) => void reset(item)}
+            />
+          ))}
+        </div>
       ))}
       {snapshot && snapshot.accounts.length === 0 && (
         <p className="kq-note">No quota sources are on.</p>
       )}
-      {snapshot && !snapshot.router_configured && (
+      {snapshot && snapshot.routers === 0 && (
         <p className="kq-note">
-          Add your 9router password in Settings → Agent harness to see every
-          connected account and use reset credits.
+          Add your 9routers in Settings → Agent harness to see every connected
+          account and use reset credits.
         </p>
       )}
     </div>

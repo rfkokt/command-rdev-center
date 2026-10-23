@@ -8,6 +8,7 @@ import {
 
 const account = (overrides: Partial<QuotaAccount>): QuotaAccount => ({
   id: "claude",
+  group: "Claude",
   source: "claude",
   provider: "claude",
   name: "Claude",
@@ -21,7 +22,7 @@ const account = (overrides: Partial<QuotaAccount>): QuotaAccount => ({
 
 const snapshot = (accounts: QuotaAccount[]): QuotaSnapshot => ({
   accounts,
-  router_configured: true,
+  routers: 1,
   checked_at: 0,
 });
 

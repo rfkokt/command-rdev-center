@@ -48,8 +48,8 @@ pub struct HarnessSettings {
     /// Show Claude subscription quota (reads Claude Code's Keychain login).
     /// `None` = on.
     pub quota_claude: Option<bool>,
-    /// 9router gateway for account quotas; `None` = `quota::DEFAULT_ROUTER_URL`.
-    pub router_url: Option<String>,
+    /// 9router gateways for account quotas (passwords in the Keychain).
+    pub routers: Vec<crate::quota::RouterConfig>,
 }
 
 impl HarnessSettings {

@@ -915,3 +915,18 @@
 .app-shell .kq-reset {
   align-self: flex-start;
 }
+
+.app-shell .kq-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.app-shell .kq-group h4 {
+  margin: 4px 0 0;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-quiet);
+}

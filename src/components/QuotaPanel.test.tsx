@@ -26,11 +26,12 @@ afterEach(() => {
 });
 
 const snapshot = {
-  router_configured: true,
+  routers: 1,
   checked_at: 1_792_772_000,
   accounts: [
     {
       id: "claude",
+      group: "Claude",
       source: "claude",
       provider: "claude",
       name: "Claude",
@@ -41,7 +42,8 @@ const snapshot = {
       error: null,
     },
     {
-      id: "9router:abc",
+      id: "9router:vps:abc",
+      group: "VPS",
       source: "9router",
       provider: "codex",
       name: "me@example.com",
@@ -68,6 +70,7 @@ test("shows each account's windows and redeems a credit after confirming", async
     await screen.findByRole("meter", { name: "Claude 5-hour" }),
   ).toHaveAttribute("aria-valuenow", "57");
   expect(screen.getByText("pro", { exact: false })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "VPS" })).toBeInTheDocument();
   expect(
     screen.getByRole("meter", { name: "me@example.com Weekly" }),
   ).toHaveClass("is-critical");
@@ -77,7 +80,7 @@ test("shows each account's windows and redeems a credit after confirming", async
   );
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("redeem_quota_reset", {
-      accountId: "9router:abc",
+      accountId: "9router:vps:abc",
     }),
   );
   expect(toast).toHaveBeenCalledWith("me@example.com: Limits reset");

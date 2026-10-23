@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Field, Group, ItemRow, Subhead, SwitchField } from "./settings-ui";
+import { Group, ItemRow, Subhead, SwitchField } from "./settings-ui";
+import UsageSettings from "./UsageSettings";
 import { describeVersion, type AgentUpdate } from "../lib/agent-updates";
 
 export type HarnessInfo = {
@@ -15,12 +16,6 @@ export type HarnessInfo = {
   custom: boolean;
   /** Kern can install it with npm. */
   installable?: boolean;
-};
-
-type QuotaSettings = {
-  claude: boolean;
-  router_url: string;
-  router_password_set: boolean;
 };
 
 type CustomDraft = { id: string; label: string; command: string; args: string };
@@ -44,10 +39,6 @@ export default function HarnessSettings({
   const [checking, setChecking] = useState(false);
   const [updating, setUpdating] = useState<string | null>(null);
   const [updateLog, setUpdateLog] = useState("");
-  const [quota, setQuota] = useState<QuotaSettings | null>(null);
-  const [routerUrl, setRouterUrl] = useState("");
-  const [routerPassword, setRouterPassword] = useState("");
-  const [quotaBusy, setQuotaBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -84,38 +75,7 @@ export default function HarnessSettings({
   useEffect(() => {
     void load();
     void checkUpdates(false);
-    invoke<QuotaSettings>("get_quota_settings")
-      .then((settings) => {
-        if (!settings) return;
-        setQuota(settings);
-        setRouterUrl(settings.router_url);
-      })
-      .catch((e) => setError(String(e)));
   }, [load, checkUpdates]);
-
-  async function saveQuota(
-    next: { claude?: boolean; password?: string | null } = {},
-  ) {
-    if (!quota) return;
-    setQuotaBusy(true);
-    try {
-      const saved = await invoke<QuotaSettings>("save_quota_settings", {
-        claude: next.claude ?? quota.claude,
-        routerUrl,
-        // undefined keeps the stored password, "" removes it.
-        password: next.password ?? (routerPassword || null),
-      });
-      setQuota(saved);
-      setRouterUrl(saved.router_url);
-      setRouterPassword("");
-      setError("");
-      if (next.claude === undefined) onToast("Usage settings saved.");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setQuotaBusy(false);
-    }
-  }
 
   const current = harnesses.find((item) => item.is_default)?.id ?? "pi";
   const chosen = harnesses.find((item) => item.id === selected);
@@ -373,62 +333,7 @@ export default function HarnessSettings({
         </pre>
       )}
 
-      <Subhead>Usage</Subhead>
-      {quota && (
-        <Group label="Subscription usage">
-          <SwitchField
-            label="Claude subscription"
-            detail="Reads your Claude login from the Keychain, read-only (macOS asks once)."
-            checked={quota.claude}
-            disabled={quotaBusy}
-            onChange={(claude) => void saveQuota({ claude })}
-          />
-          <Field label="9router URL">
-            <input
-              value={routerUrl}
-              onChange={(e) => setRouterUrl(e.target.value)}
-              placeholder="http://localhost:20128"
-            />
-          </Field>
-          <Field
-            label="9router password"
-            detail={
-              quota.router_password_set
-                ? "Saved in the Keychain. Enter a new one to replace it."
-                : "Dashboard password. A fresh 9router uses 123456 and listens on your whole network, so change it in 9router first."
-            }
-          >
-            <input
-              type="password"
-              value={routerPassword}
-              onChange={(e) => setRouterPassword(e.target.value)}
-              placeholder={quota.router_password_set ? "••••••" : ""}
-              autoComplete="off"
-            />
-          </Field>
-        </Group>
-      )}
-      {quota && (
-        <div className="kset-actions-row">
-          <button
-            type="button"
-            disabled={quotaBusy}
-            onClick={() => void saveQuota()}
-          >
-            {quotaBusy ? "Checking…" : "Save"}
-          </button>
-          {quota.router_password_set && (
-            <button
-              type="button"
-              disabled={quotaBusy}
-              onClick={() => void saveQuota({ password: "" })}
-            >
-              Disconnect 9router
-            </button>
-          )}
-          <span>Usage shows in the chat's right sidebar.</span>
-        </div>
-      )}
+      <UsageSettings onToast={onToast} />
 
       <h3 className="kset-subhead">Add another ACP agent</h3>
       <div className="kset-group">
