@@ -11,6 +11,8 @@ export type HarnessInfo = {
   install_hint: string;
   is_default: boolean;
   custom: boolean;
+  /** Kern can install it with npm. */
+  installable?: boolean;
 };
 
 type CustomDraft = { id: string; label: string; command: string; args: string };
@@ -26,6 +28,8 @@ export default function HarnessSettings({
   const [selected, setSelected] = useState("pi");
   const [draft, setDraft] = useState<CustomDraft>(EMPTY_DRAFT);
   const [error, setError] = useState("");
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installLog, setInstallLog] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +58,22 @@ export default function HarnessSettings({
       await load();
     } catch (e) {
       setError(String(e));
+    }
+  }
+
+  async function install(item: HarnessInfo) {
+    setInstalling(item.id);
+    setInstallLog("");
+    try {
+      const list = await invoke<HarnessInfo[]>("install_harness", {
+        id: item.id,
+      });
+      setHarnesses(list);
+      onToast(`${item.label} installed.`);
+    } catch (e) {
+      setInstallLog(String(e));
+    } finally {
+      setInstalling(null);
     }
   }
 
@@ -117,12 +137,32 @@ export default function HarnessSettings({
                   <code>{item.resolved_path}</code>
                 ) : (
                   <>
-                    not installed —{" "}
-                    <code>{item.install_hint || item.command}</code>
+                    not installed
+                    {!item.installable && (
+                      <>
+                        {" "}
+                        — <code>{item.install_hint || item.command}</code>
+                      </>
+                    )}
                   </>
                 )}
               </span>
             </span>
+            {!item.available && item.installable && (
+              <button
+                type="button"
+                className="kset-row-button"
+                disabled={installing !== null}
+                title={item.install_hint}
+                aria-label={`Install ${item.label}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void install(item);
+                }}
+              >
+                {installing === item.id ? "Installing…" : "Install"}
+              </button>
+            )}
             {item.custom && (
               <button
                 type="button"
@@ -139,6 +179,11 @@ export default function HarnessSettings({
           </label>
         ))}
       </fieldset>
+      {installLog && (
+        <pre className="kset-log kset-log--standalone" role="alert">
+          {installLog}
+        </pre>
+      )}
       <div className="kset-actions-row">
         <button
           type="button"

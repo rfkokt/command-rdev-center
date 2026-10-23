@@ -1121,3 +1121,34 @@ label.kset-row {
     flex-wrap: wrap;
   }
 }
+
+/* Install button on an agent row, and npm output under the list */
+.kset-row-button {
+  flex: none;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.kset-row-button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.kset-row-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.kset-log--standalone {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--status-red);
+}

@@ -24,6 +24,14 @@ pub struct HarnessSpec {
     pub args: Vec<String>,
     #[serde(default)]
     pub install_hint: String,
+    /// Older binary names that also speak the same protocol, tried after
+    /// `command` (e.g. the pre-rename Claude Code adapter).
+    #[serde(default)]
+    pub alternates: Vec<String>,
+    /// npm packages that provide this harness. Empty means Kern cannot
+    /// install it and only shows `install_hint`.
+    #[serde(default)]
+    pub npm_packages: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -47,6 +55,8 @@ pub struct HarnessInfo {
     pub install_hint: String,
     pub is_default: bool,
     pub custom: bool,
+    /// Kern can install it with one click (npm).
+    pub installable: bool,
 }
 
 fn spec(id: &str, label: &str, command: &str, args: &[&str], install_hint: &str) -> HarnessSpec {
@@ -56,24 +66,49 @@ fn spec(id: &str, label: &str, command: &str, args: &[&str], install_hint: &str)
         command: command.into(),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         install_hint: install_hint.into(),
+        alternates: Vec::new(),
+        npm_packages: Vec::new(),
     }
 }
 
-/// Built-in ACP harnesses. Commands verified against each package's published
-/// `bin` and CLI flags (Oct 2026).
+fn npm(mut spec: HarnessSpec, package: &str) -> HarnessSpec {
+    spec.npm_packages = vec![package.into()];
+    spec
+}
+
+/// Built-in ACP harnesses. Commands and package `bin` names verified against
+/// the npm registry (Oct 2026).
 pub fn builtin_acp() -> Vec<HarnessSpec> {
-    vec![
-        spec("opencode", "OpenCode", "opencode", &["acp"], "npm i -g opencode-ai"),
+    let mut claude = npm(
         spec(
             "claude-code",
             "Claude Code",
             "claude-agent-acp",
             &[],
-            "npm i -g @agentclientprotocol/claude-agent-acp (uses your Claude Code login or ANTHROPIC_* env)",
+            "npm i -g @agentclientprotocol/claude-agent-acp. This is the ACP adapter; it uses your Claude Code login or ANTHROPIC_* env.",
         ),
-        spec("oh-my-pi", "oh-my-pi", "omp", &["--mode", "acp"], "npm i -g @oh-my-pi/pi-coding-agent"),
-        spec("codex", "Codex", "codex-acp", &[], "npm i -g @zed-industries/codex-acp"),
-        spec("gemini", "Gemini CLI", "gemini", &["--acp"], "npm i -g @google/gemini-cli"),
+        "@agentclientprotocol/claude-agent-acp",
+    );
+    // Same adapter before the package moved to @agentclientprotocol.
+    claude.alternates = vec!["claude-code-acp".into()];
+    vec![
+        npm(
+            spec("opencode", "OpenCode", "opencode", &["acp"], "npm i -g opencode-ai"),
+            "opencode-ai",
+        ),
+        claude,
+        npm(
+            spec("oh-my-pi", "oh-my-pi", "omp", &["--mode", "acp"], "npm i -g @oh-my-pi/pi-coding-agent"),
+            "@oh-my-pi/pi-coding-agent",
+        ),
+        npm(
+            spec("codex", "Codex", "codex-acp", &[], "npm i -g @zed-industries/codex-acp"),
+            "@zed-industries/codex-acp",
+        ),
+        npm(
+            spec("gemini", "Gemini CLI", "gemini", &["--acp"], "npm i -g @google/gemini-cli"),
+            "@google/gemini-cli",
+        ),
         spec(
             "hermes",
             "Hermes Agent",
@@ -82,6 +117,14 @@ pub fn builtin_acp() -> Vec<HarnessSpec> {
             "Install Hermes Agent, then enable ACP: cd ~/.hermes/hermes-agent && python -c \"import pm; pm.sync_venv(['acp'], explicit=True)\" (model setup: hermes acp --setup)",
         ),
     ]
+}
+
+/// First binary of the spec found on the search path: `command`, then any
+/// older names in `alternates`.
+pub fn resolve_spec(spec: &HarnessSpec) -> Option<PathBuf> {
+    std::iter::once(&spec.command)
+        .chain(spec.alternates.iter())
+        .find_map(|command| resolve_binary(command))
 }
 
 fn settings_path() -> PathBuf {
@@ -188,8 +231,7 @@ pub fn select(
     Ok(Some((lookup(&chosen)?, None)))
 }
 
-#[tauri::command]
-pub fn list_harnesses() -> Result<Vec<HarnessInfo>, String> {
+fn harness_list() -> Result<Vec<HarnessInfo>, String> {
     let settings = read_settings();
     let default = settings.default.clone().unwrap_or_else(|| PI.into());
     let builtin_ids: Vec<String> = builtin_acp().into_iter().map(|spec| spec.id).collect();
@@ -205,12 +247,14 @@ pub fn list_harnesses() -> Result<Vec<HarnessInfo>, String> {
         install_hint: "Installed automatically by Kern".into(),
         is_default: default == PI,
         custom: false,
+        installable: false,
     }];
     for spec in all_acp(&settings) {
-        let resolved = resolve_binary(&spec.command);
+        let resolved = resolve_spec(&spec);
         out.push(HarnessInfo {
             is_default: default == spec.id,
             custom: !builtin_ids.contains(&spec.id),
+            installable: !spec.npm_packages.is_empty(),
             id: spec.id,
             label: spec.label,
             protocol: "acp",
@@ -221,6 +265,67 @@ pub fn list_harnesses() -> Result<Vec<HarnessInfo>, String> {
         });
     }
     Ok(out)
+}
+
+/// Runs off the main thread: resolving binaries may read the login shell's
+/// PATH the first time, which can take a moment.
+#[tauri::command]
+pub async fn list_harnesses() -> Result<Vec<HarnessInfo>, String> {
+    crate::pi_rpc::off_main_thread(harness_list).await
+}
+
+/// Install a built-in harness with npm, then return the refreshed list.
+/// Only runs from an explicit Install click in Settings, and only for the
+/// fixed package names in `builtin_acp`, never user-supplied commands.
+#[tauri::command]
+pub async fn install_harness(id: String) -> Result<Vec<HarnessInfo>, String> {
+    crate::pi_rpc::off_main_thread(move || {
+        let spec = builtin_acp()
+            .into_iter()
+            .find(|spec| spec.id == id)
+            .ok_or_else(|| format!("Unknown agent harness `{id}`"))?;
+        if spec.npm_packages.is_empty() {
+            return Err(format!(
+                "{} can't be installed from Kern. {}",
+                spec.label, spec.install_hint
+            ));
+        }
+        let npm = resolve_binary("npm").ok_or_else(|| {
+            "npm was not found. Install Node.js (nodejs.org or Homebrew), then try again."
+                .to_string()
+        })?;
+        let output = std::process::Command::new(&npm)
+            .args(["install", "--global"])
+            .args(&spec.npm_packages)
+            .env("PATH", crate::pi_rpc::search_path(&npm.to_string_lossy()))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("Couldn't run npm: {e}"))?;
+        if !output.status.success() {
+            let log = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let tail: Vec<&str> = log.lines().rev().take(12).collect();
+            let tail: Vec<&str> = tail.into_iter().rev().collect();
+            return Err(format!(
+                "npm install {} failed:\n{}",
+                spec.npm_packages.join(" "),
+                tail.join("\n")
+            ));
+        }
+        crate::pi_rpc::forget_login_path();
+        let list = harness_list()?;
+        if !list.iter().any(|item| item.id == spec.id && item.available) {
+            return Err(format!(
+                "npm finished, but `{}` is still not on the search path. Check `npm prefix -g` and add its bin folder to your shell PATH.",
+                spec.command
+            ));
+        }
+        Ok(list)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -342,5 +447,33 @@ mod tests {
         );
         assert!(all.iter().any(|h| h.id == "ok-1"));
         assert!(!all.iter().any(|h| h.id == "Bad Id"));
+    }
+
+    #[test]
+    fn resolve_spec_falls_back_to_alternate_names() {
+        let dir = std::env::temp_dir().join(format!("kern-harness-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("claude-code-acp");
+        std::fs::write(&old, "").unwrap();
+        let mut spec = builtin_acp()
+            .into_iter()
+            .find(|spec| spec.id == "claude-code")
+            .unwrap();
+        spec.command = dir.join("claude-agent-acp").to_string_lossy().into_owned();
+        spec.alternates = vec![old.to_string_lossy().into_owned()];
+        assert_eq!(resolve_spec(&spec), Some(old));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn npm_harnesses_are_installable_and_hermes_is_not() {
+        for spec in builtin_acp() {
+            assert_eq!(
+                spec.npm_packages.is_empty(),
+                spec.id == "hermes",
+                "{}",
+                spec.id
+            );
+        }
     }
 }

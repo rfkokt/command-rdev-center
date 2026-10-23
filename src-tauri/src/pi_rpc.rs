@@ -93,6 +93,68 @@ fn project_root_from_config(v: &serde_json::Value) -> Result<PathBuf, String> {
     crate::projects::global_worktree_root().map(|p| p.parent().unwrap_or(&p).to_path_buf())
 }
 
+static LOGIN_PATH: Mutex<Option<Option<std::ffi::OsString>>> = Mutex::new(None);
+
+/// PATH as the user's login shell sets it. macOS apps launched from Finder or
+/// the Dock get a minimal PATH, so tools installed through nvm, fnm, volta,
+/// custom npm prefixes or installers that edit ~/.zshrc are invisible without
+/// this. Read once (bounded to 3 s) and cached; `forget_login_path` clears it
+/// after an install.
+pub(crate) fn login_shell_path() -> Option<std::ffi::OsString> {
+    if let Ok(guard) = LOGIN_PATH.lock() {
+        if let Some(cached) = guard.as_ref() {
+            return cached.clone();
+        }
+    }
+    let value = read_login_shell_path();
+    if let Ok(mut guard) = LOGIN_PATH.lock() {
+        *guard = Some(value.clone());
+    }
+    value
+}
+
+pub(crate) fn forget_login_path() {
+    if let Ok(mut guard) = LOGIN_PATH.lock() {
+        *guard = None;
+    }
+}
+
+#[cfg(unix)]
+fn read_login_shell_path() -> Option<std::ffi::OsString> {
+    const MARK: &str = "__KERN_PATH__";
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let mut child = Command::new(shell)
+        .args(["-ilc", &format!("printf '{MARK}%s' \"$PATH\"")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() < std::time::Duration::from_secs(3) => {
+                thread::sleep(std::time::Duration::from_millis(25));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = String::new();
+    child.stdout.take()?.read_to_string(&mut out).ok()?;
+    let path = out.rsplit(MARK).next()?.trim();
+    (!path.is_empty()).then(|| std::ffi::OsString::from(path))
+}
+
+#[cfg(not(unix))]
+fn read_login_shell_path() -> Option<std::ffi::OsString> {
+    None
+}
+
 fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
     let pi_dir = Path::new(pi_path).parent().unwrap_or_else(|| Path::new(""));
     let home = std::env::var_os("HOME").map(PathBuf::from);
@@ -110,12 +172,28 @@ fn path_for_pi(pi_path: &str) -> std::ffi::OsString {
             home.join(".local/bin"),
             home.join(".npm-global/bin"),
             home.join(".bun/bin"),
+            // Official installers and version managers whose bin folders a
+            // GUI launch never sees on its PATH.
+            home.join(".opencode/bin"),
+            home.join("bin"),
+            home.join(".volta/bin"),
+            home.join("Library/pnpm"),
+            home.join(".local/share/pnpm"),
+            home.join(".yarn/bin"),
+            home.join(".local/share/mise/shims"),
+            home.join(".asdf/shims"),
+            home.join(".claude/local"),
+            home.join(".cargo/bin"),
         ]);
     }
     paths.extend([
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
     ]);
+    // Whatever the user's own shell resolves (fnm, nvm, custom npm prefix…).
+    if let Some(login) = login_shell_path() {
+        paths.extend(std::env::split_paths(&login));
+    }
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
@@ -289,7 +367,7 @@ fn runtime_status(refresh_latest: bool) -> Result<PiRuntimeStatus, String> {
 /// Tauri runs synchronous commands on the main thread, which froze the whole
 /// window while these spawned processes and network calls. Each one now runs
 /// on the blocking pool.
-async fn off_main_thread<T: Send + 'static>(
+pub(crate) async fn off_main_thread<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work)
@@ -1483,7 +1561,7 @@ fn spawn_acp_session(
     mcp_servers: serde_json::Value,
     preamble: String,
 ) -> Result<String, String> {
-    let binary = crate::harness::resolve_binary(&spec.command).ok_or_else(|| {
+    let binary = crate::harness::resolve_spec(&spec).ok_or_else(|| {
         format!(
             "{} is not installed (`{}` not found). Install: {}",
             spec.label, spec.command, spec.install_hint

@@ -111,3 +111,52 @@ test("adds a custom ACP agent", async () => {
     }),
   );
 });
+
+test("installs a missing harness from its row and refreshes the list", async () => {
+  const missing = list.map((item) =>
+    item.id === "claude-code" ? { ...item, installable: true } : item,
+  );
+  const installed = list.map((item) =>
+    item.id === "claude-code"
+      ? {
+          ...item,
+          available: true,
+          resolved_path: "/Users/me/.npm-global/bin/claude-agent-acp",
+        }
+      : item,
+  );
+  invoke.mockImplementation((command: string) =>
+    Promise.resolve(command === "install_harness" ? installed : missing),
+  );
+  const onToast = vi.fn();
+  render(<HarnessSettings onToast={onToast} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install Claude Code" }),
+  );
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("install_harness", {
+      id: "claude-code",
+    }),
+  );
+  expect(onToast).toHaveBeenCalledWith("Claude Code installed.");
+  expect(await screen.findByLabelText(/Claude Code/)).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: "Install Claude Code" }),
+  ).not.toBeInTheDocument();
+});
+
+test("shows npm output when an install fails", async () => {
+  const missing = list.map((item) =>
+    item.id === "claude-code" ? { ...item, installable: true } : item,
+  );
+  invoke.mockImplementation((command: string) =>
+    command === "install_harness"
+      ? Promise.reject("npm install failed:\nEACCES: permission denied")
+      : Promise.resolve(missing),
+  );
+  render(<HarnessSettings onToast={vi.fn()} />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Install Claude Code" }),
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent("EACCES");
+});

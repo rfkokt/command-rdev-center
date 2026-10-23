@@ -53,6 +53,10 @@ pub fn run() {
                 std::thread::sleep(std::time::Duration::from_secs(30));
                 browser_spike::reap_inactive(&browser_app.state::<browser_spike::BrowserState>());
             });
+            // Warm the login-shell PATH so the first agent lookup is instant.
+            std::thread::spawn(|| {
+                let _ = pi_rpc::login_shell_path();
+            });
             std::thread::spawn(|| {
                 if let Err(error) = projects::migrate_base_branches() {
                     eprintln!("startup branch migration failed: {error}");
@@ -197,6 +201,7 @@ pub fn run() {
             connections::set_connection_assignment,
             connections::fetch_connection_models,
             harness::list_harnesses,
+            harness::install_harness,
             harness::set_default_harness,
             harness::save_custom_harness,
             harness::delete_custom_harness,
