@@ -30,13 +30,11 @@ test("Graphify defaults off and can opt in without a semantic provider", async (
     expect(invoke).toHaveBeenCalledWith("get_graphify_settings"),
   );
   const toggle = screen.getByRole("checkbox", {
-    name: "Enable Graphify integration (optional)",
+    name: /^Enable Graphify/,
   });
   expect(toggle).not.toBeChecked();
   fireEvent.click(toggle);
-  fireEvent.click(
-    screen.getByRole("button", { name: "SAVE GRAPHIFY SETTINGS" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("save_graphify_settings", {
       enabled: true,
@@ -85,19 +83,17 @@ test("Graphify can reuse an OpenAI-compatible connection", async () => {
     return Promise.resolve(config);
   });
   render(<GraphifySettings onToast={vi.fn()} />);
-  const select = await screen.findByLabelText("CONNECTION");
+  const select = await screen.findByLabelText(/^Connection/);
   expect(
     Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
   ).toEqual(["Custom endpoint", "OpenRouter"]);
   fireEvent.change(select, { target: { value: "openrouter" } });
-  expect(screen.queryByLabelText("BASE URL")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "FETCH MODELS" }));
+  expect(screen.queryByLabelText("Base URL")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Fetch models" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "deepseek/deepseek-v4" }),
   );
-  fireEvent.click(
-    screen.getByRole("button", { name: "SAVE GRAPHIFY SETTINGS" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("save_graphify_settings", {
       enabled: true,

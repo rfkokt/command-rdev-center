@@ -149,15 +149,15 @@ test("uses one accessible range for pointer and keyboard sidebar resizing", () =
   render(<App />);
 
   const resizer = screen.getByRole("separator", { name: "Resize sidebar" });
-  expect(resizer).toHaveAttribute("aria-valuemin", "220");
-  expect(resizer).toHaveAttribute("aria-valuemax", "360");
-  expect(resizer).toHaveAttribute("aria-valuenow", "250");
+  expect(resizer).toHaveAttribute("aria-valuemin", "260");
+  expect(resizer).toHaveAttribute("aria-valuemax", "420");
+  expect(resizer).toHaveAttribute("aria-valuenow", "296");
 
   fireEvent.keyDown(resizer, { key: "ArrowRight" });
-  expect(resizer).toHaveAttribute("aria-valuenow", "260");
+  expect(resizer).toHaveAttribute("aria-valuenow", "306");
 
   fireEvent.keyDown(resizer, { key: "ArrowLeft" });
-  expect(resizer).toHaveAttribute("aria-valuenow", "250");
+  expect(resizer).toHaveAttribute("aria-valuenow", "296");
 });
 
 test("restores a saved sidebar width within the allowed range", () => {

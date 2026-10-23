@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  Actions,
+  Field,
+  Group,
+  Note,
+  Status,
+  SwitchField,
+} from "./settings-ui";
 import type { ConnectionProfile, ConnectionsView } from "./ConnectionsSettings";
 
 type GraphifyConfig = {
@@ -107,156 +115,149 @@ export default function GraphifySettings({
   }
 
   return (
-    <main className="graphify-settings">
-      <label className="settings-toggle">
-        <input
-          type="checkbox"
+    <div className="kset-panel">
+      <Group>
+        <SwitchField
+          label="Enable Graphify"
+          detail="Optional. Off means no automatic graph builds, updates or context injection in coding chats."
           checked={config.enabled}
-          onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
+          onChange={(enabled) => setConfig({ ...config, enabled })}
         />
-        Enable Graphify integration (optional)
-      </label>
-      <div className="settings-notice">
-        Off by default: no automatic graph builds, updates, or context injection
-        during coding chats. Provider settings below are only used while
-        enabled. API key is stored in macOS Keychain, never in this repo or
-        settings JSON.
-      </div>
-      {connections.length > 0 && (
-        <label>
-          CONNECTION
-          <select
-            value={connectionId}
-            onChange={(e) =>
-              setConfig({ ...config, connection_id: e.target.value || null })
-            }
+      </Group>
+      <Note>
+        The provider settings below are used only while Graphify is on. The API
+        key is stored in the macOS Keychain, never in the repo or settings JSON.
+      </Note>
+      <Group>
+        {connections.length > 0 && (
+          <Field
+            label="Connection"
+            detail="Reuse a model connection or enter one."
           >
-            <option value="">Custom endpoint</option>
-            {connections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {connection.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {!connectionId && (
-        <>
-          <label>
-            BASE URL
-            <input
-              type="url"
-              value={config.base_url}
+            <select
+              value={connectionId}
               onChange={(e) =>
-                setConfig({ ...config, base_url: e.target.value })
+                setConfig({ ...config, connection_id: e.target.value || null })
               }
-              placeholder="https://9router.example/v1"
-            />
-          </label>
-          <label>
-            API KEY
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={
-                config.has_api_key
-                  ? "Saved — leave blank to keep current key"
-                  : "Required"
-              }
-              autoComplete="new-password"
-            />
-          </label>
-        </>
-      )}
-      <div className="graphify-model-field">
-        <label htmlFor="graphify-model">MODEL</label>
-        <div className="graphify-model-row">
-          <input
-            id="graphify-model"
-            value={config.model}
-            onFocus={() => {
-              if (models.length) {
-                setModelSearch("");
-                setModelsOpen(true);
-              }
-            }}
-            onChange={(e) => {
-              setConfig({ ...config, model: e.target.value });
-              setModelSearch(e.target.value);
-              setModelsOpen(models.length > 0);
-            }}
-            placeholder="provider/model"
-          />
-          <button
-            type="button"
-            onClick={fetchModels}
-            disabled={
-              fetching ||
-              (!connectionId &&
-                (!config.base_url.trim() || (!apiKey && !config.has_api_key)))
-            }
-          >
-            {fetching ? "FETCHING…" : "FETCH MODELS"}
-          </button>
-        </div>
-        {modelsOpen && (
-          <div className="graphify-model-picker">
-            <div className="graphify-model-search">
-              <span>⌕</span>
-              <input
-                value={modelSearch}
-                onChange={(e) => setModelSearch(e.target.value)}
-                placeholder="Search models…"
-                aria-label="Search Graphify models"
-                autoFocus
-              />
-            </div>
-            <div className="graphify-model-list">
-              {filteredModels.map((model) => (
-                <button
-                  type="button"
-                  key={model}
-                  className={model === config.model ? "active" : ""}
-                  onClick={() => {
-                    setConfig({ ...config, model });
-                    setModelSearch("");
-                    setModelsOpen(false);
-                  }}
-                >
-                  <span>{model}</span>
-                  {model === config.model && <b>✓</b>}
-                </button>
+            >
+              <option value="">Custom endpoint</option>
+              {connections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.name}
+                </option>
               ))}
-              {!filteredModels.length && (
-                <div className="graphify-model-empty">NO MATCHING MODELS</div>
-              )}
-            </div>
-            <small>
-              {filteredModels.length} / {models.length} MODELS
-            </small>
-          </div>
+            </select>
+          </Field>
         )}
-      </div>
-      {error && (
-        <div className="settings-error" role="alert">
-          {error}
+        {!connectionId && (
+          <>
+            <Field label="Base URL">
+              <input
+                type="url"
+                value={config.base_url}
+                onChange={(e) =>
+                  setConfig({ ...config, base_url: e.target.value })
+                }
+                placeholder="https://9router.example/v1"
+              />
+            </Field>
+            <Field label="API key">
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={
+                  config.has_api_key ? "Saved; leave blank to keep" : "Required"
+                }
+                autoComplete="new-password"
+              />
+            </Field>
+          </>
+        )}
+        <div className="kset-row kset-row--wide">
+          <span className="kset-row-text">
+            <label className="kset-row-title" htmlFor="graphify-model">
+              Model
+            </label>
+          </span>
+          <span className="kset-row-control">
+            <input
+              id="graphify-model"
+              value={config.model}
+              onFocus={() => {
+                if (models.length) {
+                  setModelSearch("");
+                  setModelsOpen(true);
+                }
+              }}
+              onChange={(e) => {
+                setConfig({ ...config, model: e.target.value });
+                setModelSearch(e.target.value);
+                setModelsOpen(models.length > 0);
+              }}
+              placeholder="provider/model"
+            />
+            <button
+              type="button"
+              onClick={() => void fetchModels()}
+              disabled={
+                fetching ||
+                (!connectionId &&
+                  (!config.base_url.trim() || (!apiKey && !config.has_api_key)))
+              }
+            >
+              {fetching ? "Fetching…" : "Fetch models"}
+            </button>
+          </span>
+          {modelsOpen && (
+            <div className="graphify-model-picker">
+              <div className="graphify-model-search">
+                <input
+                  value={modelSearch}
+                  onChange={(e) => setModelSearch(e.target.value)}
+                  placeholder="Search models…"
+                  aria-label="Search Graphify models"
+                  autoFocus
+                />
+                <small>
+                  {filteredModels.length} of {models.length}
+                </small>
+              </div>
+              <div className="graphify-model-list">
+                {filteredModels.map((model) => (
+                  <button
+                    type="button"
+                    key={model}
+                    className={model === config.model ? "active" : ""}
+                    onClick={() => {
+                      setConfig({ ...config, model });
+                      setModelSearch("");
+                      setModelsOpen(false);
+                    }}
+                  >
+                    <span>{model}</span>
+                  </button>
+                ))}
+                {!filteredModels.length && (
+                  <div className="graphify-model-empty">No matching models</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
-      )}
-      {success && (
-        <div className="settings-success" role="status">
-          ✓ {success}
-        </div>
-      )}
-      <button
-        className="save-settings"
-        onClick={save}
-        disabled={saving}
-        aria-busy={saving}
-      >
-        {saving && <span className="button-spinner" aria-hidden="true" />}
-        {saving ? "SAVING…" : "SAVE GRAPHIFY SETTINGS"}
-      </button>
-    </main>
+      </Group>
+      <Status error={error} success={success} />
+      <Actions>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void save()}
+          disabled={saving}
+          aria-busy={saving}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </Actions>
+    </div>
   );
 }

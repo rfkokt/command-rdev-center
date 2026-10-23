@@ -58,7 +58,7 @@ test("shows target project and saves edited steps to that project", async () => 
   fireEvent.change(screen.getByRole("textbox", { name: "Test command" }), {
     target: { value: "pnpm test --run" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "SAVE TO PROJECT" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save to project" }));
 
   await waitFor(() =>
     expect(invoke).toHaveBeenLastCalledWith("save_pipeline_config", {
@@ -116,7 +116,7 @@ test("applies a preset then allows disabling and reordering steps", async () => 
   render(<PipelineSettings projectPath="/projects/demo" onToast={vi.fn()} />);
 
   await screen.findByDisplayValue("pnpm test");
-  fireEvent.change(screen.getByLabelText("STARTING PRESET"), {
+  fireEvent.change(screen.getByLabelText("Starting preset"), {
     target: { value: "KAI" },
   });
   expect(await screen.findByDisplayValue("pnpm build")).toBeInTheDocument();
@@ -143,10 +143,10 @@ test("keeps the latest preset when responses resolve out of order", async () => 
   render(<PipelineSettings projectPath="/projects/demo" onToast={vi.fn()} />);
 
   await screen.findByDisplayValue("pnpm test");
-  fireEvent.change(screen.getByLabelText("STARTING PRESET"), {
+  fireEvent.change(screen.getByLabelText("Starting preset"), {
     target: { value: "KAI" },
   });
-  fireEvent.change(screen.getByLabelText("STARTING PRESET"), {
+  fireEvent.change(screen.getByLabelText("Starting preset"), {
     target: { value: "MBI" },
   });
   resolveMbi({
@@ -177,7 +177,7 @@ test("consultant dialog closes on Escape and restores trigger focus", async () =
     />,
   );
   await screen.findByDisplayValue("pnpm test");
-  const trigger = screen.getByRole("button", { name: /CONSULT AI/ });
+  const trigger = screen.getByRole("button", { name: /Consult AI/ });
   trigger.focus();
   fireEvent.click(trigger);
 
@@ -209,7 +209,7 @@ test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", asy
     />,
   );
   await screen.findByDisplayValue("pnpm test");
-  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Consult AI/ }));
 
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith(
@@ -222,7 +222,7 @@ test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", asy
     ),
   );
   expect(
-    screen.queryByRole("button", { name: "APPLY TO FORM" }),
+    screen.queryByRole("button", { name: "Apply to form" }),
   ).not.toBeInTheDocument();
   const draft = {
     preset: "Custom",
@@ -249,7 +249,7 @@ test("consultant uses Pi RPC and only applies a reviewed fenced JSON draft", asy
   });
 
   expect(await screen.findByText("pnpm test --run")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "APPLY TO FORM" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply to form" }));
   expect(screen.getByDisplayValue("pnpm test --run")).toBeInTheDocument();
   expect(invoke).not.toHaveBeenCalledWith(
     "save_pipeline_config",
@@ -265,7 +265,7 @@ test("rejects invalid typed consultant drafts", async () => {
   );
   render(<PipelineSettings projectPath="/projects/demo" onToast={vi.fn()} />);
   await screen.findByDisplayValue("pnpm test");
-  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Consult AI/ }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
   );
@@ -302,7 +302,7 @@ test("rejects invalid typed consultant drafts", async () => {
     },
   });
   expect(
-    screen.queryByRole("button", { name: "APPLY TO FORM" }),
+    screen.queryByRole("button", { name: "Apply to form" }),
   ).not.toBeInTheDocument();
 });
 
@@ -321,7 +321,7 @@ test("project switch kills consultant and ignores stale startup", async () => {
     <PipelineSettings projectPath="/projects/one" onToast={vi.fn()} />,
   );
   await screen.findByDisplayValue("pnpm test");
-  fireEvent.click(screen.getByRole("button", { name: /CONSULT AI/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Consult AI/ }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
   );

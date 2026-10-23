@@ -38,13 +38,13 @@ afterEach(() => {
 test("requires credentials to opt in, but allows saving Off without a key", async () => {
   invoke.mockResolvedValue(config);
   render(<JevSettings onToast={vi.fn()} />);
-  const save = screen.getByRole("button", { name: "SAVE JEV SETTINGS" });
+  const save = screen.getByRole("button", { name: "Save" });
   await waitFor(() => expect(save).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("ROUTING MODE"), {
+  fireEvent.change(screen.getByLabelText(/^Routing mode/), {
     target: { value: "shadow" },
   });
   expect(save).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("API KEY"), {
+  fireEvent.change(screen.getByLabelText(/^API key/), {
     target: { value: "test-secret" },
   });
   expect(save).toBeEnabled();
@@ -57,17 +57,15 @@ test("saves settings through the host and clears entered credentials", async () 
   const toast = vi.fn();
   render(<JevSettings onToast={toast} />);
   await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "SAVE JEV SETTINGS" }),
-    ).toBeEnabled(),
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
   );
-  fireEvent.change(screen.getByLabelText("ROUTING MODE"), {
+  fireEvent.change(screen.getByLabelText(/^Routing mode/), {
     target: { value: "shadow" },
   });
-  fireEvent.change(screen.getByLabelText("API KEY"), {
+  fireEvent.change(screen.getByLabelText(/^API key/), {
     target: { value: "test-secret" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "SAVE JEV SETTINGS" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenLastCalledWith("save_jev_settings", {
       settings: { ...config, mode: "shadow" },
@@ -77,7 +75,7 @@ test("saves settings through the host and clears entered credentials", async () 
   expect(await screen.findByRole("status")).toHaveTextContent(
     "restart project chat",
   );
-  expect(screen.getByLabelText("API KEY")).toHaveValue("");
+  expect(screen.getByLabelText(/^API key/)).toHaveValue("");
   expect(toast).toHaveBeenCalledTimes(1);
 });
 
@@ -87,7 +85,7 @@ test("shows a configuration load error without enabling a provider", async () =>
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Cannot read Jev settings",
   );
-  expect(screen.getByLabelText("ROUTING MODE")).toHaveValue("off");
+  expect(screen.getByLabelText(/^Routing mode/)).toHaveValue("off");
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 
@@ -95,15 +93,15 @@ test("reflects automatic billing Off while retaining the user's unsaved fields",
   invoke.mockResolvedValue({ ...config, mode: "shadow", has_api_key: true });
   render(<JevSettings onToast={vi.fn()} />);
   await waitFor(() =>
-    expect(screen.getByLabelText("ROUTING MODE")).toHaveValue("shadow"),
+    expect(screen.getByLabelText(/^Routing mode/)).toHaveValue("shadow"),
   );
-  fireEvent.change(screen.getByLabelText("MODEL"), {
+  fireEvent.change(screen.getByLabelText("Model"), {
     target: { value: "my-new-model" },
   });
   const { act } = await import("@testing-library/react");
   act(() => onSettingsChanged?.());
-  expect(screen.getByLabelText("ROUTING MODE")).toHaveValue("off");
-  expect(screen.getByLabelText("MODEL")).toHaveValue("my-new-model");
+  expect(screen.getByLabelText(/^Routing mode/)).toHaveValue("off");
+  expect(screen.getByLabelText("Model")).toHaveValue("my-new-model");
   expect(screen.getByRole("status")).toHaveTextContent(
     "automatically switched Off",
   );

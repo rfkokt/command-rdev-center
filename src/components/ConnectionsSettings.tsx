@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  Actions,
+  Field,
+  Group,
+  ItemRow,
+  Note,
+  Status,
+  Subhead,
+} from "./settings-ui";
 
 export type Protocol = "openai-chat" | "openai-responses" | "anthropic";
 
@@ -238,247 +247,256 @@ export default function ConnectionsSettings({
     (draft.apiKey.trim() || draft.hasKey);
 
   return (
-    <main className="graphify-settings connections-settings">
-      <div className="settings-notice">
-        <span>
-          Add an endpoint once and every agent can use it. Keys stay in macOS
-          Keychain; agent config files only reference an environment variable
-          Kern sets at launch. Models appear in pi, oh-my-pi and OpenCode as{" "}
-          <code>kern-&lt;id&gt;/&lt;model&gt;</code>.
-        </span>
-      </div>
+    <div className="kset-panel">
+      <Note>
+        Add an endpoint once and every agent can use it. Keys stay in the macOS
+        Keychain; agent config files only reference an environment variable Kern
+        sets at launch. Models appear in pi, oh-my-pi and OpenCode as{" "}
+        <code>kern-&lt;id&gt;/&lt;model&gt;</code>.
+      </Note>
 
       {view && view.profiles.length > 0 && (
-        <section className="connection-list" aria-label="Connections">
+        <Group label="Connections">
           {view.profiles.map((profile) => (
-            <div key={profile.id} className="connection-row">
-              <span>
-                {profile.name}
-                <small>
+            <ItemRow
+              key={profile.id}
+              title={profile.name}
+              detail={
+                <>
                   {PROTOCOL_LABELS[profile.protocol]} · {profile.base_url} ·{" "}
                   {profile.models.length} model
                   {profile.models.length === 1 ? "" : "s"}
                   {profile.has_api_key ? "" : " · no key"}
-                </small>
-              </span>
+                </>
+              }
+            >
               <button type="button" onClick={() => edit(profile)}>
                 Edit
               </button>
               <button
                 type="button"
+                className="kset-link-button"
                 aria-label={`Delete ${profile.name}`}
                 onClick={() => void remove(profile)}
               >
                 Delete
               </button>
-            </div>
+            </ItemRow>
           ))}
-        </section>
+        </Group>
       )}
 
-      <div className="connection-form-head">
-        <strong>{draft.isNew ? "NEW CONNECTION" : `EDIT ${draft.name}`}</strong>
-        {draft.isNew ? (
-          <div className="connection-presets">
-            {PRESETS.map((preset) => (
-              <button
-                type="button"
-                key={preset.label}
-                onClick={() =>
-                  setDraft({
-                    ...draft,
-                    name: preset.name,
-                    id: slugify(preset.name),
-                    protocol: preset.protocol,
-                    base_url: preset.base_url,
-                  })
-                }
-              >
-                {preset.label}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <button type="button" onClick={() => setDraft(EMPTY)}>
-            Cancel
-          </button>
-        )}
-      </div>
-      <label>
-        NAME
-        <input
-          value={draft.name}
-          onChange={(e) =>
-            setDraft({
-              ...draft,
-              name: e.target.value,
-              id: draft.isNew ? slugify(e.target.value) : draft.id,
-            })
-          }
-          placeholder="OpenRouter"
-        />
-      </label>
-      <label>
-        PROTOCOL
-        <select
-          value={draft.protocol}
-          onChange={(e) =>
-            setDraft({ ...draft, protocol: e.target.value as Protocol })
-          }
-        >
-          {(Object.keys(PROTOCOL_LABELS) as Protocol[]).map((protocol) => (
-            <option key={protocol} value={protocol}>
-              {PROTOCOL_LABELS[protocol]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        BASE URL
-        <input
-          type="url"
-          value={draft.base_url}
-          onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
-          placeholder={
-            draft.protocol === "anthropic"
-              ? "https://api.anthropic.com"
-              : "https://openrouter.ai/api/v1"
-          }
-        />
-      </label>
-      <label>
-        API KEY
-        <input
-          type="password"
-          value={draft.apiKey}
-          onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
-          placeholder={
-            draft.hasKey
-              ? "Saved — leave blank to keep current key"
-              : "Required"
-          }
-          autoComplete="new-password"
-        />
-      </label>
-      <div className="graphify-model-field">
-        <label htmlFor="connection-models">
-          MODELS<small>one per line — the first is the default</small>
-        </label>
-        <div className="graphify-model-row">
-          <textarea
-            id="connection-models"
-            rows={4}
-            value={draft.models}
-            onChange={(e) => setDraft({ ...draft, models: e.target.value })}
-            placeholder={"deepseek/deepseek-v4\nqwen/qwen3-coder"}
-          />
-          <button
-            type="button"
-            onClick={() => void fetchModels()}
-            disabled={
-              busy !== "" ||
-              !draft.base_url.trim() ||
-              (!draft.apiKey && !draft.hasKey)
-            }
-          >
-            {busy === "fetch" ? "FETCHING…" : "FETCH MODELS"}
-          </button>
-        </div>
-        {fetched.length > 0 && (
-          <div className="graphify-model-picker">
-            <div className="graphify-model-search">
-              <span>⌕</span>
-              <input
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Search models…"
-                aria-label="Search connection models"
-              />
-            </div>
-            <div className="graphify-model-list">
-              {shown.map((model) => (
+      <Subhead
+        actions={
+          draft.isNew ? (
+            <div className="kset-chips">
+              {PRESETS.map((preset) => (
                 <button
                   type="button"
-                  key={model}
-                  className={draftModels.includes(model) ? "active" : ""}
-                  onClick={() => toggleModel(model)}
+                  key={preset.label}
+                  onClick={() =>
+                    setDraft({
+                      ...draft,
+                      name: preset.name,
+                      id: slugify(preset.name),
+                      protocol: preset.protocol,
+                      base_url: preset.base_url,
+                    })
+                  }
                 >
-                  <span>{model}</span>
-                  {draftModels.includes(model) && <b>✓</b>}
+                  {preset.label}
                 </button>
               ))}
             </div>
-            <small>
-              {draftModels.length} selected · {shown.length} / {fetched.length}{" "}
-              MODELS
-            </small>
-          </div>
-        )}
-      </div>
-      {error && (
-        <div className="settings-error" role="alert">
-          {error}
-        </div>
-      )}
-      <button
-        className="save-settings"
-        onClick={() => void save()}
-        disabled={!canSave || busy !== ""}
+          ) : (
+            <button
+              type="button"
+              className="kset-link-button"
+              onClick={() => setDraft(EMPTY)}
+            >
+              Cancel
+            </button>
+          )
+        }
       >
-        {busy === "save" ? "SAVING…" : "SAVE CONNECTION"}
-      </button>
+        {draft.isNew ? "New connection" : `Edit ${draft.name}`}
+      </Subhead>
+      <Group>
+        <Field label="Name">
+          <input
+            value={draft.name}
+            onChange={(e) =>
+              setDraft({
+                ...draft,
+                name: e.target.value,
+                id: draft.isNew ? slugify(e.target.value) : draft.id,
+              })
+            }
+            placeholder="OpenRouter"
+          />
+        </Field>
+        <Field label="Protocol">
+          <select
+            value={draft.protocol}
+            onChange={(e) =>
+              setDraft({ ...draft, protocol: e.target.value as Protocol })
+            }
+          >
+            {(Object.keys(PROTOCOL_LABELS) as Protocol[]).map((protocol) => (
+              <option key={protocol} value={protocol}>
+                {PROTOCOL_LABELS[protocol]}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Base URL">
+          <input
+            type="url"
+            value={draft.base_url}
+            onChange={(e) => setDraft({ ...draft, base_url: e.target.value })}
+            placeholder={
+              draft.protocol === "anthropic"
+                ? "https://api.anthropic.com"
+                : "https://openrouter.ai/api/v1"
+            }
+          />
+        </Field>
+        <Field label="API key">
+          <input
+            type="password"
+            value={draft.apiKey}
+            onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })}
+            placeholder={
+              draft.hasKey ? "Saved; leave blank to keep" : "Required"
+            }
+            autoComplete="new-password"
+          />
+        </Field>
+        <div className="kset-row kset-row--wide">
+          <span className="kset-row-text">
+            <label className="kset-row-title" htmlFor="connection-models">
+              Models
+            </label>
+            <span className="kset-row-desc">
+              One per line. The first is the default.
+            </span>
+          </span>
+          <span className="kset-row-control">
+            <textarea
+              id="connection-models"
+              rows={4}
+              value={draft.models}
+              onChange={(e) => setDraft({ ...draft, models: e.target.value })}
+              placeholder={"deepseek/deepseek-v4\nqwen/qwen3-coder"}
+            />
+            <button
+              type="button"
+              onClick={() => void fetchModels()}
+              disabled={
+                busy !== "" ||
+                !draft.base_url.trim() ||
+                (!draft.apiKey && !draft.hasKey)
+              }
+            >
+              {busy === "fetch" ? "Fetching…" : "Fetch models"}
+            </button>
+          </span>
+          {fetched.length > 0 && (
+            <div className="graphify-model-picker">
+              <div className="graphify-model-search">
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Search models…"
+                  aria-label="Search connection models"
+                />
+                <small>
+                  {draftModels.length} selected · {shown.length} of{" "}
+                  {fetched.length}
+                </small>
+              </div>
+              <div className="graphify-model-list">
+                {shown.map((model) => (
+                  <button
+                    type="button"
+                    key={model}
+                    className={draftModels.includes(model) ? "active" : ""}
+                    onClick={() => toggleModel(model)}
+                  >
+                    <span>{model}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Group>
+      <Status error={error} />
+      <Actions>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void save()}
+          disabled={!canSave || busy !== ""}
+        >
+          {busy === "save" ? "Saving…" : "Save connection"}
+        </button>
+      </Actions>
 
       {view && view.profiles.length > 0 && (
-        <section className="connection-assignments">
-          <strong>USE IN AGENTS</strong>
-          {Object.keys(HARNESS_LABELS).map((harness) => {
-            const compatible = view.profiles.filter((profile) =>
-              (view.compatibility[harness] ?? []).includes(profile.protocol),
-            );
-            const required = view.assignment_required.includes(harness);
-            return (
-              <label key={harness} className="connection-assignment">
-                <span>
-                  {HARNESS_LABELS[harness]}
-                  <small>
-                    {compatible.length === 0
-                      ? `Needs a connection using ${(
-                          view.compatibility[harness] ?? []
-                        )
-                          .map((protocol) => PROTOCOL_LABELS[protocol])
-                          .join(" or ")}`
-                      : required
-                        ? "Routes all requests through the selected connection"
-                        : harness === "opencode"
-                          ? "All compatible connections listed; pick the default model"
-                          : "All compatible connections listed in the model picker"}
-                  </small>
-                </span>
-                {(required || harness === "opencode") && (
-                  <select
-                    aria-label={`Connection for ${HARNESS_LABELS[harness]}`}
-                    value={view.assignments[harness] ?? ""}
-                    onChange={(e) => void assign(harness, e.target.value)}
-                    disabled={compatible.length === 0}
-                  >
-                    <option value="">
-                      {required ? "Own login / env" : "Harness default"}
-                    </option>
-                    {compatible.map((profile) => (
-                      <option key={profile.id} value={profile.id}>
-                        {profile.name}
+        <>
+          <Subhead>Use in agents</Subhead>
+          <Group label="Use in agents">
+            {Object.keys(HARNESS_LABELS).map((harness) => {
+              const compatible = view.profiles.filter((profile) =>
+                (view.compatibility[harness] ?? []).includes(profile.protocol),
+              );
+              const required = view.assignment_required.includes(harness);
+              const detail =
+                compatible.length === 0
+                  ? `Needs a connection using ${(
+                      view.compatibility[harness] ?? []
+                    )
+                      .map((protocol) => PROTOCOL_LABELS[protocol])
+                      .join(" or ")}`
+                  : required
+                    ? "Routes all requests through the selected connection"
+                    : harness === "opencode"
+                      ? "All compatible connections listed; pick the default model"
+                      : "All compatible connections listed in the model picker";
+              return (
+                <ItemRow
+                  key={harness}
+                  title={HARNESS_LABELS[harness]}
+                  detail={detail}
+                >
+                  {required || harness === "opencode" ? (
+                    <select
+                      aria-label={`Connection for ${HARNESS_LABELS[harness]}`}
+                      value={view.assignments[harness] ?? ""}
+                      onChange={(e) => void assign(harness, e.target.value)}
+                      disabled={compatible.length === 0}
+                    >
+                      <option value="">
+                        {required ? "Own login / env" : "Harness default"}
                       </option>
-                    ))}
-                  </select>
-                )}
-                {!required && harness !== "opencode" && (
-                  <em>{compatible.length} available</em>
-                )}
-              </label>
-            );
-          })}
-        </section>
+                      {compatible.map((profile) => (
+                        <option key={profile.id} value={profile.id}>
+                          {profile.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="kset-count">
+                      {compatible.length} available
+                    </span>
+                  )}
+                </ItemRow>
+              );
+            })}
+          </Group>
+        </>
       )}
-    </main>
+    </div>
   );
 }

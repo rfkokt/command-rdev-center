@@ -248,15 +248,15 @@ body,
   gap: 9px !important;
   text-decoration: none !important;
   color: var(--text-primary) !important;
-  font-weight: 700 !important;
-  font-size: 16px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-title-sm) !important;
   letter-spacing: -0.4px !important;
 }
 
 .wordmark-dot {
   color: var(--blue) !important;
   margin-left: 1px !important;
-  font-size: 16px !important;
+  font-size: var(--fs-title-sm) !important;
 }
 
 .dotted-logo {
@@ -327,8 +327,8 @@ body,
 }
 
 .sidebar-profile-info strong {
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   white-space: nowrap !important;
   overflow: hidden !important;
@@ -339,7 +339,7 @@ body,
   display: inline-flex !important;
   align-items: center !important;
   gap: 5px !important;
-  font-size: 10px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--text-secondary) !important;
 }
 
@@ -370,8 +370,8 @@ body,
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   box-shadow: var(--shadow-card) !important;
   transition: all 0.15s ease !important;
@@ -401,9 +401,9 @@ body,
 .sidebar-nav-label,
 .nav-label,
 .projects-heading {
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 1.1px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--muted) !important;
   padding: 6px 6px !important;
@@ -448,8 +448,8 @@ body,
   border: 1px solid transparent !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 12px !important;
-  font-weight: 450 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-regular) !important;
   text-align: left !important;
   cursor: pointer !important;
   box-sizing: border-box !important;
@@ -485,7 +485,7 @@ body,
   background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent) !important;
   color: var(--blue) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   border-radius: 8px !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
 }
@@ -510,7 +510,7 @@ body,
 
 .project-row {
   flex: 1 !important;
-  font-weight: 550 !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-primary) !important;
 }
 
@@ -575,7 +575,7 @@ body,
   border-radius: 6px !important;
   background: transparent !important;
   color: var(--text-primary) !important;
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
   cursor: pointer !important;
   text-align: left !important;
   transition: background 0.15s ease !important;
@@ -606,7 +606,7 @@ body,
 
 .conversation-row {
   padding-left: 28px !important;
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
 }
 
 /* Unread & Working Badges */
@@ -617,8 +617,8 @@ body,
   border-radius: var(--radius-pill) !important;
   background: var(--blue) !important;
   color: white !important;
-  font-size: 10px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   line-height: 1.4 !important;
   text-align: center !important;
 }
@@ -711,8 +711,8 @@ body,
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -725,7 +725,7 @@ body,
 .color-theme-control button.active {
   background: color-mix(in srgb, var(--accent) 24%, transparent) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
 }
 
@@ -766,8 +766,8 @@ body,
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 10.5px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   text-align: center !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
@@ -781,17 +781,17 @@ body,
 .appearance-control button.active {
   background: color-mix(in srgb, var(--accent) 24%, transparent) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18) !important;
 }
 
 .app-version {
   display: block !important;
-  font-size: 9px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   text-align: center !important;
   margin-top: 6px !important;
-  letter-spacing: 0.5px !important;
+  letter-spacing: var(--tracking-label) !important;
 }
 
 /* Workspace Layout */
@@ -870,15 +870,15 @@ body,
 }
 
 .workspace-title strong {
-  font-size: 13.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.2px !important;
 }
 
 .workspace-title small {
   display: block !important;
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
 }
 
@@ -887,9 +887,9 @@ body,
   display: inline-flex !important;
   align-items: center !important;
   gap: 6px !important;
-  font-size: 9.5px !important;
-  letter-spacing: 0.8px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  letter-spacing: var(--tracking-label) !important;
+  font-weight: var(--fw-semibold) !important;
   text-transform: uppercase !important;
   padding: 2.5px 9px !important;
   border-radius: var(--radius-pill) !important;
@@ -937,8 +937,8 @@ body,
   border: 0 !important;
   border-radius: var(--radius-pill) !important;
   padding: 4px 12px !important;
-  font-size: 11px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-secondary) !important;
   background: transparent !important;
   cursor: pointer !important;
@@ -953,7 +953,7 @@ body,
 .project-workspace-nav button.active {
   background: var(--blue) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent) !important;
 }
 
@@ -964,8 +964,8 @@ body,
   gap: 6px !important;
   padding: 6px 14px !important;
   border-radius: var(--radius-pill) !important;
-  font-size: 11.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
@@ -990,7 +990,7 @@ body,
   color: #ffffff !important;
   border: 1px solid var(--blue-dark) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: normal !important;
 }
 
@@ -1077,14 +1077,14 @@ body,
 }
 
 .empty-state strong {
-  font-size: 18px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-title) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.3px !important;
 }
 
 .empty-state span {
-  font-size: 13px !important;
+  font-size: var(--fs-ui) !important;
   color: var(--text-secondary) !important;
   max-width: 320px !important;
   line-height: 1.5 !important;
@@ -1094,8 +1094,8 @@ body,
   display: inline-flex !important;
   align-items: center !important;
   gap: 6px !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-secondary) !important;
   background: var(--surface-card) !important;
   border: 1px solid var(--line) !important;
@@ -1128,7 +1128,9 @@ body,
   width: 100% !important;
   height: 100% !important;
   object-fit: contain !important;
-  filter: drop-shadow(0 6px 16px color-mix(in srgb, var(--accent) 28%, transparent)) !important;
+  filter: drop-shadow(
+    0 6px 16px color-mix(in srgb, var(--accent) 28%, transparent)
+  ) !important;
   transition:
     transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
     filter 0.3s ease !important;
@@ -1145,7 +1147,9 @@ body,
 .mascot.working .dot-body {
   animation: opendots-mascot-working 0.7s cubic-bezier(0.36, 0, 0.66, -0.56)
     infinite alternate !important;
-  filter: drop-shadow(0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent)) !important;
+  filter: drop-shadow(
+    0 8px 24px color-mix(in srgb, var(--accent) 45%, transparent)
+  ) !important;
 }
 
 /* Curious / Needs Input State */
@@ -1156,7 +1160,9 @@ body,
 /* Playful Hover Interaction */
 .mascot:hover .dot-body {
   transform: translateY(-8px) scale(1.1) rotate(-3deg) !important;
-  filter: drop-shadow(0 14px 28px color-mix(in srgb, var(--accent) 50%, transparent)) !important;
+  filter: drop-shadow(
+    0 14px 28px color-mix(in srgb, var(--accent) 50%, transparent)
+  ) !important;
 }
 
 @keyframes opendots-mascot-float {
@@ -1388,7 +1394,11 @@ body,
 }
 
 [data-theme="light"] .chat-bubble-user {
-  background: linear-gradient(135deg, var(--accent) 0%, #5a6fc5 100%) !important;
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    #5a6fc5 100%
+  ) !important;
   border: 1px solid rgba(90, 111, 197, 0.45) !important;
   box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 28%, transparent) !important;
   color: #ffffff !important;
@@ -1408,7 +1418,7 @@ body,
 .chat-bubble-user > .markdown-body {
   background: transparent !important;
   color: inherit !important;
-  font-size: 13.5px !important;
+  font-size: var(--fs-ui) !important;
   line-height: 1.6 !important;
 }
 
@@ -1426,7 +1436,7 @@ body,
   color: #ffffff !important;
   border-radius: 5px !important;
   padding: 2px 6px !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   border: 1px solid rgba(255, 255, 255, 0.15) !important;
 }
 
@@ -1470,7 +1480,7 @@ body,
 
 [data-theme="light"] .chat-bubble-assistant .assistant-author-name {
   color: #0f172a !important;
-  font-weight: 700 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .chat-bubble-assistant > .markdown-body {
@@ -1533,8 +1543,8 @@ body,
 }
 
 .assistant-author-name {
-  font-size: 13px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.2px !important;
 }
@@ -1543,9 +1553,9 @@ body,
   display: inline-flex !important;
   align-items: center !important;
   gap: 6px !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--blue) !important;
-  font-weight: 500 !important;
+  font-weight: var(--fw-medium) !important;
   margin-left: 6px !important;
 }
 
@@ -1563,7 +1573,7 @@ body,
   color: var(--text-primary) !important;
   width: 100%;
   max-width: 72ch;
-  font-size: 15px !important;
+  font-size: var(--fs-title-sm) !important;
   line-height: 1.8 !important;
 }
 
@@ -1598,7 +1608,7 @@ body,
 .chat-bubble-assistant > .markdown-body h3,
 .chat-bubble-assistant > .markdown-body h4 {
   color: var(--text-primary) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
   margin-top: 1.6em !important;
   margin-bottom: 0.65em !important;
   letter-spacing: -0.2px !important;
@@ -1639,7 +1649,7 @@ body,
   backdrop-filter: blur(14px) !important;
   -webkit-backdrop-filter: blur(14px) !important;
   color: #f1f5f9 !important;
-  font-size: 12.5px !important;
+  font-size: var(--fs-small) !important;
   animation: opendots-fade-in 0.25s ease-out !important;
   box-sizing: border-box !important;
   overflow-x: hidden !important;
@@ -1649,9 +1659,9 @@ body,
   display: inline-flex !important;
   align-items: center !important;
   gap: 7px !important;
-  font-weight: 700 !important;
-  font-size: 10.5px !important;
-  letter-spacing: 1px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-caption) !important;
+  letter-spacing: var(--tracking-label) !important;
   color: #818cf8 !important;
   text-transform: uppercase !important;
   margin-bottom: 4px !important;
@@ -1672,7 +1682,7 @@ body,
 .chat-notice .markdown-body {
   background: transparent !important;
   color: inherit !important;
-  font-size: 13px !important;
+  font-size: var(--fs-ui) !important;
   line-height: 1.55 !important;
 }
 
@@ -1686,7 +1696,7 @@ body,
 
 .chat-notice .chat-message-meta {
   margin-top: 6px !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: #94a3b8 !important;
 }
 
@@ -1702,7 +1712,7 @@ body,
 
 [data-theme="light"] .chat-notice > small {
   color: #4338ca !important;
-  font-weight: 750 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .chat-notice > small::before {
@@ -1713,12 +1723,12 @@ body,
 [data-theme="light"] .chat-notice > .markdown-body p,
 [data-theme="light"] .chat-notice .markdown-body p {
   color: #0f172a !important;
-  font-weight: 500 !important;
+  font-weight: var(--fw-medium) !important;
 }
 
 [data-theme="light"] .chat-notice .chat-message-meta {
   color: #475569 !important;
-  font-weight: 500 !important;
+  font-weight: var(--fw-medium) !important;
 }
 
 .markdown-body {
@@ -1751,8 +1761,8 @@ body,
   gap: 6px !important;
   border-radius: 9999px !important;
   padding: 5px 13px !important;
-  font-size: 11px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-secondary) !important;
@@ -1792,7 +1802,7 @@ body,
   background: transparent !important;
   color: var(--text-primary) !important;
   padding: 6px 10px !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   transition: background 0.15s ease !important;
 }
 
@@ -1825,7 +1835,7 @@ body,
 
 [data-theme="light"] .thinking-block > summary {
   color: #334155 !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .thinking-block-content {
@@ -1868,8 +1878,8 @@ body,
 
 .thinking-block > summary {
   padding: 10px 14px !important;
-  font-size: 11.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-secondary) !important;
   cursor: pointer !important;
   display: flex !important;
@@ -1884,7 +1894,7 @@ body,
 .thinking-block-content {
   padding: 12px 14px !important;
   border-top: 1px solid rgba(255, 255, 255, 0.06) !important;
-  font-size: 12.5px !important;
+  font-size: var(--fs-small) !important;
   line-height: 1.6 !important;
   color: var(--text-secondary) !important;
 }
@@ -1914,7 +1924,7 @@ body,
 [data-theme="light"] .tool-stack > summary,
 [data-theme="light"] .tool-call > summary {
   color: #0f172a !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .tool-stack > summary span,
@@ -1937,8 +1947,8 @@ body,
 .tool-stack > summary,
 .tool-call > summary {
   padding: 10px 14px !important;
-  font-size: 12px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-primary) !important;
   cursor: pointer !important;
   display: flex !important;
@@ -1955,8 +1965,8 @@ body,
   border-radius: 50% !important;
   background: rgba(140, 172, 145, 0.2) !important;
   color: var(--online-green) !important;
-  font-size: 11px !important;
-  font-weight: 700 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .skill-recommendation {
@@ -1982,7 +1992,7 @@ body,
 
 [data-theme="light"] .skill-recommendation strong {
   color: #0f172a !important;
-  font-weight: 700 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .skill-recommendation span {
@@ -1991,7 +2001,7 @@ body,
 
 [data-theme="light"] .skill-recommendation small {
   color: #4338ca !important;
-  font-weight: 700 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .skill-recommendation button {
@@ -2051,7 +2061,7 @@ body,
 .chat-composer textarea {
   background: transparent !important;
   color: var(--text-primary) !important;
-  font-size: 13.5px !important;
+  font-size: var(--fs-ui) !important;
   line-height: 1.6 !important;
 }
 
@@ -2074,8 +2084,8 @@ body,
   border-radius: var(--radius-pill) !important;
   background: var(--surface-raised) !important;
   color: var(--text-secondary) !important;
-  font-size: 11.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   padding: 5px 12px !important;
   cursor: pointer !important;
   transition:
@@ -2105,10 +2115,10 @@ body,
   background: var(--blue) !important;
   color: #ffffff !important;
   border: 1px solid var(--blue-dark) !important;
-  font-weight: 600 !important;
-  font-size: 12px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-small) !important;
   padding: 7px 18px !important;
-  letter-spacing: 0.5px !important;
+  letter-spacing: var(--tracking-label) !important;
   box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 35%, transparent) !important;
   cursor: pointer !important;
   transition:
@@ -2147,8 +2157,8 @@ body,
 
 .agent-working strong {
   color: var(--text-primary) !important;
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .agent-working small,
@@ -2161,7 +2171,7 @@ body,
   border-radius: 7px !important;
   background: var(--surface-raised) !important;
   color: var(--text-primary) !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   padding: 4px 10px !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
@@ -2215,8 +2225,8 @@ body,
   border: 1px solid var(--line) !important;
   box-shadow: var(--shadow-card) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .chat-session-dot {
@@ -2229,7 +2239,7 @@ body,
 }
 
 .chat-session-name {
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.2px !important;
   max-width: 200px !important;
@@ -2250,7 +2260,7 @@ body,
   background: transparent !important;
   color: var(--muted) !important;
   cursor: pointer !important;
-  font-size: 10px !important;
+  font-size: var(--fs-caption) !important;
   line-height: 1 !important;
   transition: all 0.15s ease !important;
 }
@@ -2270,9 +2280,9 @@ body,
   background: rgba(255, 255, 255, 0.05) !important;
   border: 1px solid var(--line) !important;
   color: var(--text-secondary) !important;
-  font-size: 10.5px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.4px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
 }
 
@@ -2304,8 +2314,8 @@ body,
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-secondary) !important;
-  font-size: 11.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0.2px !important;
   box-shadow: var(--shadow-card) !important;
   cursor: pointer !important;
@@ -2367,9 +2377,9 @@ body,
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--muted) !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.4px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -2397,7 +2407,7 @@ body,
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
   border-top: 1px solid var(--line) !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--text-secondary) !important;
   z-index: 15 !important;
 }
@@ -2411,8 +2421,8 @@ body,
   align-items: center !important;
   gap: 6px !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   font-family: var(--font-mono) !important;
 }
 
@@ -2425,8 +2435,8 @@ body,
   background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
   border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent) !important;
   color: var(--blue) !important;
-  font-weight: 600 !important;
-  font-size: 10.5px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-caption) !important;
   letter-spacing: 0.3px !important;
   cursor: pointer !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) !important;
@@ -2451,8 +2461,8 @@ body,
   background: rgba(121, 190, 130, 0.12) !important;
   border: 1px solid rgba(121, 190, 130, 0.28) !important;
   color: var(--online-green) !important;
-  font-weight: 600 !important;
-  font-size: 10.5px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-caption) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -2472,8 +2482,8 @@ body,
   border: 1px solid transparent !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 10.5px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   letter-spacing: 0.05em !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
@@ -2576,8 +2586,8 @@ button:focus-visible {
   border-radius: var(--radius-pill) !important;
   background: var(--blue) !important;
   color: #ffffff !important;
-  font-size: 12px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0.2px !important;
   border: 1px solid var(--blue-dark) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent) !important;
@@ -2629,8 +2639,8 @@ button:focus-visible {
   background: var(--surface-card) !important;
   border: 1px solid var(--line) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   box-shadow: var(--shadow-card) !important;
   cursor: pointer !important;
   transition: all 0.15s var(--ease-out-expo) !important;
@@ -2667,8 +2677,8 @@ button:focus-visible {
   background: rgba(230, 120, 115, 0.12) !important;
   border: 1px solid rgba(230, 120, 115, 0.32) !important;
   color: var(--status-red) !important;
-  font-size: 11.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -2732,8 +2742,8 @@ select,
   background-position: right 12px center !important;
   background-size: 12px !important;
   color: var(--text-primary) !important;
-  font-size: 12.5px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   box-shadow: var(--shadow-card) !important;
   transition:
@@ -2767,9 +2777,9 @@ select option {
   display: flex !important;
   flex-direction: column !important;
   gap: 5px !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.6px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--text-secondary) !important;
 }
@@ -2785,8 +2795,8 @@ select option {
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   letter-spacing: normal !important;
   text-transform: none !important;
   cursor: pointer !important;
@@ -2809,7 +2819,7 @@ select option {
 
 .list-picker-trigger span {
   color: var(--blue) !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   transition: transform 0.2s ease !important;
 }
 
@@ -2841,8 +2851,8 @@ select option {
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   letter-spacing: normal !important;
   text-transform: none !important;
   cursor: pointer !important;
@@ -2858,12 +2868,12 @@ select option {
 .list-picker-menu button.active {
   background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
   color: var(--blue) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .list-picker-menu b {
   color: var(--blue) !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
 }
 
 /* ==========================================================================
@@ -2945,8 +2955,8 @@ select option {
 .settings-panel > header h2,
 .model-picker header h2,
 .approval-dialog header h2 {
-  font-size: 15px !important;
-  font-weight: 650 !important;
+  font-size: var(--fs-title-sm) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.2px !important;
   margin: 0 !important;
@@ -2955,9 +2965,9 @@ select option {
 .settings-panel > header small,
 .approval-dialog header small {
   display: block !important;
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.9px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--blue) !important;
   margin-bottom: 2px !important;
@@ -2986,8 +2996,8 @@ select option {
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   padding: 5px 12px !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
@@ -3003,7 +3013,7 @@ select option {
 .project-settings-tabs button.active {
   background: var(--blue) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent) !important;
 }
 
@@ -3024,9 +3034,9 @@ select option {
 }
 
 .settings-form label > span {
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.6px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--text-secondary) !important;
   display: flex !important;
@@ -3035,8 +3045,8 @@ select option {
 }
 
 .settings-form label > span small {
-  font-size: 10.5px !important;
-  font-weight: 400 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-regular) !important;
   color: var(--muted) !important;
   text-transform: none !important;
   letter-spacing: normal !important;
@@ -3051,7 +3061,7 @@ textarea {
   border: 1px solid var(--line) !important;
   background: var(--surface-raised) !important;
   color: var(--text-primary) !important;
-  font-size: 12.5px !important;
+  font-size: var(--fs-small) !important;
   font-family: inherit !important;
   box-sizing: border-box !important;
   box-shadow: var(--shadow-card) !important;
@@ -3095,9 +3105,9 @@ select,
   background-color: var(--surface-card) !important;
   border: 1px solid var(--line) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   font-family: inherit !important;
-  font-weight: 500 !important;
+  font-weight: var(--fw-medium) !important;
   line-height: 1.4 !important;
   cursor: pointer !important;
   box-shadow: var(--shadow-card) !important;
@@ -3177,9 +3187,9 @@ select option {
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-primary) !important;
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
   font-family: inherit !important;
-  font-weight: 550 !important;
+  font-weight: var(--fw-medium) !important;
   letter-spacing: 0.15px !important;
   cursor: pointer !important;
   box-shadow: var(--shadow-card) !important;
@@ -3215,13 +3225,13 @@ select option {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   color: var(--blue) !important;
 }
 
 .opendots-select-value {
   color: var(--text-primary) !important;
-  font-weight: 550 !important;
+  font-weight: var(--fw-medium) !important;
 }
 
 .opendots-select-chevron {
@@ -3296,7 +3306,7 @@ select option {
   border-radius: 8px !important;
   background: transparent !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   font-family: inherit !important;
   text-align: left !important;
   cursor: pointer !important;
@@ -3311,7 +3321,7 @@ select option {
 .opendots-select-option.active {
   background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
   color: var(--blue) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .opendots-select-option-text {
@@ -3321,14 +3331,14 @@ select option {
 }
 
 .opendots-select-option-label {
-  font-size: 12px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   line-height: 1.3 !important;
   color: inherit !important;
 }
 
 .opendots-select-option-desc {
-  font-size: 10px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   line-height: 1.25 !important;
 }
@@ -3339,8 +3349,8 @@ select option {
 
 .opendots-select-check {
   color: var(--blue) !important;
-  font-size: 13px !important;
-  font-weight: 700 !important;
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-semibold) !important;
   margin-left: auto !important;
   flex-shrink: 0 !important;
 }
@@ -3434,9 +3444,9 @@ select option {
 }
 
 .settings-header-badge {
-  font-size: 9.5px !important;
-  font-weight: 650 !important;
-  letter-spacing: 1px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--blue) !important;
   background: color-mix(in srgb, var(--accent) 14%, transparent) !important;
@@ -3452,16 +3462,16 @@ select option {
 }
 
 .settings-title-wrap strong {
-  font-size: 15px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-title-sm) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   letter-spacing: -0.2px !important;
 }
 
 .settings-page-tag {
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.5px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   color: var(--muted) !important;
   background: var(--surface-card) !important;
   border: 1px solid var(--line) !important;
@@ -3478,8 +3488,8 @@ select option {
   border: 1px solid var(--line) !important;
   background: var(--surface-card) !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   cursor: pointer !important;
   box-shadow: var(--shadow-card) !important;
   transition: all 0.15s ease !important;
@@ -3497,8 +3507,8 @@ select option {
 }
 
 .settings-close-button .esc-key {
-  font-size: 9px !important;
-  font-weight: 700 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--muted) !important;
   background: rgba(255, 255, 255, 0.06) !important;
   padding: 1px 5px !important;
@@ -3543,8 +3553,8 @@ select option {
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 11.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
   display: inline-flex !important;
@@ -3560,7 +3570,7 @@ select option {
 .settings-scope-tab.active {
   background: var(--blue) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 38%, transparent) !important;
 }
 
@@ -3588,8 +3598,8 @@ select option {
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 11px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -3601,7 +3611,7 @@ select option {
 .settings-scope-switch button.active {
   background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
   color: var(--blue) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent) !important;
 }
 
@@ -3610,7 +3620,7 @@ select option {
   align-items: center !important;
   gap: 6px !important;
   font-family: var(--font-mono) !important;
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   background: var(--surface-card) !important;
   border: 1px solid var(--line) !important;
@@ -3681,19 +3691,19 @@ select option {
 }
 
 .settings-group-info strong {
-  font-size: 12.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-primary) !important;
   line-height: 1.3 !important;
 }
 
 .settings-group-btn.active .settings-group-info strong {
   color: var(--blue) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .settings-group-info small {
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   line-height: 1.25 !important;
   overflow: hidden !important;
@@ -3747,8 +3757,8 @@ select option {
   border: 0 !important;
   background: transparent !important;
   color: var(--text-secondary) !important;
-  font-size: 11.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   cursor: pointer !important;
   transition: all 0.15s ease !important;
 }
@@ -3760,7 +3770,7 @@ select option {
 .settings-mode button.active {
   background: var(--blue) !important;
   color: #ffffff !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 35%, transparent) !important;
 }
 
@@ -3773,12 +3783,12 @@ select option {
   background: color-mix(in srgb, var(--accent) 7%, transparent) !important;
   border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent) !important;
   color: var(--text-secondary) !important;
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
   line-height: 1.45 !important;
 }
 
 .settings-notice .notice-icon {
-  font-size: 14px !important;
+  font-size: var(--fs-ui) !important;
   flex-shrink: 0 !important;
 }
 
@@ -3802,9 +3812,9 @@ select option {
 }
 
 .pi-runtime-header small {
-  font-size: 10.5px !important;
-  font-weight: 650 !important;
-  letter-spacing: 0.8px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--muted) !important;
 }
@@ -3815,9 +3825,9 @@ select option {
   gap: 6px !important;
   padding: 3px 9px !important;
   border-radius: var(--radius-pill) !important;
-  font-size: 10px !important;
-  font-weight: 650 !important;
-  letter-spacing: 0.5px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
 }
 
 .pi-runtime-badge.healthy {
@@ -3846,8 +3856,8 @@ select option {
 }
 
 .pi-version-tag {
-  font-size: 11px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-primary) !important;
   background: rgba(255, 255, 255, 0.05) !important;
   padding: 3px 8px !important;
@@ -3855,8 +3865,8 @@ select option {
 }
 
 .pi-latest-tag {
-  font-size: 10.5px !important;
-  font-weight: 550 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--online-green) !important;
   background: rgba(121, 190, 130, 0.1) !important;
   padding: 3px 8px !important;
@@ -3865,7 +3875,7 @@ select option {
 
 .pi-binary-path {
   font-family: var(--font-mono) !important;
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   background: rgba(0, 0, 0, 0.25) !important;
   padding: 3px 8px !important;
@@ -3882,7 +3892,7 @@ select option {
 
 .pi-runtime-log {
   font-family: var(--font-mono) !important;
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   background: rgba(0, 0, 0, 0.35) !important;
   padding: 10px !important;
   border-radius: 8px !important;
@@ -3930,18 +3940,18 @@ select option {
 }
 
 .field-title {
-  font-size: 11px !important;
-  font-weight: 650 !important;
-  letter-spacing: 0.8px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   text-transform: uppercase !important;
   color: var(--text-primary) !important;
   line-height: 1.3 !important;
 }
 
 .field-desc {
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
-  font-weight: 400 !important;
+  font-weight: var(--fw-regular) !important;
   line-height: 1.3 !important;
 }
 
@@ -3953,7 +3963,7 @@ select option {
   border: 1px solid var(--line) !important;
   background: rgba(0, 0, 0, 0.22) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
+  font-size: var(--fs-small) !important;
   font-family: inherit !important;
   outline: none !important;
   transition: all 0.15s ease !important;
@@ -4047,7 +4057,7 @@ select option {
 }
 
 .storage-icon {
-  font-size: 20px !important;
+  font-size: var(--fs-title-lg) !important;
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
@@ -4056,7 +4066,7 @@ select option {
 
 .storage-path {
   font-family: var(--font-mono) !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--muted) !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
@@ -4085,8 +4095,8 @@ select option {
   display: flex !important;
   align-items: center !important;
   gap: 8px !important;
-  font-size: 11.5px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
   color: var(--text-secondary) !important;
 }
 
@@ -4133,8 +4143,8 @@ select option {
 
 .project-danger-zone h3 {
   color: var(--status-red) !important;
-  font-size: 11px !important;
-  letter-spacing: 0.6px !important;
+  font-size: var(--fs-caption) !important;
+  letter-spacing: var(--tracking-label) !important;
 }
 
 /* ==========================================================================
@@ -4150,8 +4160,8 @@ select option {
 .knowledge-button,
 .skill-button {
   border-radius: var(--radius-pill) !important;
-  font-size: 11.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0.2px !important;
   transition: all 0.15s var(--ease-out-expo) !important;
 }
@@ -4230,15 +4240,15 @@ select option {
   gap: 6px !important;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--signal, #5ad1e6) !important;
   margin-left: 6px !important;
 }
 
 .pixel-pulse-block {
   display: inline-block !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--signal, #5ad1e6) !important;
   animation: pixel-blink 0.75s steps(2, start) infinite !important;
 }
@@ -4279,12 +4289,12 @@ select option {
 
 [data-theme="light"] .agent-working strong {
   color: #0f172a !important;
-  font-weight: 700 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .agent-working-detail {
   color: #334155 !important;
-  font-weight: 550 !important;
+  font-weight: var(--fw-medium) !important;
 }
 
 [data-theme="light"] .agent-working-stats {
@@ -4312,7 +4322,7 @@ select option {
 
 [data-theme="light"] .pixel-activity-log summary {
   color: #334155 !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .pixel-transcript-row {
@@ -4325,7 +4335,7 @@ select option {
 
 [data-theme="light"] .pixel-transcript-row.is-running .pixel-step-text {
   color: #0369a1 !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .pixel-transcript-row .pixel-step-type {
@@ -4379,13 +4389,13 @@ select option {
 .agent-badge-tag {
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 9.5px !important;
-  font-weight: 700 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   padding: 1px 6px !important;
   border-radius: 4px !important;
   border: 1px solid !important;
   text-transform: uppercase !important;
-  letter-spacing: 0.5px !important;
+  letter-spacing: var(--tracking-label) !important;
   background: rgba(0, 0, 0, 0.25) !important;
 }
 
@@ -4445,8 +4455,8 @@ select option {
   padding: 6px 12px !important;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   cursor: pointer !important;
   user-select: none !important;
   display: flex !important;
@@ -4456,7 +4466,7 @@ select option {
 }
 
 .pixel-summary-icon {
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
 }
 
 .pixel-agent-transcript {
@@ -4476,7 +4486,7 @@ select option {
   border-radius: 4px !important;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--text-primary) !important;
 }
 
@@ -4486,8 +4496,8 @@ select option {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  font-size: 9px !important;
-  font-weight: bold !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
   border-radius: 2px !important;
   flex-shrink: 0 !important;
   font-family:
@@ -4522,7 +4532,7 @@ select option {
 }
 
 .pixel-step-type {
-  font-size: 9px !important;
+  font-size: var(--fs-caption) !important;
   color: var(--text-secondary) !important;
   text-transform: uppercase !important;
   padding: 1px 4px !important;
@@ -4646,8 +4656,8 @@ select option {
   display: inline-flex !important;
   align-items: center !important;
   gap: 6px !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
   border-radius: 8px !important;
   padding: 6px 12px !important;
   cursor: pointer !important;
@@ -4797,7 +4807,7 @@ select option {
   justify-content: space-between !important;
   padding: 0 14px !important;
   border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08)) !important;
-  font-size: 11px !important;
+  font-size: var(--fs-caption) !important;
 }
 
 .code-section-body {
@@ -4926,9 +4936,9 @@ select option {
   align-items: center !important;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 11.5px !important;
-  font-weight: 700 !important;
-  letter-spacing: 0.08em !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   color: #f8fafc !important;
   background: none !important;
   -webkit-text-fill-color: initial !important;
@@ -4942,9 +4952,9 @@ select option {
   display: block !important;
   font-family:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
-  font-size: 10px !important;
-  font-weight: 600 !important;
-  letter-spacing: 0.08em !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: var(--tracking-label) !important;
   color: var(--signal, #5ad1e6) !important;
   opacity: 0.9 !important;
 }

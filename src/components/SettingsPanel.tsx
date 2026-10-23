@@ -1,15 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import ConnectionsSettings from "./ConnectionsSettings";
-import GraphifySettings from "./GraphifySettings";
-import HarnessSettings from "./HarnessSettings";
-import JevSettings from "./JevSettings";
-import McpSettings from "./McpSettings";
-import PipelineSettings from "./PipelineSettings";
-import RagSettings from "./RagSettings";
 import { useModalFocus } from "./useModalFocus";
 import CustomSelect from "./CustomSelect";
+
+// Each section loads its own code (and its own backend calls) only when it is
+// opened, so opening Settings does not mount eight panels' worth of work.
+const ConnectionsSettings = lazy(() => import("./ConnectionsSettings"));
+const GraphifySettings = lazy(() => import("./GraphifySettings"));
+const HarnessSettings = lazy(() => import("./HarnessSettings"));
+const JevSettings = lazy(() => import("./JevSettings"));
+const McpSettings = lazy(() => import("./McpSettings"));
+const PipelineSettings = lazy(() => import("./PipelineSettings"));
+const RagSettings = lazy(() => import("./RagSettings"));
 
 type PiRuntimeStatus = {
   health: "healthy" | "partial" | "missing";
@@ -18,58 +29,157 @@ type PiRuntimeStatus = {
   latest_version?: string;
 };
 
-const GROUPS = [
+type Section =
+  | "pi-model"
+  | "pi-general"
+  | "pi-runtime"
+  | "pi-json"
+  | "agent"
+  | "connections"
+  | "mcp"
+  | "rag"
+  | "graphify"
+  | "jev"
+  | "pipeline";
+
+const SECTIONS: Record<Section, { title: string; detail: string }> = {
+  "pi-model": {
+    title: "Model and thinking",
+    detail: "Default provider, model and reasoning effort for new sessions.",
+  },
+  "pi-general": {
+    title: "General",
+    detail: "Theme, editor, shell and chat behaviour.",
+  },
+  "pi-runtime": {
+    title: "Runtime and storage",
+    detail: "The pi binary Kern runs, and where sessions and reports are kept.",
+  },
+  "pi-json": {
+    title: "Edit as JSON",
+    detail: "Every pi setting, including ones without a form field.",
+  },
+  agent: {
+    title: "Agent harness",
+    detail:
+      "Which coding agent new chats run: pi, Claude Code, OpenCode, Hermes and more.",
+  },
+  connections: {
+    title: "Model connections",
+    detail: "API keys and endpoints shared by every agent harness.",
+  },
+  mcp: { title: "MCP servers", detail: "Tools exposed to agents over MCP." },
+  rag: { title: "RAG", detail: "Knowledge retrieval for chats." },
+  graphify: {
+    title: "Graphify",
+    detail: "Code graph indexing for projects.",
+  },
+  jev: { title: "Jev", detail: "Jev integration settings." },
+  pipeline: {
+    title: "Pipeline",
+    detail: "Steps that run for the selected project.",
+  },
+};
+
+const NAV: Array<{ label: string; items: Section[] }> = [
+  { label: "Pi", items: ["pi-model", "pi-general", "pi-runtime", "pi-json"] },
+  { label: "Agents", items: ["agent", "connections"] },
+  { label: "Integrations", items: ["mcp", "rag", "graphify", "jev"] },
+  { label: "Project", items: ["pipeline"] },
+];
+
+const NAV_LABEL: Partial<Record<Section, string>> = {
+  "pi-model": "Model and thinking",
+  "pi-runtime": "Runtime and storage",
+  agent: "Agent harness",
+  connections: "Connections",
+};
+
+/** Pi keys that only the JSON editor covers, grouped for quick jumps. */
+const JSON_ONLY: Array<[string, readonly string[]]> = [
+  ["Compaction", ["compaction", "branchSummary"]],
+  ["Retry", ["retry", "maxRetries", "baseDelayMs"]],
+  ["Delivery", ["steeringMode", "followUpMode", "transport", "httpProxy"]],
+  ["Terminal and images", ["terminal", "image"]],
+  ["Shell", ["shellCommandPrefix", "npmCommand"]],
+  ["Models", ["enabledModels", "markdown", "thinkingBudgets"]],
+  ["Resources", ["packages", "extensions", "skills", "prompts", "themes"]],
+];
+
+const THINKING_OPTIONS = [
+  { value: "", label: "Pi default", description: "Use the runtime default" },
+  { value: "off", label: "off", description: "Answer without reasoning" },
+  { value: "minimal", label: "minimal", description: "Quick shallow checks" },
+  { value: "low", label: "low", description: "Light reasoning" },
+  { value: "medium", label: "medium", description: "Balanced effort" },
+  { value: "high", label: "high", description: "Deep analysis and planning" },
+  { value: "xhigh", label: "xhigh", description: "Maximum effort" },
+  { value: "max", label: "max", description: "Exhaustive reasoning" },
+];
+
+const TOGGLES: Array<[string, string, string]> = [
   [
-    "Model & Thinking",
-    "Default AI provider, models & reasoning effort",
-    [
-      "defaultProvider",
-      "defaultModel",
-      "defaultThinkingLevel",
-      "thinkingBudgets",
-    ],
+    "enableSkillCommands",
+    "Skill commands",
+    "Expose installed skills as slash commands in chat.",
   ],
+  ["quietStartup", "Quiet startup", "Hide the non-critical startup banner."],
   [
-    "UI & Display",
-    "Theme, appearance, editor & layout preferences",
-    ["theme", "externalEditor", "quietStartup", "padding"],
+    "showCacheMissNotices",
+    "Cache miss notices",
+    "Show a marker when the prompt cache misses.",
   ],
-  [
-    "Compaction",
-    "Context window trimming & token preservation",
-    ["compaction", "branchSummary"],
-  ],
-  [
-    "Retry & Recovery",
-    "Exponential backoff, retries & timeouts",
-    ["retry", "maxRetries", "baseDelayMs"],
-  ],
-  [
-    "Delivery & Network",
-    "Stream steering, follow-up & HTTP proxies",
-    ["steeringMode", "followUpMode", "transport", "httpProxy"],
-  ],
-  [
-    "Terminal & Images",
-    "Inline rendering, widths & image pipelines",
-    ["terminal", "image"],
-  ],
-  [
-    "Shell & Sessions",
-    "Shell paths, npm prefixes & session storage",
-    ["shellPath", "shellCommandPrefix", "npmCommand", "sessionDir"],
-  ],
-  [
-    "Models & Markdown",
-    "Enabled models & markdown formatting",
-    ["enabledModels", "markdown"],
-  ],
-  [
-    "Resources",
-    "Extensions, skills, prompts & custom themes",
-    ["packages", "extensions", "skills", "prompts", "themes"],
-  ],
-] as const;
+  ["telemetry", "Telemetry", "Send anonymous diagnostics."],
+];
+
+// Survives closing the dialog, so reopening shows the last known status
+// immediately and refreshes it in the background.
+let runtimeCache: PiRuntimeStatus | null = null;
+
+function Row({
+  id,
+  title,
+  detail,
+  children,
+}: {
+  id: string;
+  title: string;
+  detail?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="kset-row" id={`setting-${id}`}>
+      <div className="kset-row-text">
+        <label htmlFor={`field-${id}`}>{title}</label>
+        {detail && <p>{detail}</p>}
+      </div>
+      <div className="kset-row-control">{children}</div>
+    </div>
+  );
+}
+
+function Switch({
+  id,
+  checked,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <span className="kset-switch">
+      <input
+        id={`field-${id}`}
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span aria-hidden="true" />
+    </span>
+  );
+}
 
 export default function SettingsPanel({
   projectPath,
@@ -84,38 +194,43 @@ export default function SettingsPanel({
   onClose: () => void;
   onToast: (message: string) => void;
 }) {
-  const [page, setPage] = useState<
-    | "pi"
-    | "agent"
-    | "connections"
-    | "graphify"
-    | "jev"
-    | "mcp"
-    | "rag"
-    | "pipeline"
-  >(initialPage);
+  const [section, setSection] = useState<Section>(
+    initialPage === "pipeline" ? "pipeline" : "pi-model",
+  );
   const [scope, setScope] = useState<"global" | "project">("global");
   const [text, setText] = useState("{}");
   const [saved, setSaved] = useState("{}");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeGroup, setActiveGroup] = useState("");
-  const [mode, setMode] = useState<"form" | "json">("form");
   const [backlogDir, setBacklogDir] = useState("");
-  const [runtime, setRuntime] = useState<PiRuntimeStatus | null>(null);
+  const [runtime, setRuntime] = useState<PiRuntimeStatus | null>(runtimeCache);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeLog, setRuntimeLog] = useState("");
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useModalFocus<HTMLElement>(onClose);
 
+  const isPiForm =
+    section === "pi-model" || section === "pi-general" || section === "pi-json";
+  const dirty = text !== saved;
+
+  async function refreshRuntime(refresh = false) {
+    try {
+      const next = await invoke<PiRuntimeStatus>("get_pi_runtime_status", {
+        refresh,
+      });
+      runtimeCache = next;
+      setRuntime(next);
+    } catch (e) {
+      setRuntimeLog(String(e));
+    }
+  }
+
   useEffect(() => {
+    void refreshRuntime();
     void invoke<string>("get_backlog_dir")
       .then(setBacklogDir)
       .catch((e) => setError(String(e)));
-    void invoke<PiRuntimeStatus>("get_pi_runtime_status")
-      .then(setRuntime)
-      .catch((e) => setRuntimeLog(String(e)));
   }, []);
 
   useEffect(() => {
@@ -134,36 +249,29 @@ export default function SettingsPanel({
       .finally(() => setLoading(false));
   }, [scope, projectPath]);
 
-  function settingsObject() {
+  const settings = useMemo(() => {
     try {
       return JSON.parse(text) as Record<string, unknown>;
     } catch {
-      return {};
+      return null;
     }
-  }
+  }, [text]);
 
   function updateSetting(key: string, value: unknown) {
-    const settings = settingsObject();
-    if (value === "") delete settings[key];
-    else settings[key] = value;
-    setText(JSON.stringify(settings, null, 2));
+    const next = { ...(settings ?? {}) };
+    if (value === "") delete next[key];
+    else next[key] = value;
+    setText(JSON.stringify(next, null, 2));
     setError("");
   }
 
-  function jumpToGroup(name: string, keys: readonly string[]) {
-    setActiveGroup(name);
-    if (mode === "form") {
-      document
-        .getElementById(`setting-${keys[0]}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
+  function jumpToKeys(name: string, keys: readonly string[]) {
     const editor = editorRef.current;
     const index = keys
       .map((key) => text.indexOf(`"${key}"`))
       .find((position) => position >= 0);
     if (!editor || index === undefined)
-      return onToast(`${name}: no configured values in this scope.`);
+      return onToast(`${name}: nothing set in this scope yet.`);
     editor.focus();
     editor.setSelectionRange(index, index + text.slice(index).indexOf(":") + 1);
     editor.scrollTop = (editor.scrollHeight * index) / text.length;
@@ -173,23 +281,17 @@ export default function SettingsPanel({
     const path = await open({
       directory: true,
       multiple: false,
-      title: "Choose Pi Session Storage",
+      title: "Choose pi session storage",
     });
     if (!path) return;
-    try {
-      const settings = JSON.parse(text) as Record<string, unknown>;
-      setText(JSON.stringify({ ...settings, sessionDir: path }, null, 2));
-      setError("");
-    } catch (e) {
-      setError(String(e));
-    }
+    updateSetting("sessionDir", path);
   }
 
   async function chooseBacklogDir() {
     const path = await open({
       directory: true,
       multiple: false,
-      title: "Choose Backlog & Error Report Storage",
+      title: "Choose backlog and error report storage",
     });
     if (!path) return;
     try {
@@ -202,14 +304,13 @@ export default function SettingsPanel({
 
   async function updateRuntime() {
     setRuntimeBusy(true);
-    setRuntimeLog("Installing the latest Pi runtime…");
+    setRuntimeLog("Installing or repairing pi…");
     try {
       const next = await invoke<PiRuntimeStatus>("update_pi_runtime");
+      runtimeCache = next;
       setRuntime(next);
-      setRuntimeLog(
-        `Pi ${next.installed_version || ""} is healthy. Reload active chats.`,
-      );
-      onToast("Pi updated — reload active chats.");
+      setRuntimeLog("");
+      onToast(`pi ${next.installed_version ?? ""} is ready.`);
     } catch (e) {
       setRuntimeLog(String(e));
     } finally {
@@ -219,11 +320,9 @@ export default function SettingsPanel({
 
   async function syncExtensions() {
     setRuntimeBusy(true);
-    setRuntimeLog("Syncing Kern Studio extensions…");
     try {
       const path = await invoke<string>("sync_pi_extensions");
-      setRuntimeLog(`Extensions synced to ${path}. Reload active chats.`);
-      onToast("Pi extensions synced — reload active chats.");
+      onToast(`Extensions synced to ${path}`);
     } catch (e) {
       setRuntimeLog(String(e));
     } finally {
@@ -233,628 +332,427 @@ export default function SettingsPanel({
 
   async function save() {
     try {
-      const settings = JSON.parse(text) as unknown;
-      if (!settings || Array.isArray(settings) || typeof settings !== "object")
+      const parsed = JSON.parse(text) as unknown;
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object")
         throw new Error("Root must be a JSON object");
       await invoke("save_pi_settings", {
         scope,
         projectPath: scope === "project" ? projectPath : null,
-        settings,
+        settings: parsed,
       });
       window.dispatchEvent(
-        new CustomEvent("pi-settings-saved", { detail: settings }),
+        new CustomEvent("pi-settings-saved", { detail: parsed }),
       );
-      const formatted = JSON.stringify(settings, null, 2);
+      const formatted = JSON.stringify(parsed, null, 2);
       setText(formatted);
       setSaved(formatted);
       setError("");
-      onToast("Pi settings saved — restart sessions for non-live settings.");
+      onToast("Pi settings saved. Restart sessions for non-live settings.");
     } catch (e) {
       setError(String(e));
     }
   }
 
-  return (
-    <div className="settings-backdrop">
-      <section
-        ref={panelRef}
-        className="settings-panel"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        tabIndex={-1}
-      >
-        <header>
-          <div className="settings-header-left">
-            <span className="settings-header-badge">Configuration</span>
-            <div className="settings-title-wrap">
-              <strong id="settings-title">
-                {page === "pi"
-                  ? "Pi Settings"
-                  : page === "agent"
-                    ? "Agent Harness"
-                    : page === "connections"
-                      ? "Model Connections"
-                      : page === "graphify"
-                        ? "Graphify Settings"
-                        : page === "jev"
-                          ? "Jev Settings"
-                          : page === "mcp"
-                            ? "MCP Settings"
-                            : page === "rag"
-                              ? "RAG Settings"
-                              : "Pipeline Settings"}
-              </strong>
-              <span className="settings-page-tag">{page.toUpperCase()}</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="settings-close-button"
-            onClick={onClose}
-            aria-label="Close settings"
-          >
-            <span className="esc-key">ESC</span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 14 14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M1 1l12 12M13 1L1 13" />
-            </svg>
-          </button>
-        </header>
+  const value = (key: string) => String(settings?.[key] ?? "");
+  const scopePath =
+    scope === "global"
+      ? "~/.pi/agent/settings.json"
+      : `${projectPath}/.pi/settings.json`;
 
-        <div className="settings-scope">
-          <div className="settings-scope-nav" role="tablist">
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "pi" ? "active" : ""}`}
-              onClick={() => setPage("pi")}
-            >
-              Pi
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "agent" ? "active" : ""}`}
-              onClick={() => setPage("agent")}
-            >
-              Agent
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "connections" ? "active" : ""}`}
-              onClick={() => setPage("connections")}
-            >
-              Connections
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "graphify" ? "active" : ""}`}
-              onClick={() => setPage("graphify")}
-            >
-              Graphify
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "jev" ? "active" : ""}`}
-              onClick={() => setPage("jev")}
-            >
-              Jev
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "mcp" ? "active" : ""}`}
-              onClick={() => setPage("mcp")}
-            >
-              MCP
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "rag" ? "active" : ""}`}
-              onClick={() => setPage("rag")}
-            >
-              RAG
-            </button>
-            <button
-              type="button"
-              className={`settings-scope-tab ${page === "pipeline" ? "active" : ""}`}
-              disabled={!projectPath}
-              onClick={() => setPage("pipeline")}
-            >
-              Pipeline
-            </button>
+  function renderPiForm() {
+    if (loading) return <div className="kset-loading">Loading settings…</div>;
+    if (section === "pi-json")
+      return (
+        <>
+          <div className="kset-chips" aria-label="Jump to">
+            {JSON_ONLY.map(([name, keys]) => (
+              <button
+                type="button"
+                key={name}
+                onClick={() => jumpToKeys(name, keys)}
+              >
+                {name}
+              </button>
+            ))}
           </div>
-          {page === "pi" && (
-            <div className="settings-scope-right">
-              <div
-                className="settings-scope-switch"
-                role="group"
-                aria-label="Settings scope"
-              >
-                <button
-                  type="button"
-                  className={scope === "global" ? "active" : ""}
-                  onClick={() => setScope("global")}
-                >
-                  Global
-                </button>
-                <button
-                  type="button"
-                  className={scope === "project" ? "active" : ""}
-                  disabled={!projectPath}
-                  onClick={() => setScope("project")}
-                >
-                  Project
-                </button>
-              </div>
-              <span
-                className="settings-scope-path"
-                title={
-                  scope === "global"
-                    ? "~/.pi/agent/settings.json"
-                    : `${projectPath}/.pi/settings.json`
-                }
-              >
-                {scope === "global"
-                  ? "~/.pi/agent/settings.json"
-                  : `${projectPath}/.pi/settings.json`}
-              </span>
-            </div>
+          <textarea
+            ref={editorRef}
+            className="kset-json"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            spellCheck={false}
+            aria-label="Pi settings JSON"
+          />
+          {settings === null && (
+            <p className="kset-inline-error">
+              Not valid JSON yet. The form sections show the last valid state.
+            </p>
           )}
+        </>
+      );
+    if (!settings)
+      return (
+        <p className="kset-inline-error">
+          The JSON has a syntax error. Fix it in Edit as JSON first.
+        </p>
+      );
+    if (section === "pi-model")
+      return (
+        <div className="kset-group">
+          <Row
+            id="defaultProvider"
+            title="Provider"
+            detail="Provider for new sessions."
+          >
+            <input
+              id="field-defaultProvider"
+              value={value("defaultProvider")}
+              onChange={(e) => updateSetting("defaultProvider", e.target.value)}
+              placeholder="anthropic"
+            />
+          </Row>
+          <Row
+            id="defaultModel"
+            title="Model"
+            detail="Model ID for new sessions."
+          >
+            <input
+              id="field-defaultModel"
+              value={value("defaultModel")}
+              onChange={(e) => updateSetting("defaultModel", e.target.value)}
+              placeholder="claude-opus-5-5"
+            />
+          </Row>
+          <Row
+            id="defaultThinkingLevel"
+            title="Thinking level"
+            detail="Default reasoning effort."
+          >
+            <CustomSelect
+              value={value("defaultThinkingLevel")}
+              onChange={(next) => updateSetting("defaultThinkingLevel", next)}
+              ariaLabel="Default reasoning effort"
+              placement="bottom"
+              options={THINKING_OPTIONS}
+            />
+          </Row>
+          <Row
+            id="hideThinkingBlock"
+            title="Hide thinking"
+            detail="Collapse reasoning blocks in chat."
+          >
+            <Switch
+              id="hideThinkingBlock"
+              checked={settings.hideThinkingBlock === true}
+              onChange={(next) => updateSetting("hideThinkingBlock", next)}
+            />
+          </Row>
         </div>
+      );
+    return (
+      <>
+        <div className="kset-group">
+          <Row id="theme" title="Theme" detail="Installed pi theme name.">
+            <input
+              id="field-theme"
+              value={value("theme")}
+              onChange={(e) => updateSetting("theme", e.target.value)}
+              placeholder="Pi default"
+            />
+          </Row>
+          <Row
+            id="externalEditor"
+            title="External editor"
+            detail="Command that opens files for editing."
+          >
+            <input
+              id="field-externalEditor"
+              value={value("externalEditor")}
+              onChange={(e) => updateSetting("externalEditor", e.target.value)}
+              placeholder="code --wait"
+            />
+          </Row>
+          <Row
+            id="shellPath"
+            title="Shell"
+            detail="Shell executable for tools."
+          >
+            <input
+              id="field-shellPath"
+              value={value("shellPath")}
+              onChange={(e) => updateSetting("shellPath", e.target.value)}
+              placeholder="System default"
+            />
+          </Row>
+        </div>
+        <div className="kset-group">
+          {TOGGLES.map(([key, title, detail]) => (
+            <Row id={key} key={key} title={title} detail={detail}>
+              <Switch
+                id={key}
+                checked={settings[key] === true}
+                onChange={(next) => updateSetting(key, next)}
+              />
+            </Row>
+          ))}
+        </div>
+      </>
+    );
+  }
 
-        {page === "agent" ? (
-          <HarnessSettings onToast={onToast} />
-        ) : page === "connections" ? (
-          <ConnectionsSettings onToast={onToast} />
-        ) : page === "graphify" ? (
-          <GraphifySettings onToast={onToast} />
-        ) : page === "jev" ? (
-          <JevSettings onToast={onToast} />
-        ) : page === "mcp" ? (
-          <McpSettings onToast={onToast} />
-        ) : page === "rag" ? (
-          <RagSettings onToast={onToast} />
-        ) : page === "pipeline" && projectPath ? (
+  function renderRuntime() {
+    const health = runtime?.health ?? "checking";
+    const outdated =
+      runtime?.installed_version &&
+      runtime.latest_version &&
+      !runtime.installed_version.includes(runtime.latest_version);
+    return (
+      <>
+        <div className="kset-group">
+          <div className="kset-row">
+            <div className="kset-row-text">
+              <span className="kset-row-title">
+                pi {runtime?.installed_version ?? ""}
+                <span className={`kset-health ${health}`}>
+                  {health === "checking" ? "Checking…" : health}
+                </span>
+              </span>
+              <p>
+                <code>{runtime?.path ?? "pi binary not found"}</code>
+                {runtime?.latest_version &&
+                  (outdated
+                    ? ` · ${runtime.latest_version} available`
+                    : " · up to date")}
+              </p>
+            </div>
+            <div className="kset-row-control kset-actions">
+              <button
+                type="button"
+                disabled={runtimeBusy}
+                onClick={() => void refreshRuntime(true)}
+              >
+                Check
+              </button>
+              <button
+                type="button"
+                className={outdated || health !== "healthy" ? "primary" : ""}
+                disabled={runtimeBusy}
+                onClick={() => void updateRuntime()}
+              >
+                {health === "healthy" ? "Update" : "Install"}
+              </button>
+            </div>
+          </div>
+          <Row
+            id="syncExtensions"
+            title="Extensions"
+            detail="Copy Kern's pi extensions into the pi config folder."
+          >
+            <button
+              id="field-syncExtensions"
+              type="button"
+              disabled={runtimeBusy}
+              onClick={() => void syncExtensions()}
+            >
+              Sync
+            </button>
+          </Row>
+          {runtimeLog && <pre className="kset-log">{runtimeLog}</pre>}
+        </div>
+        <div className="kset-group">
+          <Row
+            id="sessionDir"
+            title="Session storage"
+            detail={String(settings?.sessionDir || "~/.pi/agent/sessions")}
+          >
+            <button
+              id="field-sessionDir"
+              type="button"
+              onClick={() => void chooseSessionDir()}
+            >
+              Choose…
+            </button>
+          </Row>
+          <Row
+            id="backlogDir"
+            title="Backlog and error reports"
+            detail={backlogDir || "Loading…"}
+          >
+            <button
+              id="field-backlogDir"
+              type="button"
+              onClick={() => void chooseBacklogDir()}
+            >
+              Choose…
+            </button>
+          </Row>
+        </div>
+      </>
+    );
+  }
+
+  function renderSection() {
+    switch (section) {
+      case "agent":
+        return <HarnessSettings onToast={onToast} />;
+      case "connections":
+        return <ConnectionsSettings onToast={onToast} />;
+      case "mcp":
+        return <McpSettings onToast={onToast} />;
+      case "rag":
+        return <RagSettings onToast={onToast} />;
+      case "graphify":
+        return <GraphifySettings onToast={onToast} />;
+      case "jev":
+        return <JevSettings onToast={onToast} />;
+      case "pipeline":
+        return projectPath ? (
           <PipelineSettings
             projectPath={projectPath}
             projectName={projectName}
             onToast={onToast}
           />
-        ) : page === "pipeline" ? (
-          <div className="pipeline-project-empty">
-            <strong>SELECT A PROJECT</strong>
-            <span>
-              Choose the pipeline shortcut beside a project, then configure its
-              steps here.
-            </span>
-          </div>
         ) : (
-          <>
-            <div className="settings-content">
-              <nav className="settings-groups-nav">
-                {GROUPS.map(([name, detail, keys]) => (
+          <p className="kset-empty">
+            Select a project first, then open its pipeline from the project
+            menu.
+          </p>
+        );
+      case "pi-runtime":
+        return renderRuntime();
+      default:
+        return renderPiForm();
+    }
+  }
+
+  return (
+    <div
+      className="kset-scrim"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        ref={panelRef}
+        className="kset"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        tabIndex={-1}
+      >
+        <nav className="kset-nav" aria-label="Settings sections">
+          <strong id="settings-title" className="kset-nav-title">
+            Settings
+          </strong>
+          {NAV.map((group) => (
+            <div className="kset-nav-group" key={group.label}>
+              <span className="kset-nav-label">{group.label}</span>
+              {group.items.map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  className={section === item ? "active" : ""}
+                  aria-current={section === item ? "page" : undefined}
+                  disabled={item === "pipeline" && !projectPath}
+                  onClick={() => setSection(item)}
+                >
+                  {NAV_LABEL[item] ?? SECTIONS[item].title}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        <div className="kset-body">
+          <header className="kset-head">
+            <div>
+              <h2>{SECTIONS[section].title}</h2>
+              <p>{SECTIONS[section].detail}</p>
+            </div>
+            {isPiForm && (
+              <div className="kset-scope">
+                <div role="group" aria-label="Settings scope">
                   <button
                     type="button"
-                    className={`settings-group-btn ${activeGroup === name ? "active" : ""}`}
-                    key={name}
-                    onClick={() => jumpToGroup(name, keys)}
+                    className={scope === "global" ? "active" : ""}
+                    aria-pressed={scope === "global"}
+                    onClick={() => setScope("global")}
                   >
-                    <div className="settings-group-info">
-                      <strong>{name}</strong>
-                      <small>{detail}</small>
-                    </div>
+                    Global
                   </button>
-                ))}
-              </nav>
-              <main className="settings-main">
-                <div className="settings-main-top">
-                  <div className="settings-mode" role="tablist">
-                    <button
-                      type="button"
-                      className={mode === "form" ? "active" : ""}
-                      onClick={() => setMode("form")}
-                    >
-                      Form View
-                    </button>
-                    <button
-                      type="button"
-                      className={mode === "json" ? "active" : ""}
-                      onClick={() => setMode("json")}
-                    >
-                      JSON · Advanced
-                    </button>
-                  </div>
-                  <div className="settings-notice">
-                    <span>
-                      Project values override global values. Unknown/custom keys
-                      are preserved. Most settings apply to newly started
-                      sessions.
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    className={scope === "project" ? "active" : ""}
+                    aria-pressed={scope === "project"}
+                    disabled={!projectPath}
+                    title={projectPath ? undefined : "Open a project first"}
+                    onClick={() => setScope("project")}
+                  >
+                    Project
+                  </button>
                 </div>
-
-                {scope === "global" && (
-                  <section className="pi-runtime-card">
-                    <div className="pi-runtime-info">
-                      <div className="pi-runtime-header">
-                        <small>PI RUNTIME</small>
-                        <span
-                          className={`pi-runtime-badge ${
-                            runtime?.health === "healthy"
-                              ? "healthy"
-                              : runtime?.health === "partial"
-                                ? "partial"
-                                : "missing"
-                          }`}
-                        >
-                          <span className="pulse-dot" />
-                          {runtime?.health?.toUpperCase() || "CHECKING…"}
-                        </span>
-                      </div>
-                      <div className="pi-runtime-meta">
-                        <span className="pi-version-tag">
-                          {runtime?.installed_version || "Not installed"}
-                        </span>
-                        {runtime?.latest_version && (
-                          <span className="pi-latest-tag">
-                            Latest {runtime.latest_version}
-                          </span>
-                        )}
-                        <code className="pi-binary-path">
-                          {runtime?.path || "Pi binary not found"}
-                        </code>
-                      </div>
-                    </div>
-                    <div className="pi-runtime-actions">
-                      <button
-                        type="button"
-                        className="toolbar-button"
-                        disabled={runtimeBusy}
-                        onClick={() =>
-                          void invoke<PiRuntimeStatus>("get_pi_runtime_status")
-                            .then(setRuntime)
-                            .catch((e) => setRuntimeLog(String(e)))
-                        }
-                      >
-                        Check
-                      </button>
-                      <button
-                        type="button"
-                        className="toolbar-button toolbar-button-primary"
-                        disabled={runtimeBusy}
-                        onClick={updateRuntime}
-                      >
-                        {runtime?.health === "healthy"
-                          ? "Update / Repair Pi"
-                          : "Install / Repair Pi"}
-                      </button>
-                      <button
-                        type="button"
-                        className="toolbar-button"
-                        disabled={runtimeBusy}
-                        onClick={syncExtensions}
-                      >
-                        Sync Extensions
-                      </button>
-                    </div>
-                    {runtimeLog && (
-                      <pre className="pi-runtime-log">{runtimeLog}</pre>
-                    )}
-                  </section>
-                )}
-
-                {loading ? (
-                  <div className="settings-loading">
-                    <span className="pulse-dot" /> Loading settings…
-                  </div>
-                ) : mode === "json" ? (
-                  <textarea
-                    ref={editorRef}
-                    value={text}
-                    onChange={(event) => setText(event.target.value)}
-                    spellCheck={false}
-                    aria-label="Pi settings JSON"
-                  />
-                ) : (
-                  <div className="settings-form">
-                    {(() => {
-                      const settings = settingsObject();
-                      return (
-                        <>
-                          <label id="setting-defaultProvider">
-                            <span className="field-label-group">
-                              <span className="field-title">
-                                DEFAULT PROVIDER
-                              </span>
-                              <small className="field-desc">
-                                Provider used for new sessions
-                              </small>
-                            </span>
-                            <input
-                              value={String(settings.defaultProvider ?? "")}
-                              onChange={(e) =>
-                                updateSetting("defaultProvider", e.target.value)
-                              }
-                              placeholder="e.g. anthropic"
-                            />
-                          </label>
-
-                          <label id="setting-defaultModel">
-                            <span className="field-label-group">
-                              <span className="field-title">DEFAULT MODEL</span>
-                              <small className="field-desc">
-                                Model ID used for new sessions
-                              </small>
-                            </span>
-                            <input
-                              value={String(settings.defaultModel ?? "")}
-                              onChange={(e) =>
-                                updateSetting("defaultModel", e.target.value)
-                              }
-                              placeholder="provider model ID"
-                            />
-                          </label>
-
-                          <label id="setting-defaultThinkingLevel">
-                            <span className="field-label-group">
-                              <span className="field-title">
-                                THINKING LEVEL
-                              </span>
-                              <small className="field-desc">
-                                Default reasoning effort
-                              </small>
-                            </span>
-                            <CustomSelect
-                              value={String(
-                                settings.defaultThinkingLevel ?? "",
-                              )}
-                              onChange={(val) =>
-                                updateSetting("defaultThinkingLevel", val)
-                              }
-                              ariaLabel="Default reasoning effort"
-                              placement="bottom"
-                              options={[
-                                {
-                                  value: "",
-                                  label: "Pi default",
-                                  description: "Use Pi runtime default setting",
-                                },
-                                {
-                                  value: "off",
-                                  label: "off",
-                                  description:
-                                    "Direct response without reasoning",
-                                },
-                                {
-                                  value: "minimal",
-                                  label: "minimal",
-                                  description: "Quick shallow checks",
-                                },
-                                {
-                                  value: "low",
-                                  label: "low",
-                                  description: "Light reasoning",
-                                },
-                                {
-                                  value: "medium",
-                                  label: "medium",
-                                  description: "Balanced reasoning effort",
-                                },
-                                {
-                                  value: "high",
-                                  label: "high",
-                                  description: "Deep analysis and planning",
-                                },
-                                {
-                                  value: "xhigh",
-                                  label: "xhigh",
-                                  description: "Maximum reasoning effort",
-                                },
-                                {
-                                  value: "max",
-                                  label: "max",
-                                  description: "Exhaustive reasoning effort",
-                                },
-                              ]}
-                            />
-                          </label>
-
-                          {[
-                            [
-                              "hideThinkingBlock",
-                              "HIDE THINKING",
-                              "Hide reasoning blocks in chat output",
-                            ],
-                            [
-                              "showCacheMissNotices",
-                              "CACHE MISS NOTICES",
-                              "Show indicator for prompt cache misses",
-                            ],
-                            [
-                              "quietStartup",
-                              "QUIET STARTUP",
-                              "Suppress non-critical engine startup banner",
-                            ],
-                            [
-                              "telemetry",
-                              "TELEMETRY",
-                              "Allow anonymous diagnostics and telemetry",
-                            ],
-                            [
-                              "enableSkillCommands",
-                              "SKILL COMMANDS",
-                              "Expose installed skills directly as chat slash commands",
-                            ],
-                          ].map(([key, title, detail]) => (
-                            <label
-                              className="settings-toggle"
-                              id={`setting-${key}`}
-                              key={key}
-                            >
-                              <span className="field-label-group">
-                                <span className="field-title">{title}</span>
-                                <small className="field-desc">{detail}</small>
-                              </span>
-                              <div className="opendots-switch">
-                                <input
-                                  type="checkbox"
-                                  checked={settings[key] === true}
-                                  onChange={(e) =>
-                                    updateSetting(key, e.target.checked)
-                                  }
-                                />
-                                <span className="opendots-slider" />
-                              </div>
-                            </label>
-                          ))}
-
-                          <label id="setting-theme">
-                            <span className="field-label-group">
-                              <span className="field-title">THEME</span>
-                              <small className="field-desc">
-                                Installed Pi theme name
-                              </small>
-                            </span>
-                            <input
-                              value={String(settings.theme ?? "")}
-                              onChange={(e) =>
-                                updateSetting("theme", e.target.value)
-                              }
-                              placeholder="Pi default"
-                            />
-                          </label>
-
-                          <label id="setting-externalEditor">
-                            <span className="field-label-group">
-                              <span className="field-title">
-                                EXTERNAL EDITOR
-                              </span>
-                              <small className="field-desc">
-                                Command to launch external text editor
-                              </small>
-                            </span>
-                            <input
-                              value={String(settings.externalEditor ?? "")}
-                              onChange={(e) =>
-                                updateSetting("externalEditor", e.target.value)
-                              }
-                              placeholder="e.g. code --wait"
-                            />
-                          </label>
-
-                          <label id="setting-shellPath">
-                            <span className="field-label-group">
-                              <span className="field-title">SHELL PATH</span>
-                              <small className="field-desc">
-                                Default shell executable path
-                              </small>
-                            </span>
-                            <input
-                              value={String(settings.shellPath ?? "")}
-                              onChange={(e) =>
-                                updateSetting("shellPath", e.target.value)
-                              }
-                              placeholder="System default"
-                            />
-                          </label>
-
-                          {scope === "global" && (
-                            <>
-                              <div
-                                className="session-storage-setting"
-                                id="setting-sessionDir"
-                              >
-                                <div className="storage-info">
-                                  <div className="field-label-group">
-                                    <span className="field-title">
-                                      SESSION STORAGE
-                                    </span>
-                                    <span className="storage-path">
-                                      {String(
-                                        settings.sessionDir ||
-                                          "~/.pi/agent/sessions",
-                                      )}
-                                    </span>
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="toolbar-button"
-                                  onClick={chooseSessionDir}
-                                >
-                                  Choose Folder
-                                </button>
-                              </div>
-                              <div className="session-storage-setting">
-                                <div className="storage-info">
-                                  <div className="field-label-group">
-                                    <span className="field-title">
-                                      BACKLOG & ERROR REPORTS
-                                    </span>
-                                    <span className="storage-path">
-                                      {backlogDir || "Loading…"}
-                                    </span>
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  className="toolbar-button"
-                                  onClick={chooseBacklogDir}
-                                >
-                                  Choose Folder
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-                )}
-                {error && <div className="settings-error">{error}</div>}
-              </main>
-            </div>
-            <footer className="settings-footer">
-              <div className="settings-footer-status">
-                <span
-                  className={`status-indicator-dot ${
-                    text === saved ? "clean" : "dirty"
-                  }`}
-                />
-                <span>
-                  {text === saved
-                    ? "All settings saved"
-                    : "Unsaved changes pending"}
-                </span>
+                <code title={scopePath}>{scopePath}</code>
               </div>
-              <div className="settings-footer-actions">
-                <button
-                  type="button"
-                  className="toolbar-button"
-                  onClick={() => setText(saved)}
-                  disabled={text === saved}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  className="toolbar-button toolbar-button-primary save-settings"
-                  onClick={save}
-                  disabled={loading || text === saved}
-                >
-                  Save Settings
-                </button>
+            )}
+            <button
+              type="button"
+              className="kset-close"
+              onClick={onClose}
+              aria-label="Close settings"
+              title="Close (Esc)"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 14 14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M1 1l12 12M13 1L1 13" />
+              </svg>
+            </button>
+          </header>
+
+          <div className="kset-scroll">
+            <Suspense fallback={<div className="kset-loading">Loading…</div>}>
+              {renderSection()}
+            </Suspense>
+            {error && (
+              <div className="kset-inline-error" role="alert">
+                {error}
               </div>
+            )}
+          </div>
+
+          {isPiForm && (
+            <footer className="kset-foot">
+              <span className={`kset-status ${dirty ? "dirty" : ""}`}>
+                {dirty
+                  ? scope === "project"
+                    ? "Unsaved project overrides"
+                    : "Unsaved changes"
+                  : "Saved"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setText(saved)}
+                disabled={!dirty}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void save()}
+                disabled={loading || !dirty || settings === null}
+              >
+                Save
+              </button>
             </footer>
-          </>
-        )}
+          )}
+        </div>
       </section>
     </div>
   );

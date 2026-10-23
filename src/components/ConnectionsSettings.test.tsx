@@ -74,12 +74,12 @@ test("creates a connection from a preset, fetches and picks models", async () =>
   render(<ConnectionsSettings onToast={toast} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_connections"));
   fireEvent.click(screen.getByRole("button", { name: "OpenRouter" }));
-  const save = screen.getByRole("button", { name: "SAVE CONNECTION" });
+  const save = screen.getByRole("button", { name: "Save connection" });
   expect(save).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("API KEY"), {
+  fireEvent.change(screen.getByLabelText("API key"), {
     target: { value: "sk-or" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "FETCH MODELS" }));
+  fireEvent.click(screen.getByRole("button", { name: "Fetch models" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "qwen/qwen3-coder" }),
   );
@@ -138,11 +138,11 @@ test("editing keeps the saved key unless a new one is typed", async () => {
   );
   render(<ConnectionsSettings onToast={vi.fn()} />);
   fireEvent.click((await screen.findAllByRole("button", { name: "Edit" }))[1]);
-  expect(screen.getByLabelText("API KEY")).toHaveAttribute(
+  expect(screen.getByLabelText("API key")).toHaveAttribute(
     "placeholder",
-    "Saved — leave blank to keep current key",
+    "Saved; leave blank to keep",
   );
-  fireEvent.click(screen.getByRole("button", { name: "SAVE CONNECTION" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save connection" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith(
       "save_connection",

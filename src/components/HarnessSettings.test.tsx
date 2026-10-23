@@ -63,7 +63,7 @@ test("lists harnesses and disables the ones that are not installed", async () =>
   ).toBeInTheDocument();
   expect(screen.getByLabelText(/^pi/)).toBeChecked();
   expect(
-    screen.getByRole("button", { name: "USE FOR NEW CHATS" }),
+    screen.getByRole("button", { name: "Use for new chats" }),
   ).toBeDisabled();
 });
 
@@ -74,7 +74,7 @@ test("saves the default harness", async () => {
   const toast = vi.fn();
   render(<HarnessSettings onToast={toast} />);
   fireEvent.click(await screen.findByLabelText(/OpenCode/));
-  fireEvent.click(screen.getByRole("button", { name: "USE FOR NEW CHATS" }));
+  fireEvent.click(screen.getByRole("button", { name: "Use for new chats" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("set_default_harness", {
       id: "opencode",
@@ -92,13 +92,13 @@ test("adds a custom ACP agent", async () => {
   render(<HarnessSettings onToast={vi.fn()} />);
   await screen.findByLabelText(/OpenCode/);
   fireEvent.change(screen.getByLabelText(/^ID/), { target: { value: "kimi" } });
-  fireEvent.change(screen.getByLabelText(/^COMMAND/), {
+  fireEvent.change(screen.getByLabelText(/^Command/), {
     target: { value: "kimi" },
   });
-  fireEvent.change(screen.getByLabelText(/^ARGUMENTS/), {
+  fireEvent.change(screen.getByLabelText(/^Arguments/), {
     target: { value: "--acp  --quiet" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "ADD AGENT" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add agent" }));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("save_custom_harness", {
       harness: {

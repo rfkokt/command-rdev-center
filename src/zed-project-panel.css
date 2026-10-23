@@ -111,7 +111,7 @@
   border-radius: 7px;
   background: var(--accent);
   color: white;
-  font: 9px/14px var(--font-sans);
+  font: 11px/14px var(--font-sans);
 }
 
 .code-sidebar-section {
@@ -148,7 +148,7 @@
 .code-section-toggle strong {
   color: var(--text-primary);
   font-size: var(--type-sm);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   text-transform: none;
 }
 .code-empty {
@@ -183,11 +183,11 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .pfs-search > span {
-  font-size: 15px;
+  font-size: var(--fs-title-sm);
   line-height: 1;
 }
 .pfs-search > small {
-  font: 10px/1 var(--font-mono);
+  font: 11px/1 var(--font-mono);
 }
 .pfs-filter {
   min-width: 0;
@@ -227,12 +227,12 @@
   min-height: 28px;
   padding: 6px 10px;
   color: var(--text-secondary);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  font-size: var(--fs-caption);
+  letter-spacing: var(--tracking-label);
 }
 .pfs-recent > summary small {
   padding: 0;
-  font: 10px/1 var(--font-mono);
+  font: 11px/1 var(--font-mono);
   letter-spacing: 0;
 }
 .pfs-recent-item {
@@ -253,7 +253,7 @@
 .pfs-recent-item small {
   padding: 0;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--fs-caption);
   letter-spacing: 0;
 }
 .pfs-recent-item:hover {
@@ -286,7 +286,7 @@
   color: color-mix(in srgb, var(--accent) 24%, var(--text-primary));
 }
 .pfs-folder.repository-root .pfs-folder-name {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 .pfs-file {
   grid-template-columns: 15px minmax(0, 1fr) auto;
@@ -329,7 +329,7 @@
   place-items: center;
   overflow: hidden;
   color: var(--text-secondary);
-  font: 500 9px/1 var(--font-mono);
+  font: 500 11px/1 var(--font-mono);
   letter-spacing: -0.04em;
   text-align: center;
 }
@@ -346,7 +346,7 @@
   color: var(--accent);
 }
 .pfs-file-icon {
-  font-weight: 700;
+  font-weight: var(--fw-semibold);
 }
 .pfs-file-icon.file-ts {
   color: #4f9bd8;
@@ -405,7 +405,7 @@
 }
 .pfs-folder-name {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 .pfs-file-name {
   color: inherit;
@@ -453,14 +453,14 @@
   padding: 5px 8px;
   color: var(--text-primary);
   font-size: var(--type-xs);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   cursor: pointer;
 }
 .code-diff-accordion > summary small {
   margin-left: auto;
   color: var(--text-secondary);
   font-size: inherit;
-  font-weight: 400;
+  font-weight: var(--fw-regular);
 }
 .workspace-repository-settings {
   display: grid;
@@ -473,7 +473,7 @@
   border: 1px solid var(--border-subtle);
 }
 .workspace-repository-setting > strong {
-  font-size: 13px;
+  font-size: var(--fs-ui);
 }
 .repository-status-list {
   display: flex;
@@ -490,7 +490,7 @@
   gap: 4px;
   padding: 4px 10px 8px 24px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--fs-caption);
 }
 .repository-status-meta span {
   display: flex;
@@ -504,7 +504,7 @@
   width: 46px;
   flex: none;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 .pfs-preview {
   border-color: var(--separator);
@@ -532,7 +532,7 @@
 .file-preview-title strong {
   color: var(--text-primary);
   font-size: var(--type-sm);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 .file-preview-actions {
   gap: 5px;

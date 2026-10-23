@@ -86,7 +86,7 @@
   border-color: var(--separator-strong);
   background: var(--surface-selected);
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .theme-swatch {

@@ -1033,6 +1033,7 @@ export default function ChatView({
       const next = await invoke<GraphStatus>("get_graph_status", {
         projectPath,
       });
+      if (!next) return;
       setGraphStatus(next);
       graphReportRef.current = next.report_path;
       if (next.code_stale) await refreshGraph(false);
@@ -2547,8 +2548,9 @@ export default function ChatView({
               "Graphify settings check timed out",
             );
             if (!mounted || startupExpired) return;
-            setGraphEnabled(!!settings.enabled);
-            if (settings.enabled) {
+            const enabled = settings?.enabled === true;
+            setGraphEnabled(enabled);
+            if (enabled) {
               graph = await withTimeout(
                 invoke<GraphStatus>("get_graph_status", { projectPath }),
                 1500,
@@ -2616,6 +2618,10 @@ export default function ChatView({
               slug,
             });
             if (!mounted || startupExpired) return;
+            if (!wt?.worktree_path)
+              throw new Error(
+                `Couldn't prepare a worktree for ${projectName}. Check that the repository is readable.`,
+              );
             setWorktree(wt);
             setCwd(wt.worktree_path);
             // Dev-server status is independent of the agent connection.

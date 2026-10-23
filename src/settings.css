@@ -1,0 +1,1123 @@
+/*
+ * Settings dialog. Own class names (kset-*) so none of the earlier
+ * .settings-panel layers apply. Imported after the theme sheets; uses the
+ * night-shift colour tokens and the typography.css scale.
+ *
+ * Layout: section nav on the left, one section at a time on the right, rows
+ * with the label and description on the left and the control on the right.
+ * The scrim is a flat tint: a backdrop blur over the live WebGL office cost a
+ * full-screen re-blur every frame while the dialog was open.
+ */
+
+.kset-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 11, 18, 0.55);
+  animation: kset-fade var(--dur-fast, 150ms) ease-out;
+}
+
+.kset {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  width: min(960px, 100%);
+  height: min(680px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-body);
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  box-shadow: var(--shadow-pop, 0 12px 32px rgba(0, 0, 0, 0.3));
+  animation: kset-rise var(--dur-state, 220ms) var(--ease-out, ease-out);
+}
+
+.kset:focus {
+  outline: none;
+}
+
+@keyframes kset-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes kset-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kset-scrim,
+  .kset {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- nav */
+
+.kset-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 10px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 55%, var(--surface));
+}
+
+.kset-nav-title {
+  padding: 0 8px 4px;
+  font-family: var(--font-brand);
+  font-size: var(--fs-title-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+
+.kset-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kset-nav-label {
+  padding: 0 8px 4px;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  color: var(--text-quiet);
+}
+
+.kset-nav button {
+  position: relative;
+  height: 28px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kset-nav button:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+/* Same active language as the sidebar: a 2px amber bar, no fill. */
+.kset-nav button.active {
+  color: var(--text-strong);
+  font-weight: var(--fw-medium);
+}
+
+.kset-nav button.active::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.kset-nav button:disabled {
+  color: var(--text-quiet);
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- body */
+
+.kset-body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.kset-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 20px 14px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.kset-head > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.kset-head h2 {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--fs-title);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  letter-spacing: 0;
+  color: var(--text-strong);
+}
+
+.kset-head p {
+  margin: 4px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-scope {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.kset-scope > div {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-raised);
+}
+
+.kset-scope button {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-quiet);
+  font: inherit;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.kset-scope button.active {
+  background: var(--surface-card);
+  color: var(--text-strong);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.kset-scope button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.kset-scope code {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+}
+
+.kset-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin: -2px -4px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.kset-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.kset-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 28px 28px;
+  overscroll-behavior: contain;
+}
+
+.kset-scroll > * {
+  max-width: 720px;
+}
+
+.kset-scroll > .pipeline-settings,
+.kset-scroll > .pipeline-foot {
+  max-width: none;
+}
+
+/* ---------------------------------------------------------------- rows */
+
+.kset-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-card);
+}
+
+.kset-group + .kset-group {
+  margin-top: 16px;
+}
+
+.kset-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 52px;
+  padding: 10px 16px;
+}
+
+.kset-row + .kset-row {
+  border-top: 1px solid var(--line);
+}
+
+.kset-row-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.kset-row-text label,
+.kset-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-medium);
+  color: var(--text-strong);
+}
+
+.kset-row-text p {
+  margin: 2px 0 0;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+  overflow-wrap: anywhere;
+}
+
+.kset-row-text code {
+  font-size: var(--fs-caption);
+}
+
+.kset-row-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kset-row-control input:not([type="checkbox"]):not([type="radio"]),
+.kset-row-control select,
+.kset-row-control textarea {
+  background: var(--surface) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+  width: 240px !important;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+}
+
+.kset-row-control input:not([type="checkbox"]):not([type="radio"]):focus,
+.kset-row-control select:focus,
+.kset-row-control textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.kset-row-control .opendots-select,
+.kset-row-control .opendots-select-trigger {
+  width: 240px !important;
+}
+
+.kset-row-control .opendots-select-trigger {
+  justify-content: space-between !important;
+}
+
+/* buttons inside rows, footer and runtime actions */
+.kset-row-control button,
+.kset-actions-row button,
+.kset-foot button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.kset-row-control button:hover:not(:disabled),
+.kset-actions-row button:hover:not(:disabled),
+.kset-foot button:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.kset-row-control button.primary,
+.kset-actions-row button.primary,
+.kset-foot button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.kset-row-control button.primary:hover:not(:disabled),
+.kset-actions-row button.primary:hover:not(:disabled),
+.kset-foot button.primary:hover:not(:disabled) {
+  background: var(--accent-hover, var(--accent));
+}
+
+.kset-row-control button:disabled,
+.kset-actions-row button:disabled,
+.kset-foot button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* switch */
+.kset-switch {
+  position: relative;
+  display: inline-block;
+  width: 32px;
+  height: 18px;
+}
+
+.kset-switch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.kset-switch span {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--line-strong);
+  pointer-events: none;
+  transition: background var(--dur-fast, 150ms);
+}
+
+.kset-switch span::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform var(--dur-fast, 150ms) var(--ease-out, ease-out);
+}
+
+.kset-switch input:checked + span {
+  background: var(--accent);
+}
+
+.kset-switch input:checked + span::after {
+  transform: translateX(14px);
+}
+
+.kset-switch input:focus-visible + span {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* runtime */
+.kset-health {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  text-transform: capitalize;
+  background: var(--surface-raised);
+  color: var(--text-quiet);
+}
+
+.kset-health.healthy {
+  color: var(--online-green);
+  background: color-mix(in srgb, var(--online-green) 14%, transparent);
+}
+
+.kset-health.partial {
+  color: var(--status-amber);
+  background: color-mix(in srgb, var(--status-amber) 14%, transparent);
+}
+
+.kset-health.missing {
+  color: var(--status-red);
+  background: color-mix(in srgb, var(--status-red) 14%, transparent);
+}
+
+.kset-log {
+  margin: 0;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line);
+  max-height: 160px;
+  overflow: auto;
+  font-size: var(--fs-caption);
+  white-space: pre-wrap;
+  color: var(--text-quiet);
+}
+
+/* json */
+.kset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.kset-chips button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-body);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.kset-chips button:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.kset-json {
+  display: block;
+  width: 100%;
+  min-height: 420px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-card);
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: var(--lh-code);
+  resize: vertical;
+  tab-size: 2;
+}
+
+.kset-json:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.kset-loading,
+.kset-empty {
+  padding: 24px 0;
+  color: var(--text-quiet);
+}
+
+.kset-inline-error {
+  margin-top: 12px;
+  font-size: var(--fs-small);
+  color: var(--status-red);
+}
+
+/* radio rows, notes, sub-headings (agent harness) */
+.kset-note {
+  margin: 0 0 16px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-radios {
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.kset-radio {
+  gap: 12px;
+  cursor: pointer;
+}
+
+.kset-radio input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.kset-radio.unavailable {
+  cursor: default;
+}
+
+.kset-radio.unavailable .kset-row-title {
+  color: var(--text-quiet);
+}
+
+.kset-row-desc {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+  overflow-wrap: anywhere;
+}
+
+.kset-row-desc code {
+  font-size: var(--fs-caption);
+}
+
+.kset-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+}
+
+.kset-link-button {
+  border: 0;
+  background: transparent;
+  color: var(--text-quiet);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.kset-link-button:hover {
+  color: var(--status-red);
+}
+
+.kset-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-subhead {
+  margin: 28px 0 10px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+  color: var(--text-strong);
+}
+
+.kset-row-text label + p {
+  margin-top: 2px;
+}
+
+/* shared panel pieces (settings-ui.tsx) */
+.kset-panel {
+  display: block;
+}
+
+label.kset-row {
+  cursor: default;
+}
+
+.kset-row-control select {
+  padding-right: 28px;
+}
+
+.kset-row-control textarea {
+  height: auto;
+  min-height: 84px;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-code);
+  resize: vertical;
+}
+
+/* Wide rows stack: text on top, control full width. */
+.kset-row--wide {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 24px;
+}
+
+.kset-row--wide > .kset-row-text {
+  flex-basis: 100%;
+}
+
+.kset-row--wide > .kset-row-control {
+  flex: 1 1 100%;
+  align-items: flex-start;
+}
+
+.kset-row--wide > .kset-row-control > input,
+.kset-row--wide > .kset-row-control > textarea {
+  flex: 1;
+  width: auto !important;
+  min-width: 0;
+}
+
+.kset-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.kset-fieldset > .kset-group + .kset-note,
+.kset-group + .kset-note {
+  margin-top: 10px;
+}
+
+.kset-note + .kset-group {
+  margin-top: 0;
+}
+
+.kset-note code,
+.kset-row-desc code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.kset-subhead-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 28px 0 10px;
+}
+
+.kset-subhead-row .kset-subhead {
+  margin: 0;
+}
+
+.kset-subhead-actions .kset-chips {
+  margin: 0;
+}
+
+.kset-count {
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-inline-success {
+  margin-top: 12px;
+  font-size: var(--fs-small);
+  color: var(--online-green);
+}
+
+/* model picker (Graphify, Connections) inside a wide row */
+.kset-row .graphify-model-picker {
+  flex-basis: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kset-row .graphify-model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.kset-row .graphify-model-search input {
+  flex: 1;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  font: inherit;
+  outline: none;
+}
+
+.kset-row .graphify-model-search small {
+  font-size: var(--fs-caption);
+  color: var(--text-quiet);
+  font-variant-numeric: tabular-nums;
+}
+
+.kset-row .graphify-model-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.kset-row .graphify-model-list button {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  padding: 0 10px 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-body);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.kset-row .graphify-model-list button:hover {
+  background: var(--surface-hover);
+}
+
+.kset-row .graphify-model-list button.active {
+  color: var(--text-strong);
+}
+
+.kset-row .graphify-model-list button.active::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.kset-row .graphify-model-empty {
+  padding: 10px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+/* Pipeline keeps its step-table markup; this brings it onto the same
+   surfaces, borders and type as the rest of Settings. */
+.kset-scroll .pipeline-settings,
+.kset-scroll .pipeline-settings * {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+.kset-scroll .pipeline-settings {
+  display: grid;
+  gap: 14px;
+  padding: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+
+.kset-scroll .pipeline-target,
+.kset-scroll .pipeline-preset-section,
+.kset-scroll .pipeline-step-list {
+  border: 1px solid var(--line) !important;
+  border-radius: 10px !important;
+  background: var(--surface-card) !important;
+  box-shadow: none !important;
+}
+
+.kset-scroll .pipeline-target,
+.kset-scroll .pipeline-preset-section {
+  padding: 12px 16px !important;
+}
+
+.kset-scroll .pipeline-target small,
+.kset-scroll .pipeline-preset-section label {
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
+  color: var(--text-quiet) !important;
+}
+
+.kset-scroll .pipeline-settings .settings-notice {
+  display: block !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: var(--fs-small) !important;
+  color: var(--text-quiet) !important;
+}
+
+.kset-scroll .pipeline-settings .settings-notice strong {
+  margin-right: 6px;
+  color: var(--text-strong);
+}
+
+/* Steps as cards: first line holds the step's settings, the command gets
+   the full width below. The table header only fit very wide windows. */
+.kset-scroll .pipeline-step-header {
+  display: none !important;
+}
+
+.kset-scroll .pipeline-step-list {
+  display: block !important;
+  padding: 0 !important;
+}
+
+.kset-scroll .pipeline-step-editor {
+  display: grid !important;
+  grid-template-columns: 22px minmax(0, 1fr) 118px 132px 64px auto !important;
+  grid-template-areas:
+    "on name mode failure tries actions"
+    ". command command command command command"
+    ". prompt prompt prompt prompt prompt" !important;
+  gap: 8px 10px !important;
+  align-items: end !important;
+  padding: 12px 16px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.kset-scroll .pipeline-step-editor + .pipeline-step-editor {
+  border-top: 1px solid var(--line) !important;
+}
+
+.kset-scroll .pipeline-step-toggle {
+  grid-area: on;
+  align-self: center;
+  margin-bottom: 4px;
+}
+
+.kset-scroll .pipeline-step-toggle b {
+  display: none;
+}
+
+.kset-scroll .pipeline-field-name {
+  grid-area: name;
+}
+.kset-scroll .pipeline-field-mode {
+  grid-area: mode;
+}
+.kset-scroll .pipeline-field-failure {
+  grid-area: failure;
+}
+.kset-scroll .pipeline-field-tries {
+  grid-area: tries;
+}
+.kset-scroll .pipeline-field-command {
+  grid-area: command;
+}
+.kset-scroll .pipeline-field-prompt {
+  grid-area: prompt;
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kset-scroll .pipeline-field-prompt .mobile-field-label {
+  flex-basis: 100%;
+}
+.kset-scroll .pipeline-field-prompt input {
+  flex: 1;
+  min-width: 0;
+}
+
+.kset-scroll .pipeline-step-editor > label {
+  display: block;
+  min-width: 0;
+}
+
+.kset-scroll .pipeline-step-editor input:not([type="checkbox"]),
+.kset-scroll .pipeline-step-editor select {
+  width: 100% !important;
+  height: 30px !important;
+  padding: 0 8px !important;
+}
+
+.kset-scroll .pipeline-command-input {
+  font-family: var(--font-mono) !important;
+}
+
+.kset-scroll .mobile-field-label {
+  display: block !important;
+  margin-bottom: 4px !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
+  color: var(--text-quiet) !important;
+}
+
+.kset-scroll .pipeline-step-actions {
+  grid-area: actions;
+  display: flex !important;
+  gap: 2px !important;
+  margin: 0 !important;
+}
+
+.kset-scroll .pipeline-step-actions button {
+  width: 26px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+}
+
+.kset-scroll .pipeline-step-actions button:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+.kset-scroll .pipeline-step-actions button:disabled {
+  opacity: 0.35 !important;
+}
+
+.kset-scroll .pipeline-preset-section {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 16px !important;
+}
+
+.kset-scroll .pipeline-preset-section > div:first-child span {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-scroll .pipeline-preset-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 8px !important;
+}
+
+.kset-scroll .pipeline-preset-actions select {
+  width: 140px !important;
+  height: 30px !important;
+}
+
+.kset-scroll .pipeline-consult-button {
+  white-space: nowrap !important;
+  height: 30px !important;
+  padding: 0 12px !important;
+  border: 1px solid var(--line-strong) !important;
+  background: var(--surface) !important;
+  color: var(--text-strong) !important;
+}
+
+.kset-scroll .pipeline-target {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.kset-scroll .pipeline-target span {
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-scroll .pipeline-summary {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 6px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap;
+}
+
+.kset-scroll .pipeline-summary strong {
+  font-size: var(--fs-title) !important;
+  color: var(--text-strong) !important;
+}
+
+.kset-scroll .pipeline-add-step {
+  justify-self: start;
+  height: 28px !important;
+  padding: 0 12px !important;
+  border: 1px dashed var(--line-strong) !important;
+  background: transparent !important;
+  color: var(--text-body) !important;
+}
+
+.kset-scroll .pipeline-settings input,
+.kset-scroll .pipeline-settings select,
+.kset-scroll .pipeline-settings textarea {
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 6px !important;
+  background: var(--surface) !important;
+  color: var(--text-strong) !important;
+  font-size: var(--fs-small) !important;
+}
+
+.kset-scroll .pipeline-settings button,
+.kset-scroll .pipeline-add-step {
+  border-radius: 6px !important;
+  font-family: var(--font-ui) !important;
+  font-weight: var(--fw-medium) !important;
+}
+
+.kset-scroll .pipeline-foot {
+  position: sticky;
+  bottom: -28px;
+  margin: 20px -28px -28px;
+}
+
+.kset-scroll .pipeline-foot > div {
+  display: flex;
+  gap: 8px;
+}
+
+.kset-scroll .pipeline-foot button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font: inherit;
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.kset-scroll .pipeline-foot button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.kset-scroll .pipeline-foot button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.kset-scroll .pipeline-foot {
+  background: var(--surface);
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.kset-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px 12px 28px;
+  border-top: 1px solid var(--line);
+}
+
+.kset-status {
+  flex: 1;
+  font-size: var(--fs-small);
+  color: var(--text-quiet);
+}
+
+.kset-status.dirty {
+  color: var(--accent-ink, var(--accent));
+}
+
+@media (max-width: 720px) {
+  .kset {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .kset-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .kset-row {
+    flex-wrap: wrap;
+  }
+}

@@ -200,7 +200,7 @@ export default function PipelineSettings({
 
   if (!config)
     return (
-      <div className="settings-loading">{error || "LOADING PIPELINE…"}</div>
+      <div className="settings-loading">{error || "Loading pipeline…"}</div>
     );
 
   const update = (index: number, patch: Partial<PipelineStep>) =>
@@ -403,7 +403,7 @@ export default function PipelineSettings({
       <div className="pipeline-settings">
         <section className="pipeline-target">
           <div>
-            <small>APPLIES TO PROJECT</small>
+            <small>Applies to project</small>
             <strong>{projectName ?? projectPath.split("/").pop()}</strong>
             <span>{projectPath}</span>
           </div>
@@ -414,7 +414,7 @@ export default function PipelineSettings({
         </section>
 
         <div className="settings-notice">
-          <strong>LOCAL SHELL ACCESS</strong>
+          <strong>Local shell access</strong>
           <span>
             Commands run from this registered project root. Review every command
             before saving.
@@ -423,7 +423,7 @@ export default function PipelineSettings({
 
         <section className="pipeline-preset-section">
           <div>
-            <label htmlFor="pipeline-preset">STARTING PRESET</label>
+            <label htmlFor="pipeline-preset">Starting preset</label>
             <span>
               Choose a template, then customize any step. Editing switches the
               preset to Custom.
@@ -437,7 +437,7 @@ export default function PipelineSettings({
                 void startConsultant();
               }}
             >
-              ✦ CONSULT AI
+              Consult AI
             </button>
             <select
               id="pipeline-preset"
@@ -457,12 +457,12 @@ export default function PipelineSettings({
         </section>
 
         <div className="pipeline-step-header" aria-hidden="true">
-          <span>ON</span>
-          <span>STEP</span>
-          <span>COMMAND</span>
-          <span>ON FAILURE</span>
-          <span>TRIES</span>
-          <span>ORDER</span>
+          <span>On</span>
+          <span>Step</span>
+          <span>Command</span>
+          <span>On failure</span>
+          <span>Tries</span>
+          <span>Order</span>
         </div>
         <div className="pipeline-step-list">
           {config.steps.map((step, index) => (
@@ -480,10 +480,10 @@ export default function PipelineSettings({
                   aria-label={`Enable ${step.name}`}
                 />
                 <span />
-                <b>ENABLED</b>
+                <b>Enabled</b>
               </label>
-              <label>
-                <span className="mobile-field-label">STEP</span>
+              <label className="pipeline-field-name">
+                <span className="mobile-field-label">Step</span>
                 <input
                   value={step.name}
                   onChange={(event) =>
@@ -493,8 +493,8 @@ export default function PipelineSettings({
                   placeholder="Step name"
                 />
               </label>
-              <label>
-                <span className="mobile-field-label">MODE</span>
+              <label className="pipeline-field-mode">
+                <span className="mobile-field-label">Mode</span>
                 <select
                   className="themed-select"
                   aria-label={`${step.name} mode`}
@@ -510,8 +510,8 @@ export default function PipelineSettings({
                   <option value="confirm">Confirm</option>
                 </select>
               </label>
-              <label>
-                <span className="mobile-field-label">COMMAND</span>
+              <label className="pipeline-field-command">
+                <span className="mobile-field-label">Command</span>
                 <input
                   className="pipeline-command-input"
                   value={step.command}
@@ -529,8 +529,8 @@ export default function PipelineSettings({
                 />
               </label>
               {(step.mode ?? "shell") !== "shell" && (
-                <label>
-                  <span className="mobile-field-label">PROMPT / OPTIONS</span>
+                <label className="pipeline-field-prompt">
+                  <span className="mobile-field-label">Prompt or options</span>
                   <input
                     value={step.prompt ?? ""}
                     onChange={(event) =>
@@ -554,8 +554,8 @@ export default function PipelineSettings({
                   )}
                 </label>
               )}
-              <label>
-                <span className="mobile-field-label">ON FAILURE</span>
+              <label className="pipeline-field-failure">
+                <span className="mobile-field-label">On failure</span>
                 <select
                   aria-label={`${step.name} failure policy`}
                   className="themed-select"
@@ -579,8 +579,8 @@ export default function PipelineSettings({
                   ))}
                 </select>
               </label>
-              <label>
-                <span className="mobile-field-label">TRIES</span>
+              <label className="pipeline-field-tries">
+                <span className="mobile-field-label">Tries</span>
                 <input
                   type="number"
                   min="1"
@@ -649,11 +649,11 @@ export default function PipelineSettings({
             })
           }
         >
-          ＋ ADD STEP
+          Add step
         </button>
 
         <details className="pipeline-policy-guide">
-          <summary>FAILURE POLICY HELP</summary>
+          <summary>How failure policies work</summary>
           <div>
             {POLICIES.map((policy) => (
               <p key={policy.value}>
@@ -685,8 +685,8 @@ export default function PipelineSettings({
         >
           <header>
             <div>
-              <small>PROJECT COPILOT</small>
-              <strong>PIPELINE CONSULTANT</strong>
+              <small>Project copilot</small>
+              <strong>Pipeline consultant</strong>
             </div>
             <button
               onClick={closeConsultant}
@@ -702,7 +702,7 @@ export default function PipelineSettings({
           <div className="pipeline-consult-chat">
             {consultMessages.map((message, index) => (
               <article className={message.role} key={index}>
-                <small>{message.role === "user" ? "YOU" : "AI"}</small>
+                <small>{message.role === "user" ? "You" : "AI"}</small>
                 <p>{message.text}</p>
               </article>
             ))}
@@ -713,18 +713,18 @@ export default function PipelineSettings({
             aria-live="polite"
           >
             {consultBusy
-              ? "AI IS THINKING…"
+              ? "AI is thinking…"
               : consultError
-                ? "CONSULTATION ERROR"
+                ? "Consultation error"
                 : draft
-                  ? "DRAFT READY FOR REVIEW"
-                  : "READY"}
+                  ? "Draft ready for review"
+                  : "Ready"}
           </div>
           {draft && (
             <section className="pipeline-consult-draft">
               <header>
                 <div>
-                  <strong>DRAFT READY</strong>
+                  <strong>Draft ready</strong>
                   <span>
                     {draft.steps.length} steps · commands are not run or saved
                     yet
@@ -736,7 +736,7 @@ export default function PipelineSettings({
                     setDraft(null);
                   }}
                 >
-                  APPLY TO FORM
+                  Apply to form
                 </button>
               </header>
               <ol>
@@ -768,30 +768,30 @@ export default function PipelineSettings({
               onClick={() => void sendConsultMessage()}
               disabled={!consultInput.trim() || consultBusy}
             >
-              SEND
+              Send
             </button>
           </footer>
         </aside>
       )}
-      <footer>
-        <span>
+      <footer className="kset-foot pipeline-foot">
+        <span className={`kset-status ${dirty ? "dirty" : ""}`}>
           {dirty
-            ? `UNSAVED · ${projectName ?? "PROJECT"}`
-            : `SAVED · ${projectName ?? "PROJECT"}`}
+            ? `Unsaved changes · ${projectName ?? "project"}`
+            : `Saved · ${projectName ?? "project"}`}
         </span>
         <div>
           <button
             onClick={() => setConfig(JSON.parse(saved) as PipelineConfig)}
             disabled={!dirty || saving}
           >
-            RESET
+            Discard
           </button>
           <button
-            className="save-settings"
+            className="primary"
             onClick={save}
             disabled={!dirty || invalid || saving}
           >
-            {saving ? "SAVING…" : "SAVE TO PROJECT"}
+            {saving ? "Saving…" : "Save to project"}
           </button>
         </div>
       </footer>

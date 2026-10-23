@@ -207,7 +207,7 @@ fn latest_pi_version() -> Option<String> {
         .args([
             "-fsSL",
             "--max-time",
-            "10",
+            "4",
             "https://registry.npmjs.org/@earendil-works%2Fpi-coding-agent/latest",
         ])
         .output()
@@ -216,46 +216,115 @@ fn latest_pi_version() -> Option<String> {
     value.get("version")?.as_str().map(str::to_string)
 }
 
-#[tauri::command]
-pub fn get_pi_runtime_status() -> Result<PiRuntimeStatus, String> {
+/// Latest published Pi version, cached for a few hours. Settings asks for the
+/// runtime status every time it opens; hitting npm each time made opening it
+/// wait on the network.
+fn latest_pi_version_cached(refresh: bool) -> Option<String> {
+    static CACHE: Mutex<Option<(std::time::Instant, Option<String>)>> = Mutex::new(None);
+    const TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+    if !refresh {
+        if let Ok(guard) = CACHE.lock() {
+            if let Some((at, version)) = guard.as_ref() {
+                if at.elapsed() < TTL {
+                    return version.clone();
+                }
+            }
+        }
+    }
+    let version = latest_pi_version();
+    if let Ok(mut guard) = CACHE.lock() {
+        *guard = Some((std::time::Instant::now(), version.clone()));
+    }
+    version
+}
+
+/// Blocking runtime check. Runs `pi --version` once per candidate (the result
+/// doubles as the installed version) while the npm lookup runs on its own
+/// thread, so the slowest step bounds the call instead of their sum.
+fn runtime_status(refresh_latest: bool) -> Result<PiRuntimeStatus, String> {
     let (configured, _) = read_pi_config()?;
-    let candidate = candidate_pi_paths(&configured)
-        .into_iter()
-        .find(|path| path.is_file());
-    let healthy = installed_pi(&configured);
-    let path = healthy.as_ref().or(candidate.as_ref());
-    Ok(PiRuntimeStatus {
-        health: if healthy.is_some() {
+    thread::scope(|scope| {
+        let latest = scope.spawn(|| latest_pi_version_cached(refresh_latest));
+        let candidates: Vec<PathBuf> = candidate_pi_paths(&configured)
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect();
+        let mut first: Option<(PathBuf, Option<String>)> = None;
+        let mut healthy: Option<(PathBuf, String)> = None;
+        for path in candidates {
+            let version = pi_version(&path);
+            if let Some(version) = version.clone() {
+                if pi_runtime_complete(&path) {
+                    healthy = Some((path, version));
+                    break;
+                }
+            }
+            if first.is_none() {
+                first = Some((path, version));
+            }
+        }
+        let health = if healthy.is_some() {
             "healthy"
-        } else if candidate.is_some() {
+        } else if first.is_some() {
             "partial"
         } else {
             "missing"
-        }
-        .into(),
-        path: path.map(|path| path.to_string_lossy().into_owned()),
-        installed_version: path.and_then(|path| pi_version(path)),
-        latest_version: latest_pi_version(),
+        };
+        let (path, installed_version) = match healthy {
+            Some((path, version)) => (Some(path), Some(version)),
+            None => match first {
+                Some((path, version)) => (Some(path), version),
+                None => (None, None),
+            },
+        };
+        Ok(PiRuntimeStatus {
+            health: health.into(),
+            path: path.map(|path| path.to_string_lossy().into_owned()),
+            installed_version,
+            latest_version: latest.join().ok().flatten(),
+        })
     })
 }
 
-#[tauri::command]
-pub fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
-    // The frontend only invokes this from an explicit "Install/Update" button
-    // in Settings, so the click itself is the user's consent to run the
-    // installer. Automatic paths must use `approve_pi_install` instead.
-    install_pi_via_curl()?;
-    let status = get_pi_runtime_status()?;
-    if status.health != "healthy" {
-        return Err("Pi installer finished but runtime health check still fails".into());
-    }
-    Ok(status)
+/// Tauri runs synchronous commands on the main thread, which froze the whole
+/// window while these spawned processes and network calls. Each one now runs
+/// on the blocking pool.
+async fn off_main_thread<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn sync_pi_extensions() -> Result<String, String> {
-    let path = crate::projects::ensure_extensions()?;
-    Ok(path.to_string_lossy().into_owned())
+pub async fn get_pi_runtime_status(refresh: Option<bool>) -> Result<PiRuntimeStatus, String> {
+    off_main_thread(move || runtime_status(refresh.unwrap_or(false))).await
+}
+
+#[tauri::command]
+pub async fn update_pi_runtime() -> Result<PiRuntimeStatus, String> {
+    // The frontend only invokes this from an explicit "Install/Update" button
+    // in Settings, so the click itself is the user's consent to run the
+    // installer. Automatic paths must use `approve_pi_install` instead.
+    off_main_thread(|| {
+        install_pi_via_curl()?;
+        let status = runtime_status(true)?;
+        if status.health != "healthy" {
+            return Err("Pi installer finished but runtime health check still fails".into());
+        }
+        Ok(status)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn sync_pi_extensions() -> Result<String, String> {
+    off_main_thread(|| {
+        let path = crate::projects::ensure_extensions()?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
 }
 
 fn installer_failure(output: &std::process::Output) -> String {
@@ -408,11 +477,15 @@ fn ensure_pi_installed_with_repair(
 /// this command when the user clicks Install. Never invoke the installer from
 /// an automatic path — that would silently execute a remote shell script.
 #[tauri::command]
-pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, String> {
+pub async fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, String> {
+    off_main_thread(move || approve_pi_install_blocking(app)).await
+}
+
+fn approve_pi_install_blocking(app: tauri::AppHandle) -> Result<PiRuntimeStatus, String> {
     let (configured, _) = read_pi_config()?;
     // If pi appeared since the check (user installed it manually), skip.
     if installed_pi(&configured).is_some() {
-        return get_pi_runtime_status();
+        return runtime_status(false);
     }
     let _ = app.emit(
         "pi-rpc-stderr",
@@ -430,7 +503,7 @@ pub fn approve_pi_install(app: tauri::AppHandle) -> Result<PiRuntimeStatus, Stri
     if installed_pi(&configured).is_none() {
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
-    let status = get_pi_runtime_status()?;
+    let status = runtime_status(true)?;
     if status.health != "healthy" {
         return Err(format!(
             "Pi installer finished but the runtime is still not healthy. Manually run: curl -fsSL {PI_INSTALL_URL} | sh (checked: {:?})",

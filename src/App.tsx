@@ -2,6 +2,8 @@ import "@fontsource/merriweather/400.css";
 import "@fontsource/merriweather/400-italic.css";
 import "@fontsource/merriweather/700.css";
 import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource-variable/ibm-plex-sans";
+import "@fontsource-variable/lilex";
 import "@fontsource-variable/instrument-sans/wdth.css";
 import {
   lazy,
@@ -33,10 +35,12 @@ import {
   ExternalIcon,
   PanelIcon,
   PlusIcon,
+  RefreshIcon,
   SearchIcon,
   SettingsIcon,
   SparkIcon,
   BlurIcon,
+  CopyIcon,
 } from "./components/Icons";
 import {
   APPEARANCE_KEY,
@@ -62,6 +66,10 @@ import "./quiet-native.css";
 import "./opendots.css";
 import "./kern-refine.css";
 import "./night-shift.css";
+import "./sidebar-rail.css";
+import "./typography.css";
+import "./settings.css";
+import "./toast.css";
 
 type Config = {
   pi_path: string;
@@ -118,16 +126,20 @@ const DASHBOARD_TITLES: Record<Dashboard, string> = {
 };
 
 const CHAT_TABS_KEY = "crc-chat-tabs";
+/** Toasts that report a failure get the red bar instead of amber. */
+const TOAST_ERROR =
+  /\b(error|failed|failure|unavailable|couldn't|could not|cannot|timed out)\b/i;
 const SIDEBAR_WIDTH_KEY = "crc-sidebar-width";
-const SIDEBAR_MIN_WIDTH = 220;
-const SIDEBAR_MAX_WIDTH = 360;
+// Width covers the 48px icon rail plus the session panel.
+const SIDEBAR_MIN_WIDTH = 260;
+const SIDEBAR_MAX_WIDTH = 420;
 
 function savedSidebarWidth() {
   const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
   const width = saved === null ? NaN : Number(saved);
   return Number.isFinite(width)
     ? Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, width))
-    : 250;
+    : 296;
 }
 
 function savedTabs(): Tab[] {
@@ -503,7 +515,7 @@ export default function App() {
         Skip to workspace
       </a>
       <aside
-        className="sidebar glass-surface"
+        className="sidebar sidebar--rail glass-surface"
         aria-label="Projects and sessions"
       >
         <div
@@ -552,175 +564,192 @@ export default function App() {
               );
           }}
         />
-        <div className="sidebar-brand">
-          <div className="wordmark">
-            <span className="dotted-logo" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-              <i />
-            </span>
+        <nav className="sidebar-rail" aria-label="Workspace views">
+          <span className="dotted-logo rail-logo" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
+          {(
+            [
+              [null, "Chat", ChatIcon],
+              ["engines", "Prompt Engines", SparkIcon],
+              ["research", "Deep Research", SearchIcon],
+              ["knowledge", "Knowledge", BookIcon],
+              ["skills", "Skills", SparkIcon],
+            ] as const
+          ).map(([view, label, Icon]) => (
+            <button
+              key={label}
+              title={label}
+              aria-label={label}
+              className={`rail-button ${dashboard === view ? "active" : ""}`}
+              aria-current={dashboard === view ? "page" : undefined}
+              onClick={() => setDashboard(view)}
+            >
+              <Icon />
+            </button>
+          ))}
+          <div className="rail-spacer" />
+          <button
+            className={`rail-button${bgBlurred ? " is-active" : ""}`}
+            onClick={() => setBgBlurred((prev) => !prev)}
+            title={
+              bgBlurred
+                ? "Show the office background"
+                : "Blur the office background"
+            }
+            aria-label="Blur background"
+            aria-pressed={bgBlurred}
+          >
+            <BlurIcon active={bgBlurred} />
+          </button>
+          <button
+            className={`rail-button${availableVersion ? " has-update" : ""}`}
+            title={
+              updating
+                ? "Checking update…"
+                : availableVersion
+                  ? `Update ${availableVersion} available`
+                  : "Check Update"
+            }
+            aria-label={
+              updating
+                ? "Checking update…"
+                : availableVersion
+                  ? `Update ${availableVersion} available`
+                  : "Check Update"
+            }
+            disabled={updating}
+            onClick={() => void checkForUpdate()}
+          >
+            <RefreshIcon />
+          </button>
+          <button
+            title="Settings"
+            aria-label="Settings"
+            className="rail-button"
+            onClick={() => {
+              setSettingsProject(selectedProject ?? activeTab?.project ?? null);
+              setSettingsPage("pi");
+              setSettingsOpen(true);
+            }}
+          >
+            <SettingsIcon />
+          </button>
+        </nav>
+        <div className="sidebar-panel">
+          <div className="sidebar-brand">
             <span className="wordmark-text">
               <strong>Kern</strong>
               <small>Studio</small>
-              <span className="wordmark-dot">•</span>
             </span>
-          </div>
-          <button
-            className="sidebar-collapse"
-            onClick={() => setSidebarOpen(false)}
-            title="Hide sidebar"
-            aria-label="Hide sidebar"
-          >
-            <PanelIcon />
-          </button>
-        </div>
-        <button
-          className="sidebar-new-action"
-          onClick={() => {
-            if (workspaceProject) {
-              newConversation(workspaceProject);
-            } else {
-              newGlobalChat();
-            }
-          }}
-          title="New session"
-        >
-          <PlusIcon />
-          <span>New chat</span>
-        </button>
-
-        <div className="sidebar-label">
-          <span>Sessions</span>
-          <i />
-        </div>
-        {configErr && (
-          <div className="sidebar-error" role="alert">
-            Config error: {configErr}{" "}
-            <button onClick={fetchConfig}>Retry</button>
-          </div>
-        )}
-        <ProjectList
-          onOpen={openProject}
-          onSelect={(project) => {
-            setDashboard(null);
-            setSelectedProject(project);
-          }}
-          tabs={tabs.filter((tab) => !tab.global)}
-          activeTabId={activeTabId}
-          onResume={(id, project) => {
-            setDashboard(null);
-            setSelectedProject(project);
-            activateTab(id);
-          }}
-          onNewSession={newConversation}
-          onToast={addToast}
-          onPipelineSettings={(project) => {
-            setSelectedProject(project);
-            setSettingsProject(project);
-            setSettingsPage("pipeline");
-            setSettingsOpen(true);
-          }}
-        />
-        <div className="projects-panel">
-          <div className="projects-heading">
-            <span>Global chat</span>
             <button
-              onClick={newGlobalChat}
-              title="New Global Chat"
-              aria-label="New Global Chat"
+              className="sidebar-brand-action"
+              onClick={() => {
+                if (workspaceProject) {
+                  newConversation(workspaceProject);
+                } else {
+                  newGlobalChat();
+                }
+              }}
+              title="New chat"
+              aria-label="New chat"
             >
               <PlusIcon />
             </button>
+            <button
+              className="sidebar-brand-action"
+              onClick={() => setSidebarOpen(false)}
+              title="Hide sidebar"
+              aria-label="Hide sidebar"
+            >
+              <PanelIcon />
+            </button>
           </div>
-          <div className="project-sessions">
-            <div>
-              {tabs
-                .filter((tab) => tab.global)
-                .map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
-                    onClick={() => {
-                      setDashboard(null);
-                      setSelectedProject(null);
-                      activateTab(tab.id);
-                    }}
-                  >
-                    <span>{tab.title ?? "Untitled session"}</span>
-                    {tab.interrupted ? (
-                      <span
-                        className="agent-working-mark"
-                        aria-label="Agent working"
+          <div className="sidebar-scroll">
+            {configErr && (
+              <div className="sidebar-error" role="alert">
+                Config error: {configErr}{" "}
+                <button onClick={fetchConfig}>Retry</button>
+              </div>
+            )}
+            <ProjectList
+              onOpen={openProject}
+              onSelect={(project) => {
+                setDashboard(null);
+                setSelectedProject(project);
+              }}
+              tabs={tabs.filter((tab) => !tab.global)}
+              activeTabId={activeTabId}
+              onResume={(id, project) => {
+                setDashboard(null);
+                setSelectedProject(project);
+                activateTab(id);
+              }}
+              onNewSession={newConversation}
+              onToast={addToast}
+              onPipelineSettings={(project) => {
+                setSelectedProject(project);
+                setSettingsProject(project);
+                setSettingsPage("pipeline");
+                setSettingsOpen(true);
+              }}
+            />
+            <div className="projects-panel">
+              <div className="projects-heading">
+                <span>Global chat</span>
+                <button
+                  onClick={newGlobalChat}
+                  title="New Global Chat"
+                  aria-label="New Global Chat"
+                >
+                  <PlusIcon />
+                </button>
+              </div>
+              <div className="project-sessions">
+                <div>
+                  {tabs
+                    .filter((tab) => tab.global)
+                    .map((tab) => (
+                      <button
+                        key={tab.id}
+                        className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
+                        onClick={() => {
+                          setDashboard(null);
+                          setSelectedProject(null);
+                          activateTab(tab.id);
+                        }}
                       >
-                        <i />
-                        <i />
-                        <i />
-                      </span>
-                    ) : (
-                      !!tab.unread && (
-                        <span className="unread-badge">{tab.unread}</span>
-                      )
-                    )}
-                  </button>
-                ))}
+                        <span>{tab.title ?? "Untitled session"}</span>
+                        {tab.interrupted ? (
+                          <span
+                            className="agent-working-mark"
+                            aria-label="Agent working"
+                          >
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        ) : (
+                          !!tab.unread && (
+                            <span className="unread-badge">{tab.unread}</span>
+                          )
+                        )}
+                      </button>
+                    ))}
+                </div>
+              </div>
+              {tabs.every((tab) => !tab.global) && (
+                <button className="settings-button" onClick={openGlobalChat}>
+                  <ChatIcon className="settings-icon" />
+                  <span>Open global chat</span>
+                </button>
+              )}
             </div>
           </div>
-          {tabs.every((tab) => !tab.global) && (
-            <button className="settings-button" onClick={openGlobalChat}>
-              <ChatIcon className="settings-icon" />
-              <span>Open global chat</span>
-            </button>
-          )}
-        </div>
-        <nav className="sidebar-nav" aria-label="Workspace views">
-          <div className="sidebar-nav-label">Tools</div>
-          <button
-            title="Chat"
-            className={`settings-button dashboard-button ${dashboard === null ? "active" : ""}`}
-            aria-current={dashboard === null ? "page" : undefined}
-            onClick={() => setDashboard(null)}
-          >
-            <ChatIcon className="settings-icon" />
-            <span>Chat</span>
-          </button>
-          <button
-            title="Prompt Engines"
-            className={`settings-button dashboard-button ${dashboard === "engines" ? "active" : ""}`}
-            aria-current={dashboard === "engines" ? "page" : undefined}
-            onClick={() => setDashboard("engines")}
-          >
-            <SparkIcon className="settings-icon" />
-            <span>Prompt Engines</span>
-          </button>
-          <button
-            title="Deep Research"
-            className={`settings-button dashboard-button ${dashboard === "research" ? "active" : ""}`}
-            aria-current={dashboard === "research" ? "page" : undefined}
-            onClick={() => setDashboard("research")}
-          >
-            <SearchIcon className="settings-icon" />
-            <span>Deep Research</span>
-          </button>
-          <button
-            title="Knowledge"
-            className={`settings-button dashboard-button ${dashboard === "knowledge" ? "active" : ""}`}
-            aria-current={dashboard === "knowledge" ? "page" : undefined}
-            onClick={() => setDashboard("knowledge")}
-          >
-            <BookIcon className="settings-icon" />
-            <span>Knowledge</span>
-          </button>
-          <button
-            title="Skills"
-            className={`settings-button dashboard-button ${dashboard === "skills" ? "active" : ""}`}
-            aria-current={dashboard === "skills" ? "page" : undefined}
-            onClick={() => setDashboard("skills")}
-          >
-            <SparkIcon className="settings-icon" />
-            <span>Skills</span>
-          </button>
-          <div className="sidebar-system">
+          <div className="sidebar-panel-footer">
             <div
               className="appearance-control"
               role="group"
@@ -742,55 +771,9 @@ export default function App() {
                 </button>
               ))}
             </div>
-            <div className="sidebar-footer-row">
-              <button
-                className={`sidebar-icon-toggle${bgBlurred ? " is-active" : ""}`}
-                onClick={() => setBgBlurred((prev) => !prev)}
-                title={
-                  bgBlurred
-                    ? "Show the office background"
-                    : "Blur the office background"
-                }
-                aria-label="Blur background"
-                aria-pressed={bgBlurred}
-              >
-                <BlurIcon active={bgBlurred} />
-              </button>
-            </div>
-            <button
-              title="Check Update"
-              className="settings-button dashboard-button"
-              disabled={updating}
-              onClick={() => void checkForUpdate()}
-            >
-              <span className="settings-icon" aria-hidden>
-                ↻
-              </span>
-              <span>
-                {updating
-                  ? "Checking update…"
-                  : availableVersion
-                    ? `Update ${availableVersion} available`
-                    : "Check Update"}
-              </span>
-            </button>
-            <button
-              title="Settings"
-              className="settings-button dashboard-button"
-              onClick={() => {
-                setSettingsProject(
-                  selectedProject ?? activeTab?.project ?? null,
-                );
-                setSettingsPage("pi");
-                setSettingsOpen(true);
-              }}
-            >
-              <SettingsIcon className="settings-icon" />
-              <span>Settings</span>
-            </button>
+            {appVersion && <small className="app-version">v{appVersion}</small>}
           </div>
-        </nav>
-        {appVersion && <small className="app-version">v{appVersion}</small>}
+        </div>
       </aside>
 
       <section className="workspace">
@@ -1098,24 +1081,25 @@ export default function App() {
                 </div>
               )}
         </div>
-        <div className="toast-container">
+        <div className="toast-container" aria-live="polite">
           {toasts.map((toast, i) => (
-            <div key={i} className="toast glass-surface" role="status">
+            <div
+              key={i}
+              className={`toast${TOAST_ERROR.test(toast) ? " toast--error" : ""}`}
+              role="status"
+            >
               <span>{toast}</span>
               <button
                 onClick={(e) => {
                   navigator.clipboard.writeText(toast).catch(() => {});
                   const btn = e.currentTarget;
-                  const original = btn.textContent;
-                  btn.textContent = "✓";
-                  setTimeout(() => {
-                    if (btn) btn.textContent = original;
-                  }, 1200);
+                  btn.classList.add("copied");
+                  setTimeout(() => btn.classList.remove("copied"), 1200);
                 }}
-                title="Copy toast"
+                title="Copy"
                 aria-label="Copy toast"
               >
-                ⧉
+                <CopyIcon />
               </button>
               <button
                 onClick={() =>
@@ -1125,7 +1109,18 @@ export default function App() {
                 aria-label="Dismiss toast"
                 className="toast-close"
               >
-                ×
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 14 14"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M1 1l12 12M13 1L1 13" />
+                </svg>
               </button>
             </div>
           ))}
@@ -1133,11 +1128,11 @@ export default function App() {
         {settingsOpen && (
           <Suspense
             fallback={
-              <div className="settings-backdrop">
-                <div className="settings-loading" role="status">
-                  Loading settings…
-                </div>
-              </div>
+              <div
+                className="kset-scrim"
+                role="status"
+                aria-label="Loading settings"
+              />
             }
           >
             <SettingsPanel

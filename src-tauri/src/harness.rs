@@ -2,7 +2,7 @@
 //!
 //! A *harness* is the coding-agent program a Chat runs: pi (native RPC, the
 //! default) or any ACP-speaking agent (OpenCode, Claude Code, oh-my-pi, Codex,
-//! Gemini CLI, or a user-defined command). ACP harnesses are bridged to the
+//! Gemini CLI, Hermes Agent, or a user-defined command). ACP harnesses are bridged to the
 //! UI's pi protocol by `acp_bridge` — see ADR-0007.
 //!
 //! Settings live in `<app config>/harnesses.json`, separate from
@@ -74,6 +74,13 @@ pub fn builtin_acp() -> Vec<HarnessSpec> {
         spec("oh-my-pi", "oh-my-pi", "omp", &["--mode", "acp"], "npm i -g @oh-my-pi/pi-coding-agent"),
         spec("codex", "Codex", "codex-acp", &[], "npm i -g @zed-industries/codex-acp"),
         spec("gemini", "Gemini CLI", "gemini", &["--acp"], "npm i -g @google/gemini-cli"),
+        spec(
+            "hermes",
+            "Hermes Agent",
+            "hermes",
+            &["acp"],
+            "Install Hermes Agent, then enable ACP: cd ~/.hermes/hermes-agent && python -c \"import pm; pm.sync_venv(['acp'], explicit=True)\" (model setup: hermes acp --setup)",
+        ),
     ]
 }
 

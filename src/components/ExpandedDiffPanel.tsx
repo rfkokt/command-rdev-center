@@ -39,7 +39,7 @@ const buttonStyle = (
   disabled: boolean,
 ): CSSProperties => ({
   padding: "4px 10px",
-  fontSize: 10,
+  fontSize: 11,
   letterSpacing: "0.08em",
   borderRadius: 4,
   cursor: disabled ? "default" : "pointer",
@@ -268,7 +268,7 @@ export default function ExpandedDiffPanel({
             <small
               style={{
                 color: "var(--accent)",
-                fontSize: 10,
+                fontSize: 11,
                 letterSpacing: "0.1em",
               }}
             >
@@ -284,7 +284,7 @@ export default function ExpandedDiffPanel({
               padding: "6px 12px",
               border: "1px solid #ff7069",
               color: "#ff9b96",
-              fontSize: 10,
+              fontSize: 11,
               letterSpacing: "0.1em",
               borderRadius: 4,
               cursor: "pointer",
@@ -373,7 +373,7 @@ export default function ExpandedDiffPanel({
                         }}
                       >
                         {isAccepted && (
-                          <span style={{ fontSize: 10, color: "#9fe0ab" }}>
+                          <span style={{ fontSize: 11, color: "#9fe0ab" }}>
                             ✓ accepted
                           </span>
                         )}
@@ -409,7 +409,7 @@ export default function ExpandedDiffPanel({
                   <div
                     style={{
                       padding: "8px 12px",
-                      fontSize: 10,
+                      fontSize: 11,
                       letterSpacing: "0.1em",
                       color: "#ff9b96",
                       background: "#1d1210",

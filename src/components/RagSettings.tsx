@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  Actions,
+  Field,
+  Group,
+  Note,
+  Status,
+  Subhead,
+  SwitchField,
+} from "./settings-ui";
 
 type Settings = {
   enabled: boolean;
@@ -59,84 +68,73 @@ export default function RagSettings({
     }
   }
   return (
-    <main className="graphify-settings">
-      <div className="settings-notice">
-        Global Chat only. Token stays in macOS Keychain; extracted text stays
-        local. Selected project sources include top-level UTF-8 TXT, MD, CSV,
-        and JSON files.
-      </div>
-      <label className="settings-toggle">
-        <span>
-          ENABLE RAG
-          <small>
-            Inject bounded keyword-matched source citations into Global Chat
-          </small>
-        </span>
-        <input
-          type="checkbox"
+    <div className="kset-panel">
+      <Note>
+        Global Chat only. The token stays in the macOS Keychain and extracted
+        text stays on this machine. Project sources include top-level UTF-8 TXT,
+        MD, CSV and JSON files.
+      </Note>
+      <Group>
+        <SwitchField
+          label="Enable RAG"
+          detail="Add keyword-matched source citations to Global Chat."
           checked={settings.enabled}
-          onChange={(e) => update({ enabled: e.target.checked })}
+          onChange={(enabled) => update({ enabled })}
         />
-      </label>
-      <label>
-        HTTPS BASE URL
-        <input
-          type="url"
-          value={settings.base_url}
-          placeholder="https://extractor.example"
-          onChange={(e) => update({ base_url: e.target.value })}
-        />
-      </label>
-      <label>
-        BEARER TOKEN
-        <input
-          type="password"
-          value={token}
-          placeholder={
-            settings.has_token
-              ? "Saved — leave blank to keep"
-              : "Required when enabled"
-          }
-          autoComplete="new-password"
-          onChange={(e) => setToken(e.target.value)}
-        />
-      </label>
-      <label>
-        TIMEOUT SECONDS
-        <input
-          type="number"
-          min="1"
-          max="60"
-          value={settings.timeout_secs}
-          onChange={(e) => update({ timeout_secs: Number(e.target.value) })}
-        />
-      </label>
-      <label>
-        UPLOAD LIMIT MB
-        <input
-          type="number"
-          min="1"
-          max="25"
-          value={settings.upload_limit_mb}
-          onChange={(e) => update({ upload_limit_mb: Number(e.target.value) })}
-        />
-      </label>
-      <div>
-        <strong className="caption-uppercase">
-          REGISTERED PROJECT SOURCES
-        </strong>
-        {projects.map((project) => (
-          <label className="settings-toggle" key={project.path}>
-            <span>
-              {project.name}
-              <small>{project.path}</small>
-            </span>
-            <input
-              type="checkbox"
+        <Field label="Extractor URL" detail="HTTPS base URL.">
+          <input
+            type="url"
+            value={settings.base_url}
+            placeholder="https://extractor.example"
+            onChange={(e) => update({ base_url: e.target.value })}
+          />
+        </Field>
+        <Field label="Bearer token">
+          <input
+            type="password"
+            value={token}
+            placeholder={
+              settings.has_token
+                ? "Saved; leave blank to keep"
+                : "Required when enabled"
+            }
+            autoComplete="new-password"
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </Field>
+        <Field label="Timeout" detail="Seconds, 1 to 60.">
+          <input
+            type="number"
+            min="1"
+            max="60"
+            value={settings.timeout_secs}
+            onChange={(e) => update({ timeout_secs: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label="Upload limit" detail="Megabytes, 1 to 25.">
+          <input
+            type="number"
+            min="1"
+            max="25"
+            value={settings.upload_limit_mb}
+            onChange={(e) =>
+              update({ upload_limit_mb: Number(e.target.value) })
+            }
+          />
+        </Field>
+      </Group>
+      <Subhead>Project sources</Subhead>
+      {projects.length ? (
+        <Group label="Project sources">
+          {projects.map((project) => (
+            <SwitchField
+              key={project.path}
+              label={project.name}
+              detail={<code>{project.path}</code>}
               checked={settings.project_paths.includes(project.path)}
-              onChange={(e) =>
+              onChange={(checked) =>
                 update({
-                  project_paths: e.target.checked
+                  project_paths: checked
                     ? [...settings.project_paths, project.path]
                     : settings.project_paths.filter(
                         (path) => path !== project.path,
@@ -144,25 +142,23 @@ export default function RagSettings({
                 })
               }
             />
-          </label>
-        ))}
-      </div>
-      {error && (
-        <div className="settings-error" role="alert">
-          {error}
-        </div>
+          ))}
+        </Group>
+      ) : (
+        <Note>Add a project in the sidebar to use it as a source.</Note>
       )}
-      <div
-        style={{ display: "flex", gap: "var(--spacing-sm)", flexWrap: "wrap" }}
-      >
+      <Status error={error} />
+      <Actions>
         <button
-          className="save-settings"
+          type="button"
+          className="primary"
           onClick={() => void save()}
           disabled={busy}
         >
-          {busy ? "WORKING…" : "SAVE RAG SETTINGS"}
+          {busy ? "Working…" : "Save"}
         </button>
         <button
+          type="button"
           onClick={() =>
             void invoke("test_rag_connection")
               .then(() => onToast("RAG connection OK."))
@@ -170,9 +166,9 @@ export default function RagSettings({
           }
           disabled={busy || !settings.base_url}
         >
-          TEST CONNECTION
+          Test connection
         </button>
-      </div>
-    </main>
+      </Actions>
+    </div>
   );
 }

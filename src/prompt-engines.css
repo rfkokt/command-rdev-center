@@ -30,13 +30,13 @@
 .prompt-engine-status small {
   color: var(--accent);
   font: 600 var(--type-xs) / 1.4 var(--font-mono);
-  letter-spacing: 0.14em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-engine-library > header strong,
 .prompt-engine-header strong {
   color: var(--colors-on-dark);
   font-size: var(--type-title);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-engine-library > header .small-icon-button {
   width: 34px;
@@ -167,8 +167,8 @@
   min-height: 40px;
   padding: 0 14px;
   font-size: var(--type-ui);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
 }
 .prompt-secondary {
   border: 1px solid var(--colors-hairline-strong);
@@ -199,7 +199,7 @@
 }
 .prompt-run-heading strong {
   font-size: var(--type-ui);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-run-heading span {
   color: var(--colors-muted);
@@ -248,7 +248,7 @@
 }
 .prompt-run-list > button > b {
   color: var(--accent);
-  font-size: 20px;
+  font-size: var(--fs-title-lg);
 }
 .prompt-run-empty,
 .prompt-engine-empty {
@@ -264,7 +264,7 @@
 .prompt-engine-empty strong {
   color: var(--colors-on-dark);
   font-size: var(--type-ui);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-engine-empty {
   width: min(460px, calc(100% - 40px));
@@ -327,7 +327,7 @@
 .prompt-form-section > header strong {
   color: var(--colors-on-dark);
   font-size: var(--type-ui);
-  letter-spacing: 0.1em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-form-section > header span {
   color: var(--colors-muted);
@@ -349,15 +349,15 @@
 .prompt-fields label > span:not(.list-picker-trigger) {
   color: var(--colors-body);
   font-size: var(--type-ui);
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--tracking-label);
 }
 .prompt-fields label > span small {
   display: block;
   margin-top: 2px;
   color: var(--colors-muted);
   font-size: var(--type-sm);
-  font-weight: 400;
+  font-weight: var(--fw-regular);
   letter-spacing: 0;
 }
 .prompt-fields .wide {
@@ -407,7 +407,7 @@
 .prompt-model-trigger b {
   color: var(--accent);
   font-size: var(--type-xs);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-fields textarea {
   min-height: 94px;
@@ -464,7 +464,7 @@
 .prompt-engine-footer > span {
   color: var(--colors-muted);
   font: var(--type-xs) / 1.4 var(--font-mono);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking-label);
 }
 .prompt-engine-footer > div {
   display: flex;

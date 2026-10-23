@@ -36,8 +36,8 @@ body {
 /* NOTE: row radius/hover/active owned by quiet-native.css. */
 .sidebar-nav-label {
   color: var(--text-secondary);
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
 }
 
 /* NOTE: appearance-control owned by quiet-native.css. */
@@ -97,8 +97,8 @@ body {
   border-radius: 4px;
   background: var(--surface);
   color: var(--text-primary);
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
   letter-spacing: 0.02em;
 }
 .chat-copy:hover,

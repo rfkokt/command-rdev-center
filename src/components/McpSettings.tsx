@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  Actions,
+  Field,
+  Group,
+  Note,
+  Status,
+  SwitchField,
+} from "./settings-ui";
 
 type McpSettings = { enabled: boolean; url: string };
 
@@ -41,46 +49,41 @@ export default function McpSettings({
   const changed =
     !saved || saved.enabled !== settings.enabled || saved.url !== settings.url;
   return (
-    <main className="graphify-settings">
-      <div className="settings-notice">
-        Uses Pi MCP Adapter. Figma authorizes in your browser; no token is
-        stored by Kern Studio.
-      </div>
-      <label className="settings-toggle">
-        <span>
-          FIGMA MCP
-          <small>
-            Enable the official Figma remote MCP server for new chats
-          </small>
-        </span>
-        <input
-          type="checkbox"
+    <div className="kset-panel">
+      <Note>
+        Uses the pi MCP adapter. Figma signs you in through the browser; Kern
+        Studio stores no token.
+      </Note>
+      <Group>
+        <SwitchField
+          label="Figma MCP"
+          detail="Enable the official Figma remote MCP server for new chats."
           checked={settings.enabled}
-          onChange={(e) =>
-            setSettings({ ...settings, enabled: e.target.checked })
-          }
+          onChange={(enabled) => setSettings({ ...settings, enabled })}
         />
-      </label>
-      <label>
-        SERVER URL<small>Remote Streamable HTTP endpoint</small>
-        <input
-          type="url"
-          value={settings.url}
-          onChange={(e) => setSettings({ ...settings, url: e.target.value })}
-          placeholder="https://mcp.figma.com/mcp"
-        />
-      </label>
-      <div className="settings-notice">
+        <Field label="Server URL" detail="Remote Streamable HTTP endpoint.">
+          <input
+            type="url"
+            value={settings.url}
+            onChange={(e) => setSettings({ ...settings, url: e.target.value })}
+            placeholder="https://mcp.figma.com/mcp"
+          />
+        </Field>
+      </Group>
+      <Note>
         After saving, start a new chat and run <code>/mcp-auth figma</code>.
-      </div>
-      {error && (
-        <div className="settings-error" role="alert">
-          {error}
-        </div>
-      )}
-      <button className="save-settings" onClick={save} disabled={!changed}>
-        SAVE MCP
-      </button>
-    </main>
+      </Note>
+      <Status error={error} />
+      <Actions>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void save()}
+          disabled={!changed}
+        >
+          Save
+        </button>
+      </Actions>
+    </div>
   );
 }

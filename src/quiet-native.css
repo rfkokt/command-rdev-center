@@ -257,13 +257,13 @@ h3,
   padding: 0 6px;
   border-radius: var(--radius-compact);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
   text-transform: capitalize;
 }
 .appearance-control button.active {
   background: var(--surface-selected);
   color: var(--accent);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 button:focus-visible,
 input:focus-visible,
@@ -361,7 +361,7 @@ select:hover,
   margin: 0 auto;
   padding: 0 var(--spacing-md) var(--spacing-md);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .chat-composer-help kbd {
   padding: 1px 4px;
@@ -386,8 +386,8 @@ select:hover,
   border-radius: 999px;
   background: var(--surface-solid);
   color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
 }
 .composer-chip:hover:not(:disabled) {
   background: var(--surface-selected);
@@ -404,7 +404,7 @@ select:hover,
   border-radius: 999px;
   background: var(--surface-solid);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .thinking-effort select {
   min-width: 74px;
@@ -424,8 +424,8 @@ select:hover,
 }
 .chat-retry-inline {
   color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.02em;
 }
 .chat-retry-inline:hover {
@@ -520,7 +520,7 @@ select:hover,
   padding: 8px 18px 20px 28px;
   color: var(--text-secondary);
   font-family: var(--font-body);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 1.75;
   letter-spacing: 0;
   white-space: pre-wrap;
@@ -545,7 +545,7 @@ select:hover,
   padding: 9px 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 .agent-transcript {
   display: grid;
@@ -562,7 +562,7 @@ select:hover,
   gap: 8px;
   min-width: 0;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--fs-ui);
   line-height: 1.35;
 }
 .agent-transcript li > span:nth-child(2) {
@@ -573,7 +573,7 @@ select:hover,
 .agent-transcript small {
   margin-left: auto;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--fs-caption);
 }
 .agent-transcript-mark {
   width: 8px;

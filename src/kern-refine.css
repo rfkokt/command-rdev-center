@@ -146,7 +146,7 @@ body,
 
 .app-shell .assistant-author-name {
   font-size: var(--type-ui) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0 !important;
   color: var(--text-strong) !important;
 }
@@ -181,7 +181,7 @@ body,
 
 .app-shell .chat-bubble-assistant > .markdown-body strong {
   color: var(--text-strong) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 .app-shell .chat-bubble-assistant > .markdown-body h1,
@@ -234,7 +234,7 @@ body,
 
 .app-shell .markdown-body pre,
 .app-shell .markdown-body pre code {
-  font-size: 13px !important;
+  font-size: var(--fs-ui) !important;
   line-height: 1.6 !important;
 }
 
@@ -246,13 +246,13 @@ body,
 }
 
 .app-shell .markdown-body table {
-  font-size: 14.5px !important;
+  font-size: var(--fs-ui) !important;
   font-variant-numeric: tabular-nums;
 }
 
 .app-shell .markdown-body th {
-  font-weight: 650 !important;
-  font-size: 13.5px !important;
+  font-weight: var(--fw-semibold) !important;
+  font-size: var(--fs-ui) !important;
   color: var(--text-strong) !important;
 }
 
@@ -260,7 +260,7 @@ body,
 .app-shell .chat-actions button,
 .app-shell .chat-actions summary {
   font-size: var(--type-meta) !important;
-  font-weight: 550 !important;
+  font-weight: var(--fw-medium) !important;
   letter-spacing: 0 !important;
   text-transform: none !important;
 }
@@ -276,7 +276,7 @@ body,
 .app-shell .projects-heading span,
 .app-shell .sidebar-nav-label {
   font-size: var(--type-meta) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0 !important;
   text-transform: none !important;
   color: var(--text-quiet) !important;
@@ -285,13 +285,13 @@ body,
 .app-shell .sidebar-profile-status,
 .app-shell .appearance-control button,
 .app-shell .app-version {
-  font-size: 11.5px !important;
+  font-size: var(--fs-caption) !important;
 }
 
 .app-shell .dev-control,
 .app-shell .chat-header-actions .caption-uppercase {
-  font-size: 12.5px !important;
-  font-weight: 600 !important;
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0 !important;
   text-transform: none !important;
 }
@@ -305,13 +305,13 @@ body,
 .app-shell .workspace-title strong,
 .app-shell .chat-session-name {
   font-stretch: var(--heading-stretch) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: -0.005em !important;
   text-transform: none !important;
 }
 
 .app-shell .workspace-title strong {
-  font-size: 15px !important;
+  font-size: var(--fs-title-sm) !important;
 }
 
 .app-shell .workspace-title small {
@@ -319,7 +319,7 @@ body,
 }
 
 .app-shell .mode-badge {
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   letter-spacing: 0.06em !important;
 }
 
@@ -327,13 +327,13 @@ body,
 [data-theme="light"] .app-shell .appearance-control button.active,
 [data-theme="light"] .app-shell .appearance-control .active {
   color: var(--blue-dark) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .app-shell .color-theme-control .active,
 [data-theme="light"] .app-shell .color-theme-control .active * {
   color: var(--blue-dark) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 [data-theme="light"] .app-shell .mode-badge.live {
@@ -356,28 +356,28 @@ body,
 .app-shell .tool-stack summary strong,
 .app-shell .thinking-block summary span {
   font-size: var(--type-ui) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 /* ------------------------------------------------------------ activity */
 
 .app-shell .agent-working-meta strong {
-  font-size: 14px !important;
-  font-weight: 650 !important;
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-semibold) !important;
   letter-spacing: 0 !important;
   text-transform: none !important;
 }
 
 .app-shell .agent-badge-tag,
 .app-shell .pixel-step-type {
-  font-size: 10.5px !important;
+  font-size: var(--fs-caption) !important;
   letter-spacing: 0.02em !important;
   text-transform: none !important;
 }
 
 .app-shell .pixel-step-text,
 .app-shell .agent-activity-log summary {
-  font-size: 12.5px !important;
+  font-size: var(--fs-small) !important;
 }
 
 /* One run panel: status row + collapsible step list in a single card.
@@ -430,7 +430,7 @@ body,
 .app-shell .agent-run > .pixel-activity-log > summary {
   font-family: var(--font-sans) !important;
   font-size: var(--type-meta) !important;
-  font-weight: 600 !important;
+  font-weight: var(--fw-semibold) !important;
   color: var(--text-quiet) !important;
   padding: 7px 14px !important;
   list-style: none;
@@ -466,13 +466,13 @@ body,
 
 .app-shell .agent-run-queued {
   color: var(--accent) !important;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 /* ------------------------------------------------------------ composer */
 
 .app-shell .chat-composer textarea {
-  font-size: 14.5px !important;
+  font-size: var(--fs-ui) !important;
   line-height: 1.5 !important;
 }
 
@@ -484,7 +484,7 @@ body,
 
 .app-shell .chat-composer .chat-action {
   font-size: var(--type-ui) !important;
-  font-weight: 650 !important;
+  font-weight: var(--fw-semibold) !important;
 }
 
 /* Primary actions must look actionable when they are, and inert when not. */

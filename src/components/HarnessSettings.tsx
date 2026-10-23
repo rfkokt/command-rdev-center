@@ -86,18 +86,18 @@ export default function HarnessSettings({
   }
 
   return (
-    <main className="graphify-settings harness-settings">
-      <div className="settings-notice">
-        <span>
-          Pick the coding agent new chats run. pi keeps every Kern feature;
-          other agents connect over ACP and support chat, tools, approvals,
-          model switching and resume. Session tree, fork and manual compaction
-          remain pi-only, and Deep Research always uses pi.
-        </span>
-      </div>
-      <fieldset className="harness-list" aria-label="Agent harness">
+    <div className="harness-settings">
+      <p className="kset-note">
+        pi keeps every Kern feature. Other agents connect over ACP and support
+        chat, tools, approvals, model switching and resume; session tree, fork
+        and manual compaction stay pi-only, and Deep Research always uses pi.
+      </p>
+      <fieldset className="kset-group kset-radios" aria-label="Agent harness">
         {harnesses.map((item) => (
-          <label key={item.id} className="harness-option">
+          <label
+            key={item.id}
+            className={`kset-row kset-radio${item.available ? "" : " unavailable"}`}
+          >
             <input
               type="radio"
               name="harness"
@@ -106,9 +106,12 @@ export default function HarnessSettings({
               disabled={!item.available}
               onChange={() => setSelected(item.id)}
             />
-            <span>
-              {item.label}
-              <small>
+            <span className="kset-row-text">
+              <span className="kset-row-title">
+                {item.label}
+                {item.is_default && <span className="kset-tag">Default</span>}
+              </span>
+              <span className="kset-row-desc">
                 {item.protocol === "native" ? "native RPC" : "ACP"} ·{" "}
                 {item.available ? (
                   <code>{item.resolved_path}</code>
@@ -118,14 +121,17 @@ export default function HarnessSettings({
                     <code>{item.install_hint || item.command}</code>
                   </>
                 )}
-              </small>
+              </span>
             </span>
             {item.custom && (
               <button
                 type="button"
-                className="harness-remove"
+                className="kset-link-button"
                 aria-label={`Remove ${item.label}`}
-                onClick={() => void removeCustom(item.id)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void removeCustom(item.id);
+                }}
               >
                 Remove
               </button>
@@ -133,64 +139,90 @@ export default function HarnessSettings({
           </label>
         ))}
       </fieldset>
-      <button
-        className="save-settings"
-        onClick={() => void saveDefault()}
-        disabled={selected === current || !chosen?.available}
-      >
-        USE FOR NEW CHATS
-      </button>
-
-      <div className="settings-notice">
-        <span>
-          Any other ACP agent works too: add its command (for example{" "}
-          <code>kimi --acp</code>).
-        </span>
+      <div className="kset-actions-row">
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void saveDefault()}
+          disabled={selected === current || !chosen?.available}
+        >
+          Use for new chats
+        </button>
+        <span>Existing chats keep the agent they started with.</span>
       </div>
-      <label>
-        ID<small>lowercase, digits, dashes</small>
-        <input
-          value={draft.id}
-          onChange={(e) => setDraft({ ...draft, id: e.target.value })}
-          placeholder="kimi"
-        />
-      </label>
-      <label>
-        NAME
-        <input
-          value={draft.label}
-          onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-          placeholder="Kimi CLI"
-        />
-      </label>
-      <label>
-        COMMAND<small>executable name or absolute path</small>
-        <input
-          value={draft.command}
-          onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-          placeholder="kimi"
-        />
-      </label>
-      <label>
-        ARGUMENTS<small>space separated</small>
-        <input
-          value={draft.args}
-          onChange={(e) => setDraft({ ...draft, args: e.target.value })}
-          placeholder="--acp"
-        />
-      </label>
+
+      <h3 className="kset-subhead">Add another ACP agent</h3>
+      <div className="kset-group">
+        <div className="kset-row">
+          <div className="kset-row-text">
+            <label htmlFor="harness-id">ID</label>
+            <p>Lowercase letters, digits and dashes.</p>
+          </div>
+          <div className="kset-row-control">
+            <input
+              id="harness-id"
+              value={draft.id}
+              onChange={(e) => setDraft({ ...draft, id: e.target.value })}
+              placeholder="kimi"
+            />
+          </div>
+        </div>
+        <div className="kset-row">
+          <div className="kset-row-text">
+            <label htmlFor="harness-name">Name</label>
+          </div>
+          <div className="kset-row-control">
+            <input
+              id="harness-name"
+              value={draft.label}
+              onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+              placeholder="Kimi CLI"
+            />
+          </div>
+        </div>
+        <div className="kset-row">
+          <div className="kset-row-text">
+            <label htmlFor="harness-command">Command</label>
+            <p>Executable name or absolute path.</p>
+          </div>
+          <div className="kset-row-control">
+            <input
+              id="harness-command"
+              value={draft.command}
+              onChange={(e) => setDraft({ ...draft, command: e.target.value })}
+              placeholder="kimi"
+            />
+          </div>
+        </div>
+        <div className="kset-row">
+          <div className="kset-row-text">
+            <label htmlFor="harness-args">Arguments</label>
+            <p>Space separated.</p>
+          </div>
+          <div className="kset-row-control">
+            <input
+              id="harness-args"
+              value={draft.args}
+              onChange={(e) => setDraft({ ...draft, args: e.target.value })}
+              placeholder="--acp"
+            />
+          </div>
+        </div>
+      </div>
       {error && (
-        <div className="settings-error" role="alert">
+        <div className="kset-inline-error" role="alert">
           {error}
         </div>
       )}
-      <button
-        className="save-settings"
-        onClick={() => void addCustom()}
-        disabled={!draft.id.trim() || !draft.command.trim()}
-      >
-        ADD AGENT
-      </button>
-    </main>
+      <div className="kset-actions-row">
+        <button
+          type="button"
+          onClick={() => void addCustom()}
+          disabled={!draft.id.trim() || !draft.command.trim()}
+        >
+          Add agent
+        </button>
+      </div>
+    </div>
   );
 }

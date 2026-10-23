@@ -1,0 +1,284 @@
+/*
+ * Sidebar: icon rail + session panel.
+ *
+ * Loaded after night-shift.css and owns the sidebar layout. Earlier sheets
+ * style the same classes with !important, so rules here are scoped under
+ * `.sidebar--rail` to win on specificity rather than import order alone.
+ * Active rows use a 2px lamp-amber left bar only: no pill, no tint.
+ */
+
+.app-shell .sidebar.sidebar--rail {
+  flex-direction: row !important;
+  gap: 0 !important;
+  padding: 0 !important;
+  position: relative;
+}
+
+/* ---------------------------------------------------------------- rail */
+
+.app-shell .sidebar--rail .sidebar-rail {
+  flex: none;
+  width: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 0 12px;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--canvas) 60%, var(--surface));
+}
+
+.app-shell .sidebar--rail .rail-logo {
+  margin: 0 0 12px;
+  transform: scale(0.9);
+}
+
+.app-shell .sidebar--rail .rail-spacer {
+  flex: 1;
+}
+
+.app-shell .sidebar--rail .rail-button {
+  position: relative;
+  display: grid !important;
+  place-items: center !important;
+  width: 34px !important;
+  height: 34px !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--text-quiet) !important;
+  box-shadow: none !important;
+  cursor: pointer;
+}
+
+.app-shell .sidebar--rail .rail-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.app-shell .sidebar--rail .rail-button:hover:not(:disabled) {
+  background: var(--surface-hover) !important;
+  color: var(--text-strong) !important;
+}
+
+/* Active tool: same left-bar language as the session rows, pinned to the
+   rail edge. */
+.app-shell .sidebar--rail .rail-button.active {
+  color: var(--accent-ink, var(--accent)) !important;
+}
+
+.app-shell .sidebar--rail .rail-button.active::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  background: var(--accent);
+}
+
+.app-shell .sidebar--rail .rail-button.is-active {
+  color: var(--accent-ink, var(--accent)) !important;
+}
+
+.app-shell .sidebar--rail .rail-button.has-update::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+
+.app-shell .sidebar--rail .rail-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------- panel */
+
+.app-shell .sidebar--rail .sidebar-panel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell .sidebar--rail .sidebar-brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 2px;
+  height: 48px;
+  margin: 0 !important;
+  padding: 0 8px 0 14px !important;
+  border: 0 !important;
+}
+
+.app-shell .sidebar--rail .wordmark-text {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.app-shell .sidebar--rail .sidebar-brand-action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.app-shell .sidebar--rail .sidebar-brand-action svg {
+  width: 17px;
+  height: 17px;
+}
+
+.app-shell .sidebar--rail .sidebar-brand-action:hover {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell .sidebar--rail .sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+}
+
+.app-shell .sidebar--rail .sidebar-scroll > .projects-panel {
+  flex: none !important;
+  max-height: none !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+}
+
+.app-shell .sidebar--rail .sidebar-scroll > .projects-panel + .projects-panel {
+  margin-top: 14px;
+}
+
+.app-shell .sidebar--rail .projects-heading {
+  margin-top: 4px !important;
+  padding: 0 4px 0 8px !important;
+}
+
+.app-shell .sidebar--rail .projects-heading > span {
+  font-size: var(--fs-small) !important;
+  font-weight: var(--fw-medium) !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--text-quiet) !important;
+}
+
+/* ---------------------------------------------------------------- rows */
+
+.app-shell .sidebar--rail .project-row,
+.app-shell .sidebar--rail .conversation-row {
+  min-height: 28px !important;
+  border-radius: 6px !important;
+}
+
+/* No tree guide line: the active left bar is the only vertical mark. */
+.app-shell .sidebar--rail .project-sessions {
+  padding-left: 0 !important;
+}
+
+.app-shell .sidebar--rail .project-sessions::before {
+  display: none !important;
+}
+
+.app-shell .sidebar--rail .project-sessions .conversation-row {
+  position: relative;
+  padding-left: 30px !important;
+}
+
+/* Active session: 2px lamp-amber bar under the project chevron, brighter
+   text, no background. */
+.app-shell .sidebar--rail .conversation-row.active {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-strong) !important;
+  font-weight: var(--fw-medium) !important;
+}
+
+.app-shell .sidebar--rail .conversation-row.active::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 0;
+  background: var(--accent);
+}
+
+.app-shell .sidebar--rail .conversation-row.active:hover {
+  background: var(--surface-hover) !important;
+}
+
+/* ---------------------------------------------------------------- footer */
+
+.app-shell .sidebar--rail .sidebar-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.app-shell .sidebar--rail .sidebar-panel-footer .appearance-control button {
+  min-width: 0 !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-semibold) !important;
+}
+
+.app-shell .sidebar--rail .app-version {
+  margin: 0 !important;
+  font-size: var(--fs-caption);
+}
+
+/* ---------------------------------------------------------------- type */
+
+/* Roles from typography.css: 13px rows, 12px section titles, 11px meta. */
+.app-shell .sidebar--rail .project-row,
+.app-shell .sidebar--rail .project-row span {
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-medium) !important;
+  letter-spacing: 0 !important;
+  color: var(--text-body) !important;
+}
+
+.app-shell .sidebar--rail .conversation-row,
+.app-shell .sidebar--rail .conversation-row span {
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-regular) !important;
+  letter-spacing: 0 !important;
+}
+
+.app-shell .sidebar--rail .conversation-row {
+  color: var(--text-quiet) !important;
+}
+
+.app-shell .sidebar--rail .conversation-row.active,
+.app-shell .sidebar--rail .conversation-row.active span {
+  font-weight: var(--fw-medium) !important;
+  color: var(--text-strong) !important;
+}
+
+.app-shell .sidebar--rail .sidebar-panel-footer .appearance-control button,
+.app-shell .sidebar--rail .app-version {
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-caption) !important;
+  font-weight: var(--fw-medium) !important;
+  letter-spacing: 0 !important;
+}

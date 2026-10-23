@@ -1,0 +1,206 @@
+/*
+ * Typography — the one place Kern Studio's type is defined.
+ *
+ * Imported last. Earlier sheets now reference these tokens instead of
+ * literal sizes and weights.
+ *
+ * Roles (UI and code fonts follow Zed's defaults: IBM Plex Sans + Lilex)
+ * - UI chrome (sidebar, toolbars, buttons, labels): IBM Plex Sans. Bundled,
+ *   so it renders the same on every OS; open apertures and a generous
+ *   x-height keep it legible at 11–13px, where Instrument Sans (a brand face)
+ *   reads tight.
+ * - Reading (chat answers): IBM Plex Sans at 15px / 1.6, capped near 68ch
+ *   (50–75 characters per line reads best).
+ * - Brand (wordmark): Instrument Sans.
+ * - Code, terminal, diffs: Lilex (IBM Plex Mono lineage, so it pairs with the
+ *   UI face), JetBrains Mono as fallback.
+ * - Long-form reports (Deep Research article): Merriweather.
+ *
+ * Scale follows Apple's macOS text styles (body 13/16, callout 12,
+ * subheadline 11, title3 15, title2 17, title1 22, large title 26), with 11px
+ * as the floor. Weights: 400 regular, 500 medium, 600 semibold.
+ */
+
+:root,
+[data-color-theme="kern"],
+[data-color-theme="classic"],
+[data-theme="dark"],
+[data-color-theme="kern"][data-theme="dark"],
+[data-color-theme="classic"][data-theme="dark"] {
+  /* families */
+  --font-ui:
+    "IBM Plex Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, sans-serif !important;
+  --font-brand:
+    "Instrument Sans Variable", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif !important;
+  --font-mono:
+    "Lilex Variable", "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular,
+    Menlo, Consolas, monospace !important;
+  --font-serif:
+    Merriweather, ui-serif, Georgia, Cambria, "Times New Roman", serif !important;
+
+  --font-sans: var(--font-ui) !important;
+  --font-body: var(--font-ui) !important;
+  --font-display: var(--font-brand) !important;
+
+  /* size scale */
+  --fs-caption: 11px; /* meta, badges, timestamps, uppercase labels */
+  --fs-small: 12px; /* secondary text, compact controls */
+  --fs-ui: 13px; /* default UI text, rows, buttons, inputs */
+  --fs-code: 13px; /* code blocks, terminal */
+  --fs-read: 15px; /* conversation prose */
+  --fs-title-sm: 15px; /* section titles, dialog titles */
+  --fs-title: 17px; /* page titles */
+  --fs-title-lg: 22px; /* view headers */
+  --fs-display: 26px; /* empty-state headlines */
+
+  /* weights */
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* leading */
+  --lh-tight: 1.25; /* single-line UI, titles */
+  --lh-ui: 1.4; /* multi-line UI text */
+  --lh-read: 1.6; /* prose */
+  --lh-code: 1.6;
+
+  --measure-read: 68ch;
+  --tracking-label: 0.06em; /* small uppercase labels only */
+
+  /* legacy token names → the scale above */
+  --type-xs: var(--fs-caption) !important;
+  --type-meta: var(--fs-caption) !important;
+  --type-sm: var(--fs-small) !important;
+  --type-ui: var(--fs-ui) !important;
+  --type-body: var(--fs-ui) !important;
+  --type-read: var(--fs-read) !important;
+  --type-title: var(--fs-title-sm) !important;
+  --type-h3: var(--fs-title-sm) !important;
+  --type-h2: var(--fs-title) !important;
+  --type-h1: var(--fs-title-lg) !important;
+  --leading-read: var(--lh-read) !important;
+  --heading-weight: var(--fw-semibold) !important;
+  --heading-stretch: 100% !important;
+}
+
+/* ------------------------------------------------------------ base */
+
+html,
+body,
+.app-shell {
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  font-optical-sizing: auto;
+  font-kerning: normal;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+code,
+kbd,
+samp,
+pre,
+.xterm,
+.diff-line,
+.syntax-code-block {
+  font-family: var(--font-mono) !important;
+}
+
+/* Numbers that update in place or line up in columns. */
+.unread-badge,
+.app-version,
+.chat-token-count,
+.checkpoint-time,
+time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ brand */
+
+.app-shell .wordmark-text strong,
+.app-shell .wordmark-text small {
+  font-family: var(--font-brand) !important;
+  font-size: var(--fs-title-sm) !important;
+  font-stretch: 100% !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1 !important;
+}
+
+.app-shell .wordmark-text strong {
+  font-weight: var(--fw-semibold) !important;
+}
+
+.app-shell .wordmark-text small {
+  font-weight: var(--fw-regular) !important;
+}
+
+/* ------------------------------------------------------------ reading */
+
+.app-shell .chat-bubble-assistant > .markdown-body,
+.app-shell .chat-bubble-assistant > .markdown-body p,
+.app-shell .chat-bubble-assistant > .markdown-body li,
+.app-shell .chat-bubble-user > .markdown-body p {
+  font-family: var(--font-ui) !important;
+  font-size: var(--fs-read) !important;
+  line-height: var(--lh-read) !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body strong {
+  font-weight: var(--fw-semibold) !important;
+}
+
+/* Headings inside an answer belong to the prose, not the brand. */
+.app-shell .chat-bubble-assistant > .markdown-body h1,
+.app-shell .chat-bubble-assistant > .markdown-body h2,
+.app-shell .chat-bubble-assistant > .markdown-body h3,
+.app-shell .chat-bubble-assistant > .markdown-body h4 {
+  font-family: var(--font-ui) !important;
+  font-stretch: 100% !important;
+  font-weight: var(--fw-semibold) !important;
+  letter-spacing: 0 !important;
+  line-height: var(--lh-tight) !important;
+}
+
+.app-shell .chat-bubble-assistant > .markdown-body h1 {
+  font-size: var(--fs-title-lg) !important;
+}
+.app-shell .chat-bubble-assistant > .markdown-body h2 {
+  font-size: var(--fs-title) !important;
+}
+.app-shell .chat-bubble-assistant > .markdown-body h3,
+.app-shell .chat-bubble-assistant > .markdown-body h4 {
+  font-size: var(--fs-title-sm) !important;
+}
+
+.app-shell .markdown-body :not(pre) > code {
+  font-size: 0.9em !important;
+}
+
+.app-shell .markdown-body pre,
+.app-shell .markdown-body pre code {
+  font-size: var(--fs-code) !important;
+  line-height: var(--lh-code) !important;
+}
+
+.app-shell .assistant-author-name {
+  font-size: var(--fs-ui) !important;
+  font-weight: var(--fw-semibold) !important;
+}
+
+/* ------------------------------------------------------------ research */
+
+.research-article-header h1,
+.research-article > .markdown-body h1,
+.research-article > .markdown-body h2,
+.research-article > .markdown-body h3 {
+  font-family: var(--font-serif) !important;
+  font-weight: 700 !important; /* Merriweather ships 400 and 700 only */
+}

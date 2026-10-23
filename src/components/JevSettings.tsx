@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Actions, Field, Group, Note, Status } from "./settings-ui";
 import { listen } from "@tauri-apps/api/event";
 
 type Config = {
@@ -80,112 +81,104 @@ export default function JevSettings({
     }
   }
   return (
-    <main className="graphify-settings">
-      <div className="settings-notice">
+    <div className="kset-panel">
+      <Note>
         Jev recommends tools and skills for project chats. Shadow records
         suggestions; advisory shares them with the agent. Neither mode runs
         tools or changes permissions.
-      </div>
-      <fieldset
-        disabled={loading || saving}
-        style={{ border: 0, padding: 0, margin: 0, display: "grid", gap: 16 }}
-      >
-        <label>
-          ROUTING MODE
-          <select
-            value={config.mode}
-            onChange={(e) =>
-              setConfig({ ...config, mode: e.target.value as Config["mode"] })
-            }
+      </Note>
+      <fieldset className="kset-fieldset" disabled={loading || saving}>
+        <Group>
+          <Field
+            label="Routing mode"
+            detail="Shadow and advisory send each request to your provider."
           >
-            <option value="off">Off — no Jev requests</option>
-            <option value="shadow">Shadow — record suggestions only</option>
-            <option value="advisory">Advisory — suggest to agent</option>
-          </select>
-        </label>
-        <div className="settings-notice">
-          Enabling routing sends the current request and available tool/skill
-          descriptions to your configured provider before each turn and uses its
-          API allowance. Project rules, file ranking, and compaction are planned
-          separately.
-        </div>
-        <label>
-          DECISION ENDPOINT
-          <input
-            type="url"
-            value={config.endpoint}
-            onChange={(e) => setConfig({ ...config, endpoint: e.target.value })}
-          />
-        </label>
-        <label>
-          MODEL
-          <input
-            value={config.model}
-            onChange={(e) => setConfig({ ...config, model: e.target.value })}
-          />
-        </label>
-        <label>
-          API KEY
-          <input
-            type="password"
-            autoComplete="new-password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={
-              config.has_api_key
-                ? "Saved — leave blank to keep current key"
-                : "Required for shadow or advisory"
-            }
-          />
-        </label>
-        <div className="settings-notice">
-          API key is stored in macOS Keychain. A timeout or unavailable provider
-          leaves the usual agent workflow intact. Exhausted provider
-          credits/billing automatically switch Jev Off; re-enable after topping
-          up.
-        </div>
-        <label>
-          TIMEOUT (MS)
-          <input
-            type="number"
-            min={100}
-            max={30000}
-            step={100}
-            value={config.timeout_ms}
-            onChange={(e) =>
-              setConfig({ ...config, timeout_ms: Number(e.target.value) })
-            }
-          />
-        </label>
+            <select
+              value={config.mode}
+              onChange={(e) =>
+                setConfig({ ...config, mode: e.target.value as Config["mode"] })
+              }
+            >
+              <option value="off">Off</option>
+              <option value="shadow">Shadow: record only</option>
+              <option value="advisory">Advisory: suggest to agent</option>
+            </select>
+          </Field>
+        </Group>
+        <Note>
+          With routing on, the current request and the available tool and skill
+          descriptions go to your provider before each turn, using its API
+          allowance.
+        </Note>
+        <Group>
+          <Field label="Decision endpoint">
+            <input
+              type="url"
+              value={config.endpoint}
+              onChange={(e) =>
+                setConfig({ ...config, endpoint: e.target.value })
+              }
+            />
+          </Field>
+          <Field label="Model">
+            <input
+              value={config.model}
+              onChange={(e) => setConfig({ ...config, model: e.target.value })}
+            />
+          </Field>
+          <Field label="API key" detail="Stored in the macOS Keychain.">
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                config.has_api_key
+                  ? "Saved; leave blank to keep"
+                  : "Required for shadow or advisory"
+              }
+            />
+          </Field>
+          <Field label="Timeout" detail="Milliseconds, 100 to 30000.">
+            <input
+              type="number"
+              min={100}
+              max={30000}
+              step={100}
+              value={config.timeout_ms}
+              onChange={(e) =>
+                setConfig({ ...config, timeout_ms: Number(e.target.value) })
+              }
+            />
+          </Field>
+        </Group>
+        <Note>
+          A timeout or unavailable provider leaves the normal agent workflow
+          intact. If provider credits run out, Jev switches itself off.
+        </Note>
       </fieldset>
       {loading && <div role="status">Loading Jev settings…</div>}
-      {error && (
-        <div className="settings-error" role="alert">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="settings-success" role="status">
-          {success}
-        </div>
-      )}
-      <button
-        className="save-settings"
-        onClick={save}
-        disabled={
-          loading ||
-          saving ||
-          !config.endpoint.trim() ||
-          !config.model.trim() ||
-          !Number.isInteger(config.timeout_ms) ||
-          config.timeout_ms < 100 ||
-          config.timeout_ms > 30000 ||
-          (config.mode !== "off" && !apiKey.trim() && !config.has_api_key)
-        }
-        aria-busy={saving}
-      >
-        {saving ? "SAVING…" : "SAVE JEV SETTINGS"}
-      </button>
-    </main>
+      <Status error={error} success={success} />
+      <Actions>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void save()}
+          disabled={
+            loading ||
+            saving ||
+            !config.endpoint.trim() ||
+            !config.model.trim() ||
+            !Number.isInteger(config.timeout_ms) ||
+            config.timeout_ms < 100 ||
+            config.timeout_ms > 30000 ||
+            (config.mode !== "off" && !apiKey.trim() && !config.has_api_key)
+          }
+          aria-busy={saving}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </Actions>
+    </div>
   );
 }
