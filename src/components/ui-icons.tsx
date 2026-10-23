@@ -52,6 +52,13 @@ export const GaugeIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const PinIcon = (props: IconProps) => (
+  <Icon {...props}>
+    <path d="m10 2 4 4-2.5.5-3 3-.5 2.5L4 8l2.5-.5 3-3z" />
+    <path d="M6 10 2 14" />
+  </Icon>
+);
+
 export const RefreshIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13.25 8a5.25 5.25 0 1 1-1.54-3.71" />

@@ -803,8 +803,9 @@
 .app-shell .kq {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 12px 16px;
+  gap: 8px;
+  padding: 8px 10px 12px;
+  min-width: 0;
 }
 
 .app-shell .kq-toolbar {
@@ -836,8 +837,8 @@
 .app-shell .kq-account {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
+  min-width: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-card);
@@ -845,8 +846,56 @@
 
 .app-shell .kq-account header {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.app-shell .kq-account.is-pinned {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.app-shell .kq-account-title {
+  display: flex;
+  flex: 1;
   flex-direction: column;
   min-width: 0;
+}
+
+.app-shell .kq-provider-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-strong);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.app-shell .kq-pin {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-quiet);
+  cursor: pointer;
+}
+
+.app-shell .kq-pin:hover,
+.app-shell .kq-pin[aria-pressed="true"] {
+  background: var(--surface-selected);
+  color: var(--accent-ink, var(--accent));
 }
 
 .app-shell .kq-account header strong {
@@ -860,27 +909,100 @@
 
 .app-shell .kq-account header small,
 .app-shell .kq-window small {
-  font-family: var(--font-mono);
   font-size: var(--fs-caption);
   color: var(--text-quiet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.app-shell .kq-window {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.app-shell .kq-window-text {
+.app-shell .kq-account-meta {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  padding: 5px 10px 0;
+  color: var(--text-quiet);
   font-size: var(--fs-caption);
-  color: var(--text-body);
+}
+
+.app-shell .kq-account-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .kq-windows {
+  padding: 0 10px 5px;
+}
+
+.app-shell .kq-window {
+  --kq-quota-color: var(--online-green);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-caption);
+}
+
+.app-shell .kq-window:last-child {
+  border-bottom: 0;
+}
+
+.app-shell .kq-window.is-high {
+  --kq-quota-color: var(--status-amber);
+}
+
+.app-shell .kq-window.is-critical {
+  --kq-quota-color: var(--status-red);
+}
+
+.app-shell .kq-window-label {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .kq-window-label i {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--kq-quota-color);
+  transform: translateY(-50%);
+}
+
+.app-shell .kq-window-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.app-shell .kq-window-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.app-shell .kq-window-meta > span {
+  flex: none;
+  color: var(--kq-quota-color);
+  white-space: nowrap;
 }
 
 .app-shell .kq-bar {
-  height: 6px;
+  height: 3px;
+  flex: none;
   overflow: hidden;
   border-radius: 3px;
   background: var(--surface-hover);
@@ -890,15 +1012,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
-}
-
-.app-shell .kq-bar.is-high span {
-  background: color-mix(in srgb, var(--accent) 40%, var(--danger));
-}
-
-.app-shell .kq-bar.is-critical span {
-  background: var(--danger);
+  background: var(--kq-quota-color);
 }
 
 .app-shell .kq-note,
@@ -908,12 +1022,43 @@
   color: var(--text-quiet);
 }
 
+.app-shell .kq-account > .kq-note,
+.app-shell .kq-account > .kq-error {
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+}
+
 .app-shell .kq-error {
   color: var(--danger);
 }
 
 .app-shell .kq-reset {
   align-self: flex-start;
+  margin: 0 10px 8px;
+}
+
+.app-shell .kq-more {
+  padding: 5px 10px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-shell .kq-more:hover {
+  color: var(--text-strong);
+}
+
+.app-shell .kq button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.app-shell .kq button:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 .app-shell .kq-group {
