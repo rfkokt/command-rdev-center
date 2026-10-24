@@ -641,9 +641,13 @@ describe("chat-native Deep Research", () => {
       },
     });
     await waitFor(() =>
-      expect(screen.getByText("Calling functions.bash")).toBeInTheDocument(),
+      expect(
+        screen.getByRole("status", { name: "Agent run" }),
+      ).toBeInTheDocument(),
     );
-    expect(screen.getByText("1 step")).toBeInTheDocument();
+    const card = screen.getByRole("status", { name: "Agent run" });
+    expect(card).toHaveTextContent("Step 1");
+    expect(card).toHaveTextContent(/Stop/);
     expect(screen.queryByText(/assistantMessageEvent/)).not.toBeInTheDocument();
   });
 
@@ -783,7 +787,7 @@ describe("agent final settlement", () => {
     baseProps.onAgentRunning.mockClear();
     baseProps.onUnread.mockClear();
     await emit({ type: "compaction_start", reason: "overflow" });
-    expect(screen.getByText("COMPACTING CONTEXT")).toBeInTheDocument();
+    expect(screen.getAllByText("Compacting context").length).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: "Cancel compaction" }),
     ).toBeInTheDocument();
@@ -924,7 +928,7 @@ describe("agent final settlement", () => {
           JSON.parse(args.jsonLine).type === "abort",
       );
     expect(aborts()).toHaveLength(0);
-    expect(screen.getByText("COMPACTING CONTEXT")).toBeInTheDocument();
+    expect(screen.getAllByText("Compacting context").length).toBeGreaterThan(0);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(180000);
     });
@@ -991,7 +995,7 @@ describe("agent final settlement", () => {
     expect(
       screen.getByRole("button", { name: "Retry compaction" }),
     ).toBeEnabled();
-    expect(screen.queryByText("COMPACTING CONTEXT")).not.toBeInTheDocument();
+    expect(screen.queryByText("Compacting context")).not.toBeInTheDocument();
   });
 
   it("keeps manual compaction pending through turn abortion, preserves drafts and deduplicates its acknowledgement", async () => {

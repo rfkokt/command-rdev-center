@@ -69,6 +69,7 @@ import ToolCallView, {
 } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
+import AgentRunCard, { buildRunSteps } from "./AgentRunCard";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
@@ -484,7 +485,7 @@ export default function ChatView({
   const [agentStatus, setAgentStatus] = useState<
     "idle" | "running" | "stopped"
   >(initialInterrupted ? "stopped" : "idle");
-  const [agentTranscript, setAgentTranscript] = useState<
+  const [, setAgentTranscript] = useState<
     Array<{ id: string; type: string; detail: string; at: number }>
   >([]);
   const [driveDetached, setDriveDetached] = useState(false);
@@ -4857,14 +4858,6 @@ export default function ChatView({
         const allTools = messages.flatMap((message) => message.toolCalls);
         const allActive = allTools.filter((tool) => tool.phase !== "end");
         const activeTool = [...allActive].reverse()[0];
-        const completedCount = allTools.filter(
-          (tool) => tool.phase === "end",
-        ).length;
-        const completedApiCount = allTools.filter(
-          (tool) =>
-            tool.phase === "end" &&
-            /(?:^|\.)(?:api_request|api_contract_test)$/.test(tool.name),
-        ).length;
         const lastCompleted = [...allTools]
           .reverse()
           .find((tool) => tool.phase === "end");
@@ -5100,161 +5093,79 @@ export default function ChatView({
           "validation",
         ];
         const apiStageIndex = Math.max(0, apiStages.indexOf(apiStage));
+        let lastUserIndex = -1;
+        for (let i = messages.length - 1; i >= 0; i--)
+          if (messages[i].role === "user") {
+            lastUserIndex = i;
+            break;
+          }
+        const turnTools = messages
+          .slice(lastUserIndex + 1)
+          .flatMap((message) => message.toolCalls);
+        const runSteps = buildRunSteps(turnTools);
+        const idleStep = activeTool
+          ? null
+          : phase === "writing"
+            ? { kind: "write" as const, label: "Writing response" }
+            : {
+                kind: "think" as const,
+                label:
+                  title === "Thinking" || title === "Reasoning"
+                    ? "Thinking"
+                    : title.charAt(0) + title.slice(1).toLowerCase(),
+              };
         return (
-          <section
-            className="agent-activity pixel-activity-section agent-run"
-            aria-label="Agent activity"
-            style={{ "--agent-color": assignedAgent.color } as CSSProperties}
+          <AgentRunCard
+            steps={runSteps}
+            idleStep={idleStep}
+            title={
+              activeTool &&
+              runSteps.length &&
+              (icon === "meter" || icon === "search")
+                ? runSteps[runSteps.length - 1].label
+                : title.charAt(0) + title.slice(1).toLowerCase()
+            }
+            detail={detail}
+            model={currentModel.split("/").pop() || "Agent"}
+            agentLabel={
+              assignedAgent.name === "Kern" ? undefined : assignedAgent.name
+            }
+            color={assignedAgent.color}
+            startedAt={taskStartedAtRef.current ?? Date.now()}
+            ticking={isActive}
+            queued={pendingMessageCount}
+            isAborting={isAborting}
+            onStop={handleAbort}
           >
-            <div
-              className={`agent-working pixel-activity-card activity-${icon} phase-${phase}`}
-              role="status"
-              aria-live="polite"
-            >
-              <div
-                className="pixel-agent-avatar-tag"
-                title={`${assignedAgent.name} (${assignedAgent.role})`}
-              >
-                <Mascot
-                  identity={assignedAgent.identity}
-                  state="working"
-                  small
-                  className="mini"
-                  name={assignedAgent.name}
-                />
-              </div>
-              <span
-                className="agent-working-mark pixel-agent-working-mark"
-                aria-hidden="true"
-              >
-                <i />
-                <i />
-                <i />
-              </span>
-              <div className="agent-working-content">
-                <div className="agent-working-meta">
-                  <span
-                    className="agent-badge-tag"
-                    style={{
-                      color: assignedAgent.color,
-                      borderColor: `${assignedAgent.color}55`,
-                    }}
-                  >
-                    {assignedAgent.name} · {assignedAgent.role}
-                  </span>
-                  <strong>{title}</strong>
-                </div>
-                <small className="agent-working-detail" title={detail}>
-                  {detail}
-                </small>
-                {apiProgress && (
-                  <div className="api-live-progress">
-                    <span className="api-live-target">
-                      {String(apiProgress.method ?? "API")} ·{" "}
-                      {String(apiProgress.path ?? "Resolving endpoint")}
-                      {apiProgress.httpStatus != null &&
-                        ` · HTTP ${String(apiProgress.httpStatus)}`}
-                    </span>
-                    <span
-                      className="api-live-track"
-                      aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
-                    >
-                      {apiStages.map((stage, index) => (
-                        <i
-                          key={stage}
-                          className={
-                            index < apiStageIndex
-                              ? "done"
-                              : index === apiStageIndex
-                                ? "active"
-                                : ""
-                          }
-                          title={stage}
-                        />
-                      ))}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <span className="agent-working-stats">
-                {icon === "api" && completedApiCount > 0 ? (
-                  <span>
-                    {completedApiCount} API call
-                    {completedApiCount !== 1 ? "s" : ""} done
-                  </span>
-                ) : completedCount > 0 ? (
-                  <span>
-                    {completedCount} tool
-                    {completedCount !== 1 ? "s" : ""}
-                  </span>
-                ) : null}
-                {pendingMessageCount > 0 && (
-                  <span className="agent-run-queued">
-                    {pendingMessageCount} queued
-                  </span>
-                )}
-                <span>
-                  <ElapsedLabel
-                    startedAt={taskStartedAtRef.current ?? Date.now()}
-                    ticking={isActive}
-                  />
+            {apiProgress && (
+              <div className="api-live-progress">
+                <span className="api-live-target">
+                  {String(apiProgress.method ?? "API")} ·{" "}
+                  {String(apiProgress.path ?? "Resolving endpoint")}
+                  {apiProgress.httpStatus != null &&
+                    ` · HTTP ${String(apiProgress.httpStatus)}`}
                 </span>
-              </span>
-              <button onClick={handleAbort} disabled={isAborting}>
-                {isAborting ? "Stopping…" : "Stop"}
-              </button>
-            </div>
-            <details className="agent-activity-log pixel-activity-log">
-              <summary>
-                {agentTranscript.length
-                  ? `${agentTranscript.length} step${agentTranscript.length === 1 ? "" : "s"}`
-                  : "Preparing"}
-              </summary>
-              <ul
-                className="agent-transcript pixel-agent-transcript"
-                aria-label="Agent tasks"
-              >
-                {agentTranscript.length > 0 ? (
-                  agentTranscript.map((entry) => {
-                    const isDone =
-                      entry.detail.startsWith("Finished") ||
-                      entry.detail === "Ready" ||
-                      entry.detail === "Completed";
-                    const isRun =
-                      entry.detail.startsWith("Running") ||
-                      entry.detail.startsWith("Calling") ||
-                      entry.detail === "Started";
-                    return (
-                      <li
-                        key={entry.id}
-                        className={`pixel-transcript-row ${isDone ? "is-done" : isRun ? "is-running" : ""}`}
-                      >
-                        <span
-                          className={`pixel-step-badge ${isDone ? "step-done" : isRun ? "step-running" : "step-idle"}`}
-                          aria-hidden="true"
-                        >
-                          {isDone ? "✓" : isRun ? "▶" : "·"}
-                        </span>
-                        <span className="pixel-step-text">
-                          {entry.type === "Agent" && entry.detail === "Thinking"
-                            ? activeRequest
-                              ? `Working on: ${activeRequest}${activeRequest.length >= 90 ? "…" : ""}`
-                              : "Preparing next step"
-                            : entry.detail}
-                        </span>
-                        <small className="pixel-step-type">{entry.type}</small>
-                      </li>
-                    );
-                  })
-                ) : (
-                  <li className="agent-transcript-empty">
-                    <span className="pixel-step-badge step-running">▶</span>
-                    <span>Analyzing request</span>
-                  </li>
-                )}
-              </ul>
-            </details>
-          </section>
+                <span
+                  className="api-live-track"
+                  aria-label={`API stage ${apiStageIndex + 1} of ${apiStages.length}`}
+                >
+                  {apiStages.map((stage, index) => (
+                    <i
+                      key={stage}
+                      className={
+                        index < apiStageIndex
+                          ? "done"
+                          : index === apiStageIndex
+                            ? "active"
+                            : ""
+                      }
+                      title={stage}
+                    />
+                  ))}
+                </span>
+              </div>
+            )}
+          </AgentRunCard>
         );
       })();
     }

@@ -1,0 +1,392 @@
+/* Agent run card — live step log while the agent works (AgentRunCard.tsx). */
+.run-card {
+  --run-agent: var(--accent);
+  --run-ink: var(--text-primary);
+  --run-muted: var(--text-secondary);
+  --run-line: var(--separator);
+  --run-line-strong: var(--separator-strong);
+  --run-bg: var(--surface-solid);
+  --run-done: var(--accent);
+  --run-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  position: relative;
+  width: min(100%, 560px);
+  margin: 4px 0 8px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--run-line-strong);
+  border-radius: 16px;
+  background: var(--run-bg);
+  color: var(--run-ink);
+  font-size: var(--type-ui, 13px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 32px -18px rgba(0, 0, 0, 0.45);
+  animation: run-card-in 420ms var(--run-ease) both;
+  overflow: hidden;
+}
+.run-card.has-failure {
+  --run-agent: var(--danger);
+}
+
+/* ---- header ---- */
+.run-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.run-card-spinner {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--run-agent) 10%, transparent);
+}
+.run-card-spinner::after {
+  /* travelling arc around the glyph */
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0 62%,
+    color-mix(in srgb, var(--run-agent) 35%, transparent) 75%,
+    var(--run-agent) 100%
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    #000 calc(100% - 1.5px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2px),
+    #000 calc(100% - 1.5px)
+  );
+  animation: run-spin 1.1s linear infinite;
+}
+.run-card-glyph {
+  width: 16px;
+  height: 16px;
+  stroke: var(--run-agent);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  animation:
+    run-spin 6s linear infinite,
+    run-breathe 1.6s ease-in-out infinite;
+}
+.run-card-head-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--run-line-strong);
+  border-radius: 6px;
+  color: var(--run-muted);
+}
+.run-card-head-icon .run-step-icon {
+  width: 13px;
+  height: 13px;
+}
+.run-card-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-body, 14px);
+  font-weight: 500;
+  color: var(--run-muted);
+  animation: run-fade-up 360ms var(--run-ease) both;
+}
+.run-card-clock {
+  flex: none;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-body, 14px);
+  color: var(--run-muted);
+}
+
+/* ---- meta + segments ---- */
+.run-card-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 2px 8px;
+  font-size: var(--type-sm, 12px);
+  color: var(--run-muted);
+}
+.run-card-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-card-model em {
+  margin-right: 6px;
+  font-style: normal;
+  color: var(--run-agent);
+}
+.run-card-stepno {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.run-card-segments {
+  display: flex;
+  gap: 4px;
+  height: 3px;
+  margin: 0 2px 10px;
+}
+.run-card-segments i {
+  position: relative;
+  flex: 1;
+  border-radius: 99px;
+  background: var(--run-line-strong);
+  overflow: hidden;
+  animation: run-seg-in 300ms var(--run-ease) both;
+}
+.run-card-segments i::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--run-done);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 520ms var(--run-ease);
+}
+.run-card-segments i.is-done::before {
+  transform: scaleX(1);
+}
+.run-card-segments i.is-failed::before {
+  background: var(--danger);
+  transform: scaleX(1);
+}
+.run-card-segments i.is-active::before {
+  transform: scaleX(1);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--run-done) 80%, transparent),
+    transparent
+  );
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: run-seg-scan 1.3s ease-in-out infinite;
+}
+
+/* ---- steps ---- */
+.run-card-steps {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.run-step {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 2px;
+  animation: run-step-in 420ms var(--run-ease) both;
+}
+.run-step-icon-wrap {
+  display: grid;
+  place-items: center;
+  color: var(--run-muted);
+}
+.run-step-icon {
+  width: 16px;
+  height: 16px;
+}
+.run-step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-body, 14px);
+  color: var(--run-ink);
+  transition: color 300ms ease;
+}
+.run-step-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--type-sm, 12px);
+  color: var(--run-muted);
+}
+.run-step.is-done .run-step-icon-wrap {
+  animation: run-pop 380ms var(--run-ease) both;
+}
+.run-step.is-done .run-step-label {
+  animation: run-settle 360ms var(--run-ease) both;
+}
+.run-step.is-active .run-step-label {
+  /* shimmer sweep across the in-progress label */
+  color: transparent;
+  background: linear-gradient(
+      100deg,
+      var(--run-muted) 0 40%,
+      var(--run-ink) 50%,
+      var(--run-muted) 60% 100%
+    )
+    0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: run-shimmer 1.8s linear infinite;
+}
+.run-step.is-active .run-step-icon-wrap {
+  color: var(--run-agent);
+  animation: run-breathe 1.4s ease-in-out infinite;
+}
+.run-step.is-failed .run-step-icon-wrap,
+.run-step.is-failed .run-step-label {
+  color: var(--danger);
+}
+.run-step.is-earlier .run-step-label {
+  font-size: var(--type-sm, 12px);
+  color: var(--run-muted);
+}
+
+/* ---- actions ---- */
+.run-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.run-card-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--run-line-strong);
+  border-radius: 99px;
+  background: transparent;
+  color: var(--run-ink);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 120ms ease;
+}
+.run-card-btn:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.run-card-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+.run-card-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.run-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  color: var(--run-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.run-card-link:hover {
+  color: var(--run-ink);
+}
+.run-card .api-live-progress {
+  margin: 8px 2px 0;
+}
+
+/* ---- keyframes ---- */
+@keyframes run-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+@keyframes run-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes run-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+@keyframes run-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+    filter: blur(2px);
+  }
+}
+@keyframes run-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(3px);
+  }
+}
+@keyframes run-settle {
+  from {
+    color: var(--run-muted);
+  }
+}
+@keyframes run-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+}
+@keyframes run-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+@keyframes run-seg-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0.4);
+  }
+}
+@keyframes run-seg-scan {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-card,
+  .run-card *,
+  .run-card *::before,
+  .run-card *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .run-step.is-active .run-step-label {
+    color: var(--run-ink);
+    background: none;
+  }
+}

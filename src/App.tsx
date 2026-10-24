@@ -74,6 +74,7 @@ import "./settings.css";
 import "./toast.css";
 import "./composer.css";
 import "./right-sidebar.css";
+import "./run-card.css";
 
 type Config = {
   pi_path: string;
