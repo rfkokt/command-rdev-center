@@ -258,9 +258,9 @@ function groupSteps(steps: RunStep[]): RunStep[] {
         kind: step.kind === "edit" ? "files" : "read",
         label: `${verb} ${count} files`,
         durationMs:
-          prev.durationMs !== undefined && step.durationMs !== undefined
-            ? prev.durationMs + step.durationMs
-            : undefined,
+          prev.durationMs === undefined && step.durationMs === undefined
+            ? undefined
+            : (prev.durationMs ?? 0) + (step.durationMs ?? 0),
       };
       continue;
     }
