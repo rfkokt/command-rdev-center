@@ -31,6 +31,10 @@ export type QuotaSnapshot = {
 };
 
 export const QUOTA_POLL_MS = 5 * 60 * 1000;
+/** Providers book usage a moment after a reply ends. */
+export const REPLY_REFRESH_DELAY_MS = 3_000;
+/** Replies from several chats collapse into one lookup per window. */
+export const REPLY_REFRESH_MIN_MS = 20_000;
 
 /**
  * A window counts as reset when its usage drops by at least 10 points from
@@ -79,13 +83,57 @@ export function subscribeQuota(listener: (snapshot: QuotaSnapshot) => void) {
 }
 
 let notify: ((message: string) => void) | null = null;
+let inflight: { force: boolean; promise: Promise<QuotaSnapshot> } | null = null;
 
-export async function refreshQuota(force = false): Promise<QuotaSnapshot> {
-  const next = await invoke<QuotaSnapshot>("get_quota", { refresh: force });
-  for (const message of detectResets(current, next)) notify?.(message);
-  current = next;
-  for (const listener of listeners) listener(next);
-  return next;
+export function refreshQuota(force = false): Promise<QuotaSnapshot> {
+  // Concurrent callers (poll, reply, panel open) share one lookup; a forced
+  // refresh behind a cached one waits for it, then fetches fresh data.
+  if (inflight && (inflight.force || !force)) return inflight.promise;
+  if (inflight)
+    return inflight.promise.catch(() => null).then(() => refreshQuota(true));
+  const promise = invoke<QuotaSnapshot>("get_quota", { refresh: force })
+    .then((next) => {
+      for (const message of detectResets(current, next)) notify?.(message);
+      current = next;
+      for (const listener of listeners) listener(next);
+      return next;
+    })
+    .finally(() => {
+      inflight = null;
+    });
+  inflight = { force, promise };
+  return promise;
+}
+
+/**
+ * Refresh shortly after each agent reply, at most once per
+ * `REPLY_REFRESH_MIN_MS`; a reply inside that window schedules one trailing
+ * refresh so the last reply of a burst is always reflected.
+ */
+export function createReplyRefresher(
+  refresh: () => void,
+  now: () => number = Date.now,
+) {
+  let last = -Infinity;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    onReply() {
+      if (timer !== undefined) return;
+      const wait = Math.max(
+        REPLY_REFRESH_DELAY_MS,
+        last + REPLY_REFRESH_MIN_MS - now(),
+      );
+      timer = setTimeout(() => {
+        timer = undefined;
+        last = now();
+        refresh();
+      }, wait);
+    },
+    cancel() {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    },
+  };
 }
 
 /** One poller for the whole app; panels subscribe to its snapshots. */
@@ -94,8 +142,20 @@ export function startQuotaPolling(toast: (message: string) => void) {
   const tick = () => void refreshQuota().catch(() => {});
   tick();
   const id = window.setInterval(tick, QUOTA_POLL_MS);
+  const replies = createReplyRefresher(
+    () => void refreshQuota(true).catch(() => {}),
+  );
+  const onActivity = (event: Event) => {
+    if (
+      (event as CustomEvent<{ type?: string }>).detail?.type === "agent_settled"
+    )
+      replies.onReply();
+  };
+  window.addEventListener("crc-agent-activity", onActivity);
   return () => {
     window.clearInterval(id);
+    replies.cancel();
+    window.removeEventListener("crc-agent-activity", onActivity);
     notify = null;
   };
 }
