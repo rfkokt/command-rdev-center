@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
-import JevSettings from "./JevSettings";
+import JevSettings, { remainingBalance } from "./JevSettings";
 
 const config = {
   mode: "off",
@@ -51,9 +51,13 @@ test("requires credentials to opt in, but allows saving Off without a key", asyn
 });
 
 test("saves settings through the host and clears entered credentials", async () => {
-  invoke
-    .mockResolvedValueOnce(config)
-    .mockResolvedValueOnce({ ...config, mode: "shadow", has_api_key: true });
+  invoke.mockImplementation((command: string) =>
+    Promise.resolve(
+      command === "save_jev_settings"
+        ? { ...config, mode: "shadow", has_api_key: true }
+        : config,
+    ),
+  );
   const toast = vi.fn();
   render(<JevSettings onToast={toast} />);
   await waitFor(() =>
@@ -86,7 +90,10 @@ test("shows a configuration load error without enabling a provider", async () =>
     "Cannot read Jev settings",
   );
   expect(screen.getByLabelText(/^Routing mode/)).toHaveValue("off");
-  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(invoke).not.toHaveBeenCalledWith(
+    "save_jev_settings",
+    expect.anything(),
+  );
 });
 
 test("reflects automatic billing Off while retaining the user's unsaved fields", async () => {
@@ -105,4 +112,49 @@ test("reflects automatic billing Off while retaining the user's unsaved fields",
   expect(screen.getByRole("status")).toHaveTextContent(
     "automatically switched Off",
   );
+});
+
+const usage = {
+  month_requests: 312,
+  month_input_tokens: 1_200_000,
+  total_input_tokens: 3_000_000,
+  balance_usd: 4.86,
+  balance_tokens: 1_000_000,
+  balance_set_at: 1,
+  billing_exhausted_at: null,
+};
+
+test("estimates what is left from the entered balance", () => {
+  // 2M tokens since the balance was entered, at $0.042 per million.
+  expect(remainingBalance(usage)).toBeCloseTo(4.776, 6);
+  expect(remainingBalance({ ...usage, balance_usd: null })).toBeNull();
+  expect(remainingBalance({ ...usage, balance_usd: 0.01 })).toBe(0);
+});
+
+test("updates the balance read off the TypeSafe dashboard", async () => {
+  invoke.mockImplementation((command: string) =>
+    Promise.resolve(
+      command === "get_jev_usage" || command === "set_jev_balance"
+        ? {
+            ...usage,
+            balance_usd: 4.86,
+            balance_tokens: usage.total_input_tokens,
+          }
+        : config,
+    ),
+  );
+  const toast = vi.fn();
+  render(<JevSettings onToast={toast} />);
+  const input = await screen.findByLabelText(/^Current balance/);
+  await waitFor(() =>
+    expect(screen.getByText(/left of \$4\.86/)).toBeInTheDocument(),
+  );
+  fireEvent.change(input, { target: { value: "4.86" } });
+  fireEvent.click(screen.getByRole("button", { name: "Update balance" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("set_jev_balance", {
+      balanceUsd: 4.86,
+    }),
+  );
+  expect(toast).toHaveBeenCalledWith("Jev balance set to $4.86");
 });

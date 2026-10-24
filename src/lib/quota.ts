@@ -13,7 +13,7 @@ export type QuotaAccount = {
   id: string;
   /** Panel heading: "Claude" or the 9router's name. */
   group: string;
-  source: "claude" | "9router";
+  source: "claude" | "9router" | "jev";
   provider: string;
   name: string;
   plan: string | null;

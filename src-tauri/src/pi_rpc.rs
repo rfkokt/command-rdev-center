@@ -650,7 +650,7 @@ pub fn global_chat_cwd() -> Result<PathBuf, String> {
     Ok(path.canonicalize().map_err(|e| e.to_string())?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_global_chat_cwd() -> Result<String, String> {
     Ok(global_chat_cwd()?.to_string_lossy().into())
 }
@@ -771,7 +771,13 @@ fn with_handoff(prompt: Option<String>, handoff: Option<String>) -> Option<Strin
     }
 }
 
-#[tauri::command]
+/// Spawns ran one at a time on the main thread; off it they still must, so
+/// a restart and a bootstrap of the same chat cannot leave a stray process.
+static SPAWN_LOCK: Mutex<()> = Mutex::new(());
+
+// Off the main thread: resolving the login PATH and probing the pi runtime
+// take seconds and froze the window (beach ball on launch and resize).
+#[tauri::command(async)]
 pub fn spawn_pi_rpc(
     app: tauri::AppHandle,
     session_id: String,
@@ -789,6 +795,9 @@ pub fn spawn_pi_rpc(
     harness: Option<String>,
     handoff: Option<String>,
 ) -> Result<String, String> {
+    let _spawn = SPAWN_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let custom_system_prompt = with_handoff(custom_system_prompt, handoff);
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
@@ -1429,7 +1438,14 @@ pub fn spawn_pi_rpc(
         for line in buf.lines() {
             match line {
                 Ok(l) => {
+                    if let Some(tokens) = l.strip_prefix("CRC_JEV_USAGE ") {
+                        if let Ok(tokens) = tokens.trim().parse::<u64>() {
+                            crate::settings::record_jev_usage(tokens);
+                        }
+                        continue;
+                    }
                     if l == "CRC_JEV_BILLING_EXHAUSTED" {
+                        crate::settings::record_jev_billing_exhausted();
                         if let Some(generation) = jev_generation.as_deref() {
                             match crate::settings::disable_jev_for_billing(generation) {
                                 Ok(true) => {
@@ -1957,7 +1973,7 @@ pub fn kill_pi_session(session_id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pi_sessions() -> Result<Vec<String>, String> {
     let map = sessions_map().lock().map_err(|_| "poisoned".to_string())?;
     Ok(map.keys().cloned().collect())

@@ -3,6 +3,27 @@ import { invoke } from "@tauri-apps/api/core";
 import { Actions, Field, Group, Note, Status } from "./settings-ui";
 import { listen } from "@tauri-apps/api/event";
 
+type Usage = {
+  month_requests: number;
+  month_input_tokens: number;
+  total_input_tokens: number;
+  balance_usd: number | null;
+  balance_tokens: number;
+  balance_set_at: number | null;
+  billing_exhausted_at: number | null;
+};
+
+/** USD per million billed input tokens (output is free). */
+const USD_PER_MILLION = 0.042;
+
+export function remainingBalance(usage: Usage): number | null {
+  if (usage.balance_usd == null) return null;
+  const spent =
+    (Math.max(0, usage.total_input_tokens - usage.balance_tokens) / 1e6) *
+    USD_PER_MILLION;
+  return Math.max(0, usage.balance_usd - spent);
+}
+
 type Config = {
   mode: "off" | "shadow" | "advisory";
   endpoint: string;
@@ -28,6 +49,33 @@ export default function JevSettings({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState("");
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [balance, setBalance] = useState("");
+  useEffect(() => {
+    invoke<Usage>("get_jev_usage")
+      .then((value) => {
+        if (typeof value?.total_input_tokens === "number") setUsage(value);
+      })
+      .catch(() => {});
+  }, []);
+  async function saveBalance() {
+    setError("");
+    try {
+      const amount = balance.trim() === "" ? null : Number(balance);
+      const next = await invoke<Usage>("set_jev_balance", {
+        balanceUsd: amount,
+      });
+      setUsage(next);
+      setBalance("");
+      onToast(
+        amount == null
+          ? "Jev balance cleared"
+          : `Jev balance set to $${amount.toFixed(2)}`,
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | undefined;
@@ -83,7 +131,8 @@ export default function JevSettings({
   return (
     <div className="kset-panel">
       <Note>
-        Jev recommends tools and skills for project chats. Shadow records
+        Jev recommends tools and skills for project chats and, in advisory,
+        leaves clearly unrelated files out of graph context. Shadow records
         suggestions; advisory shares them with the agent. Neither mode runs
         tools or changes permissions.
       </Note>
@@ -177,6 +226,37 @@ export default function JevSettings({
           aria-busy={saving}
         >
           {saving ? "Saving…" : "Save"}
+        </button>
+      </Actions>
+      <Group label="Jev balance">
+        <Field
+          label="Current balance (USD)"
+          detail={
+            usage && remainingBalance(usage) != null
+              ? `≈ $${remainingBalance(usage)!.toFixed(2)} left of $${usage.balance_usd!.toFixed(2)} (estimate) · ${usage.month_requests} requests this month. TypeSafe has no balance API, so enter the dashboard amount now and then to stay accurate.`
+              : "Enter the balance shown on your TypeSafe dashboard; Kern subtracts what Jev uses from here on."
+          }
+        >
+          <input
+            type="number"
+            min={0}
+            step={0.01}
+            inputMode="decimal"
+            value={balance}
+            onChange={(e) => setBalance(e.target.value)}
+            placeholder={
+              usage?.balance_usd != null ? usage.balance_usd.toFixed(2) : "4.86"
+            }
+          />
+        </Field>
+      </Group>
+      <Actions>
+        <button
+          type="button"
+          onClick={() => void saveBalance()}
+          disabled={balance.trim() === "" || Number.isNaN(Number(balance))}
+        >
+          Update balance
         </button>
       </Actions>
     </div>

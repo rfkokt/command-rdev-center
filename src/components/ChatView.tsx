@@ -31,6 +31,8 @@ import { withTimeout } from "../lib/with-timeout";
 import {
   formatTokens,
   cacheHitPercent,
+  applyToolPatches,
+  type ToolCallPatch,
   buildHandoff,
   mergeAssistantMessage,
   recentItems,
@@ -724,10 +726,6 @@ export default function ChatView({
   }, [flushDeltas]);
   // Same idea for tool calls: a burst of tool events in one frame (start /
   // progress / end for several calls) becomes a single setMessages.
-  type ToolCallPatch = Partial<ToolCall> & {
-    name?: string;
-    args?: Record<string, unknown>;
-  };
   const pendingToolPatchesRef = useRef<
     Array<{ callId: string; patch: ToolCallPatch }>
   >([]);
@@ -737,30 +735,7 @@ export default function ChatView({
     const patches = pendingToolPatchesRef.current;
     pendingToolPatchesRef.current = [];
     if (patches.length === 0) return;
-    setMessages((prev) => {
-      const copy = ensureAssistantTurn(prev, createAssistantTurn);
-      for (const { callId, patch } of patches) {
-        for (let i = copy.length - 1; i >= 0; i--) {
-          if (copy[i].role === "assistant") {
-            const tcs = [...copy[i].toolCalls];
-            const idx = tcs.findIndex((t) => t.callId === callId);
-            if (idx >= 0) tcs[idx] = { ...tcs[idx], ...patch } as ToolCall;
-            else
-              tcs.push({
-                callId,
-                name: (patch.name as string) ?? "tool",
-                args: (patch.args as Record<string, unknown>) ?? {},
-                ...patch,
-                phase: (patch.phase as ToolCall["phase"]) ?? "start",
-              } as ToolCall);
-            if (tcs.length > 200) tcs.splice(0, tcs.length - 200);
-            copy[i] = { ...copy[i], toolCalls: tcs };
-            break;
-          }
-        }
-      }
-      return copy;
-    });
+    setMessages((prev) => applyToolPatches(prev, patches, createAssistantTurn));
   }, [createAssistantTurn]);
   const upsertToolCall = useCallback(
     (callId: string, patch: ToolCallPatch) => {
@@ -2054,6 +2029,7 @@ export default function ChatView({
         if (t === "message_end" || t === "turn_end") {
           if (t === "turn_end") void sendRaw({ type: "get_session_stats" });
           flushDeltas();
+          flushToolCalls();
           const message = ev.message as Record<string, unknown> | undefined;
           if (message?.role === "custom" && message.display === true) {
             const text =
@@ -2097,6 +2073,7 @@ export default function ChatView({
         }
         if (t === "agent_end") {
           flushDeltas();
+          flushToolCalls();
           const generated = ev.messages as
             | Array<Record<string, unknown>>
             | undefined;
@@ -2139,7 +2116,10 @@ export default function ChatView({
           }
           if (settlementHandled) return;
           settlementHandled = true;
+          // Batched tool events must land before the run settles, or a late
+          // flush opens a new bubble that never stops "Typing…".
           flushDeltas();
+          flushToolCalls();
           activeToolCallsRef.current.clear();
           setAgentStatus("idle");
           sendRaw({ type: "get_session_stats" });

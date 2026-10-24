@@ -20,7 +20,7 @@ vi.mock("node:child_process", () => ({
     );
   },
 }));
-import graphify from "./graphify-context";
+import graphify, { filterGraphContext } from "./graphify-context";
 import { isFollowUp } from "./follow-up";
 
 const folders: string[] = [];
@@ -124,5 +124,103 @@ describe("graph context reuse", () => {
       "recovered symbols",
     );
     expect(query).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("Jev relevance filter", () => {
+  const raw = [
+    "Traversal: BFS depth=2",
+    "NODE login() [src=src/auth/login.ts loc=L3]",
+    "NODE session() [src=src/auth/login.ts loc=L9]",
+    "NODE Token [src=src/auth/token.ts loc=L1]",
+    "NODE theme() [src=src/theme.ts loc=L2]",
+    "NODE Palette [src=docs/palette.md loc=L1]",
+    "NODE String [src= loc= community=x]",
+  ].join("\n");
+  const answers = (nouls: number[]) =>
+    Object.fromEntries(
+      nouls.map((noul, index) => [`f${index}`, { type: "noul", noul }]),
+    );
+
+  it("drops clearly unrelated files and keeps headers, uncertain and sourceless nodes", async () => {
+    vi.stubEnv("CRC_JEV_API_KEY", "k");
+    const evaluate = vi.fn(async (_config, state, questions) => {
+      expect(state).toEqual({ task: "fix login" });
+      expect(Object.keys(questions)).toHaveLength(4);
+      // Order: most nodes first (login.ts), then token, theme, palette.
+      return {
+        status: "ok" as const,
+        model: "jev",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        answers: answers([0.9, 0.5, 0.05, 0.2]),
+      };
+    });
+    const { content, dropped } = await filterGraphContext(
+      raw,
+      "fix login",
+      undefined,
+      evaluate as any,
+    );
+    expect(dropped).toEqual(["src/theme.ts", "docs/palette.md"]);
+    expect(content).toContain("Traversal: BFS depth=2");
+    expect(content).toContain("login()");
+    expect(content).toContain("Token");
+    expect(content).toContain("NODE String");
+    expect(content).not.toContain("theme()");
+    expect(content).toContain("Jev left out 2 file(s)");
+  });
+
+  it("filters injected graph context in advisory mode only", async () => {
+    query.mockResolvedValue(raw);
+    vi.stubEnv("CRC_JEV_API_KEY", "k");
+    const fetcher = vi.fn(async () =>
+      Response.json({
+        model: "jev",
+        usage: { input_tokens: 1, output_tokens: 1 },
+        answers: answers([0.9, 0.5, 0.05, 0.2]),
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    vi.stubEnv("CRC_JEV_MODE", "off");
+    const off = harness();
+    expect((await off.start("fix login")).message.content).toContain("theme()");
+    expect(fetcher).not.toHaveBeenCalled();
+
+    vi.stubEnv("CRC_JEV_MODE", "advisory");
+    const on = harness();
+    const content = (await on.start("fix login")).message.content;
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(content).not.toContain("theme()");
+    expect(content).toContain("login()");
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the result unchanged when Jev fails or there are too few files", async () => {
+    const failing = vi.fn(async () => ({
+      status: "unavailable" as const,
+      reason: "timeout" as const,
+    }));
+    expect(
+      (await filterGraphContext(raw, "fix login", undefined, failing as any))
+        .content,
+    ).toBe(raw);
+    const broke = vi.fn(async () => ({
+      status: "unavailable" as const,
+      reason: "billing_exhausted" as const,
+    }));
+    const exhausted = await filterGraphContext(
+      raw,
+      "fix login",
+      undefined,
+      broke as any,
+    );
+    expect(exhausted.content).toBe(raw);
+    expect(exhausted.billing).toBe(true);
+    const small = "NODE a [src=a.ts loc=L1]\nNODE b [src=b.ts loc=L1]";
+    const unused = vi.fn();
+    expect(
+      (await filterGraphContext(small, "x", undefined, unused as any)).content,
+    ).toBe(small);
+    expect(unused).not.toHaveBeenCalled();
   });
 });

@@ -586,8 +586,14 @@ pub async fn ensure_worktree(
     .map_err(|e| format!("Worktree worker failed: {e}"))?
 }
 
-#[tauri::command]
+static WORKSPACE_SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+// Off the main thread (git worktree work per repository), still serialized.
+#[tauri::command(async)]
 pub fn ensure_workspace_session(workspace_path: String, slug: String) -> Result<String, String> {
+    let _guard = WORKSPACE_SESSION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let workspace = crate::projects::registered_workspace(Path::new(&workspace_path))
         .filter(|root| {
             root == &crate::projects::canonicalize_or_original(Path::new(&workspace_path))

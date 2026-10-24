@@ -461,7 +461,7 @@ fn view(file: ConnectionsFile) -> ConnectionsView {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_connections() -> Result<ConnectionsView, String> {
     Ok(view(read_file()))
 }

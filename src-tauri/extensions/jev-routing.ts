@@ -1,6 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFile } from "node:fs/promises";
-import { evaluateJev, type JevConfig, type JevQuestion } from "./jev-client";
+import {
+  evaluateJev,
+  jevConfig,
+  jevMode,
+  type JevQuestion,
+} from "./jev-client";
 import { isFollowUp } from "./follow-up";
 
 export type RoutingCandidate = {
@@ -56,20 +60,7 @@ export function routingQuestions(
 export default function (pi: ExtensionAPI) {
   let lastTrace: Record<string, unknown> | undefined;
   let billingDisabled = false;
-  const modeNow = async () => {
-    if (billingDisabled) return "off";
-    // The host persists automatic Off; other open chats observe it on their next turn.
-    const settingsPath = process.env.CRC_JEV_SETTINGS_PATH;
-    if (settingsPath) {
-      try {
-        const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-        if (settings.mode === "off") return "off";
-      } catch {
-        return "off";
-      }
-    }
-    return process.env.CRC_JEV_MODE ?? "off";
-  };
+  const modeNow = async () => (billingDisabled ? "off" : await jevMode());
   const recordTrace = (trace: Record<string, unknown>) => {
     lastTrace = trace;
     pi.appendEntry("kern-jev-routing", trace);
@@ -93,13 +84,7 @@ export default function (pi: ExtensionAPI) {
     if (!event.prompt.trim()) return;
     // "iya push aja" needs no new tool or skill: skip the request and its wait.
     if (isFollowUp(event.prompt.trim())) return;
-    const config: JevConfig = {
-      endpoint:
-        process.env.CRC_JEV_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone",
-      model: process.env.CRC_JEV_MODEL ?? "jev-1.13.0",
-      apiKey: process.env.CRC_JEV_API_KEY ?? "",
-      timeoutMs: Number(process.env.CRC_JEV_TIMEOUT_MS ?? 2500),
-    };
+    const config = jevConfig();
     const active = new Set(pi.getActiveTools());
     // Never expose inactive/hidden tools or override an explicit --tools allowlist.
     const tools = pi

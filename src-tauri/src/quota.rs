@@ -485,6 +485,62 @@ fn router_accounts(router: &RouterConfig) -> Result<Vec<QuotaAccount>, String> {
     }))
 }
 
+// --------------------------------------------------------------------- Jev
+
+fn compact_tokens(tokens: u64) -> String {
+    match tokens {
+        0..=999 => tokens.to_string(),
+        1_000..=999_999 => format!("{:.1}k", tokens as f64 / 1e3),
+        _ => format!("{:.1}M", tokens as f64 / 1e6),
+    }
+}
+
+/// Jev's balance is an estimate: TypeSafe has no balance API, so Kern counts
+/// billed tokens since the balance the user last entered.
+fn jev_card(mode: &str, usage: &crate::settings::JevUsage) -> QuotaAccount {
+    let mut windows = Vec::new();
+    let activity = format!(
+        "{} requests · {} tokens this month",
+        usage.month_requests,
+        compact_tokens(usage.month_input_tokens)
+    );
+    let note = match (usage.balance_usd, usage.remaining_usd()) {
+        (Some(balance), Some(remaining)) => {
+            if balance > 0.0 {
+                windows.push(QuotaWindow {
+                    label: "Balance".into(),
+                    used_percent: ((balance - remaining) / balance * 100.0).clamp(0.0, 100.0),
+                    resets_at: None,
+                });
+            }
+            format!("≈ ${remaining:.2} left of ${balance:.2} (estimate) · {activity}")
+        }
+        _ => format!(
+            "Enter your TypeSafe balance in Settings → Jev to track what's left · {activity}"
+        ),
+    };
+    QuotaAccount {
+        id: "jev".into(),
+        group: "Jev".into(),
+        source: "jev".into(),
+        provider: "jev".into(),
+        name: "Jev (TypeSafe)".into(),
+        plan: Some(mode.to_string()),
+        windows,
+        reset_credits: 0,
+        note: Some(note),
+        error: usage.billing_exhausted_at.map(|_| {
+            "TypeSafe reported exhausted credits, so Jev is Off. Top up, update the balance in Settings → Jev, then turn Jev back on.".into()
+        }),
+    }
+}
+
+fn jev_account() -> Option<QuotaAccount> {
+    let settings = crate::settings::get_jev_settings().ok()?;
+    let usage = crate::settings::jev_usage();
+    (settings.has_api_key || usage.total_input_tokens > 0).then(|| jev_card(&settings.mode, &usage))
+}
+
 // ---------------------------------------------------------------- commands
 
 static CACHE: Mutex<Option<(Instant, QuotaSnapshot)>> = Mutex::new(None);
@@ -527,6 +583,7 @@ fn snapshot() -> QuotaSnapshot {
         )
     });
     let mut accounts: Vec<QuotaAccount> = claude.into_iter().collect();
+    accounts.extend(jev_account());
     for (router, result) in per_router {
         match result {
             Ok(list) => accounts.extend(list),
@@ -626,7 +683,7 @@ pub struct QuotaSettings {
     pub routers: Vec<RouterView>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_quota_settings() -> QuotaSettings {
     let settings = crate::harness::read_settings();
     QuotaSettings {
@@ -811,6 +868,35 @@ mod tests {
         assert!(safe_id("a6eca261-6fbb-45cb"));
         assert!(!safe_id("../etc"));
         assert!(!safe_id(""));
+    }
+
+    #[test]
+    fn jev_card_estimates_the_balance() {
+        let mut usage = crate::settings::JevUsage {
+            month_requests: 312,
+            month_input_tokens: 1_234_567,
+            total_input_tokens: 2_000_000,
+            balance_usd: Some(4.86),
+            balance_tokens: 0,
+            ..Default::default()
+        };
+        let card = jev_card("advisory", &usage);
+        assert_eq!(card.plan.as_deref(), Some("advisory"));
+        assert!(card.error.is_none());
+        let note = card.note.unwrap();
+        assert!(note.starts_with("≈ $4.78 left of $4.86"), "{note}");
+        assert!(note.contains("312 requests · 1.2M tokens this month"));
+        assert!((card.windows[0].used_percent - 0.084 / 4.86 * 100.0).abs() < 1e-6);
+
+        usage.balance_usd = None;
+        usage.billing_exhausted_at = Some(1);
+        let card = jev_card("off", &usage);
+        assert!(card.windows.is_empty());
+        assert!(card
+            .note
+            .unwrap()
+            .starts_with("Enter your TypeSafe balance"));
+        assert!(card.error.unwrap().contains("exhausted"));
     }
 
     #[test]

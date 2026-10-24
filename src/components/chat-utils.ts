@@ -1,4 +1,4 @@
-import type { ChatMessage } from "../lib/rpc";
+import type { ChatMessage, ToolCall } from "../lib/rpc";
 
 // Separated from ChatView.tsx so Vite React Fast Refresh stays valid:
 // a module exporting a component must export only components. These helpers
@@ -245,6 +245,56 @@ export function ensureAssistantTurn(
   const last = messages[messages.length - 1];
   if (last?.role === "assistant" && last.isStreaming) return messages;
   return [...messages, create()];
+}
+
+export type ToolCallPatch = Partial<ToolCall> & {
+  name?: string;
+  args?: Record<string, unknown>;
+};
+
+/**
+ * Apply batched tool events. A patch for a call already on screen updates
+ * that message in place; only an unseen call may open a new assistant turn.
+ * Late patches (a tool's end flushed after the run settled) must not create
+ * a fresh, never-settled "Typing…" bubble.
+ */
+export function applyToolPatches(
+  messages: ChatMessage[],
+  patches: Array<{ callId: string; patch: ToolCallPatch }>,
+  create: () => ChatMessage,
+): ChatMessage[] {
+  const owner = (list: ChatMessage[], callId: string) => {
+    for (let i = list.length - 1; i >= 0; i--)
+      if (
+        list[i].role === "assistant" &&
+        list[i].toolCalls.some((tool) => tool.callId === callId)
+      )
+        return i;
+    return -1;
+  };
+  const unseen = patches.some(({ callId }) => owner(messages, callId) < 0);
+  const copy = unseen ? ensureAssistantTurn(messages, create) : [...messages];
+  for (const { callId, patch } of patches) {
+    let index = owner(copy, callId);
+    if (index < 0)
+      for (let i = copy.length - 1; i >= 0 && index < 0; i--)
+        if (copy[i].role === "assistant") index = i;
+    if (index < 0) continue;
+    const tools = [...copy[index].toolCalls];
+    const at = tools.findIndex((tool) => tool.callId === callId);
+    if (at >= 0) tools[at] = { ...tools[at], ...patch } as ToolCall;
+    else
+      tools.push({
+        callId,
+        name: patch.name ?? "tool",
+        args: patch.args ?? {},
+        ...patch,
+        phase: patch.phase ?? "start",
+      } as ToolCall);
+    if (tools.length > 200) tools.splice(0, tools.length - 200);
+    copy[index] = { ...copy[index], toolCalls: tools };
+  }
+  return copy;
 }
 
 export function insertSteerMessage(

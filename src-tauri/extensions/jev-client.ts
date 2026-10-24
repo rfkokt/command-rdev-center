@@ -67,6 +67,35 @@ function sameKeys(a: object, b: object) {
   );
 }
 
+export type JevMode = "off" | "shadow" | "advisory";
+
+/** Mode for this turn. The host persists automatic Off (billing) in the
+ * settings file; other open chats observe it on their next turn. */
+export async function jevMode(): Promise<JevMode> {
+  const settingsPath = process.env.CRC_JEV_SETTINGS_PATH;
+  if (settingsPath) {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      if (settings.mode === "off") return "off";
+    } catch {
+      return "off";
+    }
+  }
+  const mode = process.env.CRC_JEV_MODE;
+  return mode === "shadow" || mode === "advisory" ? mode : "off";
+}
+
+export function jevConfig(): JevConfig {
+  return {
+    endpoint:
+      process.env.CRC_JEV_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone",
+    model: process.env.CRC_JEV_MODEL ?? "jev-1.13.0",
+    apiKey: process.env.CRC_JEV_API_KEY ?? "",
+    timeoutMs: Number(process.env.CRC_JEV_TIMEOUT_MS ?? 2500),
+  };
+}
+
 export function validEndpoint(endpoint: string) {
   try {
     const url = new URL(endpoint);
@@ -221,6 +250,16 @@ export function parseJevResponse(
   };
 }
 
+/**
+ * Billed input tokens for the host's usage tally (Settings and the Usage
+ * panel). A fixed stderr marker, like CRC_JEV_BILLING_EXHAUSTED; no prompt
+ * or provider data.
+ */
+function reportUsage(inputTokens: number) {
+  if (Number.isInteger(inputTokens) && inputTokens >= 0)
+    console.error(`CRC_JEV_USAGE ${inputTokens}`);
+}
+
 export async function evaluateJev(
   config: JevConfig,
   state: unknown,
@@ -319,12 +358,13 @@ export async function evaluateJev(
     }
     // Limit streamed responses before parsing; never log provider bodies/errors.
     try {
-      return (
-        parseJevResponse(await readBoundedBody(response), questions) ?? {
-          status: "unavailable",
-          reason: "invalid_response",
-        }
+      const parsed = parseJevResponse(
+        await readBoundedBody(response),
+        questions,
       );
+      if (!parsed) return { status: "unavailable", reason: "invalid_response" };
+      reportUsage(parsed.usage.input_tokens);
+      return parsed;
     } catch {
       if (signal?.aborted)
         return { status: "unavailable", reason: "cancelled" };

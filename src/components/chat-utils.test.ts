@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   appendStreamingText,
+  applyToolPatches,
   buildHandoff,
   cacheHitPercent,
   mergeAssistantMessage,
@@ -214,4 +215,42 @@ test("buildHandoff keeps user and assistant text, newest first within the cap", 
   expect(capped).toContain("User: 39 ");
   expect(capped).not.toContain("User: 0 ");
   expect(capped).toMatch(/\d+ older messages dropped/);
+});
+
+test("applyToolPatches updates a settled call in place instead of opening a Typing bubble", () => {
+  const assistant = (overrides: Partial<ChatMessage>): ChatMessage => ({
+    id: "a1",
+    role: "assistant",
+    text: "",
+    thinking: "",
+    toolCalls: [],
+    createdAt: 0,
+    isStreaming: false,
+    ...overrides,
+  });
+  const create = () => assistant({ id: "new", isStreaming: true });
+  // The run settled while the Bash end event was still batched.
+  const settled = [
+    assistant({
+      toolCalls: [{ callId: "t1", name: "Bash", args: {}, phase: "start" }],
+    }),
+  ];
+  const late = applyToolPatches(
+    settled,
+    [{ callId: "t1", patch: { phase: "end" } }],
+    create,
+  );
+  expect(late).toHaveLength(1);
+  expect(late[0].isStreaming).toBe(false);
+  expect(late[0].toolCalls[0].phase).toBe("end");
+
+  // A call never seen before still opens the next turn.
+  const fresh = applyToolPatches(
+    settled,
+    [{ callId: "t2", patch: { name: "Read", phase: "start" } }],
+    create,
+  );
+  expect(fresh).toHaveLength(2);
+  expect(fresh[1].id).toBe("new");
+  expect(fresh[1].toolCalls[0]).toMatchObject({ callId: "t2", name: "Read" });
 });

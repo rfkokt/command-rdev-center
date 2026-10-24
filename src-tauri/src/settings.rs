@@ -72,7 +72,7 @@ fn jev_key() -> Result<String, String> {
     Ok(key)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_jev_settings() -> Result<JevSettings, String> {
     let path = jev_settings_path()?;
     let mut settings = if path.exists() {
@@ -333,7 +333,7 @@ fn read_value(path: &Path) -> Result<Value, String> {
     Ok(value)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pi_settings(scope: String, project_path: Option<String>) -> Result<Value, String> {
     read_value(&settings_path(&scope, project_path.as_deref())?)
 }
@@ -357,7 +357,7 @@ pub fn save_pi_settings(
     std::fs::rename(temp, path).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_graphify_settings() -> Result<GraphifySettings, String> {
     let path = graphify_settings_path()?;
     let mut settings = if path.exists() {
@@ -510,6 +510,146 @@ pub async fn save_graphify_settings(
     .map_err(|e| format!("Failed to save Graphify settings: {e}"))?
 }
 
+// ------------------------------------------------------------ Jev usage
+
+/// TypeSafe publishes no balance API, so Kern tallies billed input tokens
+/// itself and estimates the balance from the last amount the user read off
+/// the TypeSafe dashboard. Output tokens are free.
+pub const JEV_USD_PER_MILLION_INPUT: f64 = 0.042;
+
+static JEV_USAGE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct JevUsage {
+    /// `YYYY-MM` the monthly counters belong to.
+    pub month: String,
+    pub month_requests: u64,
+    pub month_input_tokens: u64,
+    pub total_input_tokens: u64,
+    /// Balance the user entered, and the token total at that moment.
+    pub balance_usd: Option<f64>,
+    pub balance_tokens: u64,
+    pub balance_set_at: Option<i64>,
+    /// Set when TypeSafe reported exhausted credits; cleared by a new balance.
+    pub billing_exhausted_at: Option<i64>,
+}
+
+impl JevUsage {
+    pub fn spent_since_balance_usd(&self) -> f64 {
+        self.total_input_tokens.saturating_sub(self.balance_tokens) as f64 / 1_000_000.0
+            * JEV_USD_PER_MILLION_INPUT
+    }
+
+    pub fn remaining_usd(&self) -> Option<f64> {
+        self.balance_usd
+            .map(|balance| (balance - self.spent_since_balance_usd()).max(0.0))
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// `YYYY-MM` (UTC) for Unix seconds.
+fn month_of(secs: i64) -> String {
+    // Civil from days (Howard Hinnant).
+    let days = secs.div_euclid(86_400) + 719_468;
+    let era = days.div_euclid(146_097);
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}")
+}
+
+fn jev_usage_path() -> Result<PathBuf, String> {
+    Ok(jev_settings_path()?.with_file_name("jev-usage.json"))
+}
+
+fn read_jev_usage_at(path: &Path) -> JevUsage {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn update_jev_usage(path: &Path, change: impl FnOnce(&mut JevUsage)) -> Result<JevUsage, String> {
+    let _guard = JEV_USAGE_LOCK
+        .lock()
+        .map_err(|_| "Jev usage lock unavailable")?;
+    let mut usage = read_jev_usage_at(path);
+    change(&mut usage);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| "Cannot create Jev usage directory")?;
+    }
+    let raw = serde_json::to_string_pretty(&usage).map_err(|_| "Cannot encode Jev usage")?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, format!("{raw}\n")).map_err(|_| "Cannot write Jev usage")?;
+    std::fs::rename(temp, path).map_err(|_| "Cannot save Jev usage")?;
+    Ok(usage)
+}
+
+fn add_usage(usage: &mut JevUsage, input_tokens: u64, now: i64) {
+    let month = month_of(now);
+    if usage.month != month {
+        usage.month = month;
+        usage.month_requests = 0;
+        usage.month_input_tokens = 0;
+    }
+    usage.month_requests += 1;
+    usage.month_input_tokens += input_tokens;
+    usage.total_input_tokens += input_tokens;
+}
+
+/// One successful Jev request (`CRC_JEV_USAGE <tokens>` from an extension).
+pub fn record_jev_usage(input_tokens: u64) {
+    if let Ok(path) = jev_usage_path() {
+        let _ = update_jev_usage(&path, |usage| add_usage(usage, input_tokens, unix_now()));
+    }
+}
+
+/// TypeSafe reported exhausted credits (`CRC_JEV_BILLING_EXHAUSTED`).
+pub fn record_jev_billing_exhausted() {
+    if let Ok(path) = jev_usage_path() {
+        let _ = update_jev_usage(&path, |usage| usage.billing_exhausted_at = Some(unix_now()));
+    }
+}
+
+pub fn jev_usage() -> JevUsage {
+    jev_usage_path()
+        .map(|path| read_jev_usage_at(&path))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn get_jev_usage() -> JevUsage {
+    jev_usage()
+}
+
+/// The balance shown on the TypeSafe dashboard right now; `None` clears it.
+#[tauri::command]
+pub fn set_jev_balance(balance_usd: Option<f64>) -> Result<JevUsage, String> {
+    if let Some(balance) = balance_usd {
+        if !balance.is_finite() || !(0.0..=100_000.0).contains(&balance) {
+            return Err("Enter the balance in USD, e.g. 4.86".into());
+        }
+    }
+    update_jev_usage(&jev_usage_path()?, |usage| {
+        usage.balance_usd = balance_usd;
+        usage.balance_tokens = usage.total_input_tokens;
+        usage.balance_set_at = balance_usd.map(|_| unix_now());
+        if balance_usd.is_some_and(|balance| balance > 0.0) {
+            usage.billing_exhausted_at = None;
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -623,5 +763,44 @@ mod tests {
             ..valid
         })
         .is_err());
+    }
+}
+
+#[cfg(test)]
+mod jev_usage_tests {
+    use super::*;
+
+    #[test]
+    fn months_roll_over_and_balance_counts_only_later_tokens() {
+        assert_eq!(month_of(0), "1970-01");
+        assert_eq!(month_of(1_792_778_399), "2026-10");
+        assert_eq!(month_of(1_793_491_200), "2026-11"); // 2026-11-01T00:00Z
+
+        let mut usage = JevUsage::default();
+        add_usage(&mut usage, 3_000_000, 1_792_778_399);
+        usage.balance_usd = Some(4.86);
+        usage.balance_tokens = usage.total_input_tokens;
+        add_usage(&mut usage, 10_000_000, 1_792_778_400);
+        assert_eq!(
+            (usage.month_requests, usage.month_input_tokens),
+            (2, 13_000_000)
+        );
+        assert!((usage.spent_since_balance_usd() - 0.42).abs() < 1e-9);
+        assert!((usage.remaining_usd().unwrap() - 4.44).abs() < 1e-9);
+
+        add_usage(&mut usage, 1_000, 1_793_491_200);
+        assert_eq!((usage.month.as_str(), usage.month_requests), ("2026-11", 1));
+        assert_eq!(usage.total_input_tokens, 13_001_000);
+    }
+
+    #[test]
+    fn usage_file_round_trips() {
+        let path = std::env::temp_dir().join(format!("kern-jev-usage-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        update_jev_usage(&path, |usage| add_usage(usage, 500, 1_792_778_399)).unwrap();
+        let usage = update_jev_usage(&path, |usage| usage.billing_exhausted_at = Some(1)).unwrap();
+        assert_eq!(read_jev_usage_at(&path), usage);
+        assert_eq!(usage.total_input_tokens, 500);
+        let _ = std::fs::remove_file(path);
     }
 }

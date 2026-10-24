@@ -213,6 +213,8 @@ pub fn run() {
             agent_updates::apply_agent_update,
             agent_updates::get_auto_update,
             agent_updates::set_auto_update,
+            settings::get_jev_usage,
+            settings::set_jev_balance,
             quota::get_quota,
             quota::redeem_quota_reset,
             quota::get_quota_settings,

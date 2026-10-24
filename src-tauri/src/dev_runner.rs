@@ -354,7 +354,7 @@ fn detect_command(cwd: &Path) -> Result<String, String> {
     Err("No supported dev command detected".into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_dev_command(cwd: String) -> Result<String, String> {
     crate::projects::ensure_path_allowed(Path::new(&cwd))?;
     detect_command(Path::new(&cwd))
@@ -583,7 +583,7 @@ fn kill_port_listener(url: &str) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_dev_server(chat_id: String, cwd: String) -> Result<Option<DevRunnerInfo>, String> {
     crate::projects::ensure_path_allowed(Path::new(&cwd))?;
     let _lock = REGISTRY_LOCK
