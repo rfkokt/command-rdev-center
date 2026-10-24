@@ -2,11 +2,47 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 const SCROLLBACK_CAP: usize = 256 * 1024; // bytes retained for replay on re-open
+                                          // Snapshots are for restoring after an app restart, not per read: writing the
+                                          // whole scrollback on every PTY read stalled heavy output (installs, builds).
+const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(1000);
+
+/// Bytes at the end of `bytes` that start a UTF-8 sequence the read cut short.
+/// They are held back so a multi-byte glyph split across reads is not emitted
+/// as replacement characters.
+fn incomplete_utf8_tail(bytes: &[u8]) -> usize {
+    for back in 1..=bytes.len().min(3) {
+        let byte = bytes[bytes.len() - back];
+        if byte & 0b1100_0000 == 0b1000_0000 {
+            continue; // continuation byte: keep looking for the lead byte
+        }
+        let needed = match byte {
+            b if b & 0b1110_0000 == 0b1100_0000 => 2,
+            b if b & 0b1111_0000 == 0b1110_0000 => 3,
+            b if b & 0b1111_1000 == 0b1111_0000 => 4,
+            _ => return 0, // ASCII or invalid lead: nothing to hold back
+        };
+        return if needed > back { back } else { 0 };
+    }
+    0
+}
+
+/// macOS GUI apps start without a locale, so shells fall back to "C" and
+/// mangle non-ASCII output. Mirror Terminal.app's UTF-8 default.
+fn locale_fallback() -> Option<&'static str> {
+    let has_locale = ["LC_ALL", "LC_CTYPE", "LANG"].iter().any(|key| {
+        std::env::var(key)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+    });
+    (!has_locale).then_some("en_US.UTF-8")
+}
 
 // One PTY per chat id. Writer/child for input/resize/kill; scrollback for replay.
 struct Session {
@@ -99,6 +135,10 @@ pub fn terminal_open(
     cmd.cwd(&live_cwd);
     // no PATH override: an interactive login shell rebuilds it from the user's rc files
     cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    if let Some(lang) = locale_fallback() {
+        cmd.env("LANG", lang);
+    }
     // nvm refuses to load when npm_config_prefix is set (inherited from the app's parent env)
     cmd.env_remove("npm_config_prefix");
     cmd.env_remove("NPM_CONFIG_PREFIX");
@@ -121,8 +161,36 @@ pub fn terminal_open(
 
     let event = format!("terminal://data/{chat_id}");
     let exit_event = format!("terminal://exit/{chat_id}");
+    let dirty = Arc::new(AtomicBool::new(false));
+    let finished = Arc::new(AtomicBool::new(false));
+    {
+        // Persist the scrollback at most once per interval, off the read path.
+        let (dirty, finished, scrollback, chat_id) = (
+            dirty.clone(),
+            finished.clone(),
+            scrollback.clone(),
+            chat_id.clone(),
+        );
+        thread::spawn(move || {
+            while !finished.load(Ordering::Acquire) {
+                thread::sleep(SNAPSHOT_INTERVAL);
+                if !dirty.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
+                // Checked under the lock the reader takes when it finishes, so
+                // a write can never land after the snapshot is removed.
+                if let Ok(sb) = scrollback.lock() {
+                    if finished.load(Ordering::Acquire) {
+                        break;
+                    }
+                    write_snapshot(&chat_id, &sb);
+                }
+            }
+        });
+    }
     thread::spawn(move || {
-        let mut buf = [0u8; 4096];
+        let mut buf = [0u8; 16 * 1024];
+        let mut pending: Vec<u8> = Vec::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
@@ -133,13 +201,23 @@ pub fn terminal_open(
                             let drop_to = sb.len() - SCROLLBACK_CAP;
                             sb.drain(..drop_to);
                         }
-                        write_snapshot(&chat_id, &sb);
                     }
-                    let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    let _ = app.emit(&event, chunk);
+                    dirty.store(true, Ordering::Release);
+                    pending.extend_from_slice(&buf[..n]);
+                    let keep = incomplete_utf8_tail(&pending);
+                    let tail = pending.split_off(pending.len() - keep);
+                    if !pending.is_empty() {
+                        let chunk = String::from_utf8_lossy(&pending).into_owned();
+                        let _ = app.emit(&event, chunk);
+                    }
+                    pending = tail;
                 }
             }
         }
+        // Hold the scrollback lock so an in-flight snapshot write finishes first.
+        let guard = scrollback.lock();
+        finished.store(true, Ordering::Release);
+        drop(guard);
         let _ = app.emit(&exit_event, ());
         let _ = sessions().lock().map(|mut m| m.remove(&chat_id));
         remove_snapshot(&chat_id);
@@ -224,7 +302,20 @@ pub fn terminal_close(chat_id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::snapshot_path;
+    use super::{incomplete_utf8_tail, snapshot_path};
+
+    #[test]
+    fn holds_back_only_a_cut_off_utf8_sequence() {
+        let glyph = "\u{e0b0}".as_bytes(); // powerline arrow, 3 bytes
+        assert_eq!(incomplete_utf8_tail(b"ls -la"), 0);
+        assert_eq!(incomplete_utf8_tail(glyph), 0);
+        assert_eq!(incomplete_utf8_tail(&glyph[..1]), 1);
+        assert_eq!(incomplete_utf8_tail(&glyph[..2]), 2);
+        let mut cut = b"prompt ".to_vec();
+        cut.extend_from_slice(&"\u{1f680}".as_bytes()[..3]); // rocket, 4 bytes
+        assert_eq!(incomplete_utf8_tail(&cut), 3);
+        assert_eq!(incomplete_utf8_tail(&[0xff]), 0);
+    }
 
     #[test]
     fn terminal_snapshot_ids_cannot_escape_the_snapshot_directory() {

@@ -1,7 +1,40 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { init, Terminal, FitAddon } from "ghostty-web";
+import { Terminal, FitAddon, type ITheme } from "ghostty-web";
+import {
+  TERMINAL_FONT_FAMILY,
+  TERMINAL_FONT_SIZE,
+  warmTerminal,
+} from "../lib/terminal-warmup";
+
+// Full ANSI palette (One Dark–style, like Zed) so CLI colors match a native
+// terminal instead of ghostty-web's defaults.
+const TERMINAL_THEME: ITheme = {
+  background: "#0b0e14",
+  foreground: "#c8ccd4",
+  cursor: "#74ade8",
+  cursorAccent: "#0b0e14",
+  selectionBackground: "#3e4451",
+  selectionForeground: "#e6e6e6",
+  black: "#3f4451",
+  red: "#e06c75",
+  green: "#98c379",
+  yellow: "#e5c07b",
+  blue: "#61afef",
+  magenta: "#c678dd",
+  cyan: "#56b6c2",
+  white: "#d7dae0",
+  brightBlack: "#5c6370",
+  brightRed: "#ea858b",
+  brightGreen: "#aad581",
+  brightYellow: "#f0d197",
+  brightBlue: "#85c0f5",
+  brightMagenta: "#d398eb",
+  brightCyan: "#6ed5de",
+  brightWhite: "#ffffff",
+};
 
 // One PTY terminal, bound to a backend session key. Kill on unmount only when asked.
 function TerminalPane({
@@ -25,20 +58,23 @@ function TerminalPane({
     let disposed = false;
 
     (async () => {
-      await init();
+      // Module, WASM and fonts are usually warm already (see warmTerminal).
+      await warmTerminal();
       if (disposed) return;
-      const fontFamily =
-        "'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, monospace";
       const term = new Terminal({
-        fontSize: 13,
-        fontFamily,
+        fontSize: TERMINAL_FONT_SIZE,
+        fontFamily: TERMINAL_FONT_FAMILY,
         cursorBlink: true,
-        theme: { background: "#0b0e14" },
+        scrollback: 10000,
+        theme: TERMINAL_THEME,
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(host);
       cleanup.term = term;
+      // Fit BEFORE spawning: a shell started at the default 80x24 and resized
+      // a moment later redraws its prompt and leaves garbled lines behind.
+      if (host.clientWidth > 0 && host.clientHeight > 0) fit.fit();
 
       // register the output listener BEFORE spawning so the first shell prompt isn't lost
       await listen<string>(`terminal://data/${sessionKey}`, (e) => {
@@ -49,6 +85,7 @@ function TerminalPane({
       await listen(`terminal://exit/${sessionKey}`, () =>
         term.write("\r\n[process exited]\r\n"),
       ).then((u) => unlisten.push(u));
+      if (disposed) return;
 
       term.onResize(
         ({ cols, rows }) =>
@@ -59,7 +96,6 @@ function TerminalPane({
           }).catch(() => {}),
       );
 
-      // spawn the shell first so the prompt is never blocked on font/layout work
       const snapshot = await invoke<string>("terminal_open", {
         chatId: sessionKey,
         cwd,
@@ -77,25 +113,8 @@ function TerminalPane({
             () => {},
           ),
       );
-
-      // fit once the font+layout settle; guarded with a timeout so a stuck fonts.ready never blocks the shell
-      const settle = Promise.all([
-        document.fonts
-          ?.load("13px 'JetBrainsMono Nerd Font'")
-          .catch(() => {}) ?? Promise.resolve(),
-        document.fonts?.ready ?? Promise.resolve(),
-      ]);
-      await Promise.race([settle, new Promise((r) => setTimeout(r, 400))]);
-      if (disposed) return;
-      (
-        term as unknown as { renderer?: { remeasureFont(): void } }
-      ).renderer?.remeasureFont();
-      await new Promise((r) =>
-        requestAnimationFrame(() => requestAnimationFrame(r)),
-      );
-      if (disposed) return;
-      fit.fit();
       fit.observeResize();
+      term.focus();
     })().catch((error) => {
       if (!disposed)
         host.textContent = `Terminal failed to initialize: ${String(error)}`;
@@ -197,7 +216,9 @@ export default function TerminalPanel({
     if (panes.length <= 1) onClose();
   }
 
-  return (
+  // Portaled to <body>: inside the chat view the modal sat in a z-index:1
+  // stacking context, so the sidebar (z-index:30) covered its left edge.
+  return createPortal(
     <div
       className="terminal-modal"
       style={{ left: pos.x, top: pos.y, display: hidden ? "none" : "flex" }}
@@ -312,6 +333,7 @@ export default function TerminalPanel({
           />
         ))}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

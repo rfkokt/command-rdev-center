@@ -1,0 +1,33 @@
+/* Symbols-only Nerd Font (MIT, see assets/fonts/SymbolsNerdFont-LICENSE.txt):
+   fallback for prompt icons when no patched Nerd Font is installed. */
+@font-face {
+  font-family: "Kern Symbols Nerd Font";
+  src: url("./assets/fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  font-display: block;
+  unicode-range:
+    U+23FB-23FE, U+2665, U+26A1, U+2B58, U+E000-F8FF, U+F0000-FFFFD;
+}
+
+/* The canvas paints the terminal background; the host padding must match. */
+.terminal-panel-host {
+  background: #0b0e14;
+}
+
+/* The per-pane kill control floats over the pane instead of taking a row. */
+.terminal-pane {
+  position: relative;
+}
+.terminal-pane-bar {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  min-height: 0;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.terminal-pane:hover .terminal-pane-bar,
+.terminal-pane-bar:focus-within {
+  opacity: 1;
+}

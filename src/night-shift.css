@@ -1312,3 +1312,64 @@ body,
     animation: none;
   }
 }
+
+/* ================================================================ compact header
+   One 40px row: session title only (the project is already in the sidebar),
+   smaller mascot/badge and 26px controls. */
+:root {
+  --minimal-header: 40px;
+}
+
+.app-shell .app-toolbar {
+  height: var(--minimal-header) !important;
+  min-height: var(--minimal-header) !important;
+  padding: 0 12px !important;
+  gap: 10px !important;
+}
+
+.app-shell .workspace-title {
+  gap: 8px !important;
+}
+
+.app-shell .workspace-title strong {
+  font-size: var(--fs-small) !important;
+  line-height: 1.2 !important;
+}
+
+.app-shell .workspace-title small {
+  display: none !important;
+}
+
+.app-shell .workspace-title .mascot.small {
+  width: 22px !important;
+  height: 22px !important;
+}
+
+.app-shell .workspace-title .mode-badge {
+  height: 20px !important;
+  padding: 0 8px !important;
+}
+
+.app-shell .app-toolbar .dev-control,
+.app-shell .app-toolbar .toolbar-button,
+.app-shell .app-toolbar .chat-header-actions .caption-uppercase {
+  min-height: 26px !important;
+  height: 26px !important;
+  padding: 0 8px !important;
+}
+
+.app-shell .app-toolbar .project-workspace-nav button {
+  min-height: 22px !important;
+  padding: 0 8px !important;
+}
+
+.app-shell .app-toolbar .chat-session-close {
+  width: 26px !important;
+  height: 26px !important;
+}
+
+/* Keep the sidebar brand row on the same 40px line as the header. */
+.app-shell .sidebar-brand {
+  height: var(--minimal-header) !important;
+  min-height: var(--minimal-header) !important;
+}

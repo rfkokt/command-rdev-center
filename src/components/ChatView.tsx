@@ -69,13 +69,15 @@ import ToolCallView, {
 } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
+import { warmTerminalWhenIdle } from "../lib/terminal-warmup";
 import AgentRunCard, { buildRunSteps, noteToolPhase } from "./AgentRunCard";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
 // Split the xterm bundle out of the main chunk; it only loads when the
 // terminal is first mounted.
-const TerminalPanel = lazy(() => import("./TerminalPanel"));
+const loadTerminalPanel = () => import("./TerminalPanel");
+const TerminalPanel = lazy(loadTerminalPanel);
 import {
   canResumeResearch,
   elapsedResearch,
@@ -518,6 +520,13 @@ export default function ChatView({
   // Global chat provisions a hidden pane immediately so the agent can use SSH/device tools
   // without asking the user to open the terminal first.
   const [terminalMounted, setTerminalMounted] = useState(globalChat);
+  // Load the terminal chunk, WASM core and fonts while idle so opening the
+  // terminal does not wait on them.
+  useEffect(() => {
+    if (!isActive) return;
+    void loadTerminalPanel().catch(() => undefined);
+    warmTerminalWhenIdle();
+  }, [isActive]);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(
     null,
@@ -3742,6 +3751,15 @@ export default function ChatView({
       source: "client",
     },
     { name: "model", description: "Choose the active model", source: "client" },
+    ...(globalChat
+      ? []
+      : [
+          {
+            name: "dev",
+            description: "Start the project dev server",
+            source: "client" as const,
+          },
+        ]),
     { name: "thinking", description: "Set reasoning level", source: "client" },
     {
       name: "compact",
@@ -3909,6 +3927,12 @@ export default function ChatView({
       } catch (error) {
         onToast(`Pi sync: ${String(error)}`);
       }
+      return;
+    }
+    if (text === "/dev" && !globalChat) {
+      setInput("");
+      if (!devRunner) void handleRunDev();
+      else onToast(`Dev server already running at ${devRunner.url}`);
       return;
     }
     if (text === "/model") {
@@ -5383,14 +5407,6 @@ export default function ChatView({
                 ? (currentModel.split("/").pop()?.slice(0, 24) ?? "Model")
                 : "Model"}
             </button>
-            {!globalChat && !devRunner && (
-              <button
-                onClick={handleRunDev}
-                className="dev-control run dev-control-run"
-              >
-                Run dev
-              </button>
-            )}
             <button
               onClick={handleOpenTerminal}
               className={`dev-control open dev-control-term${showTerminal ? " active" : ""}`}
