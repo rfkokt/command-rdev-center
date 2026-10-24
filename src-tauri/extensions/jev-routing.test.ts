@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import routing from "./jev-routing";
 
-function harness() {
+function harness(prompt = "Inspect auth") {
   let handler: (event: any, ctx: any) => Promise<any>;
   const appendEntry = vi.fn();
   const pi = {
@@ -24,7 +24,7 @@ function harness() {
   };
   routing(pi as any);
   const event = {
-    prompt: "Inspect auth",
+    prompt,
     systemPromptOptions: {
       skills: [
         {
@@ -152,6 +152,21 @@ describe("Jev project routing lifecycle", () => {
     );
     const h = harness();
     expect(await h.run()).toBeUndefined();
+    // "none" is recorded, not announced in the chat.
+    expect(h.pi.appendEntry).toHaveBeenCalled();
+    expect(h.pi.sendMessage).not.toHaveBeenCalled();
+  });
+  it("skips short follow-up replies without a request", async () => {
+    const fetcher = setup("advisory");
+    for (const prompt of ["iya push aja", "lanjut", "ok commit"]) {
+      const h = harness(prompt);
+      expect(await h.run()).toBeUndefined();
+      expect(h.pi.sendMessage).not.toHaveBeenCalled();
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    // A short new task still goes to Jev.
+    await harness("Fix CSS").run();
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("failure records a safe reason and adds no advice", async () => {
     const fetcher = setup("advisory");

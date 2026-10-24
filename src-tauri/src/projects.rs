@@ -24,6 +24,7 @@ const BROWSER_TOOLS_EXTENSION: &str = include_str!("../extensions/browser-tools.
 const API_TEST_EXTENSION: &str = include_str!("../extensions/api-test.ts");
 const JEV_ROUTING_EXTENSION: &str = include_str!("../extensions/jev-routing.ts");
 const JEV_CLIENT: &str = include_str!("../extensions/jev-client.ts");
+const FOLLOW_UP: &str = include_str!("../extensions/follow-up.ts");
 const KERN_MCP_SERVER: &str = include_str!("../extensions/kern-mcp.mjs");
 
 #[derive(Debug, Clone, Serialize)]
@@ -284,6 +285,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("openapi-refresh.ts", OPENAPI_REFRESH_EXTENSION),
         ("jev-routing.ts", JEV_ROUTING_EXTENSION),
         ("jev-client.ts", JEV_CLIENT),
+        ("follow-up.ts", FOLLOW_UP),
         ("kern-mcp.mjs", KERN_MCP_SERVER),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;

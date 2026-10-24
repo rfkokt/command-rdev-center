@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { evaluateJev, type JevConfig, type JevQuestion } from "./jev-client";
+import { isFollowUp } from "./follow-up";
 
 export type RoutingCandidate = {
   id: string;
@@ -90,6 +91,8 @@ export default function (pi: ExtensionAPI) {
     const mode = await modeNow();
     if (mode !== "shadow" && mode !== "advisory") return;
     if (!event.prompt.trim()) return;
+    // "iya push aja" needs no new tool or skill: skip the request and its wait.
+    if (isFollowUp(event.prompt.trim())) return;
     const config: JevConfig = {
       endpoint:
         process.env.CRC_JEV_ENDPOINT ?? "https://api.typesafe.ai/v1/systemone",
@@ -129,11 +132,6 @@ export default function (pi: ExtensionAPI) {
       });
       return;
     }
-    pi.sendMessage({
-      customType: "kern-jev-status",
-      content: `Jev sedang memilih tool/skill (${bounded.length} kandidat)…`,
-      display: true,
-    });
     const result = await evaluateJev(
       config,
       { request: event.prompt },
@@ -192,14 +190,14 @@ export default function (pi: ExtensionAPI) {
         confidence,
       })),
     });
+    // Only a pick is worth a line in the chat; "none" stays in the trace.
+    if (!selected.length) return;
     pi.sendMessage({
       customType: "kern-jev-status",
-      content: selected.length
-        ? `Jev selesai: ${selected.map((item) => `${item.kind} ${item.name}`).join(", ")}.`
-        : "Jev selesai: tidak ada tool/skill khusus yang direkomendasikan.",
+      content: `Jev: ${selected.map((item) => `${item.kind} ${item.name}`).join(", ")}.`,
       display: true,
     });
-    if (mode !== "advisory" || !selected.length) return;
+    if (mode !== "advisory") return;
     // No confidence threshold is advertised as calibrated. These are suggestions, never enforcement.
     return {
       message: {

@@ -20,7 +20,8 @@ vi.mock("node:child_process", () => ({
     );
   },
 }));
-import graphify, { isFollowUp } from "./graphify-context";
+import graphify from "./graphify-context";
+import { isFollowUp } from "./follow-up";
 
 const folders: string[] = [];
 function harness(count = 1) {

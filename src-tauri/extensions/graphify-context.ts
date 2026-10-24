@@ -3,24 +3,12 @@ import { execFile } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { promisify } from "node:util";
+import { isFollowUp } from "./follow-up";
 
 const execFileAsync = promisify(execFile);
 const MAX_PROMPT_CHARS = 2_000;
 // Every injection stays in the session for good; keep each one small.
 const MAX_CONTEXT_CHARS = 8_000;
-const CONTINUE =
-  /^(?:continue|lanjut(?:kan)?|retry|coba lagi|teruskan|go on|oke lanjut)[.!\s]*$/i;
-// Short replies to the agent ("iya push aja", "ok commit", "sip") keep the
-// current task instead of querying the graph for the reply's words.
-const ACK =
-  /^(?:iya|iyaa+|ya|yaa+|yap|yup|yes|yep|ok|oke|okay|okey|sip|siap|gas|boleh|mantap|setuju|sure|thanks|makasih|good|nice|lanjut|continue|go)\b/i;
-
-export function isFollowUp(prompt: string) {
-  return (
-    CONTINUE.test(prompt) ||
-    (ACK.test(prompt) && prompt.split(/\s+/).length <= 6)
-  );
-}
 
 export default function (pi: ExtensionAPI) {
   const cache = new Map<string, string>();
