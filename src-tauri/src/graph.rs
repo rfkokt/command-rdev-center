@@ -548,7 +548,7 @@ pub async fn build_graph(
         .map_err(|e| format!("Graphify worker failed: {e}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn enable_global_graphignore() -> Result<String, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
     let configured = Command::new("git")

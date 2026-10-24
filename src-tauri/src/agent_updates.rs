@@ -465,13 +465,14 @@ pub async fn apply_agent_update(id: String) -> Result<Vec<AgentUpdate>, String> 
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_auto_update() -> bool {
     harness::read_settings().auto_update
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auto_update(enabled: bool) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let mut settings = harness::read_settings();
     settings.auto_update = enabled;
     harness::write_settings(&settings)

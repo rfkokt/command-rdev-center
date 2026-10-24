@@ -327,13 +327,14 @@ pub fn backlog_dir() -> Result<PathBuf, String> {
         .join("backlog"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_backlog_dir() -> Result<String, String> {
     Ok(backlog_dir()?.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_backlog_dir(path: String) -> Result<String, String> {
+    let _serial = crate::config_guard();
     let path = PathBuf::from(path.trim());
     if !path.is_absolute() || !path.is_dir() {
         return Err("backlog storage must be an existing absolute directory".into());
@@ -596,7 +597,7 @@ pub(crate) fn ensure_verified_repository(path: &Path) -> Result<PathBuf, String>
     Ok(root)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_vscode(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     let allowed = ensure_path_allowed(&path)?;
@@ -751,7 +752,7 @@ pub async fn fetch_project_branches(path: String) -> Result<Vec<String>, String>
     .map_err(|error| format!("Branch fetch worker failed: {error}"))?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
     let project = project_info(Path::new(&path), None, None)?;
     if !project.is_git {
@@ -781,7 +782,7 @@ pub fn list_project_branches(path: String) -> Result<Vec<String>, String> {
     Ok(branches)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
     let canonical = canonicalize_or_original(Path::new(&path))
         .to_string_lossy()
@@ -801,8 +802,9 @@ pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
         }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_task_source(path: String, source: TaskSource) -> Result<TaskSource, String> {
+    let _serial = crate::config_guard();
     let canonical = canonicalize_or_original(Path::new(&path))
         .to_string_lossy()
         .to_string();
@@ -1512,7 +1514,7 @@ pub fn swagger_url_for_project(path: &Path) -> Result<Option<String>, String> {
     Ok(swagger_urls_for_project(path)?.into_iter().next())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_swagger_urls(path: String) -> Result<Vec<String>, String> {
     swagger_urls_for_project(Path::new(&path))
 }
@@ -1527,13 +1529,14 @@ fn validated_swagger_urls(urls: Vec<String>) -> Result<Vec<String>, String> {
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_swagger_url(path: String) -> Result<String, String> {
     Ok(swagger_url_for_project(Path::new(&path))?.unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_swagger_url(path: String, swagger_url: String) -> Result<String, String> {
+    let _serial = crate::config_guard();
     let canonical = canonicalize_or_original(Path::new(&path))
         .to_string_lossy()
         .into_owned();
@@ -1584,16 +1587,17 @@ pub fn postman_collection_url_for_project(path: &Path) -> Result<Option<String>,
         .flatten())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_postman_collection_url(path: String) -> Result<String, String> {
     Ok(postman_collection_url_for_project(Path::new(&path))?.unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_postman_collection_url(
     path: String,
     postman_collection_url: String,
 ) -> Result<String, String> {
+    let _serial = crate::config_guard();
     let canonical = canonicalize_or_original(Path::new(&path))
         .to_string_lossy()
         .into_owned();
@@ -1620,7 +1624,7 @@ pub fn save_project_postman_collection_url(
     Ok(postman_collection_url)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_project_api_documentation(
     path: String,
     swagger_urls: Vec<String>,
@@ -1628,6 +1632,7 @@ pub fn save_project_api_documentation(
     postman_collection_path: Option<String>,
     api_list_sheet: Option<ApiListSheet>,
 ) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let canonical = project_config_key(Path::new(&path))?;
     let swagger_urls = validated_swagger_urls(swagger_urls)?;
     let postman_collection_url = validated_swagger_url(&postman_collection_url)?;
@@ -1677,14 +1682,15 @@ pub fn save_project_api_documentation(
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_api_list_sheet(path: String) -> Result<Option<ApiListSheet>, String> {
     let key = project_config_key(Path::new(&path))?;
     Ok(read_config()?.api_list_sheets.get(&key).cloned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn refresh_project_api_documentation(path: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let canonical = project_config_key(Path::new(&path))?;
     let mut config = read_config()?;
     refresh_api_documentation_context(&mut config, &canonical)?;
@@ -1701,7 +1707,7 @@ pub fn project_base_branch(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("base branch not configured for {}", canonical))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn discover_projects(path: String) -> Result<Vec<ProjectInfo>, String> {
     let root = PathBuf::from(path);
     if !root.is_dir() {
@@ -1726,7 +1732,7 @@ pub fn discover_projects(path: String) -> Result<Vec<ProjectInfo>, String> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
     let root = canonicalize_or_original(Path::new(&path));
     if !root.is_dir() {
@@ -1737,6 +1743,8 @@ pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
         let branch = current_branch(root.to_string_lossy().as_ref());
         return add_project(root.to_string_lossy().into_owned(), branch);
     }
+    // After the add_project hand-off above: the guard is not re-entrant.
+    let _serial = crate::config_guard();
     let mut config = read_config()?;
     let root_string = root.to_string_lossy().into_owned();
     config.projects.retain(|saved| {
@@ -1766,8 +1774,9 @@ pub fn add_workspace(path: String) -> Result<ProjectInfo, String> {
         .ok_or("workspace registration failed".into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectInfo, String> {
+    let _serial = crate::config_guard();
     let mut project = project_info(Path::new(&path), base_branch.clone(), None)?;
     if project.is_git {
         let branch = base_branch
@@ -1807,11 +1816,12 @@ pub fn add_project(path: String, base_branch: Option<String>) -> Result<ProjectI
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_project_base_branch(
     path: String,
     base_branch: String,
 ) -> Result<ProjectInfo, String> {
+    let _serial = crate::config_guard();
     let mut project = project_info(Path::new(&path), Some(base_branch.clone()), None)?;
     if !project.is_git {
         return Err("base branch is only available for Git projects".into());
@@ -1848,11 +1858,12 @@ pub fn update_project_base_branch(
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_project_pipeline_type(
     path: String,
     pipeline_type: String,
 ) -> Result<ProjectInfo, String> {
+    let _serial = crate::config_guard();
     let pipeline_type = pipeline_type.trim().to_string();
     if !matches!(pipeline_type.as_str(), "Personal" | "MBI" | "KAI") {
         return Err("pipeline type must be Personal, MBI, or KAI".into());
@@ -1877,8 +1888,9 @@ pub fn update_project_pipeline_type(
     project_info(Path::new(&canonical), base_branch, Some(pipeline_type))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_project(path: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let canonical = canonicalize_or_original(Path::new(&path))
         .to_string_lossy()
         .to_string();

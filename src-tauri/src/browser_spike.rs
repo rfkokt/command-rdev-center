@@ -416,7 +416,7 @@ fn screenshot_artifact_id<'a>(session_id: &str, artifact_ref: &'a str) -> Result
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_browser_screenshot(
     app: AppHandle,
     session_id: String,
@@ -485,7 +485,7 @@ pub fn shutdown(state: &BrowserState) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn browser_b0_packaged_smoke(
     app: AppHandle,
     state: tauri::State<'_, BrowserState>,

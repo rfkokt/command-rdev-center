@@ -93,7 +93,7 @@ fn remove_snapshot(chat_id: &str) {
 }
 
 // Returns retained scrollback so the frontend can replay it (empty for a fresh session).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_open(
     app: AppHandle,
     chat_id: String,
@@ -287,7 +287,7 @@ pub fn terminal_resize(chat_id: String, cols: u16, rows: u16) -> Result<(), Stri
 }
 
 // Kill the shell + child processes and drop the session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_close(chat_id: String) -> Result<(), String> {
     if let Some(mut s) = sessions()
         .lock()

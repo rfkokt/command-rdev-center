@@ -159,7 +159,7 @@ fn generate_id() -> String {
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_prompt_engines() -> Result<Vec<PromptEngine>, String> {
     ensure_default()?;
     let mut engines = Vec::new();
@@ -178,8 +178,9 @@ pub fn list_prompt_engines() -> Result<Vec<PromptEngine>, String> {
     Ok(engines)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_prompt_engine(input: SavePromptEngineInput) -> Result<PromptEngine, String> {
+    let _serial = crate::config_guard();
     validate(&input)?;
     let timestamp = now();
     let id = input.id.unwrap_or_else(generate_id);
@@ -210,8 +211,9 @@ pub fn save_prompt_engine(input: SavePromptEngineInput) -> Result<PromptEngine, 
     Ok(engine)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_prompt_engine(id: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let target = path(&id)?;
     if target.exists() {
         std::fs::remove_file(target).map_err(|e| e.to_string())?;

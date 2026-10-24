@@ -219,7 +219,7 @@ pub struct ProjectFile {
     pub chars: usize,
     pub modified_ms: u128,
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_rag_source(id: String) -> Result<RagSourceDetail, String> {
     let path = source_path(&id)?;
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -247,7 +247,7 @@ fn allowed_project_path(project_path: &str) -> Result<PathBuf, String> {
     Ok(requested)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_project_files(project_path: String) -> Result<Vec<ProjectFile>, String> {
     let canonical = allowed_project_path(&project_path)?;
     let mut files: Vec<ProjectFile> = Vec::new();
@@ -369,14 +369,14 @@ fn project_file_path(project_path: &str, file_name: &str) -> Result<PathBuf, Str
     }
     Ok(target)
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_file_content(project_path: String, file_name: String) -> Result<String, String> {
     let target = project_file_path(&project_path, &file_name)?;
     let content = text_file(&target)
         .map_err(|_| "Binary or non-UTF8 file — preview not available".to_string())?;
     Ok(content.chars().take(100_000).collect())
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_image_content(
     project_path: String,
     file_name: String,
@@ -394,7 +394,7 @@ pub fn get_project_image_content(
     fs::read(target).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_rag_settings() -> Result<RagSettings, String> {
     let mut settings: RagSettings = fs::read_to_string(settings_path()?)
         .ok()
@@ -404,11 +404,12 @@ pub fn get_rag_settings() -> Result<RagSettings, String> {
     settings.has_token = token().is_ok();
     Ok(settings)
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_rag_settings(
     mut settings: RagSettings,
     bearer_token: Option<String>,
 ) -> Result<RagSettings, String> {
+    let _serial = crate::config_guard();
     settings.base_url = settings.base_url.trim_end_matches('/').to_string();
     validate(&settings)?;
     if let Some(value) = bearer_token.filter(|v| !v.trim().is_empty()) {
@@ -452,7 +453,7 @@ fn curl_fail_flag() -> &'static str {
 fn is_unauthorized_detail(detail: &str) -> bool {
     detail.contains("401")
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn test_rag_connection() -> Result<(), String> {
     let s = get_rag_settings()?;
     validate(&s)?;
@@ -565,8 +566,9 @@ fn ingest_rag_document_blocking(file_path: String) -> Result<String, String> {
         default_source_kind(),
     )
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_rag_chat_response(text: String, kind: String) -> Result<String, String> {
+    let _serial = crate::config_guard();
     let title = text
         .lines()
         .find(|line| !line.trim().is_empty())
@@ -601,7 +603,7 @@ fn read_sources() -> Vec<Source> {
         .filter_map(|raw| serde_json::from_str(&raw).ok())
         .collect()
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_rag_sources() -> Result<Vec<RagSource>, String> {
     let dir = corpus_dir()?;
     let mut sources = Vec::new();
@@ -636,8 +638,9 @@ pub fn list_rag_sources() -> Result<Vec<RagSource>, String> {
     sources.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
     Ok(sources)
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_rag_source(id: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let path = source_path(&id)?;
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
@@ -691,7 +694,7 @@ fn project_sources(paths: &[String]) -> Vec<Source> {
     }
     sources
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_rag_context(query: String) -> Result<String, String> {
     let settings = get_rag_settings()?;
     if !settings.enabled {

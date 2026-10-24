@@ -35,10 +35,26 @@ pub struct Config {
     pub projects: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_config() -> Result<Config, String> {
     let raw = std::fs::read_to_string(projects::config_path()).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+/// Commands used to run on the main thread, which also serialized them. They
+/// now run on the async pool (so slow git, disk or network work no longer
+/// freezes the app), and these guards keep read-modify-write of shared config
+/// files from interleaving. Not re-entrant: take it once, in the command.
+pub(crate) fn config_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Same idea for git checkpoint/worktree commands, kept separate so a slow
+/// git operation never holds up a settings save.
+pub(crate) fn checkpoint_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

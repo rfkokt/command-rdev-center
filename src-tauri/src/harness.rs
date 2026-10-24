@@ -352,8 +352,9 @@ pub async fn install_harness(id: String) -> Result<Vec<HarnessInfo>, String> {
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_default_harness(id: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let mut settings = read_settings();
     if id != PI && !all_acp(&settings).iter().any(|spec| spec.id == id) {
         return Err(format!("Unknown agent harness `{id}`"));
@@ -362,13 +363,14 @@ pub fn set_default_harness(id: String) -> Result<(), String> {
     write_settings(&settings)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_auto_approve() -> bool {
     read_settings().auto_approve
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auto_approve(enabled: bool) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let mut settings = read_settings();
     settings.auto_approve = enabled;
     write_settings(&settings)?;
@@ -376,8 +378,9 @@ pub fn set_auto_approve(enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_custom_harness(harness: HarnessSpec) -> Result<(), String> {
+    let _serial = crate::config_guard();
     if !valid_id(&harness.id) || harness.id == PI {
         return Err("Harness id must be lowercase letters, digits or dashes".into());
     }
@@ -393,8 +396,9 @@ pub fn save_custom_harness(harness: HarnessSpec) -> Result<(), String> {
     write_settings(&settings)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_custom_harness(id: String) -> Result<(), String> {
+    let _serial = crate::config_guard();
     let mut settings = read_settings();
     settings.custom.retain(|existing| existing.id != id);
     if settings.default.as_deref() == Some(id.as_str()) {
