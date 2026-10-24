@@ -1180,7 +1180,18 @@ body,
 /* Header: the title keeps a readable minimum, chat controls scroll sideways
    rather than overlapping it, and app actions never shrink. */
 .app-shell .workspace-title {
-  min-width: 140px !important;
+  /* Content minimum (mascot + 96px title + badge), so nothing overflows it. */
+  min-width: auto !important;
+  /* Give way first: the session title ellipsizes before chat controls scroll. */
+  flex: 0 12 auto !important;
+}
+
+.app-shell .workspace-title > div {
+  min-width: 96px !important;
+}
+
+.app-shell .workspace-title > :not(div) {
+  flex-shrink: 0 !important;
 }
 
 .app-shell .workspace-title .mode-badge {
@@ -1188,7 +1199,9 @@ body,
 }
 
 .app-shell .toolbar-chat-slot {
-  flex: 1 1 0px !important;
+  flex: 1 1 auto !important;
+  /* Always room for the close control, so it never spills over the title. */
+  min-width: 72px !important;
 }
 
 .app-shell .chat-header.in-app-header {
@@ -1196,9 +1209,25 @@ body,
 }
 
 .app-shell .chat-header.in-app-header .chat-header-actions {
+  /* opendots.css pins .chat-header-actions to flex-shrink: 0 !important; in
+     the app header that made the group overflow leftwards over the title. */
+  flex: 0 1 auto !important;
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+  /* Fade the clipped edge so it reads as scrollable, not cut off. The
+     padding keeps the fade on empty space when nothing overflows. */
+  padding-right: 14px !important;
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 calc(100% - 14px),
+    transparent
+  );
+  mask-image: linear-gradient(90deg, #000 calc(100% - 14px), transparent);
+}
+
+.app-shell .chat-header.in-app-header .chat-header-actions > * {
+  flex-shrink: 0;
 }
 
 .app-shell .chat-header.in-app-header .chat-header-actions::-webkit-scrollbar {
