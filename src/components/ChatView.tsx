@@ -31,6 +31,7 @@ import { withTimeout } from "../lib/with-timeout";
 import {
   formatTokens,
   cacheHitPercent,
+  buildHandoff,
   mergeAssistantMessage,
   recentItems,
   uid,
@@ -622,6 +623,8 @@ export default function ChatView({
   // reopens with the agent it began with.
   const [harness, setHarness] = useState<string | undefined>(initialHarness);
   const harnessRef = useRef<string | undefined>(initialHarness);
+  /** Conversation so far, handed to an agent that took over mid-chat. */
+  const handoffRef = useRef<string | undefined>(undefined);
   const [harnessOptions, setHarnessOptions] = useState<HarnessOption[]>([]);
   const slug = useRef(
     chatId
@@ -3482,6 +3485,7 @@ export default function ChatView({
           globalChat,
           customSystemPrompt,
           projectName,
+          handoff: handoffRef.current,
         });
         // The old process's fork request must not filter the new process's history.
         forkHistoryRequestRef.current = null;
@@ -3542,23 +3546,48 @@ export default function ChatView({
   }, []);
 
   const hasUserMessage = messages.some((message) => message.role === "user");
+  // Agents can change between turns; a running turn, restart or compaction
+  // belongs to the current agent.
   const agentLocked =
-    hasUserMessage || Boolean(sessionFileRef.current?.startsWith("acp:"));
+    agentStatus === "running" ||
+    isRestarting ||
+    compaction?.status === "running";
   const currentHarness =
     harness ?? harnessOptions.find((item) => item.is_default)?.id ?? "pi";
+  const harnessLabel = (id: string) =>
+    harnessOptions.find((item) => item.id === id)?.label ?? id;
 
-  /** Switch agents on a chat that has not started yet: drop the empty session
-   * and start the chosen agent in its place. */
+  /** Start the chosen agent in this chat. Each agent keeps its own session,
+   * so a chat already underway hands the new one its conversation so far. */
   const changeHarness = useCallback(
     (next: string) => {
       if (agentLocked || next === currentHarness) return;
+      const from = harnessLabel(currentHarness);
+      const label = harnessLabel(next);
+      handoffRef.current = hasUserMessage
+        ? buildHandoff(messages, from)
+        : undefined;
       setHarness(next);
       harnessRef.current = next;
       sessionFileRef.current = undefined;
       onSessionFile(chatId, "");
       onHarnessChange?.(chatId, next);
-      const label =
-        harnessOptions.find((item) => item.id === next)?.label ?? next;
+      // A model id from one agent means nothing to another.
+      modelRef.current = "";
+      setCurrentModel("");
+      if (hasUserMessage)
+        setMessages((previous) => [
+          ...previous,
+          {
+            id: uid(),
+            role: "system",
+            text: `Switched from ${from} to ${label}. ${label} starts a new session and gets this conversation as context.`,
+            thinking: "",
+            toolCalls: [],
+            createdAt: Date.now(),
+            isStreaming: false,
+          },
+        ]);
       onToast(`Starting ${label}…`);
       void handleRestart();
     },
@@ -3568,6 +3597,8 @@ export default function ChatView({
       currentHarness,
       handleRestart,
       harnessOptions,
+      hasUserMessage,
+      messages,
       onHarnessChange,
       onSessionFile,
       onToast,

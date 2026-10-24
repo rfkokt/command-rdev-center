@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   appendStreamingText,
+  buildHandoff,
   cacheHitPercent,
   mergeAssistantMessage,
 } from "./chat-utils";
@@ -183,4 +184,34 @@ test("cacheHitPercent is the cached share of prompt tokens", () => {
     cacheHitPercent({ input: 1200, cacheRead: 45000, cacheWrite: 3800 }),
   ).toBe(90);
   expect(cacheHitPercent({ input: 0, cacheRead: 0, cacheWrite: 0 })).toBe(0);
+});
+
+test("buildHandoff keeps user and assistant text, newest first within the cap", () => {
+  expect(
+    buildHandoff([{ role: "system", text: "Agent reloaded" }], "pi"),
+  ).toBeUndefined();
+  const handoff = buildHandoff(
+    [
+      { role: "user", text: "Add a login page" },
+      { role: "system", text: "Agent reloaded" },
+      { role: "assistant", text: "Done. Added src/Login.tsx." },
+      { role: "user", text: "  " },
+    ],
+    "Claude Code",
+  )!;
+  expect(handoff).toContain("switched to you from Claude Code");
+  expect(handoff).toContain(
+    "User: Add a login page\n\nAssistant: Done. Added src/Login.tsx.",
+  );
+  expect(handoff).not.toContain("Agent reloaded");
+
+  const long = Array.from({ length: 40 }, (_, index) => ({
+    role: "user" as const,
+    text: `${index} ${"x".repeat(3000)}`,
+  }));
+  const capped = buildHandoff(long, "Codex")!;
+  expect(capped.length).toBeLessThan(26_000);
+  expect(capped).toContain("User: 39 ");
+  expect(capped).not.toContain("User: 0 ");
+  expect(capped).toMatch(/\d+ older messages dropped/);
 });

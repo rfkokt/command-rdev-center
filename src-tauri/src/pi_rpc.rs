@@ -750,6 +750,27 @@ fn apply_user_token_env(command: &mut Command) {
     }
 }
 
+/// Upper bound for the conversation handed to an agent that took over a chat
+/// (the UI already trims it; this guards the command boundary).
+const MAX_HANDOFF_CHARS: usize = 64_000;
+
+/// Append the previous agent's conversation to the chat's system prompt, so
+/// pi (`--append-system-prompt`) and ACP agents (first-prompt preamble) both
+/// see it.
+fn with_handoff(prompt: Option<String>, handoff: Option<String>) -> Option<String> {
+    let handoff = handoff
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .map(|text| match text.char_indices().nth(MAX_HANDOFF_CHARS) {
+            Some((cut, _)) => text[..cut].to_string(),
+            None => text,
+        });
+    match (prompt.filter(|p| !p.trim().is_empty()), handoff) {
+        (Some(prompt), Some(handoff)) => Some(format!("{prompt}\n\n{handoff}")),
+        (prompt, handoff) => prompt.or(handoff),
+    }
+}
+
 #[tauri::command]
 pub fn spawn_pi_rpc(
     app: tauri::AppHandle,
@@ -766,7 +787,9 @@ pub fn spawn_pi_rpc(
     custom_system_prompt: Option<String>,
     project_name: Option<String>,
     harness: Option<String>,
+    handoff: Option<String>,
 ) -> Result<String, String> {
+    let custom_system_prompt = with_handoff(custom_system_prompt, handoff);
     let (configured_pi_path, _cfg) = read_pi_config()?;
     if session_id.trim().is_empty() || session_id.contains(['/', '\\']) {
         return Err("session_id must not contain path separators".to_string());
@@ -2002,6 +2025,27 @@ mod tests {
         let error = pi_install_required_error("/tmp/pi");
         assert!(error.starts_with("PI_INSTALL_REQUIRED:"));
         assert!(error.contains("https://pi.dev/install.sh"));
+    }
+
+    #[test]
+    fn handoff_is_appended_to_the_chat_prompt() {
+        assert_eq!(with_handoff(None, None), None);
+        assert_eq!(with_handoff(Some("  ".into()), Some(" ".into())), None);
+        assert_eq!(
+            with_handoff(Some("rules".into()), None).as_deref(),
+            Some("rules")
+        );
+        assert_eq!(
+            with_handoff(None, Some("earlier".into())).as_deref(),
+            Some("earlier")
+        );
+        assert_eq!(
+            with_handoff(Some("rules".into()), Some("earlier".into())).as_deref(),
+            Some("rules\n\nearlier")
+        );
+        let long = "é".repeat(MAX_HANDOFF_CHARS + 10);
+        let kept = with_handoff(None, Some(long)).unwrap();
+        assert_eq!(kept.chars().count(), MAX_HANDOFF_CHARS);
     }
 
     #[test]

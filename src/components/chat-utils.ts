@@ -11,6 +11,48 @@ export function formatTokens(tokens: number) {
   }).format(tokens);
 }
 
+const HANDOFF_MAX_CHARS = 24_000;
+const HANDOFF_MESSAGE_CHARS = 2_000;
+
+/**
+ * Context for an agent that takes over a chat mid-conversation: the visible
+ * user/assistant text (no tool output), newest turns first to fit the cap.
+ */
+export function buildHandoff(
+  messages: Array<Pick<ChatMessage, "role" | "text">>,
+  from: string,
+): string | undefined {
+  const lines = messages
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        message.text.trim(),
+    )
+    .map((message) => {
+      const text = message.text.trim();
+      const clipped =
+        text.length > HANDOFF_MESSAGE_CHARS
+          ? `${text.slice(0, HANDOFF_MESSAGE_CHARS)} […]`
+          : text;
+      return `${message.role === "user" ? "User" : "Assistant"}: ${clipped}`;
+    });
+  if (lines.length === 0) return undefined;
+  const kept: string[] = [];
+  let size = 0;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    size += lines[index].length + 2;
+    if (size > HANDOFF_MAX_CHARS && kept.length > 0) break;
+    kept.unshift(lines[index]);
+  }
+  const dropped = lines.length - kept.length;
+  return [
+    "## Earlier in this chat",
+    `The user switched to you from ${from} mid-conversation. This is that conversation so far (tool calls and their output omitted${dropped ? `; ${dropped} older messages dropped` : ""}). Continue from it, and re-check files before relying on earlier results.`,
+    "",
+    kept.join("\n\n"),
+  ].join("\n");
+}
+
 /** Share of prompt tokens served from the prompt cache. */
 export function cacheHitPercent(tokens: {
   input: number;

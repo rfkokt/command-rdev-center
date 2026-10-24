@@ -56,7 +56,7 @@ export type ChatComposerProps = {
   /** Cursor-style Plan/Build mode. Plan mode prefixes the pi-bound message. */
   planMode: boolean;
   onPlanModeChange: (value: boolean) => void;
-  /** Installed agent harnesses; the picker shows until the first message. */
+  /** Installed agent harnesses; switchable between turns (locked while the agent works). */
   agentOptions?: Array<{ id: string; label: string; protocol: string }>;
   agentValue?: string;
   agentLocked?: boolean;
@@ -442,12 +442,13 @@ export default function ChatComposer({
                 inputRef.current?.focus();
               }}
             />
-            {!agentLocked && onAgentChange && agentOptions.length > 1 && (
+            {onAgentChange && agentOptions.length > 1 && (
               <CustomSelect
                 className="kc-select"
                 value={agentValue ?? ""}
                 onChange={onAgentChange}
-                disabled={inputDisabled}
+                // Locked while the current agent is working.
+                disabled={inputDisabled || agentLocked}
                 ariaLabel="Agent"
                 placement="top"
                 options={agentOptions.map((option) => ({
