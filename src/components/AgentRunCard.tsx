@@ -39,25 +39,38 @@ export type RunStep = {
   durationMs?: number;
 };
 
-// Tool calls carry no timestamps, so first-seen / first-ended times are kept
-// here. Module scope survives virtualized remounts of the card.
+// Tool calls carry no timestamps, so start/end times are recorded when the
+// tool events arrive (noteToolPhase, called from the event handler). Rendering
+// alone is not enough: a virtualized feed may not re-render the card for every
+// event. Module scope also survives remounts of the card.
 const timings = new Map<string, { start: number; end?: number }>();
 
-function track(tool: ToolCall) {
-  const now = Date.now();
-  let entry = timings.get(tool.callId);
-  if (!entry) {
-    // Already finished before we ever saw it (e.g. remount): no duration.
-    entry = tool.phase === "end" ? { start: NaN, end: NaN } : { start: now };
-    timings.set(tool.callId, entry);
-    if (timings.size > 2000) {
-      const oldest = timings.keys().next().value;
-      if (oldest) timings.delete(oldest);
-    }
-  } else if (tool.phase === "end" && entry.end === undefined) {
-    entry.end = now;
+function remember(callId: string, entry: { start: number; end?: number }) {
+  timings.set(callId, entry);
+  if (timings.size > 2000) {
+    const oldest = timings.keys().next().value;
+    if (oldest) timings.delete(oldest);
   }
   return entry;
+}
+
+export function noteToolPhase(callId: string, phase?: ToolCall["phase"]) {
+  const now = Date.now();
+  const entry = timings.get(callId) ?? remember(callId, { start: now });
+  if (phase === "end" && entry.end === undefined) entry.end = now;
+}
+
+function track(tool: ToolCall) {
+  const entry = timings.get(tool.callId);
+  if (entry) {
+    if (tool.phase === "end" && entry.end === undefined) entry.end = Date.now();
+    return entry;
+  }
+  // Never saw it start (e.g. restored history): no duration.
+  return remember(
+    tool.callId,
+    tool.phase === "end" ? { start: NaN, end: NaN } : { start: Date.now() },
+  );
 }
 
 function resultText(result: unknown): string {
@@ -89,6 +102,17 @@ const plural = (n: number, word: string) =>
 function testSummary(text: string, failed: boolean) {
   // vitest: "Tests  12 passed (12)" · jest: "Tests: 1 failed, 11 passed, 12 total"
   // cargo: "test result: ok. 12 passed; 0 failed" · pytest: "12 passed in 0.3s"
+  // Prefer the per-test summary line over "Test Files … passed".
+  const line =
+    text
+      .split("\n")
+      .find(
+        (l) =>
+          /^\s*(Tests?:?\s|test result:)/i.test(l) &&
+          !/files/i.test(l) &&
+          /passed|failed/i.test(l),
+      ) ?? text;
+  text = line;
   const passed = Number(/(\d+)\s+passed/i.exec(text)?.[1] ?? NaN);
   const failedN = Number(/(\d+)\s+failed/i.exec(text)?.[1] ?? 0);
   const total =

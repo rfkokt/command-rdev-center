@@ -24,6 +24,15 @@ describe("AgentRunCard steps", () => {
       describeStep(
         tool({
           name: "bash",
+          args: { command: "pnpm vitest run" },
+          result: " Test Files  5 passed (5)\n      Tests  12 passed (12)",
+        }),
+      ).label,
+    ).toBe("Passed 12 of 12 tests");
+    expect(
+      describeStep(
+        tool({
+          name: "bash",
           args: { command: "npx jest" },
           result: "Tests: 1 failed, 11 passed, 12 total",
           isError: true,

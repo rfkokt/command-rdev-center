@@ -69,7 +69,7 @@ import ToolCallView, {
 } from "./ToolCall";
 import MarkdownMessage from "./MarkdownMessage";
 import ThinkingBlock from "./ThinkingBlock";
-import AgentRunCard, { buildRunSteps } from "./AgentRunCard";
+import AgentRunCard, { buildRunSteps, noteToolPhase } from "./AgentRunCard";
 import ApprovalDialog from "./ApprovalDialog";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
@@ -740,6 +740,7 @@ export default function ChatView({
   }, [createAssistantTurn]);
   const upsertToolCall = useCallback(
     (callId: string, patch: ToolCallPatch) => {
+      noteToolPhase(callId, patch.phase);
       pendingToolPatchesRef.current.push({ callId, patch });
       if (typeof window !== "undefined" && patch.name) {
         window.dispatchEvent(
@@ -5109,10 +5110,7 @@ export default function ChatView({
             ? { kind: "write" as const, label: "Writing response" }
             : {
                 kind: "think" as const,
-                label:
-                  title === "Thinking" || title === "Reasoning"
-                    ? "Thinking"
-                    : title.charAt(0) + title.slice(1).toLowerCase(),
+                label: title.charAt(0) + title.slice(1).toLowerCase(),
               };
         return (
           <AgentRunCard
