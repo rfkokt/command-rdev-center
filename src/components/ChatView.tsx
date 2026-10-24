@@ -30,6 +30,7 @@ import { parseApprovalRequest } from "../lib/rpc";
 import { withTimeout } from "../lib/with-timeout";
 import {
   formatTokens,
+  cacheHitPercent,
   mergeAssistantMessage,
   recentItems,
   uid,
@@ -209,6 +210,8 @@ type SessionStats = {
     cacheWrite: number;
     total: number;
   };
+  /** USD, when the harness reports it. */
+  cost?: number;
   contextUsage?: {
     tokens: number | null;
     contextWindow: number;
@@ -5984,10 +5987,32 @@ export default function ChatView({
                 <dt>OUTPUT</dt>
                 <dd>{sessionStats.tokens.output.toLocaleString()}</dd>
               </div>
+              {sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite >
+                0 && (
+                <>
+                  <div>
+                    <dt>CACHE READ</dt>
+                    <dd>
+                      {sessionStats.tokens.cacheRead.toLocaleString()} (
+                      {cacheHitPercent(sessionStats.tokens)}% of input)
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>CACHE WRITE</dt>
+                    <dd>{sessionStats.tokens.cacheWrite.toLocaleString()}</dd>
+                  </div>
+                </>
+              )}
               <div>
                 <dt>TOTAL</dt>
                 <dd>{sessionStats.tokens.total.toLocaleString()}</dd>
               </div>
+              {typeof sessionStats.cost === "number" && (
+                <div>
+                  <dt>COST</dt>
+                  <dd>${sessionStats.cost.toFixed(2)}</dd>
+                </div>
+              )}
             </dl>
             <p>
               Auto compaction:{" "}

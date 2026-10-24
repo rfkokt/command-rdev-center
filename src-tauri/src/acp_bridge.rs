@@ -50,6 +50,7 @@ enum Pending {
     NewSession { pi_id: Option<Value> },
     LoadSession,
     Prompt,
+    Compact { pi_id: Option<Value> },
     SetModel { pi_id: Option<Value>, value: String },
     SetThinking { pi_id: Option<Value>, value: String },
 }
@@ -103,6 +104,12 @@ pub struct AcpBridge {
     legacy_models: Option<Value>,
     commands: Vec<Value>,
     usage: Option<(u64, u64)>,
+    /// Cumulative `PromptResponse.usage` (inputTokens, cachedReadTokens, …).
+    tokens: Option<Value>,
+    /// Session cost in USD when the adapter reports it (`usage_update.cost`).
+    cost: Option<f64>,
+    /// A `/compact` prompt is running; user prompts wait for it.
+    compacting: bool,
     /// Kern context (worktree rules, prompt engine) that pi receives via
     /// `--append-system-prompt`. ACP has no system-prompt field, so it rides
     /// along with the first prompt of each fresh session.
@@ -307,6 +314,9 @@ impl AcpBridge {
             legacy_models: None,
             commands: Vec::new(),
             usage: None,
+            tokens: None,
+            cost: None,
+            compacting: false,
             preamble: None,
             preamble_pending: false,
             auto_approve: false,
@@ -555,6 +565,10 @@ impl AcpBridge {
             .unwrap_or_default();
         match kind.as_str() {
             "prompt" => {
+                if self.compacting {
+                    self.queued_prompts.push_back((message, images));
+                    return vec![Self::respond("prompt", id, None), self.queue_update()];
+                }
                 if self.turn.is_some() {
                     if command.get("streamingBehavior").is_some() {
                         self.queued_prompts.push_back((message, images));
@@ -571,7 +585,7 @@ impl AcpBridge {
                 out
             }
             "steer" | "follow_up" => {
-                if self.turn.is_some() {
+                if self.turn.is_some() || self.compacting {
                     // ACP cannot inject into a running turn: deliver after it settles.
                     self.queued_prompts.push_back((message, images));
                     return vec![Self::respond(&kind, id, None), self.queue_update()];
@@ -589,7 +603,7 @@ impl AcpBridge {
                     }))));
                 }
                 self.queued_prompts.clear();
-                if self.turn.is_some() {
+                if self.turn.is_some() || self.compacting {
                     if let Some(session_id) = self.session_id.clone() {
                         out.push(Self::notify(
                             "session/cancel",
@@ -674,28 +688,15 @@ impl AcpBridge {
                 id,
                 Some(json!({ "messages": self.history })),
             )],
-            "get_session_stats" => {
-                let Some((used, size)) = self.usage else {
-                    return vec![Self::fail(
-                        "get_session_stats",
-                        id,
-                        "usage not reported yet",
-                    )];
-                };
-                let percent = if size > 0 {
-                    (used as f64 / size as f64) * 100.0
-                } else {
-                    0.0
-                };
-                vec![Self::respond(
+            "get_session_stats" => match self.session_stats() {
+                Some(stats) => vec![Self::respond("get_session_stats", id, Some(stats))],
+                None => vec![Self::fail(
                     "get_session_stats",
                     id,
-                    Some(json!({
-                        "tokens": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": used },
-                        "contextUsage": { "tokens": used, "contextWindow": size, "percent": percent }
-                    })),
-                )]
-            }
+                    "usage not reported yet",
+                )],
+            },
+            "compact" => self.compact(id),
             "get_commands" => {
                 let commands: Vec<Value> = self
                     .commands
@@ -721,6 +722,8 @@ impl AcpBridge {
                 }
                 self.history.clear();
                 self.usage = None;
+                self.tokens = None;
+                self.cost = None;
                 self.ready = false;
                 vec![self.request(
                     "session/new",
@@ -734,6 +737,81 @@ impl AcpBridge {
                 format!("`{other}` is not supported by the {} harness", self.harness),
             )],
         }
+    }
+
+    /// pi-shaped `get_session_stats` data from ACP usage reports.
+    fn session_stats(&self) -> Option<Value> {
+        if self.usage.is_none() && self.tokens.is_none() {
+            return None;
+        }
+        let count = |key: &str| {
+            self.tokens
+                .as_ref()
+                .and_then(|tokens| tokens.get(key))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        let (input, output) = (count("inputTokens"), count("outputTokens"));
+        let (cache_read, cache_write) = (count("cachedReadTokens"), count("cachedWriteTokens"));
+        let total = match count("totalTokens") {
+            0 => input + output + cache_read + cache_write,
+            total => total,
+        };
+        let mut stats = json!({
+            "tokens": {
+                "input": input, "output": output,
+                "cacheRead": cache_read, "cacheWrite": cache_write,
+                "total": if total == 0 { self.usage.map_or(0, |(used, _)| used) } else { total }
+            }
+        });
+        if let Some((used, size)) = self.usage {
+            let percent = if size > 0 {
+                (used as f64 / size as f64) * 100.0
+            } else {
+                0.0
+            };
+            stats["contextUsage"] =
+                json!({ "tokens": used, "contextWindow": size, "percent": percent });
+        }
+        if let Some(cost) = self.cost {
+            stats["cost"] = json!(cost);
+        }
+        Some(stats)
+    }
+
+    /// ACP has no compaction method, but Claude Code, Codex and others offer
+    /// a `/compact` slash command; run it as a hidden prompt.
+    fn compact(&mut self, id: Option<&Value>) -> Vec<Out> {
+        if self.turn.is_some() || self.compacting {
+            return vec![Self::fail("compact", id, "Stop the running turn first")];
+        }
+        let Some(session_id) = self.session_id.clone() else {
+            return vec![Self::fail("compact", id, "Session is not ready yet")];
+        };
+        let command = ["compact", "summarize"].into_iter().find(|name| {
+            self.commands
+                .iter()
+                .any(|command| command.get("name").and_then(Value::as_str) == Some(name))
+        });
+        let Some(command) = command else {
+            return vec![Self::fail(
+                "compact",
+                id,
+                format!("The {} harness does not offer compaction", self.harness),
+            )];
+        };
+        self.compacting = true;
+        vec![
+            Self::ui(json!({ "type": "compaction_start", "reason": "manual" })),
+            self.request(
+                "session/prompt",
+                json!({
+                    "sessionId": session_id,
+                    "prompt": [{ "type": "text", "text": format!("/{command}") }]
+                }),
+                Pending::Compact { pi_id: id.cloned() },
+            ),
+        ]
     }
 
     fn start_prompt(&mut self, message: String, images: Vec<Value>) -> Vec<Out> {
@@ -1050,11 +1128,36 @@ impl AcpBridge {
                 out
             }
             Pending::Prompt => {
+                if let Some(usage) = result.get("usage").filter(|usage| usage.is_object()) {
+                    self.tokens = Some(usage.clone());
+                }
                 let reason = result
                     .get("stopReason")
                     .and_then(Value::as_str)
                     .unwrap_or("end_turn");
                 self.finish_turn(reason, error)
+            }
+            Pending::Compact { pi_id } => {
+                let mut end = json!({ "type": "compaction_end", "reason": "manual" });
+                if let Some(error) = &error {
+                    end["errorMessage"] = json!(error);
+                }
+                if let Some(usage) = result.get("usage").filter(|usage| usage.is_object()) {
+                    self.tokens = Some(usage.clone());
+                }
+                // The pre-compaction size is stale until the next usage_update.
+                self.usage = self.usage.map(|(_, size)| (0, size));
+                self.compacting = false;
+                let ack = match error {
+                    Some(error) => Self::fail("compact", pi_id.as_ref(), error),
+                    None => Self::respond("compact", pi_id.as_ref(), None),
+                };
+                let mut out = vec![Self::ui(end), ack];
+                if let Some((message, images)) = self.queued_prompts.pop_front() {
+                    out.push(self.queue_update());
+                    out.extend(self.start_prompt(message, images));
+                }
+                out
             }
             Pending::SetModel { pi_id, value } => {
                 if let Some(error) = error {
@@ -1357,6 +1460,9 @@ impl AcpBridge {
                 ) {
                     self.usage = Some((used, size));
                 }
+                if let Some(amount) = update.pointer("/cost/amount").and_then(Value::as_f64) {
+                    self.cost = Some(amount);
+                }
                 Vec::new()
             }
             _ => Vec::new(),
@@ -1599,6 +1705,72 @@ mod tests {
         })));
         let settled = bridge.on_agent(&reply(id, json!({ "stopReason": "end_turn" })));
         assert_eq!(kinds(&settled), ["agent_end", "agent_settled"]);
+    }
+
+    #[test]
+    fn compact_runs_the_adapters_slash_command_and_queues_prompts() {
+        let mut bridge = ready_bridge(false);
+        let refused = ui(&bridge.on_ui(r#"{"type":"compact","id":"c0"}"#));
+        assert_eq!(refused[0]["success"], false);
+
+        bridge.on_agent(&update(json!({
+            "sessionUpdate": "available_commands_update",
+            "availableCommands": [{ "name": "compact", "description": "Compact" }]
+        })));
+        let out = bridge.on_ui(r#"{"type":"compact","id":"c1"}"#);
+        assert_eq!(ui(&out)[0]["type"], "compaction_start");
+        let sent = agent(&out);
+        assert_eq!(sent[0]["method"], "session/prompt");
+        assert_eq!(sent[0]["params"]["prompt"][0]["text"], "/compact");
+        let compact_id = sent[0]["id"].as_u64().unwrap();
+
+        // The summary the adapter streams is not a chat message.
+        let chunk = bridge.on_agent(&update(json!({
+            "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "summary" }
+        })));
+        assert!(ui(&chunk).is_empty());
+        // A prompt sent meanwhile waits for compaction.
+        let queued = bridge.on_ui(r#"{"type":"prompt","message":"next"}"#);
+        assert!(agent(&queued).is_empty());
+
+        let done = bridge.on_agent(&reply(compact_id, json!({ "stopReason": "end_turn" })));
+        let events = ui(&done);
+        assert_eq!(events[0]["type"], "compaction_end");
+        assert!(events[0].get("errorMessage").is_none());
+        assert_eq!(events[1]["command"], "compact");
+        assert_eq!(events[1]["id"], "c1");
+        let next = agent(&done);
+        assert_eq!(next[0]["params"]["prompt"][0]["text"], "next");
+    }
+
+    #[test]
+    fn session_stats_report_acp_token_usage_and_cost() {
+        let mut bridge = ready_bridge(false);
+        let failed = ui(&bridge.on_ui(r#"{"type":"get_session_stats","id":"s"}"#));
+        assert_eq!(failed[0]["success"], false);
+
+        let id = agent(&bridge.on_ui(r#"{"type":"prompt","message":"x"}"#))[0]["id"]
+            .as_u64()
+            .unwrap();
+        bridge.on_agent(&update(json!({
+            "sessionUpdate": "usage_update", "used": 50_000, "size": 200_000,
+            "cost": { "amount": 0.42, "currency": "USD" }
+        })));
+        bridge.on_agent(&reply(
+            id,
+            json!({ "stopReason": "end_turn", "usage": {
+                "inputTokens": 1200, "outputTokens": 800,
+                "cachedReadTokens": 45000, "cachedWriteTokens": 3000, "totalTokens": 50000
+            }}),
+        ));
+        let stats = ui(&bridge.on_ui(r#"{"type":"get_session_stats","id":"s"}"#));
+        let data = &stats[0]["data"];
+        assert_eq!(data["tokens"]["input"], 1200);
+        assert_eq!(data["tokens"]["cacheRead"], 45000);
+        assert_eq!(data["tokens"]["cacheWrite"], 3000);
+        assert_eq!(data["tokens"]["total"], 50000);
+        assert_eq!(data["contextUsage"]["percent"], 25.0);
+        assert_eq!(data["cost"], 0.42);
     }
 
     #[test]

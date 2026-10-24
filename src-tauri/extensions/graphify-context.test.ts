@@ -20,7 +20,7 @@ vi.mock("node:child_process", () => ({
     );
   },
 }));
-import graphify from "./graphify-context";
+import graphify, { isFollowUp } from "./graphify-context";
 
 const folders: string[] = [];
 function harness(count = 1) {
@@ -69,12 +69,42 @@ describe("graph context reuse", () => {
     utimesSync(h.graphs[0], now, now);
     expect((await h.start("continue")).message).toBeTruthy();
     expect(query).toHaveBeenCalledTimes(2);
+    query.mockResolvedValueOnce("css symbols");
     expect((await h.start("Fix CSS")).message).toBeTruthy();
     expect(query).toHaveBeenCalledTimes(3);
     expect(query.mock.calls[2][1][1]).toBe("Fix CSS");
     h.hooks.get("session_tree")();
     await h.start("Fix CSS");
     expect(query).toHaveBeenCalledTimes(4);
+  });
+  it("treats short replies as follow-ups and skips repeated results", async () => {
+    query.mockResolvedValue("checkout symbols");
+    const h = harness();
+    expect((await h.start("Fix checkout lifecycle")).message).toBeTruthy();
+    // Replies to the agent neither re-query nor re-inject.
+    expect(await h.start("iya push aja")).toBeUndefined();
+    expect(await h.start("ok commit")).toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(1);
+    // A new wording that returns the same symbols is not injected twice.
+    expect(await h.start("Fix the checkout lifecycle bug")).toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+  it("recognises follow-ups without swallowing short tasks", () => {
+    for (const prompt of [
+      "lanjut",
+      "iya push aja",
+      "Oke, gas",
+      "sip",
+      "yes please do it",
+    ])
+      expect(isFollowUp(prompt)).toBe(true);
+    for (const prompt of [
+      "Fix CSS",
+      "iya tapi ganti juga warna tombol login di halaman checkout",
+      "yarn build fails",
+      "okta login broken",
+    ])
+      expect(isFollowUp(prompt)).toBe(false);
   });
   it("keeps context from working repositories when another query fails, then recovers", async () => {
     query

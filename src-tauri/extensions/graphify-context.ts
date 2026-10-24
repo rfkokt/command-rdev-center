@@ -6,15 +6,31 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const MAX_PROMPT_CHARS = 2_000;
-const MAX_CONTEXT_CHARS = 12_000;
+// Every injection stays in the session for good; keep each one small.
+const MAX_CONTEXT_CHARS = 8_000;
+const CONTINUE =
+  /^(?:continue|lanjut(?:kan)?|retry|coba lagi|teruskan|go on|oke lanjut)[.!\s]*$/i;
+// Short replies to the agent ("iya push aja", "ok commit", "sip") keep the
+// current task instead of querying the graph for the reply's words.
+const ACK =
+  /^(?:iya|iyaa+|ya|yaa+|yap|yup|yes|yep|ok|oke|okay|okey|sip|siap|gas|boleh|mantap|setuju|sure|thanks|makasih|good|nice|lanjut|continue|go)\b/i;
+
+export function isFollowUp(prompt: string) {
+  return (
+    CONTINUE.test(prompt) ||
+    (ACK.test(prompt) && prompt.split(/\s+/).length <= 6)
+  );
+}
 
 export default function (pi: ExtensionAPI) {
   const cache = new Map<string, string>();
   let lastInjected = "";
+  let lastContent = "";
   let taskQuery = "";
   const reset = () => {
     cache.clear();
     lastInjected = "";
+    lastContent = "";
     taskQuery = "";
   };
   pi.on("session_start", reset);
@@ -23,6 +39,7 @@ export default function (pi: ExtensionAPI) {
   // results on the next user prompt without querying the same graph again.
   pi.on("session_compact", () => {
     lastInjected = "";
+    lastContent = "";
   });
   pi.on("before_agent_start", async (event, ctx) => {
     const prompt = event.prompt.trim();
@@ -35,11 +52,8 @@ export default function (pi: ExtensionAPI) {
       .filter((graph) => graph && existsSync(graph));
     if (!graphs.length || !prompt || ctx.signal?.aborted) return;
     // Short steering/follow-up requests retain the last substantive task query.
-    const followUp =
-      /^(?:continue|lanjut(?:kan)?|retry|coba lagi|teruskan|go on|oke lanjut)[.!\s]*$/i.test(
-        prompt,
-      );
-    if (!taskQuery || !followUp) taskQuery = prompt.slice(0, MAX_PROMPT_CHARS);
+    if (!taskQuery || !isFollowUp(prompt))
+      taskQuery = prompt.slice(0, MAX_PROMPT_CHARS);
     const query = taskQuery;
     const results = await Promise.allSettled(
       graphs.map(async (graph) => {
@@ -91,6 +105,9 @@ export default function (pi: ExtensionAPI) {
     if (context.length > MAX_CONTEXT_CHARS)
       context = `${context.slice(0, MAX_CONTEXT_CHARS)}\n[Context truncated; query the relevant graph or inspect source for remaining results.]`;
     lastInjected = signature;
+    // A different wording that hits the same symbols adds nothing new.
+    if (context === lastContent) return;
+    lastContent = context;
     return {
       message: {
         customType: "graphify-context",

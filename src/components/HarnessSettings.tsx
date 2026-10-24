@@ -180,8 +180,9 @@ export default function HarnessSettings({
     <div className="harness-settings">
       <p className="kset-note">
         pi keeps every Kern feature. Other agents connect over ACP and support
-        chat, tools, approvals, model switching and resume; session tree, fork
-        and manual compaction stay pi-only, and Deep Research always uses pi.
+        chat, tools, approvals, model switching, resume and compaction (when the
+        agent offers /compact); session tree and fork stay pi-only, and Deep
+        Research always uses pi.
       </p>
       <fieldset className="kset-group kset-radios" aria-label="Agent harness">
         {harnesses.map((item) => (

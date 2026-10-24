@@ -11,6 +11,16 @@ export function formatTokens(tokens: number) {
   }).format(tokens);
 }
 
+/** Share of prompt tokens served from the prompt cache. */
+export function cacheHitPercent(tokens: {
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+}) {
+  const prompt = tokens.input + tokens.cacheRead + tokens.cacheWrite;
+  return prompt > 0 ? Math.round((tokens.cacheRead / prompt) * 100) : 0;
+}
+
 export function uid() {
   return Math.random().toString(36).slice(2, 10);
 }

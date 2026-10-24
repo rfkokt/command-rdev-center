@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { appendStreamingText, mergeAssistantMessage } from "./chat-utils";
+import {
+  appendStreamingText,
+  cacheHitPercent,
+  mergeAssistantMessage,
+} from "./chat-utils";
 import type { ChatMessage } from "../lib/rpc";
 
 describe("assistant message boundaries", () => {
@@ -172,4 +176,11 @@ describe("appendStreamingText", () => {
     expect(result).toBe(current + incoming);
     expect(elapsed).toBeLessThan(1000);
   });
+});
+
+test("cacheHitPercent is the cached share of prompt tokens", () => {
+  expect(
+    cacheHitPercent({ input: 1200, cacheRead: 45000, cacheWrite: 3800 }),
+  ).toBe(90);
+  expect(cacheHitPercent({ input: 0, cacheRead: 0, cacheWrite: 0 })).toBe(0);
 });
