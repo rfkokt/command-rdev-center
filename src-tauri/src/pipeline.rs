@@ -235,7 +235,7 @@ fn validate_config(config: &PipelineConfig) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pipeline_config(
     project_path: String,
     preset: Option<String>,
@@ -254,8 +254,9 @@ pub fn get_pipeline_config(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_pipeline_config(project_path: String, config: PipelineConfig) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
     validate_config(&config)?;
     let _lock = CONFIG_LOCK
@@ -808,7 +809,7 @@ fn run_pipeline_thread(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_pipeline(
     project_path: String,
     execution_cwd: Option<String>,
@@ -904,16 +905,19 @@ fn control_pipeline(project_path: String, action: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_pipeline(project_path: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     control_pipeline(project_path, "cancel")
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn retry_pipeline_step(project_path: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     control_pipeline(project_path, "retry")
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn skip_pipeline_step(project_path: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     control_pipeline(project_path, "skip")
 }
 
@@ -967,8 +971,9 @@ fn accept_pipeline_input(guard: &mut ActiveRun, input: PipelineInput) -> Result<
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn provide_pipeline_input(project_path: String, input: PipelineInput) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     let project = crate::projects::ensure_verified_repository(Path::new(&project_path))?;
     let state = active()
         .lock()
@@ -981,7 +986,7 @@ pub fn provide_pipeline_input(project_path: String, input: PipelineInput) -> Res
     accept_pipeline_input(&mut guard, input)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_pipeline_data(project_path: Option<String>) -> Result<PipelineData, String> {
     let project_key = project_path
         .map(|path| {

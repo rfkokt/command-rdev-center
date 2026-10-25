@@ -780,7 +780,7 @@ fn launch(
     Ok(running)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_deep_research(
     app: tauri::AppHandle,
     input: StartInput,
@@ -848,7 +848,7 @@ pub fn start_deep_research(
         }
     }
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_deep_research_data() -> Result<ResearchData, String> {
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     Ok(load_at(&runs_dir()?))
@@ -945,7 +945,7 @@ fn render_run_markdown(run: &ResearchRun) -> String {
 }
 
 /// Markdown source for "Copy .md" in the UI.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_deep_research_markdown(run_id: String) -> Result<String, String> {
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     let run = read_one(&run_path(&runs_dir()?, &run_id)?)?;
@@ -954,8 +954,9 @@ pub fn get_deep_research_markdown(run_id: String) -> Result<String, String> {
 
 /// Write the rendered Markdown to a user-chosen file ("Export .md"). The
 /// destination comes from the save dialog, i.e. the user's explicit choice.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_deep_research_markdown(run_id: String, dest: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     let run = read_one(&run_path(&runs_dir()?, &run_id)?)?;
     let dest = PathBuf::from(dest.trim());
@@ -982,13 +983,14 @@ fn attach_origin(run: &mut ResearchRun, chat_id: &str, session_id: &str) -> bool
     true
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_deep_research_to_chat(
     app: tauri::AppHandle,
     run_id: String,
     origin_chat_id: String,
     origin_session_id: String,
 ) -> Result<ResearchRun, String> {
+    let _state = crate::state_lock::state_write_lock();
     let run = mutate(&run_id, |run| {
         attach_origin(run, &origin_chat_id, &origin_session_id)
     })?
@@ -997,7 +999,7 @@ pub fn attach_deep_research_to_chat(
     Ok(run)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn handoff_deep_research(
     app: tauri::AppHandle,
     run_id: String,
@@ -1064,8 +1066,9 @@ pub fn handoff_deep_research(
         run: delivered,
     })
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_deep_research(app: tauri::AppHandle, run_id: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     let _guard = LOCK.lock().map_err(|_| "research store poisoned")?;
     let run = read_one(&run_path(&runs_dir()?, &run_id)?)?;
     if !run.state.terminal() {
@@ -1082,8 +1085,9 @@ pub fn delete_deep_research(app: tauri::AppHandle, run_id: String) -> Result<(),
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_deep_research(app: tauri::AppHandle, run_id: String) -> Result<ResearchRun, String> {
+    let _state = crate::state_lock::state_write_lock();
     let Some(run) = mutate(&run_id, |r| {
         if !matches!(r.state, RunState::Creating | RunState::Running) {
             return false;
@@ -1118,7 +1122,7 @@ pub fn cancel_deep_research(app: tauri::AppHandle, run_id: String) -> Result<Res
     emit(&app, &cancelled);
     Ok(cancelled)
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn resume_deep_research(app: tauri::AppHandle, run_id: String) -> Result<ResearchRun, String> {
     {
         let mut a = active().lock().map_err(|_| "research registry poisoned")?;

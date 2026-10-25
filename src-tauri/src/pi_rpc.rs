@@ -63,7 +63,7 @@ fn read_pi_config() -> Result<(String, serde_json::Value), String> {
     Ok((pi_path, v))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_available_models() -> Result<Vec<String>, String> {
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
     let raw = std::fs::read_to_string(PathBuf::from(home).join(".pi/agent/models.json"))
@@ -1938,7 +1938,7 @@ pub async fn fork_session(
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
     let map = sessions_map()
         .lock()
@@ -1959,7 +1959,7 @@ pub fn is_pi_session_running(session_id: String) -> Result<bool, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn kill_pi_session(session_id: String) -> Result<(), String> {
     let h = sessions_map()
         .lock()

@@ -235,7 +235,7 @@ fn validate_figma_mcp_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_figma_mcp_settings() -> Result<FigmaMcpSettings, String> {
     let path = figma_mcp_settings_path()?;
     if !path.exists() {
@@ -245,8 +245,9 @@ pub fn get_figma_mcp_settings() -> Result<FigmaMcpSettings, String> {
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_figma_mcp_settings(enabled: bool, url: String) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     let settings = FigmaMcpSettings {
         enabled,
         url: url.trim().to_string(),
@@ -338,12 +339,13 @@ pub fn get_pi_settings(scope: String, project_path: Option<String>) -> Result<Va
     read_value(&settings_path(&scope, project_path.as_deref())?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_pi_settings(
     scope: String,
     project_path: Option<String>,
     settings: Value,
 ) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     if !settings.is_object() {
         return Err("settings root must be a JSON object".to_string());
     }
@@ -627,14 +629,15 @@ pub fn jev_usage() -> JevUsage {
         .unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_jev_usage() -> JevUsage {
     jev_usage()
 }
 
 /// The balance shown on the TypeSafe dashboard right now; `None` clears it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_jev_balance(balance_usd: Option<f64>) -> Result<JevUsage, String> {
+    let _state = crate::state_lock::state_write_lock();
     if let Some(balance) = balance_usd {
         if !balance.is_finite() || !(0.0..=100_000.0).contains(&balance) {
             return Err("Enter the balance in USD, e.g. 4.86".into());

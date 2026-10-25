@@ -920,11 +920,12 @@ fn checkpoint_repo(worktree_path: &str) -> Result<String, String> {
     Ok(path_str)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_checkpoint(
     worktree_path: String,
     message: String,
 ) -> Result<CheckpointResult, String> {
+    let _state = crate::state_lock::state_write_lock();
     let path_str = checkpoint_repo(&worktree_path)?;
     create_checkpoint_in_repo(&path_str, &message)
 }
@@ -1019,7 +1020,7 @@ fn create_checkpoint_in_repo(path_str: &str, message: &str) -> Result<Checkpoint
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_checkpoints(worktree_path: String) -> Result<Vec<Checkpoint>, String> {
     let path_str = checkpoint_repo(&worktree_path)?;
     list_checkpoints_in_repo(&path_str)
@@ -1067,8 +1068,9 @@ fn list_checkpoints_in_repo(path_str: &str) -> Result<Vec<Checkpoint>, String> {
 /// added after the snapshot are removed as well. Untracked
 /// files created after the checkpoint are left alone, and the conversation is
 /// untouched (it lives in the pi session file, not in git).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_checkpoint(worktree_path: String, sha: String) -> Result<String, String> {
+    let _state = crate::state_lock::state_write_lock();
     if !is_valid_checkpoint_sha(&sha) {
         return Err("invalid checkpoint sha".to_string());
     }

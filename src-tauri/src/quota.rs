@@ -701,8 +701,9 @@ pub fn get_quota_settings() -> QuotaSettings {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_quota_claude(enabled: bool) -> Result<QuotaSettings, String> {
+    let _state = crate::state_lock::state_write_lock();
     let mut settings = crate::harness::read_settings();
     settings.quota_claude = Some(enabled);
     crate::harness::write_settings(&settings)?;
@@ -772,8 +773,9 @@ pub async fn save_router(
     .await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_router(id: String) -> Result<QuotaSettings, String> {
+    let _state = crate::state_lock::state_write_lock();
     let mut settings = crate::harness::read_settings();
     settings.routers.retain(|router| router.id != id);
     crate::harness::write_settings(&settings)?;

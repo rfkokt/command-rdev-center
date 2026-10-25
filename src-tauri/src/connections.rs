@@ -530,8 +530,9 @@ pub async fn save_connection(
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_connection(id: String) -> Result<ConnectionsView, String> {
+    let _state = crate::state_lock::state_write_lock();
     let mut file = read_file();
     file.profiles.retain(|profile| profile.id != id);
     file.assignments.retain(|_, profile| profile != &id);
@@ -541,11 +542,12 @@ pub fn delete_connection(id: String) -> Result<ConnectionsView, String> {
     Ok(view(file))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_connection_assignment(
     harness: String,
     profile_id: Option<String>,
 ) -> Result<ConnectionsView, String> {
+    let _state = crate::state_lock::state_write_lock();
     let mut file = read_file();
     match profile_id.filter(|id| !id.is_empty()) {
         Some(id) => {

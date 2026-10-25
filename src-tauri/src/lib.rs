@@ -21,6 +21,7 @@ mod rag;
 mod scm;
 mod settings;
 mod skills;
+mod state_lock;
 mod terminal;
 mod worktree;
 

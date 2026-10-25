@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -46,7 +47,10 @@ fn locale_fallback() -> Option<&'static str> {
 
 // One PTY per chat id. Writer/child for input/resize/kill; scrollback for replay.
 struct Session {
-    writer: Box<dyn Write + Send>,
+    // Keystrokes go through a channel to a writer thread: ordered like the
+    // invokes that sent them, and a full PTY buffer (large paste into a busy
+    // program) blocks that thread instead of the command handler.
+    input: Sender<Vec<u8>>,
     master: Box<dyn portable_pty::MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     scrollback: Arc<Mutex<Vec<u8>>>,
@@ -93,7 +97,7 @@ fn remove_snapshot(chat_id: &str) {
 }
 
 // Returns retained scrollback so the frontend can replay it (empty for a fresh session).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_open(
     app: AppHandle,
     chat_id: String,
@@ -101,6 +105,10 @@ pub fn terminal_open(
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
+    // Runs off the main thread now; two opens for one key (remount, double
+    // effect) must not both spawn a shell.
+    static OPENING: Mutex<()> = Mutex::new(());
+    let _opening = OPENING.lock().unwrap_or_else(|e| e.into_inner());
     // The app-owned Global Chat directory is intentionally not an imported project.
     // It is the only non-project cwd permitted to host a terminal.
     if crate::pi_rpc::global_chat_cwd()
@@ -145,14 +153,26 @@ pub fn terminal_open(
 
     let child = pty.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
     drop(pty.slave);
-    let writer = pty.master.take_writer().map_err(|e| e.to_string())?;
+    let mut writer = pty.master.take_writer().map_err(|e| e.to_string())?;
+    let (input, keystrokes) = mpsc::channel::<Vec<u8>>();
+    thread::spawn(move || {
+        for bytes in keystrokes {
+            if writer
+                .write_all(&bytes)
+                .and_then(|_| writer.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
     let mut reader = pty.master.try_clone_reader().map_err(|e| e.to_string())?;
 
     let scrollback = Arc::new(Mutex::new(Vec::new()));
     sessions().lock().map_err(|e| e.to_string())?.insert(
         chat_id.clone(),
         Session {
-            writer,
+            input,
             master: pty.master,
             child,
             scrollback: scrollback.clone(),
@@ -264,12 +284,11 @@ pub async fn terminal_execute_approved(cwd: String, command: String) -> Result<S
 
 #[tauri::command]
 pub fn terminal_write(chat_id: String, data: String) -> Result<(), String> {
-    let mut map = sessions().lock().map_err(|e| e.to_string())?;
-    let s = map.get_mut(&chat_id).ok_or("no terminal session")?;
-    s.writer
-        .write_all(data.as_bytes())
-        .map_err(|e| e.to_string())?;
-    s.writer.flush().map_err(|e| e.to_string())
+    let map = sessions().lock().map_err(|e| e.to_string())?;
+    let s = map.get(&chat_id).ok_or("no terminal session")?;
+    s.input
+        .send(data.into_bytes())
+        .map_err(|_| "terminal session closed".to_string())
 }
 
 #[tauri::command]
@@ -287,7 +306,7 @@ pub fn terminal_resize(chat_id: String, cols: u16, rows: u16) -> Result<(), Stri
 }
 
 // Kill the shell + child processes and drop the session.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_close(chat_id: String) -> Result<(), String> {
     if let Some(mut s) = sessions()
         .lock()

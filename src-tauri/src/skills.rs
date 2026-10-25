@@ -514,7 +514,7 @@ fn staged_skills(repo: &Path, path: Option<&str>) -> Result<Vec<PiSkill>, String
     }
     Ok(skills)
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_git_skills(request: GitSkillRequest) -> Result<SkillPreview, String> {
     let url = canonical_git_url(&request.url)?;
     let (repo, commit) = clone_repo(&url, request.reference.as_deref())?;
@@ -527,7 +527,7 @@ pub fn preview_git_skills(request: GitSkillRequest) -> Result<SkillPreview, Stri
         error: None,
     })
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_git_skills(request: GitSkillRequest) -> Result<SkillInstallResult, String> {
     let url = canonical_git_url(&request.url)?;
     if request.selected_paths.is_empty() {
@@ -629,11 +629,11 @@ pub fn install_git_skills(request: GitSkillRequest) -> Result<SkillInstallResult
     let _ = std::fs::remove_dir_all(repo);
     result
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_pi_skills() -> Result<SkillCatalog, String> {
     Ok(discover(sources()?))
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_skill_manifests() -> Result<Vec<SkillManifest>, String> {
     Ok(discover(sources()?)
         .skills
@@ -641,7 +641,7 @@ pub fn list_skill_manifests() -> Result<Vec<SkillManifest>, String> {
         .filter_map(|skill| skill.manifest.filter(|manifest| manifest.valid))
         .collect())
 }
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_skill_instructions(name: String) -> Result<String, String> {
     let skill = discover(sources()?)
         .skills

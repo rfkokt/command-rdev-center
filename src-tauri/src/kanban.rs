@@ -320,7 +320,7 @@ fn parse_google_sheet_names(html: &str) -> Vec<String> {
     sheets
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_google_sheet_names(url: String) -> Result<Vec<String>, String> {
     let page_url = format!(
         "https://docs.google.com/spreadsheets/d/{}/edit",
@@ -349,7 +349,7 @@ pub fn list_google_sheet_names(url: String) -> Result<Vec<String>, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_google_sheet_pics(url: String, sheets: Vec<String>) -> Result<Vec<String>, String> {
     let mut pics = sheets
         .iter()
@@ -388,8 +388,9 @@ pub struct ErrorReportTask {
     prevention: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
+    let _state = crate::state_lock::state_write_lock();
     if !valid_project(&input.project) || input.session_id.trim().is_empty() {
         return Err("invalid chat task identity".into());
     }
@@ -434,8 +435,9 @@ pub fn sync_chat_task(input: ChatTaskSync) -> Result<Option<String>, String> {
     Ok(Some(input.status))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_error_report_task(input: ErrorReportTask) -> Result<String, String> {
+    let _state = crate::state_lock::state_write_lock();
     if !valid_project(&input.project) || input.session_id.trim().is_empty() {
         return Err("invalid error report identity".into());
     }
@@ -499,12 +501,13 @@ fn update_task_status_at(path: &Path, task_no: &Value, status: &str) -> Result<(
     write_tasks(path, &tasks)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_kanban_task_status(
     project: String,
     task_no: Value,
     status: String,
 ) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
     if !valid_project(&project) || task_no.is_null() {
         return Err("invalid task identity".into());
     }
@@ -517,7 +520,7 @@ pub fn update_kanban_task_status(
     update_task_status_at(&path, &task_no, &status)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_project_tasks(
     project: String,
     pic: Option<String>,
@@ -583,7 +586,7 @@ fn attach_references(tasks: &mut [KanbanTask], all_tasks: &[KanbanTask]) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, String> {
     let task_no = task_no.trim().trim_start_matches('#');
     let mut matching = list_project_tasks(project, None, None)?
@@ -623,7 +626,7 @@ fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), Stri
     std::fs::rename(temp, metadata).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
     let dir = task_dir()?;
     let mut projects = Vec::new();
