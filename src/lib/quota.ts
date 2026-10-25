@@ -31,6 +31,8 @@ export type QuotaSnapshot = {
 };
 
 export const QUOTA_POLL_MS = 5 * 60 * 1000;
+/** Claude Code renews an expired login on its next request; re-check soon. */
+export const QUOTA_EXPIRED_POLL_MS = 30_000;
 /** Providers book usage a moment after a reply ends. */
 export const REPLY_REFRESH_DELAY_MS = 3_000;
 /** Replies from several chats collapse into one lookup per window. */
@@ -136,12 +138,29 @@ export function createReplyRefresher(
   };
 }
 
+export function claudeLoginExpired(snapshot: QuotaSnapshot | null) {
+  return !!snapshot?.accounts?.some(
+    (account) =>
+      account.source === "claude" && /login expired/i.test(account.error ?? ""),
+  );
+}
+
 /** One poller for the whole app; panels subscribe to its snapshots. */
 export function startQuotaPolling(toast: (message: string) => void) {
   notify = toast;
-  const tick = () => void refreshQuota().catch(() => {});
+  let id: number | undefined;
+  const tick = () => {
+    void refreshQuota()
+      .catch(() => {})
+      .finally(() => {
+        if (id === -1) return;
+        id = window.setTimeout(
+          tick,
+          claudeLoginExpired(current) ? QUOTA_EXPIRED_POLL_MS : QUOTA_POLL_MS,
+        );
+      });
+  };
   tick();
-  const id = window.setInterval(tick, QUOTA_POLL_MS);
   const replies = createReplyRefresher(
     () => void refreshQuota(true).catch(() => {}),
   );
@@ -153,7 +172,8 @@ export function startQuotaPolling(toast: (message: string) => void) {
   };
   window.addEventListener("crc-agent-activity", onActivity);
   return () => {
-    window.clearInterval(id);
+    window.clearTimeout(id);
+    id = -1;
     replies.cancel();
     window.removeEventListener("crc-agent-activity", onActivity);
     notify = null;
