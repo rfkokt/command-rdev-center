@@ -12,6 +12,7 @@ import QuotaPanel from "./QuotaPanel";
 import { confirm } from "./ConfirmDialog";
 import type { ChatRepository, WorktreeDiff, WorktreeInfo } from "./ChatView";
 import type { ToolCall } from "../lib/rpc";
+import type { OfficeView } from "./OfficePanel";
 
 // Three.js and the voxel models only load once the office is first opened.
 const OfficePanel = lazy(() => import("./OfficePanel"));
@@ -35,6 +36,18 @@ export type ChatRightSidebarProps = {
   onWorktreeDiffChange: (diff: WorktreeDiff) => void;
   onToast: (message: string) => void;
   office: { tools: readonly ToolCall[]; running: boolean; writing: boolean };
+  /** This chat is the one on screen. */
+  active: boolean;
+  officeView: OfficeView;
+  /** Chat-area node for the full and mini office views. */
+  officeLayer: HTMLElement | null;
+  /** Crew roster slot inside the floating chat (full view). */
+  officeRoster: HTMLElement | null;
+  /** The office is drawn (full view, or mini window not collapsed). */
+  officeShown: boolean;
+  onOfficeViewChange: (view: OfficeView) => void;
+  /** Files and Changes need a project; global chat has none. */
+  codePanels?: boolean;
 };
 
 const TITLES: Record<RightActivity, string> = {
@@ -61,14 +74,22 @@ export default function ChatRightSidebar({
   onWorktreeDiffChange,
   onToast,
   office,
+  active,
+  officeView,
+  officeLayer,
+  officeRoster,
+  officeShown,
+  onOfficeViewChange,
+  codePanels = true,
 }: ChatRightSidebarProps) {
   const showOffice = open && activity === "office";
   const [officeMounted, setOfficeMounted] = useState(showOffice);
-  if (showOffice && !officeMounted) setOfficeMounted(true);
+  const officeAway = officeView !== "panel";
+  if ((showOffice || officeAway) && !officeMounted) setOfficeMounted(true);
   // The office reads better wider than the file/diff panels.
   const maxWidth = activity === "office" ? 720 : 480;
   const changeCount = worktreeDiff?.files.length ?? 0;
-  const canShowChanges = Boolean(worktree || isWorkspace);
+  const canShowChanges = codePanels && Boolean(worktree || isWorkspace);
   const toggle = (next: RightActivity) => {
     if (open && activity === next) onOpenChange(false);
     else {
@@ -154,7 +175,11 @@ export default function ChatRightSidebar({
                   tools={office.tools}
                   running={office.running}
                   writing={office.writing}
-                  visible={showOffice}
+                  visible={officeAway ? active && officeShown : showOffice}
+                  view={officeView}
+                  layer={officeLayer}
+                  roster={officeRoster}
+                  onViewChange={onOfficeViewChange}
                 />
               </Suspense>
             </div>
@@ -202,16 +227,18 @@ export default function ChatRightSidebar({
         >
           <CrewIcon size={18} />
         </button>
-        <button
-          type="button"
-          className={open && activity === "explorer" ? "active" : ""}
-          onClick={() => toggle("explorer")}
-          title={open && activity === "explorer" ? "Hide files" : "Files"}
-          aria-label="Explorer"
-          aria-expanded={open && activity === "explorer"}
-        >
-          <FilesIcon size={18} />
-        </button>
+        {codePanels && (
+          <button
+            type="button"
+            className={open && activity === "explorer" ? "active" : ""}
+            onClick={() => toggle("explorer")}
+            title={open && activity === "explorer" ? "Hide files" : "Files"}
+            aria-label="Explorer"
+            aria-expanded={open && activity === "explorer"}
+          >
+            <FilesIcon size={18} />
+          </button>
+        )}
         {canShowChanges && (
           <button
             type="button"

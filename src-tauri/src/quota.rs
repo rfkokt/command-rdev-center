@@ -200,6 +200,66 @@ fn parse_claude_usage(usage: &Value) -> Vec<QuotaWindow> {
     .collect()
 }
 
+/// Last good Claude usage reply, and when Anthropic lets Kern ask again.
+#[derive(Default)]
+struct ClaudeUsage {
+    fetched: Option<(Instant, Vec<QuotaWindow>, Option<String>)>,
+    last_try: Option<Instant>,
+    blocked_until: Option<Instant>,
+}
+static CLAUDE_USAGE: LazyLock<Mutex<ClaudeUsage>> =
+    LazyLock::new(|| Mutex::new(ClaudeUsage::default()));
+/// The usage endpoint rate-limits hard (429 + Retry-After). Several chats
+/// refreshing after every reply would trip it, so a good reply is reused for
+/// `CLAUDE_REUSE` and calls are never closer than `CLAUDE_MIN_RETRY`.
+const CLAUDE_REUSE: Duration = Duration::from_secs(90);
+const CLAUDE_MIN_RETRY: Duration = Duration::from_secs(30);
+const CLAUDE_DEFAULT_BACKOFF: u64 = 5 * 60;
+
+fn claude_usage() -> std::sync::MutexGuard<'static, ClaudeUsage> {
+    CLAUDE_USAGE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn rate_limited(wait_secs: u64) -> String {
+    format!(
+        "Anthropic is rate-limiting usage checks; Kern retries in {}m.",
+        wait_secs.div_ceil(60).max(1)
+    )
+}
+
+fn retry_after(headers: &str) -> Option<u64> {
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if !name.trim().eq_ignore_ascii_case("retry-after") {
+            return None;
+        }
+        value.trim().parse().ok()
+    })
+}
+
+/// Fill `account` from the last good reply; with nothing cached, `reason`
+/// becomes the error.
+fn claude_from_cache(usage: &ClaudeUsage, account: &mut QuotaAccount, reason: Option<String>) {
+    match &usage.fetched {
+        Some((at, windows, note)) => {
+            account.windows = windows.clone();
+            account.note = match reason {
+                Some(reason) => {
+                    let minutes = at.elapsed().as_secs() / 60;
+                    let age = if minutes == 0 {
+                        "just now".to_string()
+                    } else {
+                        format!("{minutes}m ago")
+                    };
+                    Some(format!("{reason} Showing data from {age}."))
+                }
+                None => note.clone(),
+            };
+        }
+        None => account.error = reason,
+    }
+}
+
 fn claude_account() -> QuotaAccount {
     let mut account = QuotaAccount {
         id: "claude".into(),
@@ -227,13 +287,34 @@ fn claude_account() -> QuotaAccount {
     // Kern never refreshes this token: rotating it would sign Claude Code out.
     let expires = creds.get("expiresAt").and_then(Value::as_i64).unwrap_or(0) / 1000;
     if expires > 0 && expires < now_secs() {
-        account.error = Some("Claude login expired. Use Claude Code once to refresh it.".into());
+        account.error = Some(CLAUDE_EXPIRED.into());
         return account;
     }
     let Some(token) = creds.get("accessToken").and_then(Value::as_str) else {
         account.error = Some("Claude Code login has no access token".into());
         return account;
     };
+    {
+        let mut usage = claude_usage();
+        let now = Instant::now();
+        if let Some(until) = usage.blocked_until.filter(|until| *until > now) {
+            let reason = rate_limited((until - now).as_secs());
+            claude_from_cache(&usage, &mut account, Some(reason));
+            return account;
+        }
+        let fresh = usage
+            .fetched
+            .as_ref()
+            .is_some_and(|(at, _, _)| at.elapsed() < CLAUDE_REUSE);
+        let too_soon = usage
+            .last_try
+            .is_some_and(|at| at.elapsed() < CLAUDE_MIN_RETRY);
+        if fresh || (too_soon && usage.fetched.is_some()) {
+            claude_from_cache(&usage, &mut account, None);
+            return account;
+        }
+        usage.last_try = Some(now);
+    }
     let config = format!(
         "url = \"https://api.anthropic.com/api/oauth/usage?cedar_ember=1\"\nheader = {}\nheader = \"anthropic-beta: oauth-2025-04-20\"\n",
         quoted(&format!("Authorization: Bearer {token}"))
@@ -252,10 +333,24 @@ fn claude_account() -> QuotaAccount {
                     if grants == 1 { "" } else { "s" }
                 ));
             }
+            let mut usage = claude_usage();
+            usage.fetched = Some((
+                Instant::now(),
+                account.windows.clone(),
+                account.note.clone(),
+            ));
+            usage.blocked_until = None;
+        }
+        Ok(reply) if reply.status == 429 => {
+            let wait = retry_after(&reply.headers)
+                .unwrap_or(CLAUDE_DEFAULT_BACKOFF)
+                .clamp(60, 30 * 60);
+            let mut usage = claude_usage();
+            usage.blocked_until = Some(Instant::now() + Duration::from_secs(wait));
+            claude_from_cache(&usage, &mut account, Some(rate_limited(wait)));
         }
         Ok(reply) if reply.status == 401 => {
-            account.error =
-                Some("Claude login expired. Use Claude Code once to refresh it.".into());
+            account.error = Some(CLAUDE_EXPIRED.into());
         }
         Ok(reply) => account.error = Some(format!("Claude usage returned HTTP {}", reply.status)),
         Err(error) => account.error = Some(error),
@@ -546,6 +641,22 @@ fn jev_account() -> Option<QuotaAccount> {
 static CACHE: Mutex<Option<(Instant, QuotaSnapshot)>> = Mutex::new(None);
 /// Matches the frontend poll so several panels share one lookup.
 const CACHE_TTL: Duration = Duration::from_secs(4 * 60);
+/// Claude Code rotates its token on its next request, so an expired login
+/// usually heals within seconds; don't pin that error for a full poll.
+const EXPIRED_CACHE_TTL: Duration = Duration::from_secs(20);
+const CLAUDE_EXPIRED: &str = "Claude login expired. Use Claude Code once to refresh it.";
+
+fn cache_ttl(snapshot: &QuotaSnapshot) -> Duration {
+    let expired = snapshot
+        .accounts
+        .iter()
+        .any(|account| account.error.as_deref() == Some(CLAUDE_EXPIRED));
+    if expired {
+        EXPIRED_CACHE_TTL
+    } else {
+        CACHE_TTL
+    }
+}
 
 fn clear_cache() {
     if let Ok(mut guard) = CACHE.lock() {
@@ -613,7 +724,7 @@ pub async fn get_quota(refresh: Option<bool>) -> Result<QuotaSnapshot, String> {
     crate::pi_rpc::off_main_thread(move || {
         if !refresh.unwrap_or(false) {
             if let Some((at, cached)) = CACHE.lock().ok().and_then(|guard| guard.clone()) {
-                if at.elapsed() < CACHE_TTL {
+                if at.elapsed() < cache_ttl(&cached) {
                     return Ok(cached);
                 }
             }
@@ -788,6 +899,61 @@ pub fn delete_router(id: String) -> Result<QuotaSettings, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_retry_after() {
+        let headers = "HTTP/2 429\r\ncontent-type: application/json\r\nRetry-After: 155";
+        assert_eq!(retry_after(headers), Some(155));
+        assert_eq!(retry_after("HTTP/2 429\r\nx: y"), None);
+    }
+
+    #[test]
+    fn rate_limit_falls_back_to_last_reply() {
+        let window = QuotaWindow {
+            label: "5-hour".into(),
+            used_percent: 52.0,
+            resets_at: None,
+        };
+        let mut account = claude_account_shell();
+        claude_from_cache(
+            &ClaudeUsage::default(),
+            &mut account,
+            Some(rate_limited(155)),
+        );
+        assert!(account.windows.is_empty());
+        assert_eq!(
+            account.error.as_deref(),
+            Some("Anthropic is rate-limiting usage checks; Kern retries in 3m.")
+        );
+
+        let usage = ClaudeUsage {
+            fetched: Some((Instant::now(), vec![window.clone()], None)),
+            ..ClaudeUsage::default()
+        };
+        let mut account = claude_account_shell();
+        claude_from_cache(&usage, &mut account, Some(rate_limited(155)));
+        assert_eq!(account.windows, vec![window]);
+        assert!(account.error.is_none());
+        assert!(account
+            .note
+            .unwrap()
+            .ends_with("Showing data from just now."));
+    }
+
+    fn claude_account_shell() -> QuotaAccount {
+        QuotaAccount {
+            id: "claude".into(),
+            group: "Claude".into(),
+            source: "claude".into(),
+            provider: "claude".into(),
+            name: "Claude".into(),
+            plan: None,
+            windows: Vec::new(),
+            reset_credits: 0,
+            note: None,
+            error: None,
+        }
+    }
 
     #[test]
     fn parses_rfc3339_with_offsets() {

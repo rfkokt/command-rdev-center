@@ -24,7 +24,8 @@ export type LiveMember = {
   detail?: string;
 };
 export type LiveCrew = { working: boolean; members: readonly LiveMember[] };
-export type CameraMode = "overview" | "auto" | AgentId;
+/** "free": the user moved the camera by hand; nothing steers it. */
+export type CameraMode = "overview" | "auto" | "free" | AgentId;
 
 export const OVERVIEW = { x: -0.5, z: -1.2, zoom: 0.4 } as const;
 export const FOLLOW_ZOOM = 1.45;
@@ -694,7 +695,7 @@ export function createOfficeLive(
       shot = "";
       shotSince = -99;
       if (next === "overview") overview();
-      else if (next !== "auto") {
+      else if (next !== "auto" && next !== "free") {
         shot = `follow:${next}`;
         office.focusOn(next, FOLLOW_ZOOM);
       }

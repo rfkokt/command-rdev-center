@@ -1075,3 +1075,163 @@
   text-transform: uppercase;
   color: var(--text-quiet);
 }
+
+/* ------------------------------------------------- office in the chat area */
+/* ChatView: "full" puts the office under the chat and floats the chat over it
+   (Claw3D style); "pip" floats a mini office over the chat. The stage itself
+   is moved in by OfficePanel. --office-rail is the right rail + panel width. */
+
+.chat-office-layer {
+  position: absolute;
+  overflow: hidden;
+}
+.chat-office-layer-stage {
+  position: absolute;
+  inset: 0;
+}
+.chat-office-layer-stage[hidden] {
+  display: none;
+}
+
+/* Full: the office is the chat area's floor. */
+.app-shell .chat-view.is-office-full {
+  isolation: isolate;
+}
+.chat-office-layer.is-full {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: var(--office-rail, 38px);
+  z-index: -1;
+}
+.app-shell .chat-view.is-office-full > .chat-content {
+  position: absolute !important;
+  right: calc(var(--office-rail, 38px) + 12px);
+  bottom: 50px;
+  z-index: 5;
+  flex: none !important;
+  width: min(780px, calc(100% - var(--office-rail, 38px) - 24px)) !important;
+  height: min(580px, calc(100% - 110px)) !important;
+  padding: 0 0 0 208px !important;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 12px;
+  background: var(--surface-solid, #0e131d) !important;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.app-shell
+  .chat-view.is-office-full
+  > .chat-content:has(.office-roster.is-collapsed) {
+  padding-left: 48px !important;
+}
+.app-shell .chat-view.is-chat-hidden > .chat-content,
+.app-shell .chat-view.is-office-full > .chat-composer-help,
+.app-shell .chat-view.is-office-full > .caption-uppercase {
+  display: none !important;
+}
+.chat-office-roster {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 208px;
+  border-right: 1px solid var(--line);
+}
+.chat-content:has(.office-roster.is-collapsed) > .chat-office-roster {
+  width: 48px;
+}
+.chat-float-toggle {
+  position: absolute;
+  right: calc(var(--office-rail, 38px) + 12px);
+  bottom: 12px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 8px;
+  background: var(--surface-solid, #0e131d);
+  color: var(--text-body);
+  font: 600 11px var(--font-ui);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.chat-float-toggle em,
+.chat-office-pip-bar em {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, #4ade80 18%, transparent);
+  color: #4ade80;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Mini: a floating window over the chat. Position/size come inline. */
+.chat-office-layer.is-pip {
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 12px;
+  background: var(--surface-solid, #0e131d);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+.chat-office-layer.is-pip .chat-office-layer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+.chat-office-pip-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 6px 0 4px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-quiet);
+  font: 500 11px var(--font-ui);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.chat-office-layer.is-collapsed .chat-office-pip-bar {
+  border-bottom: 0;
+}
+.chat-office-pip-bar strong {
+  flex: 1;
+  color: var(--text-body);
+  font-weight: 600;
+}
+.chat-office-pip-bar button {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-quiet);
+  font: inherit;
+  cursor: pointer;
+}
+.chat-office-pip-bar button:hover {
+  color: var(--text-body);
+}
+/* Anchored bottom-right, so it grows from the top-left corner. */
+.chat-office-pip-grip {
+  width: 14px;
+  height: 14px;
+  border-top: 2px solid var(--text-quiet);
+  border-left: 2px solid var(--text-quiet);
+  border-radius: 3px 0 0 0;
+  opacity: 0.6;
+  cursor: nwse-resize;
+}
+.chat-office-layer.is-collapsed .chat-office-pip-grip {
+  visibility: hidden;
+}

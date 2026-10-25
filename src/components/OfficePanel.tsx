@@ -1,11 +1,13 @@
 import {
   memo,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 import type { ToolCall } from "../lib/rpc";
 import { STUDIO_COLORS } from "./office/office-layout";
 import type { AgentId, SceneCrew } from "./office/office-motion";
@@ -87,22 +89,122 @@ function liveCrew(crew: ReturnType<typeof buildCrew>): LiveCrew {
   };
 }
 
-const CAMERA_ORDER: AgentId[] = ["kern", "alan", "ada", "linus", "bob", "grace"];
+/**
+ * Where the office is drawn: the side panel, full size in the chat area with
+ * the chat floating over it, or a small floating window over the chat.
+ */
+export type OfficeView = "panel" | "full" | "pip";
+
+const VIEWS: { id: OfficeView; label: string; title: string }[] = [
+  { id: "panel", label: "Panel", title: "Office in this side panel" },
+  { id: "pip", label: "Mini", title: "Small floating office over the chat" },
+  { id: "full", label: "Full", title: "Office fills the chat; chat floats" },
+];
+
+function ViewSwitch({
+  view,
+  onView,
+}: {
+  view: OfficeView;
+  onView: (view: OfficeView) => void;
+}) {
+  return (
+    <div className="office-view-switch" role="group" aria-label="Office view">
+      {VIEWS.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className={view === option.id ? "is-on" : ""}
+          aria-pressed={view === option.id}
+          title={option.title}
+          onClick={() => onView(option.id)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const CAMERA_ORDER: AgentId[] = [
+  "kern",
+  "alan",
+  "ada",
+  "linus",
+  "bob",
+  "grace",
+];
+
+function CameraBar({
+  crew,
+  camera,
+  onSelect,
+  onCamera,
+}: {
+  crew: ReturnType<typeof buildCrew>;
+  camera: CameraMode;
+  onSelect: (id: AgentId) => void;
+  onCamera: (mode: CameraMode) => void;
+}) {
+  return (
+    <div className="office-camera" role="toolbar" aria-label="Camera">
+      {(["overview", "auto"] as const).map((mode) => (
+        <button
+          key={mode}
+          type="button"
+          className={camera === mode ? "is-on" : ""}
+          aria-pressed={camera === mode}
+          title={
+            mode === "auto"
+              ? "Camera moves to whoever is working"
+              : "Show the whole floor"
+          }
+          onClick={() => onCamera(mode)}
+        >
+          {mode === "auto" ? "Auto" : "Overview"}
+        </button>
+      ))}
+      <span className="office-camera-sep" aria-hidden="true" />
+      {CAMERA_ORDER.map((id) => {
+        const member = crew.members.find((m) => m.id === id)!;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={camera === id ? "is-on" : ""}
+            aria-pressed={camera === id}
+            title={`Follow ${member.name}`}
+            data-status={member.status}
+            style={{ "--member-color": member.color } as CSSProperties}
+            onClick={() => onSelect(id)}
+          >
+            <i aria-hidden="true" />
+            {member.name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function OfficeStage({
   crew,
   selected,
   camera,
   visible,
+  view,
   onSelect,
   onCamera,
+  onView,
 }: {
   crew: ReturnType<typeof buildCrew>;
   selected: AgentId | null;
   camera: CameraMode;
   visible: boolean;
+  view: OfficeView;
   onSelect: (id: AgentId) => void;
   onCamera: (mode: CameraMode) => void;
+  onView: (view: OfficeView) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
@@ -219,9 +321,71 @@ function OfficeStage({
     if (visible) sceneRef.current?.resize();
   }, [visible]);
 
+  // Scroll zooms, dragging pans (as in Claw3D). A drag hands the camera to
+  // the user ("free") so Auto/follow stop steering it.
+  const onCameraRef = useRef(onCamera);
+  onCameraRef.current = onCamera;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !ready) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+      sceneRef.current?.zoomBy(Math.exp(-delta * 0.0015));
+    };
+    let drag: { id: number; x: number; y: number; moved: boolean } | null =
+      null;
+    const onDown = (event: PointerEvent) => {
+      if (event.button !== 0 && event.button !== 2) return;
+      drag = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        moved: false,
+      };
+      canvas.setPointerCapture(event.pointerId);
+    };
+    const onMove = (event: PointerEvent) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        canvas.classList.add("is-dragging");
+        onCameraRef.current("free");
+      }
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      sceneRef.current?.panBy(dx, dy);
+    };
+    const onUp = (event: PointerEvent) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      canvas.classList.remove("is-dragging");
+      if (canvas.hasPointerCapture(event.pointerId))
+        canvas.releasePointerCapture(event.pointerId);
+    };
+    const onContext = (event: MouseEvent) => event.preventDefault();
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("pointerdown", onDown);
+    canvas.addEventListener("pointermove", onMove);
+    canvas.addEventListener("pointerup", onUp);
+    canvas.addEventListener("pointercancel", onUp);
+    canvas.addEventListener("contextmenu", onContext);
+    return () => {
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("pointerdown", onDown);
+      canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
+      canvas.removeEventListener("contextmenu", onContext);
+    };
+  }, [ready]);
+
   return (
     <div
-      className="office-panel-stage office-scene"
+      className={`office-panel-stage office-scene is-${view}`}
       data-renderer={ready ? "webgl" : "fallback"}
       style={
         {
@@ -232,44 +396,14 @@ function OfficeStage({
     >
       <canvas ref={canvasRef} hidden={!ready} />
       <div ref={labelsRef} className="office-scene-labels" hidden={!ready} />
+      {ready && <ViewSwitch view={view} onView={onView} />}
       {ready && (
-        <div className="office-camera" role="toolbar" aria-label="Camera">
-          {(["overview", "auto"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={camera === mode ? "is-on" : ""}
-              aria-pressed={camera === mode}
-              title={
-                mode === "auto"
-                  ? "Camera moves to whoever is working"
-                  : "Show the whole floor"
-              }
-              onClick={() => onCamera(mode)}
-            >
-              {mode === "auto" ? "Auto" : "Overview"}
-            </button>
-          ))}
-          <span className="office-camera-sep" aria-hidden="true" />
-          {CAMERA_ORDER.map((id) => {
-            const member = crew.members.find((m) => m.id === id)!;
-            return (
-              <button
-                key={id}
-                type="button"
-                className={camera === id ? "is-on" : ""}
-                aria-pressed={camera === id}
-                title={`Follow ${member.name}`}
-                data-status={member.status}
-                style={{ "--member-color": member.color } as CSSProperties}
-                onClick={() => onSelect(id)}
-              >
-                <i aria-hidden="true" />
-                {member.name}
-              </button>
-            );
-          })}
-        </div>
+        <CameraBar
+          crew={crew}
+          camera={camera}
+          onSelect={onSelect}
+          onCamera={onCamera}
+        />
       )}
       {(failed || !ready) && (
         <p className="office-panel-fallback">
@@ -363,21 +497,105 @@ function MemberDetail({ member }: { member: CrewMember }) {
   );
 }
 
+/** Compact crew list for the floating chat window (full view). */
+function CrewRoster({
+  crew,
+  selected,
+  onSelect,
+}: {
+  crew: ReturnType<typeof buildCrew>;
+  selected: AgentId | null;
+  onSelect: (id: AgentId) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const busy = crew.members.filter((m) => m.status === "working").length;
+  return (
+    <div className={`office-roster${collapsed ? " is-collapsed" : ""}`}>
+      <header>
+        {!collapsed && <strong>Crew</strong>}
+        <span>{busy ? `${busy} busy` : crew.members.length}</span>
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          title={collapsed ? "Show the crew" : "Hide the crew"}
+          aria-label={collapsed ? "Expand crew list" : "Collapse crew list"}
+          aria-expanded={!collapsed}
+        >
+          {collapsed ? "›" : "‹"}
+        </button>
+      </header>
+      <ul>
+        {crew.members.map((member) => (
+          <li key={member.id}>
+            <button
+              type="button"
+              className={`is-${member.status}${member.id === selected ? " is-selected" : ""}`}
+              style={{ "--member-color": member.color } as CSSProperties}
+              title={`${member.name} · ${member.role}${member.text ? ` — ${member.text}` : ""}`}
+              aria-pressed={member.id === selected}
+              onClick={() => onSelect(member.id)}
+            >
+              <i aria-hidden="true" />
+              {collapsed ? (
+                <b>{member.name.slice(0, 1)}</b>
+              ) : (
+                <>
+                  <span>
+                    <b>{member.name}</b>
+                    <small>{member.text || member.role}</small>
+                  </span>
+                  <em>{STATUS_TEXT[member.status]}</em>
+                </>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default memo(function OfficePanel({
   tools,
   running,
   writing,
   visible,
+  view = "panel",
+  layer = null,
+  roster = null,
+  onViewChange,
 }: {
   tools: readonly ToolCall[];
   running: boolean;
   writing: boolean;
+  /** The 3D stage is on screen (in the panel or over the chat). */
   visible: boolean;
+  view?: OfficeView;
+  /** Chat-area node the stage moves into for the full and mini views. */
+  layer?: HTMLElement | null;
+  /** Node in the floating chat (full view) that shows the crew roster. */
+  roster?: HTMLElement | null;
+  onViewChange?: (view: OfficeView) => void;
 }) {
   const [camera, setCamera] = useState<CameraMode>("overview");
   // Following a member is the same as selecting them.
   const selected: AgentId | null =
-    camera === "overview" || camera === "auto" ? null : camera;
+    camera === "overview" || camera === "auto" || camera === "free"
+      ? null
+      : camera;
+  const outside = view !== "panel" && layer !== null;
+  // The stage lives in its own node that moves between the panel slot and the
+  // chat area, so the WebGL scene survives the switch instead of rebuilding.
+  const [stageHost] = useState(() => {
+    const host = document.createElement("div");
+    host.className = "office-stage-host";
+    return host;
+  });
+  const slotRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    (outside ? layer : slotRef.current)?.appendChild(stageHost);
+  }, [outside, layer, stageHost]);
+  useEffect(() => () => stageHost.remove(), [stageHost]);
   // Tick while something can still change by time alone (done/error fades).
   const lastEnd = useRef(0);
   const now = useCrewClock(
@@ -399,14 +617,39 @@ export default memo(function OfficePanel({
 
   return (
     <div className="office-panel">
-      <OfficeStage
-        crew={crew}
-        selected={selected}
-        camera={camera}
-        visible={visible}
-        onSelect={toggle}
-        onCamera={setCamera}
-      />
+      {createPortal(
+        <OfficeStage
+          crew={crew}
+          selected={selected}
+          camera={camera}
+          visible={visible}
+          view={outside ? view : "panel"}
+          onSelect={toggle}
+          onCamera={setCamera}
+          onView={(next) => onViewChange?.(next)}
+        />,
+        stageHost,
+      )}
+      {roster &&
+        view === "full" &&
+        createPortal(
+          <CrewRoster crew={crew} selected={selected} onSelect={toggle} />,
+          roster,
+        )}
+      <div ref={slotRef} className="office-stage-slot" />
+      {outside && (
+        <div className="office-away-card">
+          <p>
+            <strong>
+              {view === "full"
+                ? "Office fills the chat"
+                : "Office is in a mini window"}
+            </strong>
+            <span>Scroll to zoom, drag to move the camera.</span>
+          </p>
+          <ViewSwitch view={view} onView={(next) => onViewChange?.(next)} />
+        </div>
+      )}
       <div className="office-panel-summary" role="status" aria-live="polite">
         {running
           ? busy > 1
