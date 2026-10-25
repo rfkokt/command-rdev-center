@@ -10,6 +10,7 @@ import type { ToolCall } from "../lib/rpc";
 import { STUDIO_COLORS } from "./office/office-layout";
 import type { AgentId, SceneCrew } from "./office/office-motion";
 import type { OfficeScene } from "./office/office-scene";
+import type { CameraMode, LiveCrew, OfficeLive } from "./office/office-live";
 import {
   buildCrew,
   DONE_HOLD_MS,
@@ -68,22 +69,47 @@ function sceneCrew(
   };
 }
 
+/** What the live layer (video wall, tubes, camera) needs from the crew. */
+function liveCrew(crew: ReturnType<typeof buildCrew>): LiveCrew {
+  return {
+    working: crew.working,
+    members: crew.members.map((member) => {
+      const done = member.steps.filter((step) => step.done).length;
+      return {
+        id: member.id,
+        status: member.status,
+        text: member.text,
+        detail: member.steps.length
+          ? `${done}/${member.steps.length} steps done`
+          : undefined,
+      };
+    }),
+  };
+}
+
+const CAMERA_ORDER: AgentId[] = ["kern", "alan", "ada", "linus", "bob", "grace"];
+
 function OfficeStage({
   crew,
   selected,
+  camera,
   visible,
   onSelect,
+  onCamera,
 }: {
   crew: ReturnType<typeof buildCrew>;
   selected: AgentId | null;
+  camera: CameraMode;
   visible: boolean;
   onSelect: (id: AgentId) => void;
+  onCamera: (mode: CameraMode) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<OfficeScene | null>(null);
-  const latest = useRef({ crew, selected, visible, onSelect });
-  latest.current = { crew, selected, visible, onSelect };
+  const liveRef = useRef<OfficeLive | null>(null);
+  const latest = useRef({ crew, selected, camera, visible, onSelect });
+  latest.current = { crew, selected, camera, visible, onSelect };
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -100,8 +126,10 @@ function OfficeStage({
         theme === "dark" || (theme !== "light" && (scheme?.matches ?? true)),
       );
     };
-    const updateMotion = () =>
+    const updateMotion = () => {
       sceneRef.current?.setReducedMotion(motion?.matches ?? false);
+      liveRef.current?.setReducedMotion(motion?.matches ?? false);
+    };
     const updateVisibility = () =>
       sceneRef.current?.setVisible(latest.current.visible && !document.hidden);
     const resizeObserver =
@@ -120,22 +148,31 @@ function OfficeStage({
 
     if (typeof window.WebGL2RenderingContext === "undefined") setFailed(true);
     else
-      void import("./office/office-scene")
-        .then(({ createOfficeScene }) => {
+      void Promise.all([
+        import("./office/office-scene"),
+        import("./office/office-live"),
+      ])
+        .then(([{ createOfficeScene }, { createOfficeLive, OVERVIEW }]) => {
           if (cancelled) return;
           const scene = createOfficeScene(canvas, labels, {
             onSelect: (id) => latest.current.onSelect(id),
-            // Frame the six desks; the panel is far smaller than the window.
-            zoom: 1.55,
-            focus: { x: 2.4, z: 0.9 },
+            // Start on the whole floor; the camera bar moves it from there.
+            zoom: OVERVIEW.zoom,
+            focus: { x: OVERVIEW.x, z: OVERVIEW.z },
           });
           sceneRef.current = scene;
+          const live = createOfficeLive(scene, {
+            reducedMotion: motion?.matches ?? false,
+          });
+          liveRef.current = live;
           updateTheme();
           updateMotion();
           scene.setCrew(
             sceneCrew(latest.current.crew, latest.current.selected),
           );
+          live.update(liveCrew(latest.current.crew));
           scene.setSelected(latest.current.selected);
+          live.setCamera(latest.current.camera);
           updateVisibility();
           setReady(true);
         })
@@ -146,6 +183,8 @@ function OfficeStage({
         });
     return () => {
       cancelled = true;
+      liveRef.current?.dispose();
+      liveRef.current = null;
       sceneRef.current?.dispose();
       sceneRef.current = null;
       resizeObserver?.disconnect();
@@ -163,6 +202,15 @@ function OfficeStage({
   useEffect(() => {
     sceneRef.current?.setCrew(sceneCrew(latest.current.crew, selected));
   }, [crewKey, crew.working, selected]);
+  const stepsKey = crew.members
+    .map((m) => `${m.steps.filter((s) => s.done).length}/${m.steps.length}`)
+    .join("|");
+  useEffect(() => {
+    liveRef.current?.update(liveCrew(latest.current.crew));
+  }, [crewKey, crew.working, stepsKey]);
+  useEffect(() => {
+    liveRef.current?.setCamera(camera);
+  }, [camera]);
   useEffect(() => {
     sceneRef.current?.setSelected(selected);
   }, [selected]);
@@ -184,6 +232,45 @@ function OfficeStage({
     >
       <canvas ref={canvasRef} hidden={!ready} />
       <div ref={labelsRef} className="office-scene-labels" hidden={!ready} />
+      {ready && (
+        <div className="office-camera" role="toolbar" aria-label="Camera">
+          {(["overview", "auto"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={camera === mode ? "is-on" : ""}
+              aria-pressed={camera === mode}
+              title={
+                mode === "auto"
+                  ? "Camera moves to whoever is working"
+                  : "Show the whole floor"
+              }
+              onClick={() => onCamera(mode)}
+            >
+              {mode === "auto" ? "Auto" : "Overview"}
+            </button>
+          ))}
+          <span className="office-camera-sep" aria-hidden="true" />
+          {CAMERA_ORDER.map((id) => {
+            const member = crew.members.find((m) => m.id === id)!;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={camera === id ? "is-on" : ""}
+                aria-pressed={camera === id}
+                title={`Follow ${member.name}`}
+                data-status={member.status}
+                style={{ "--member-color": member.color } as CSSProperties}
+                onClick={() => onSelect(id)}
+              >
+                <i aria-hidden="true" />
+                {member.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
       {(failed || !ready) && (
         <p className="office-panel-fallback">
           {failed
@@ -287,7 +374,10 @@ export default memo(function OfficePanel({
   writing: boolean;
   visible: boolean;
 }) {
-  const [selected, setSelected] = useState<AgentId | null>(null);
+  const [camera, setCamera] = useState<CameraMode>("overview");
+  // Following a member is the same as selecting them.
+  const selected: AgentId | null =
+    camera === "overview" || camera === "auto" ? null : camera;
   // Tick while something can still change by time alone (done/error fades).
   const lastEnd = useRef(0);
   const now = useCrewClock(
@@ -303,7 +393,7 @@ export default memo(function OfficePanel({
     [tools, running, writing, now],
   );
   const toggle = (id: AgentId) =>
-    setSelected((current) => (current === id ? null : id));
+    setCamera((current) => (current === id ? "overview" : id));
   const busy = crew.members.filter((m) => m.status === "working").length;
   const chosen = crew.members.find((m) => m.id === selected) ?? null;
 
@@ -312,8 +402,10 @@ export default memo(function OfficePanel({
       <OfficeStage
         crew={crew}
         selected={selected}
+        camera={camera}
         visible={visible}
         onSelect={toggle}
+        onCamera={setCamera}
       />
       <div className="office-panel-summary" role="status" aria-live="polite">
         {running

@@ -2,8 +2,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import * as THREE from "three";
 import { createOfficeScene, type OfficeScene } from "./office-scene";
-import { TEAM, activityFor } from "./office-motion";
+import { TEAM, activityFor, facingOf } from "./office-motion";
 import { OFFICE_VISITS } from "./office-layout";
+import { createOfficeLive, type LiveMember } from "./office-live";
 
 const renderer = vi.hoisted(() => ({
   render: vi.fn(),
@@ -94,6 +95,9 @@ function advance(seconds: number) {
   }
   vi.advanceTimersByTime(seconds * 1000);
 }
+// Only Kern sits (lead desk); helpers stand at their consoles.
+const restY = (i: number) => (TEAM[i].post === "lead" ? -0.24 : 0);
+const restArm = (i: number) => (TEAM[i].post === "lead" ? -0.8 : 0);
 function expectAtDesks() {
   roots.forEach((root, i) => {
     expect(root.position.toArray()).toEqual([
@@ -101,7 +105,7 @@ function expectAtDesks() {
       0,
       TEAM[i].home.z,
     ]);
-    expect(root.rotation.y).toBe(Math.PI);
+    expect(root.rotation.y).toBe(facingOf(TEAM[i]));
   });
 }
 
@@ -173,7 +177,7 @@ it("lifts a visible mug at the pantry and leaves motion still when reduced motio
   office.setReducedMotion(true);
   expectAtDesks();
   expect(mug.visible).toBe(false);
-  expect(visitor.children[0].position.y).toBe(-0.24);
+  expect(visitor.children[0].position.y).toBeCloseTo(restY(1));
 });
 
 it("moves the visitor's contact shadow without recalculating GPU shadows on each step", () => {
@@ -199,10 +203,10 @@ it("moves the visitor's contact shadow without recalculating GPU shadows on each
 it("animates every rigid chibi body and fallback arm while working, then stops typing", () => {
   office.setWorking(true);
   advance(1);
-  const poses = roots.map((root) => {
+  const poses = roots.map((root, i) => {
     const body = root.children[0];
     expect(body.rotation.x).toBeGreaterThan(0);
-    expect(body.children[1].rotation.x).not.toBe(-0.8);
+    expect(body.children[1].rotation.x).not.toBeCloseTo(restArm(i), 6);
     return body.rotation.x;
   });
   advance(1);
@@ -211,11 +215,11 @@ it("animates every rigid chibi body and fallback arm while working, then stops t
   );
   office.setWorking(false);
   advance(1);
-  roots.forEach((root) => {
+  roots.forEach((root, i) => {
     const body = root.children[0];
     expect(body.rotation.x).toBe(0);
     expect(body.rotation.z).toBeCloseTo(0);
-    expect(body.children[1].rotation.x).toBe(-0.8);
+    expect(body.children[1].rotation.x).toBeCloseTo(restArm(i));
   });
 });
 
@@ -262,8 +266,8 @@ it("keeps reduced motion still while work indicators and real activity remain li
   office.setReducedMotion(true);
   office.setActivity(activityFor("crc-agent-prompt", { text: "Build it" })!);
   expect(renderer.setAnimationLoop).toHaveBeenLastCalledWith(null);
-  roots.forEach((root) => {
-    expect(root.children[0].position.y).toBe(-0.24);
+  roots.forEach((root, i) => {
+    expect(root.children[0].position.y).toBeCloseTo(restY(i));
     expect(root.children[0].rotation.x).toBe(0);
   });
   expectAtDesks();
@@ -336,4 +340,45 @@ it("lets labels select a member when a handler is given", () => {
   linus.click();
   linus.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
   expect(onSelect.mock.calls).toEqual([["linus"], ["linus"]]);
+});
+
+it("sends tasks down the tubes, walks Kern to a failure and lets the camera follow a pick", () => {
+  const live = createOfficeLive(office);
+  const scene = renderer.render.mock.lastCall![0] as THREE.Scene;
+  const layer = scene.getObjectByName("office-live")!;
+  const crew = (status: Record<string, LiveMember["status"]>) => ({
+    working: true,
+    members: TEAM.map((m) => ({
+      id: m.id,
+      status: status[m.id] ?? "idle",
+      text: status[m.id] ? `${m.name} task` : "",
+    })),
+  });
+  const moving = () =>
+    layer.children.filter((child) => child.userData.moving).length;
+  office.setWorking(true);
+  live.update(crew({ bob: "working" }));
+  expect(moving()).toBe(1); // a capsule on its way to the test lab
+  advance(4);
+  expect(moving()).toBe(1); // landed as a card on Bob's console
+  live.update(crew({ bob: "error" }));
+  advance(1);
+  const kern = roots[TEAM.findIndex((m) => m.id === "kern")];
+  const home = TEAM.find((m) => m.id === "kern")!.home;
+  expect(Math.hypot(kern.position.x - home.x, kern.position.z - home.z)).toBeGreaterThan(0.5);
+
+  const camera = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  const overviewWidth = camera.right - camera.left;
+  live.setCamera("ada");
+  advance(4);
+  const followed = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  const followWidth = followed.right - followed.left;
+  expect(followWidth).toBeLessThan(overviewWidth * 0.8);
+  live.setCamera("overview");
+  advance(6);
+  const back = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  // The floor-plan view is far wider than following one member.
+  expect(back.right - back.left).toBeGreaterThan(followWidth * 3);
+  live.dispose();
+  expect(scene.getObjectByName("office-live")).toBeUndefined();
 });

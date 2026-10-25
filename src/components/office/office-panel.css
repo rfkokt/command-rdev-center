@@ -278,3 +278,76 @@
     animation: none;
   }
 }
+
+/* ---- camera bar: overview / auto / follow one member ---- */
+.office-camera {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  /* The stage itself ignores the pointer (see office-scene.css). */
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-solid, #0b0e14) 86%, transparent);
+}
+.office-camera::-webkit-scrollbar {
+  display: none;
+}
+.office-camera-sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--line);
+}
+.office-camera button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-quiet);
+  font: 500 11px var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.office-camera button:hover {
+  color: var(--text-body);
+}
+.office-camera button.is-on {
+  border-color: var(--line);
+  background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+  color: var(--text-primary, var(--text-body));
+}
+.office-camera button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.office-camera i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--member-color);
+  opacity: 0.45;
+}
+.office-camera button[data-status="working"] i {
+  opacity: 1;
+  box-shadow: 0 0 6px var(--member-color);
+}
+.office-camera button[data-status="error"] i {
+  background: var(--danger);
+  opacity: 1;
+}

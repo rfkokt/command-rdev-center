@@ -823,7 +823,7 @@ export function createOfficeScene(
       label,
       bubble,
       walker: routine.walkers[index],
-      sit: 1,
+      sit: member.post === "lead" ? 1 : 0,
       shadowAnchored: true as boolean | null,
       projectedAt: { x: NaN, z: NaN, y: NaN },
       focused: false,

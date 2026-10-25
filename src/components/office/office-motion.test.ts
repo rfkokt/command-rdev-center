@@ -7,6 +7,7 @@ import {
   routeWalkersTo,
   CHARACTER_CLEARANCE,
   aisleRoute,
+  POST_OBSTACLES,
   belongsToTab,
   createWalker,
   TEAM,
@@ -88,49 +89,33 @@ describe("office motion", () => {
       }
     }
   });
-  it("keeps routes to the pantry discussion spots clear of desks and chair backrests", () => {
-    const spots = DISCUSSION_SPOTS;
+  it("keeps routes to the lounge discussion spots clear of walls, furniture and posts", () => {
+    const blocked = [...FIXED_OBSTACLES, ...POST_OBSTACLES];
+    const hits: string[] = [];
     for (const member of TEAM) {
-      for (const spot of spots) {
+      for (const spot of DISCUSSION_SPOTS) {
         for (const [from, to] of [
           [member.home, spot],
           [spot, member.home],
         ]) {
           const waypoints = aisleRoute(from, to);
           expect(waypoints.length).toBeGreaterThan(0);
+          expect(waypoints[waypoints.length - 1]).toEqual(to);
           const route = [from, ...waypoints];
-          for (let i = 1; i < route.length; i++) {
-            for (let step = 0; step <= 20; step++) {
-              const t = step / 20;
+          for (let i = 1; i < route.length; i++)
+            for (let step = 0; step <= 40; step++) {
+              const t = step / 40;
               const x = route[i - 1].x * (1 - t) + route[i].x * t;
               const z = route[i - 1].z * (1 - t) + route[i].z * t;
-              for (const obstacle of FIXED_OBSTACLES) {
-                expect(
-                  x > obstacle.minX &&
-                    x < obstacle.maxX &&
-                    z > obstacle.minZ &&
-                    z < obstacle.maxZ,
-                ).toBe(false);
-              }
-              for (const station of TEAM) {
-                const facing = -1;
-                const backrestZ = station.home.z - facing * 0.45;
-                expect(
-                  Math.abs(x - station.home.x) < 1.35 &&
-                    Math.abs(z - (station.home.z - 0.95)) < 0.575,
-                ).toBe(false);
-                expect(
-                  Math.abs(x - station.home.x) < 0.5 &&
-                    Math.abs(z - backrestZ) < 0.1,
-                ).toBe(false);
-              }
+              for (const o of blocked)
+                if (x > o.minX && x < o.maxX && z > o.minZ && z < o.maxZ)
+                  hits.push(`${member.id} at ${x.toFixed(2)},${z.toFixed(2)}`);
             }
-          }
-          expect(route[route.length - 1]).toEqual(to);
         }
       }
     }
-  });
+    expect(hits).toEqual([]);
+  }, 30_000);
 });
 
 describe("office crowd collisions", () => {
