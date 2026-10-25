@@ -46,6 +46,10 @@ export interface OfficeScene {
   focusOn(id: AgentId | null, zoom?: number): void;
   /** Glide the camera to a floor point (and zoom), ending any follow. */
   glideTo(x: number, z: number, zoom?: number): void;
+  /** Drag the floor by a screen offset in CSS pixels, ending any follow. */
+  panBy(dx: number, dy: number): void;
+  /** Scale the zoom (>1 closer), within limits around the home framing. */
+  zoomBy(factor: number): void;
   /** Scene graph access for overlays drawn on top of the office. */
   stage(): {
     scene: THREE.Scene;
@@ -1265,6 +1269,30 @@ export function createOfficeScene(
       framing.x = x;
       framing.z = z;
       framing.zoom = zoomLevel ?? framing.zoom;
+      if (reduced || !previous) draw(0);
+    },
+    panBy(dx, dy) {
+      // Screen pixels to world units; the screen's up axis meets the floor
+      // at an angle, so its floor share is stretched back out.
+      const unit = (camera.top - camera.bottom) / height;
+      const e = camera.matrixWorld.elements;
+      const upFloor = e[4] * e[4] + e[6] * e[6] || 1;
+      framing.followId = null;
+      framing.x += -e[0] * dx * unit + (e[4] * dy * unit) / upFloor;
+      framing.z += -e[2] * dx * unit + (e[6] * dy * unit) / upFloor;
+      // Follow the hand directly; gliding would make drags feel rubbery.
+      focus.x = framing.x;
+      focus.z = framing.z;
+      frameCamera();
+      if (reduced || !previous) draw(0);
+    },
+    zoomBy(factor) {
+      framing.zoom = Math.min(
+        homeZoom * 6,
+        Math.max(homeZoom * 0.6, framing.zoom * factor),
+      );
+      zoom = framing.zoom;
+      frameCamera();
       if (reduced || !previous) draw(0);
     },
     focusOn(id, zoomLevel) {

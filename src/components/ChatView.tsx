@@ -9,6 +9,7 @@ import {
   useMemo,
   type CSSProperties,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -89,6 +90,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
+import type { OfficeView } from "./OfficePanel";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel from "./SessionTreePanel";
 import Mascot from "./Mascot";
@@ -262,6 +264,39 @@ const ElapsedLabel = memo(function ElapsedLabel({
 });
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
 const OFFICE_AUTOSHOW_KEY = "crc-office-autoshow";
+/** Where the office is drawn: side panel, full chat area, or mini window. */
+const OFFICE_VIEW_KEY = "crc-office-view";
+/** Mini office window: offset from the chat area's bottom-right, and size. */
+const OFFICE_PIP_KEY = "crc-office-pip";
+type OfficePip = {
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+const OFFICE_PIP_DEFAULT: OfficePip = {
+  right: 16,
+  bottom: 120,
+  width: 420,
+  height: 300,
+};
+
+function readStored<T>(key: string, parse: (raw: string) => T, fallback: T) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStored(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 function formatTaskDuration(ms: number) {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -503,8 +538,84 @@ export default function ChatView({
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const [commandIndex, setCommandIndex] = useState(0);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [rightActivity, setRightActivity] = useState<RightActivity>("explorer");
+  const [rightActivity, setRightActivity] = useState<RightActivity>(
+    globalChat ? "office" : "explorer",
+  );
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
+  // The office can leave the side panel: "full" fills the chat area and the
+  // chat floats over it (Claw3D style); "pip" floats a mini office over the
+  // chat. One chat either way; the crew only mirrors its tool calls.
+  const [officeView, setOfficeView] = useState<OfficeView>(() =>
+    readStored<OfficeView>(
+      OFFICE_VIEW_KEY,
+      (raw) => (raw === "full" || raw === "pip" ? raw : "panel"),
+      "panel",
+    ),
+  );
+  const [officeLayerEl, setOfficeLayerEl] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [officeRosterEl, setOfficeRosterEl] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [floatingChatOpen, setFloatingChatOpen] = useState(true);
+  const [pipCollapsed, setPipCollapsed] = useState(false);
+  const [pip, setPip] = useState<OfficePip>(() =>
+    readStored(
+      OFFICE_PIP_KEY,
+      (raw) => ({ ...OFFICE_PIP_DEFAULT, ...(JSON.parse(raw) as OfficePip) }),
+      OFFICE_PIP_DEFAULT,
+    ),
+  );
+  const pipRef = useRef(pip);
+  pipRef.current = pip;
+  const changeOfficeView = useCallback((next: OfficeView) => {
+    setOfficeView(next);
+    setFloatingChatOpen(true);
+    setPipCollapsed(false);
+    writeStored(OFFICE_VIEW_KEY, next);
+  }, []);
+  /** Drag the mini window (move) or its top-left corner (resize). */
+  const dragPip = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, kind: "move" | "resize") => {
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement).closest("button")) return;
+      event.preventDefault();
+      const target = event.currentTarget;
+      target.setPointerCapture(event.pointerId);
+      const start = { x: event.clientX, y: event.clientY };
+      const origin = pipRef.current;
+      const box = target.closest(".chat-view")?.getBoundingClientRect();
+      const maxW = Math.max(260, (box?.width ?? 1200) - 80);
+      const maxH = Math.max(180, (box?.height ?? 800) - 80);
+      let latest: OfficePip | null = null;
+      target.onpointermove = (move) => {
+        const dx = move.clientX - start.x;
+        const dy = move.clientY - start.y;
+        latest =
+          kind === "move"
+            ? {
+                ...origin,
+                right: Math.max(0, origin.right - dx),
+                bottom: Math.max(0, origin.bottom - dy),
+              }
+            : {
+                ...origin,
+                width: Math.min(maxW, Math.max(260, origin.width - dx)),
+                height: Math.min(maxH, Math.max(180, origin.height - dy)),
+              };
+        setPip(latest);
+      };
+      target.onpointerup = () => {
+        target.onpointermove = null;
+        target.onpointerup = null;
+        if (target.hasPointerCapture(event.pointerId))
+          target.releasePointerCapture(event.pointerId);
+        if (latest) writeStored(OFFICE_PIP_KEY, JSON.stringify(latest));
+      };
+    },
+    [],
+  );
   // Tool calls of the current turn drive the office crew in the side panel.
   const officeData = useMemo(() => {
     let lastUser = -1;
@@ -526,20 +637,21 @@ export default function ChatView({
   }, [messages, agentStatus]);
   // Show the office when a run starts, unless the user closed it last time.
   useEffect(() => {
-    if (globalChat || !isActive || agentStatus !== "running") return;
+    if (!isActive || agentStatus !== "running") return;
     let autoShow = true;
     try {
       autoShow = localStorage.getItem(OFFICE_AUTOSHOW_KEY) !== "false";
     } catch {
       /* storage unavailable: keep the default */
     }
-    if (!autoShow || rightSidebarOpen) return;
+    // Full and mini views already have the office on screen.
+    if (!autoShow || rightSidebarOpen || officeView !== "panel") return;
     setRightActivity("office");
     setRightPanelWidth((width) => Math.max(width, 400));
     setRightSidebarOpen(true);
     // Only react to the run starting, not to every sidebar change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentStatus, globalChat, isActive]);
+  }, [agentStatus, isActive]);
   const handleRightSidebarOpen = useCallback(
     (open: boolean) => {
       if (rightActivity === "office") {
@@ -587,12 +699,11 @@ export default function ChatView({
     void loadTerminalPanel().catch(() => undefined);
     warmTerminalWhenIdle();
     // The Office panel opens when a run starts; have its 3D chunk ready.
-    if (!globalChat)
-      window.setTimeout(() => {
-        void import("./OfficePanel").catch(() => undefined);
-        void import("./office/office-scene").catch(() => undefined);
-      }, 1500);
-  }, [isActive, globalChat]);
+    window.setTimeout(() => {
+      void import("./OfficePanel").catch(() => undefined);
+      void import("./office/office-scene").catch(() => undefined);
+    }, 1500);
+  }, [isActive]);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(
     null,
@@ -5319,10 +5430,16 @@ export default function ChatView({
     </>
   );
 
+  // Width the right rail (and open panel) takes from the chat area.
+  const railOffset = rightSidebarOpen ? rightPanelWidth + 38 : 38;
+  const officeFull = officeView === "full";
+  const officePip = officeView === "pip";
+  const officeShown = officeFull || (officePip && !pipCollapsed);
   return (
     <div
-      className="chat-view"
+      className={`chat-view${officeFull ? " is-office-full" : ""}${officeFull && !floatingChatOpen ? " is-chat-hidden" : ""}`}
       style={{
+        ["--office-rail" as string]: `${railOffset}px`,
         flex: 1,
         display: "flex",
         flexDirection: "column",
@@ -5338,26 +5455,74 @@ export default function ChatView({
         touchAction: "pan-y",
       }}
     >
+      {officeView !== "panel" && (
+        <div
+          className={`chat-office-layer is-${officeView}${officePip && pipCollapsed ? " is-collapsed" : ""}`}
+          style={
+            officePip
+              ? {
+                  right: pip.right + railOffset,
+                  bottom: pip.bottom,
+                  width: pip.width,
+                  height: pipCollapsed ? undefined : pip.height,
+                }
+              : undefined
+          }
+        >
+          {officePip && (
+            <div
+              className="chat-office-pip-bar"
+              onPointerDown={(event) => dragPip(event, "move")}
+              title="Drag to move"
+            >
+              <span
+                className="chat-office-pip-grip"
+                aria-hidden="true"
+                title="Drag to resize"
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  dragPip(event, "resize");
+                }}
+              />
+              <strong>Office</strong>
+              {officeData.running && <em>working</em>}
+              <button
+                type="button"
+                onClick={() => setPipCollapsed((value) => !value)}
+                aria-expanded={!pipCollapsed}
+              >
+                {pipCollapsed ? "Show" : "Hide"}
+              </button>
+              <button
+                type="button"
+                onClick={() => changeOfficeView("panel")}
+                title="Back to the side panel"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          <div
+            ref={setOfficeLayerEl}
+            className="chat-office-layer-stage"
+            hidden={officePip && pipCollapsed}
+          />
+        </div>
+      )}
       {inAppHeader(
         <div
           className={`chat-header ${
             headerSlot
               ? "in-app-header"
-              : globalChat
-                ? ""
-                : rightSidebarOpen
-                  ? "has-code-rail-rail-open"
-                  : "has-code-rail"
+              : rightSidebarOpen
+                ? "has-code-rail-rail-open"
+                : "has-code-rail"
           }`}
           style={
             headerSlot
               ? undefined
               : {
-                  paddingRight: !globalChat
-                    ? rightSidebarOpen
-                      ? rightPanelWidth + 48
-                      : 48
-                    : 24,
+                  paddingRight: rightSidebarOpen ? rightPanelWidth + 48 : 48,
                   boxSizing: "border-box",
                   maxWidth: "100%",
                   overflowX: "hidden",
@@ -5679,11 +5844,9 @@ export default function ChatView({
 
       <div
         className={
-          !globalChat
-            ? rightSidebarOpen
-              ? "chat-content has-code-rail-rail-open"
-              : "chat-content has-code-rail"
-            : "chat-content"
+          rightSidebarOpen
+            ? "chat-content has-code-rail-rail-open"
+            : "chat-content has-code-rail"
         }
         style={{
           flex: 1,
@@ -5691,11 +5854,7 @@ export default function ChatView({
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
-          paddingRight: !globalChat
-            ? rightSidebarOpen
-              ? rightPanelWidth + 38
-              : 38
-            : 0,
+          paddingRight: rightSidebarOpen ? rightPanelWidth + 38 : 38,
           marginRight: 0,
           overflowX: "hidden",
           overscrollBehaviorX: "none",
@@ -5705,6 +5864,9 @@ export default function ChatView({
           boxSizing: "border-box",
         }}
       >
+        {officeFull && (
+          <div ref={setOfficeRosterEl} className="chat-office-roster" />
+        )}
         <Virtuoso
           ref={virtuosoRef}
           style={{
@@ -5884,6 +6046,17 @@ export default function ChatView({
           onAgentChange={changeHarness}
         />
       </div>
+      {officeFull && (
+        <button
+          type="button"
+          className="chat-float-toggle"
+          onClick={() => setFloatingChatOpen((open) => !open)}
+          aria-expanded={floatingChatOpen}
+        >
+          {floatingChatOpen ? "Hide chat" : "Chat"}
+          {!floatingChatOpen && officeData.running && <em>working</em>}
+        </button>
+      )}
       {!globalChat &&
         (atHint ? (
           <div
@@ -5902,27 +6075,33 @@ export default function ChatView({
             Shift+Enter for a new line.
           </p>
         ))}
-      {/* VSCode right sidebar: activity rail + explorer + diff, now with proper hide toggle */}
-      {!globalChat && (
-        <ChatRightSidebar
-          open={rightSidebarOpen}
-          activity={rightActivity}
-          panelWidth={rightPanelWidth}
-          worktree={worktree}
-          isWorkspace={isWorkspace}
-          worktreeDiff={worktreeDiff}
-          cwd={cwd}
-          projectName={projectName}
-          repositoryStatuses={repositoryStatuses}
-          onOpenChange={handleRightSidebarOpen}
-          onActivityChange={handleRightActivity}
-          office={officeData}
-          onPanelWidthChange={setRightPanelWidth}
-          onOpenDiff={setExpandedDiff}
-          onWorktreeDiffChange={setWorktreeDiff}
-          onToast={onToast}
-        />
-      )}
+      {/* VSCode right sidebar: activity rail + explorer + diff; global chat
+          has no project, so it only gets the office and usage panels. */}
+      <ChatRightSidebar
+        open={rightSidebarOpen}
+        activity={rightActivity}
+        panelWidth={rightPanelWidth}
+        worktree={worktree}
+        isWorkspace={isWorkspace}
+        worktreeDiff={worktreeDiff}
+        cwd={cwd}
+        projectName={projectName}
+        repositoryStatuses={repositoryStatuses}
+        onOpenChange={handleRightSidebarOpen}
+        onActivityChange={handleRightActivity}
+        office={officeData}
+        onPanelWidthChange={setRightPanelWidth}
+        onOpenDiff={setExpandedDiff}
+        onWorktreeDiffChange={setWorktreeDiff}
+        onToast={onToast}
+        active={isActive}
+        codePanels={!globalChat}
+        officeView={officeView}
+        officeLayer={officeLayerEl}
+        officeRoster={officeFull ? officeRosterEl : null}
+        officeShown={officeShown}
+        onOfficeViewChange={changeOfficeView}
+      />
       {usageOpen && sessionStats && (
         <div className="usage-backdrop" onMouseDown={() => setUsageOpen(false)}>
           <section
