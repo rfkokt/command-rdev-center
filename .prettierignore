@@ -15,3 +15,10 @@ src-tauri/icons/
 src-tauri/skills/
 pnpm-lock.yaml
 src-tauri/Cargo.lock
+
+# Hand-formatted 3D office code; do not run prettier on these (see docs/plans/2026-10-25-001-feat-orca-essentials-plan.md).
+src/components/office/office-layout.ts
+src/components/office/office-live.ts
+src/components/office/office-motion.ts
+src/components/office/office-scene.ts
+src/components/office/office-scene.test.ts
