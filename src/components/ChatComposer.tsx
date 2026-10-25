@@ -9,7 +9,8 @@ import {
 } from "react";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import type { ChatImage } from "../lib/rpc";
-import type { ComposerImage } from "../lib/attachments";
+import { estimatedImageTokens, type ComposerImage } from "../lib/attachments";
+import type { ImageSupport } from "../lib/model-capabilities";
 import type { ChatFile, SlashCommand } from "./ChatView";
 import { shouldSubmitCommand } from "./chat-utils";
 import CustomSelect from "./CustomSelect";
@@ -28,9 +29,12 @@ export type ChatComposerProps = {
   projectPath: string;
   inputPlaceholder?: string;
   input: string;
+  promptHistory?: string[];
   images: ComposerImage[];
   /** Files are being dragged over the composer. */
   dropActive?: boolean;
+  /** Whether the current model reads images (null: unknown). */
+  imageSupport?: ImageSupport;
   files: ChatFile[];
   currentThinking: string;
   slashCommands: SlashCommand[];
@@ -184,8 +188,10 @@ export default function ChatComposer({
   projectPath,
   inputPlaceholder,
   input,
+  promptHistory = [],
   images,
   dropActive = false,
+  imageSupport = null,
   files,
   currentThinking,
   slashCommands,
@@ -217,6 +223,21 @@ export default function ChatComposer({
   agentLocked = true,
   onAgentChange,
 }: ChatComposerProps) {
+  const historyRef = useRef<{
+    prompts: string[];
+    index: number;
+    draft: string;
+    recalled: string;
+  } | null>(null);
+  const historyCaretRef = useRef(false);
+  useEffect(() => {
+    if (historyRef.current && input !== historyRef.current.recalled)
+      historyRef.current = null;
+    if (historyCaretRef.current) {
+      inputRef.current?.setSelectionRange(input.length, input.length);
+      historyCaretRef.current = false;
+    }
+  }, [input, inputRef]);
   const inputDisabled =
     driveDetached || agentStatus === "stopped" || isNewSessionLoading;
   const sendLabel = !chatReady
@@ -307,6 +328,11 @@ export default function ChatComposer({
             )}
           </div>
         )}
+        {images.length > 0 && imageSupport === false && (
+          <p className="kc-image-note" role="note">
+            This model can't see images. They go to the agent as file paths.
+          </p>
+        )}
         {images.length > 0 && (
           <div className="image-previews">
             {images.map((image) => (
@@ -320,6 +346,15 @@ export default function ChatComposer({
                     alt={image.name ?? "Attached image preview"}
                   />
                 </button>
+                {image.width && image.height && (
+                  <small
+                    title={`${image.width}×${image.height} inline. Claude estimate: pixels ÷ 750; actual provider usage varies. Original file is unchanged.`}
+                  >
+                    {imageSupport === false
+                      ? "Path only"
+                      : `~${estimatedImageTokens(image.width, image.height).toLocaleString("en-US")} tokens (Claude est.)`}
+                  </small>
+                )}
                 <button
                   className="image-remove"
                   onClick={() =>
@@ -373,6 +408,7 @@ export default function ChatComposer({
             setCommandIndex(0);
           }}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.altKey && e.key === "Enter") {
               e.preventDefault();
               onSubmit("steer");
@@ -413,6 +449,52 @@ export default function ChatComposer({
               filePickerRef.current?.onKeyDown(e.key)
             ) {
               e.preventDefault();
+              return;
+            }
+            if (
+              filePickerQuery === null &&
+              !e.altKey &&
+              !e.ctrlKey &&
+              !e.metaKey &&
+              !e.shiftKey &&
+              (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+              e.currentTarget.selectionStart === e.currentTarget.selectionEnd
+            ) {
+              let history = historyRef.current;
+              const cursor = e.currentTarget.selectionStart;
+              const atFirstLine = !input.slice(0, cursor).includes("\n");
+              const atLastLine = !input.slice(cursor).includes("\n");
+              if (e.key === "ArrowUp" && atFirstLine) {
+                if (!history) {
+                  const prompts = promptHistory
+                    .filter((text) => text.trim())
+                    .slice()
+                    .reverse();
+                  if (!prompts.length) return;
+                  history = {
+                    prompts,
+                    index: -1,
+                    draft: input,
+                    recalled: input,
+                  };
+                  historyRef.current = history;
+                }
+                history.index = Math.min(
+                  history.index + 1,
+                  history.prompts.length - 1,
+                );
+              } else if (e.key === "ArrowDown" && history && atLastLine) {
+                history.index--;
+              } else return;
+              e.preventDefault();
+              const next =
+                history.index < 0
+                  ? history.draft
+                  : history.prompts[history.index];
+              history.recalled = next;
+              if (history.index < 0) historyRef.current = null;
+              historyCaretRef.current = true;
+              setInput(next);
               return;
             }
             if (e.key === "Enter" && !e.shiftKey) {

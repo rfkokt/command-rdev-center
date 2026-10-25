@@ -7,7 +7,7 @@ import {
   type Ref,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { splitPatch } from "./chat-diff-utils";
+import { diffLineLocations, type DiffComment } from "../lib/diff-comments";
 import {
   buildHunkPatch,
   flattenHunks,
@@ -19,6 +19,10 @@ import type { WorktreeDiff } from "./ChatView";
 import CheckpointTimeline from "./CheckpointTimeline";
 
 export type ExpandedDiffPanelProps = {
+  comments?: DiffComment[];
+  onComment?: (path: string, line: string, text: string) => void;
+  onSendComments?: () => void;
+  onRemoveComment?: (id: string) => void;
   diffKey: string;
   worktreeDiff: WorktreeDiff;
   position: { x: number; y: number };
@@ -61,6 +65,10 @@ const buttonStyle = (
 
 export default function ExpandedDiffPanel({
   diffKey,
+  comments = [],
+  onComment,
+  onSendComments,
+  onRemoveComment,
   worktreeDiff,
   position,
   dialogRef,
@@ -71,6 +79,8 @@ export default function ExpandedDiffPanel({
   onToast,
   onDiffInvalidated,
 }: ExpandedDiffPanelProps) {
+  const [commentLine, setCommentLine] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
   const dragRef = useRef<{
     startX: number;
     startY: number;
@@ -170,8 +180,6 @@ export default function ExpandedDiffPanel({
   const rejectedEntries = hunks.filter((entry) =>
     rejectedSet.has(entry.hunk.id),
   );
-  const hunkPatch = (entry: { hunk: { header: string; lines: string[] } }) =>
-    `${entry.hunk.header}\n${entry.hunk.lines.join("\n")}`;
 
   return (
     <div
@@ -395,7 +403,103 @@ export default function ExpandedDiffPanel({
                         </button>
                       </div>
                     </div>
-                    {splitPatch(hunkPatch(entry))}
+                    <pre
+                      className="diff-code"
+                      aria-label={`Diff lines for ${diffKey}`}
+                    >
+                      {entry.hunk.lines.map((text, index) => {
+                        const line = diffLineLocations(
+                          entry.hunk.header,
+                          entry.hunk.lines,
+                        )[index];
+                        return (
+                          <div key={index}>
+                            {onComment && line !== "metadata" && (
+                              <button
+                                aria-label={`Comment on ${diffKey} ${line}`}
+                                onClick={() => setCommentLine(`${id}|${line}`)}
+                              >
+                                {line}
+                              </button>
+                            )}
+                            <code>{text}</code>
+                          </div>
+                        );
+                      })}
+                    </pre>
+                    {onComment && (
+                      <details
+                        open={commentLine?.startsWith(`${id}|`) || undefined}
+                      >
+                        <summary>Add line comment</summary>
+                        <select
+                          aria-label="Diff line"
+                          value={
+                            commentLine?.startsWith(`${id}|`) ? commentLine : ""
+                          }
+                          onChange={(event) =>
+                            setCommentLine(event.target.value)
+                          }
+                        >
+                          <option value="">Choose a line</option>
+                          {diffLineLocations(
+                            entry.hunk.header,
+                            entry.hunk.lines,
+                          ).map((line, index) => (
+                            <option
+                              key={`${line}-${index}`}
+                              value={`${id}|${line}`}
+                            >
+                              {line} {entry.hunk.lines[index].slice(0, 100)}
+                            </option>
+                          ))}
+                        </select>
+                        <textarea
+                          aria-label="Diff comment"
+                          value={commentText}
+                          onChange={(event) =>
+                            setCommentText(event.target.value)
+                          }
+                        />
+                        <button
+                          disabled={
+                            !commentLine?.startsWith(`${id}|`) ||
+                            !commentText.trim()
+                          }
+                          onClick={() => {
+                            onComment(
+                              diffKey,
+                              commentLine!.split("|")[1],
+                              commentText.trim(),
+                            );
+                            setCommentText("");
+                          }}
+                        >
+                          Add comment
+                        </button>
+                      </details>
+                    )}
+                    {comments.length > 0 && (
+                      <section aria-label="Pending review comments">
+                        {comments.map((comment) => (
+                          <div key={comment.id}>
+                            <strong>
+                              {comment.path} {comment.line}
+                            </strong>
+                            <p>{comment.text}</p>
+                            <button
+                              onClick={() => onRemoveComment?.(comment.id)}
+                              aria-label={`Remove comment ${comment.path} ${comment.line}`}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                        <button onClick={onSendComments}>
+                          Send {comments.length} review comments
+                        </button>
+                      </section>
+                    )}
                   </div>
                 );
               })}

@@ -2,6 +2,35 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[tauri::command]
+pub async fn scm_pull_request(repository_path: String, account: String, title: Option<String>, body: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = repository(&repository_path)?;
+        if account.is_empty() || account.len() > 39 || !account.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err("Choose a valid GitHub account".into());
+        }
+        let token = Command::new("gh").args(["auth", "token", "--hostname", "github.com", "--user", &account]).output().map_err(|e| e.to_string())?;
+        if !token.status.success() { return Err("Could not load GitHub account token; sign in with gh first".into()); }
+        let token = String::from_utf8(token.stdout).map_err(|_| "Invalid token encoding")?;
+        let mut cmd = Command::new("gh");
+        cmd.current_dir(repo).env("GH_TOKEN", token.trim()).env("GH_HOST", "github.com").env("GH_PROMPT_DISABLED", "1");
+        if let Some(title) = title {
+            if title.trim().is_empty() || title.len() > 256 { return Err("PR title must contain 1–256 bytes".into()); }
+            let body = body.unwrap_or_default();
+            if body.len() > 65_536 { return Err("PR body too large".into()); }
+            // Explicit head prevents gh from offering to push an unpublished branch.
+            let branch = run(cmd.get_current_dir().unwrap(), &["branch", "--show-current"])?;
+            if branch.trim().is_empty() { return Err("PR creation requires a branch".into()); }
+            cmd.args(["pr", "create", "--head", branch.trim(), "--title", &title, "--body", &body]);
+        } else {
+            cmd.args(["pr", "view", "--json", "url,title,state,statusCheckRollup"]);
+        }
+        let out = cmd.output().map_err(|e| e.to_string())?;
+        if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScmFile {

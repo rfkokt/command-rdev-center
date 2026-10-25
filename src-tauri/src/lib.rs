@@ -4,6 +4,7 @@ use tauri::Manager;
 mod acp_bridge;
 mod agent_updates;
 mod attachments;
+mod worktree_setup;
 mod browser_spike;
 mod connections;
 mod deep_research;
@@ -20,6 +21,7 @@ mod prompt_engines;
 mod quota;
 mod rag;
 mod scm;
+mod session_search;
 mod settings;
 mod skills;
 mod state_lock;
@@ -128,7 +130,11 @@ pub fn run() {
             diff::get_workspace_diff,
             diff::reject_hunks,
             diff::apply_hunks,
+            worktree_setup::inspect_worktree_setup,
+            worktree_setup::run_worktree_setup,
+            session_search::search_saved_sessions,
             scm::scm_status,
+            scm::scm_pull_request,
             scm::scm_paths,
             scm::scm_all,
             scm::scm_commit,

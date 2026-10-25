@@ -136,6 +136,7 @@ function mockBackend(runs: unknown[] = []) {
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
   vi.useRealTimers();
   invoke.mockReset();
   listeners.clear();
@@ -427,8 +428,12 @@ describe("chat-native Deep Research", () => {
       fireEvent.click(
         screen.getByRole("button", { name: "Open session tree" }),
       );
-      const forkButton = await screen.findByRole("button", { name: "FORK" });
-      expect(screen.getAllByRole("button", { name: "FORK" })).toHaveLength(1);
+      const forkButton = await screen.findByRole("button", {
+        name: "EDIT & RESEND",
+      });
+      expect(
+        screen.getAllByRole("button", { name: "EDIT & RESEND" }),
+      ).toHaveLength(1);
       fireEvent.click(forkButton);
       await waitFor(() =>
         expect(invoke).toHaveBeenCalledWith("fork_session", {

@@ -109,6 +109,14 @@ describe("terminalCommandIsDestructive", () => {
 });
 
 describe("agentNotification", () => {
+  test("omits sound when notification sounds are disabled", () => {
+    expect(
+      agentNotification("finished", "Command", undefined, undefined, false),
+    ).not.toHaveProperty("sound");
+    expect(
+      agentNotification("follow-up", "Command", undefined, undefined, false),
+    ).not.toHaveProperty("sound");
+  });
   test("uses a distinct sound for follow-up requests", () => {
     expect(agentNotification("finished", "Command").sound).toBe("Glass");
     expect(agentNotification("follow-up", "Command")).toEqual({

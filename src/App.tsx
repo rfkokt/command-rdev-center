@@ -21,6 +21,10 @@ import { check } from "@tauri-apps/plugin-updater";
 
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
+import CommandPalette from "./components/CommandPalette";
+import ChatSessionActions, {
+  type ChatMetadata,
+} from "./components/ChatSessionActions";
 const KanbanBoard = lazy(() => import("./components/KanbanBoard"));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PipelineView = lazy(() => import("./components/PipelineView"));
@@ -85,6 +89,8 @@ type Config = {
 };
 
 type Tab = {
+  pinned?: boolean;
+  archived?: boolean;
   id: string;
   project: ProjectInfo;
   global?: boolean;
@@ -167,13 +173,36 @@ export function sameSessionHarness(candidate: string, current?: string) {
 export default function App() {
   const [configErr, setConfigErr] = useState<string | null>(null);
   const [tabs, setTabs] = useState<Tab[]>(savedTabs);
+  const [showArchivedGlobal, setShowArchivedGlobal] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  useEffect(() => {
+    const openPalette = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "k" &&
+        !event.isComposing
+      ) {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", openPalette);
+    return () => window.removeEventListener("keydown", openPalette);
+  }, []);
+  const changeChatMetadata = (id: string, patch: ChatMetadata) => {
+    setTabs((current) =>
+      current.map((tab) => (tab.id === id ? { ...tab, ...patch } : tab)),
+    );
+    if (patch.archived)
+      setActiveTabId((current) => (current === id ? null : current));
+  };
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null);
   const [activeTabId, setActiveTabId] = useState<string | null>(() => {
-    const tabs = savedTabs();
+    const tabs = savedTabs().filter((tab) => !tab.archived);
     return tabs[tabs.length - 1]?.id ?? null;
   });
   const [mountedTabIds, setMountedTabIds] = useState<Set<string>>(() => {
-    const tabs = savedTabs();
+    const tabs = savedTabs().filter((tab) => !tab.archived);
     const active = tabs[tabs.length - 1]?.id;
     return new Set(active ? [active] : []);
   });
@@ -534,6 +563,76 @@ export default function App() {
       className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          search={async (query) => {
+            const hits = await invoke<Array<{ id: string; text: string }>>(
+              "search_saved_sessions",
+              {
+                query,
+                candidates: tabs
+                  .filter((tab) => tab.sessionFile)
+                  .map((tab) => ({ id: tab.id, path: tab.sessionFile })),
+              },
+            );
+            return hits.map((hit) => ({
+              id: `message:${hit.id}`,
+              label: `Message: ${hit.text}`,
+              run: () => {
+                const tab = tabs.find((item) => item.id === hit.id);
+                if (!tab) return;
+                if (tab.archived)
+                  changeChatMetadata(tab.id, { archived: false });
+                setDashboard(null);
+                setSelectedProject(tab.global ? null : tab.project);
+                activateTab(tab.id);
+              },
+            }));
+          }}
+          actions={[
+            { id: "new", label: "New global chat", run: newGlobalChat },
+            {
+              id: "settings",
+              label: "Open settings",
+              run: () => setSettingsOpen(true),
+            },
+            {
+              id: "sidebar",
+              label: "Toggle sidebar",
+              run: () => setSidebarOpen((value) => !value),
+            },
+            ...(activeTab
+              ? [
+                  {
+                    id: "model",
+                    label: "Change active chat model (Ctrl+L)",
+                    run: () => {
+                      setDashboard(null);
+                      window.dispatchEvent(new Event("kern-open-model-picker"));
+                    },
+                  },
+                ]
+              : []),
+            ...Object.entries(DASHBOARD_TITLES).map(([id, label]) => ({
+              id,
+              label: `Open ${label}`,
+              run: () => setDashboard(id as Dashboard),
+            })),
+            ...tabs.map((tab) => ({
+              id: tab.id,
+              label: `Chat: ${tab.project.name} / ${tab.title ?? "Untitled session"}${tab.archived ? " (archived)" : ""}`,
+              run: () => {
+                if (tab.archived)
+                  changeChatMetadata(tab.id, { archived: false });
+                setDashboard(null);
+                setSelectedProject(tab.global ? null : tab.project);
+                activateTab(tab.id);
+              },
+            })),
+          ]}
+        />
+      )}
       <a className="skip-link" href="#workspace-content">
         Skip to workspace
       </a>
@@ -705,6 +804,7 @@ export default function App() {
                 setSelectedProject(project);
               }}
               tabs={tabs.filter((tab) => !tab.global)}
+              onChatChange={changeChatMetadata}
               activeTabId={activeTabId}
               onResume={(id, project) => {
                 setDashboard(null);
@@ -734,36 +834,60 @@ export default function App() {
               <div className="project-sessions">
                 <div>
                   {tabs
-                    .filter((tab) => tab.global)
+                    .filter(
+                      (tab) =>
+                        tab.global && (showArchivedGlobal || !tab.archived),
+                    )
+                    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
                     .map((tab) => (
-                      <button
-                        key={tab.id}
-                        className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
-                        onClick={() => {
-                          setDashboard(null);
-                          setSelectedProject(null);
-                          activateTab(tab.id);
-                        }}
-                      >
-                        <span>{tab.title ?? "Untitled session"}</span>
-                        {tab.interrupted ? (
-                          <span
-                            className="agent-working-mark"
-                            aria-label="Agent working"
-                          >
-                            <i />
-                            <i />
-                            <i />
+                      <div key={tab.id} className="project-row-wrap">
+                        <button
+                          className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
+                          onClick={() => {
+                            setDashboard(null);
+                            setSelectedProject(null);
+                            activateTab(tab.id);
+                          }}
+                        >
+                          <span>
+                            {tab.pinned ? "★ " : ""}
+                            {tab.archived ? "[Archived] " : ""}
+                            {tab.title ?? "Untitled session"}
                           </span>
-                        ) : (
-                          !!tab.unread && (
-                            <span className="unread-badge">{tab.unread}</span>
-                          )
-                        )}
-                      </button>
+                          {tab.interrupted ? (
+                            <span
+                              className="agent-working-mark"
+                              aria-label="Agent working"
+                            >
+                              <i />
+                              <i />
+                              <i />
+                            </span>
+                          ) : (
+                            !!tab.unread && (
+                              <span className="unread-badge">{tab.unread}</span>
+                            )
+                          )}
+                        </button>
+                        <ChatSessionActions
+                          chat={tab}
+                          onChange={(patch) =>
+                            changeChatMetadata(tab.id, patch)
+                          }
+                        />
+                      </div>
                     ))}
                 </div>
               </div>
+              <button
+                className="settings-button"
+                aria-pressed={showArchivedGlobal}
+                onClick={() => setShowArchivedGlobal((value) => !value)}
+              >
+                {showArchivedGlobal
+                  ? "Hide archived chats"
+                  : "Show archived chats"}
+              </button>
               {tabs.every((tab) => !tab.global) && (
                 <button className="settings-button" onClick={openGlobalChat}>
                   <ChatIcon className="settings-icon" />

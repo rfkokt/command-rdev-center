@@ -10,6 +10,8 @@ export type ComposerImage = ChatImage & {
   /** Local key; stable while the image sits in the composer. */
   id: string;
   name?: string;
+  width?: number;
+  height?: number;
   /** Copy in the attachment store; absent until storing finishes. */
   path?: string;
 };
@@ -51,6 +53,68 @@ export function composerImageId() {
 /** What the agent protocol takes: the extra composer fields stay behind. */
 export function toChatImage(image: ChatImage): ChatImage {
   return { type: "image", data: image.data, mimeType: image.mimeType };
+}
+
+export function inlineImageSize(width: number, height: number) {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0
+  )
+    throw new Error("Invalid image dimensions");
+  const scale = Math.min(1, 1568 / Math.max(width, height));
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+/** Claude-style area estimate only; providers may resize or tokenize differently. */
+export function estimatedImageTokens(width: number, height: number) {
+  return Math.ceil((width * height) / 750);
+}
+
+/** Prepare inline bytes only. The attachment store's original is never changed. */
+export async function prepareComposerImage(
+  stored: StoredAttachment,
+): Promise<ComposerImage> {
+  if (!stored.data) throw new Error("Stored image has no preview data");
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("Couldn't decode attached image"));
+    image.src = `data:${stored.mime};base64,${stored.data}`;
+  });
+  const size = inlineImageSize(image.naturalWidth, image.naturalHeight);
+  let data = stored.data;
+  let mimeType = stored.mime;
+  if (
+    size.width !== image.naturalWidth ||
+    size.height !== image.naturalHeight
+  ) {
+    const canvas = document.createElement("canvas");
+    canvas.width = size.width;
+    canvas.height = size.height;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Image resizing is unavailable");
+    context.drawImage(image, 0, 0, size.width, size.height);
+    // PNG preserves transparency; animated input becomes a static inline frame.
+    const encoded = canvas.toDataURL("image/png");
+    if (!encoded.startsWith("data:image/png;base64,"))
+      throw new Error("Couldn't encode resized image");
+    data = encoded.slice("data:image/png;base64,".length);
+    mimeType = "image/png";
+  }
+  return {
+    type: "image",
+    id: composerImageId(),
+    name: stored.name,
+    path: stored.path,
+    data,
+    mimeType,
+    ...size,
+  };
 }
 
 /** Copy a dropped or picked file into the chat's store (images come back with data). */

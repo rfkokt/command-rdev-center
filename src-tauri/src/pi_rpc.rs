@@ -1083,6 +1083,8 @@ pub fn spawn_pi_rpc(
                 .into(),
         );
     }
+    args.push("--extension".into());
+    args.push(crate::projects::ensure_extensions()?.join("image-fallback.ts").to_string_lossy().into());
     if session_id.starts_with("research-") {
         args.push("--extension".into());
         args.push(

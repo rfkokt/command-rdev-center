@@ -823,6 +823,12 @@ impl AcpBridge {
         let Some(session_id) = self.session_id.clone() else {
             return vec![Self::fail("prompt", None, "ACP session is not ready")];
         };
+        let omitted_images = !self.image_supported && !images.is_empty();
+        let message = if omitted_images {
+            format!("{message}\n\nThis agent cannot receive inline images. They were omitted; use the saved attachment paths above if available. Do not assume their visual contents.")
+        } else {
+            message
+        };
         let mut user_content = vec![json!({ "type": "text", "text": message })];
         let sent = match (&self.preamble, self.preamble_pending) {
             (Some(preamble), true) => {
@@ -858,7 +864,7 @@ impl AcpBridge {
         self.turn = Some(Turn::default());
         self.tools.clear();
         self.announced.clear();
-        vec![
+        let mut out = vec![
             self.request(
                 "session/prompt",
                 json!({ "sessionId": session_id, "prompt": blocks }),
@@ -866,7 +872,14 @@ impl AcpBridge {
             ),
             Self::ui(json!({ "type": "agent_start" })),
             Self::ui(json!({ "type": "message_start", "message": { "role": "assistant" } })),
-        ]
+        ];
+        if omitted_images {
+            out.push(Self::ui(json!({"type":"message_end", "message": {
+                "role":"custom", "customType":"kern-image-fallback", "display":true,
+                "content":"This agent cannot receive inline images. Only the attachment text and saved paths were sent."
+            }})));
+        }
+        out
     }
 
     fn answer_permission(&mut self, command: &Value) -> Vec<Out> {
@@ -1629,6 +1642,21 @@ mod tests {
         assert_eq!(state["data"]["imageInput"], false);
         assert_eq!(state["data"]["model"]["id"], "anthropic/claude-sonnet");
         assert_eq!(state["data"]["isStreaming"], false);
+    }
+
+    #[test]
+    fn unsupported_inline_images_have_an_explicit_notice_and_keep_paths() {
+        let mut bridge = ready_bridge(false);
+        bridge.image_supported = false;
+        let out = bridge.start_prompt("look /store/shot.png".into(), vec![json!({"data":"AAAA", "mimeType":"image/png"})]);
+        let sent = agent(&out);
+        let blocks = sent[0]["params"]["prompt"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        let text = blocks[0]["text"].as_str().unwrap();
+        assert!(text.contains("/store/shot.png"));
+        assert!(text.contains("cannot receive inline images"));
+        assert!(ui(&out).iter().any(|event| event["message"]["customType"] == "kern-image-fallback"));
+        assert!(bridge.history.last().unwrap()["content"][0]["text"].as_str().unwrap().contains("cannot receive inline images"));
     }
 
     #[test]

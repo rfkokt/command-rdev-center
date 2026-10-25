@@ -202,7 +202,7 @@ export default function SessionTreePanel({
         }}
       >
         <header>
-          <span>SESSION TREE</span>
+          <span>SESSION TREE · EDIT & RESEND</span>
           <button onClick={onClose} aria-label="Close session tree">
             ESC
           </button>
@@ -275,7 +275,7 @@ export default function SessionTreePanel({
                     }
                     onClick={() => void handleFork(node)}
                   >
-                    {forking === node.id ? "FORKING…" : "FORK"}
+                    {forking === node.id ? "FORKING…" : "EDIT & RESEND"}
                   </button>
                 )}
               </div>
@@ -284,7 +284,10 @@ export default function SessionTreePanel({
         </div>
         <footer>
           <span>{nodes.length} NODES</span>
-          <span>FORK FROM HERE</span>
+          <span>
+            Fork restores the prompt to your composer. Edit and send; worktree
+            files are not rolled back.
+          </span>
         </footer>
       </section>
     </div>

@@ -203,6 +203,13 @@ export default function SettingsPanel({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [backlogDir, setBacklogDir] = useState("");
+  const [notificationSound, setNotificationSound] = useState(() => {
+    try {
+      return localStorage.getItem("kern:notification-sound") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [runtime, setRuntime] = useState<PiRuntimeStatus | null>(runtimeCache);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeLog, setRuntimeLog] = useState("");
@@ -664,6 +671,25 @@ export default function SettingsPanel({
         </nav>
 
         <div className="kset-body">
+          <label>
+            <input
+              type="checkbox"
+              checked={notificationSound}
+              onChange={(event) => {
+                const enabled = event.target.checked;
+                try {
+                  localStorage.setItem(
+                    "kern:notification-sound",
+                    String(enabled),
+                  );
+                  setNotificationSound(enabled);
+                } catch {
+                  setError("Could not save notification sound preference");
+                }
+              }}
+            />{" "}
+            Notification sounds
+          </label>
           <header className="kset-head">
             <div>
               <h2>{SECTIONS[section].title}</h2>

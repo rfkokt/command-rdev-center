@@ -166,7 +166,7 @@
         "id": "O1-03",
         "phase": "O1",
         "name": "Pengiriman hybrid sesuai kemampuan model",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [
           "O0-02",
@@ -189,18 +189,22 @@
         "files": [
           "src/components/ChatView.tsx",
           "src-tauri/src/pi_rpc.rs",
-          "src-tauri/src/acp_bridge.rs"
+          "src-tauri/src/acp_bridge.rs",
+          "src/lib/attachment-delivery.ts",
+          "src-tauri/extensions/image-fallback.ts",
+          "src-tauri/src/projects.rs",
+          "src/components/ChatComposer.tsx"
         ],
         "references": [
           "opencode: packages/app/src/composer/attachments/attachments.ts (native(mime, input), MAX_INLINE_BYTES)"
         ],
-        "notes": "Orca sendiri menyerahkan keputusan ke agent CLI; Kern harus memutuskan sendiri karena pi menyusun pesan ke model."
+        "notes": "Implemented: inline+saved path for vision/unknown; path-only and visible note for text-only; paste chip appears only after durable save. Unknown prompts carry a marker. pi image-fallback extension observes user message_start (including queued messages), handles explicit unsupported-image errors at agent_before_settle, applies append-only context_edit entries removing image blocks from projected context while preserving original history and plan/RAG/task text, adds visible notice and continues once. Abort, unrelated errors, pending work and prior continuation do not retry. ACP now sends and displays an explicit omission notice rather than silently dropping inline images. Focused lifecycle tests and real installed pi SessionManager projection check cover path-only context and single retry. Requires pi with agent_before_settle/context_edit support (verified installed 1.4.0); native/provider smoke test still pending. Status Review, not user-accepted Done. Typecheck uses node node_modules/typescript/lib/tsc.js because pnpm exec tsc resolves a broken global installation."
       },
       {
         "id": "O1-04",
         "phase": "O1",
         "name": "Perkecil gambar dan tampilkan perkiraan token",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [
           "O1-03"
@@ -219,13 +223,13 @@
           "src/lib/ (helper baru)"
         ],
         "references": [],
-        "notes": "Tidak ada di Orca; tambahan Kern."
+        "notes": "Implemented with native Image/canvas in prepareComposerImage (src/lib/attachments.ts), shared by paste/drop/picker after storing originals. Inline longest side capped at 1568px, no upscale; resized bytes PNG preserve transparency, large animated inputs become static inline frames (original animation remains saved). Chip shows Claude area/750 estimate and dimension tooltip; text-only says Path only. Tests cover dimensions, resize bytes vs unchanged store metadata, decode errors, and chip labels. Typecheck via local TypeScript CLI. Native canvas/provider/visual smoke test pending; estimate is not provider billing."
       },
       {
         "id": "O1-05",
         "phase": "O1",
         "name": "Riwayat prompt dengan panah atas/bawah",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -244,13 +248,13 @@
         "references": [
           "renderer/src/components/native-chat/native-chat-sent-prompt-history.ts"
         ],
-        "notes": ""
+        "notes": "Implemented in ChatComposer using promptHistory derived from current chat user messages in ChatView. Up on first logical line recalls newest-first, Down on last logical line restores saved draft after newest. No modifiers/selection/IME interception; slash and file pickers retain priority. Editing recalled text resets navigation; history is snapshotted during browsing. Reuses loaded chat history, no new storage; recalls text only, not attachment chips. Component tests cover draft restore, multiline/edit reset, picker priority and IME; typecheck passed. Native keyboard smoke test pending."
       },
       {
         "id": "O1-06",
         "phase": "O1",
         "name": "Draft per chat tetap ada setelah restart",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -262,18 +266,20 @@
           "Draft chat A tidak muncul di chat B."
         ],
         "files": [
-          "src/components/ChatView.tsx"
+          "src/components/ChatView.tsx",
+          "src/lib/use-chat-draft.ts",
+          "src/lib/use-chat-draft.test.tsx"
         ],
         "references": [
           "renderer/src/lib/native-chat-draft-owner.ts"
         ],
-        "notes": ""
+        "notes": "Implemented useChatDraft keyed by chatId in localStorage: text, file refs, saved image paths only (no base64). Images restored through storeAttachmentFile/prepareComposerImage; composer disabled during restore. Empty draft removes storage; parse/storage failures never block typing, write failures notify once. Send/queue/steer IPC failure restores draft data. Tests cover remount restore, isolation, clear, invalid/storage errors and missing image notices. Image restoration copies stored file again (existing command), no additional backend API. Attachment retention remains 30 days; missing images notify, text survives. Native restart smoke test pending."
       },
       {
         "id": "O1-07",
         "phase": "O1",
         "name": "Edit lalu kirim ulang pesan user",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -295,13 +301,13 @@
         "references": [
           "main/claude/claude-rewind-transcript.ts"
         ],
-        "notes": "Pertanyaan terbuka di dokumen: apakah file ikut dikembalikan atau hanya percakapan. Tanyakan user sebelum implementasi."
+        "notes": "Delivery review requested by user; implementation remains partial: Existing pi session tree fork already restores full original prompt into composer and reloads forked history. UI now labels Edit & resend and explains files unchanged; ACP explicitly blocked with notice (no fork protocol). Need full UI integration validation and ACP-compatible design before Review."
       },
       {
         "id": "O2-01",
         "phase": "O2",
         "name": "Rename, pin, dan archive chat",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -318,13 +324,13 @@
           "src-tauri/src/projects.rs"
         ],
         "references": [],
-        "notes": ""
+        "notes": "Rename/pin/archive UI in project/global sidebar, metadata persisted with existing crc-chat-tabs. Archived hidden by default, explicit toggle/unarchive; startup ignores archived. No close/delete/worktree operation. Tests and typecheck pass; native visual/restart pending."
       },
       {
         "id": "O2-02",
         "phase": "O2",
         "name": "Pencarian lintas sesi",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -343,13 +349,13 @@
           "renderer/src/app-shell/AppRootSurfaces.tsx",
           "renderer/src/lib/quick-open-file-history.ts"
         ],
-        "notes": ""
+        "notes": "Delivery review requested by user; implementation remains partial: Initial Cmd/Ctrl+K message search uses search_saved_sessions spawn_blocking over saved tab sessionFile JSONL; 5MB per file / 50MB total / 50 hits, query bounds and allowed-path guard, text parts only. Debounce 250ms and stale-result guard. Opens matching chat but does not yet scroll to matched message. ACP/closed-not-saved tabs/custom session dirs unsupported; add worker tests, explicit truncation/coverage UI and message anchor before Review. cargo check/typecheck pass."
       },
       {
         "id": "O2-03",
         "phase": "O2",
         "name": "Setup script worktree (kern.yaml)",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -369,13 +375,13 @@
           "main/runtime/runtime-local-worktree-setup.ts",
           "orca.yaml (root repo Orca)"
         ],
-        "notes": "Pertimbangkan juga node_modules symlink yang sudah dibuat app (lihat kern-context: Turbopack menolak symlink keluar root)."
+        "notes": "Delivery review requested by user; implementation remains partial: Initial kern.yaml schema {copy:[relative-file],commands:[shell-command]} and inspect/run Tauri commands implemented; per-chat setup details with explicit confirmation, output and failure keeping chat alive. Copy rejects traversal, outside source symlinks/destination parents, skips existing files. Focused path test and compilation pass. Approved config snapshot and Git common-directory ownership are validated; commands stop at 120s/1MB output via process-group kill with private temporary log, displayed output capped at 100KB. NOT READY: stream output to terminal, add copy/symlink/process integration tests and verify native behavior; no automatic execution. Do not mark Review yet."
       },
       {
         "id": "O2-04",
         "phase": "O2",
         "name": "Bunyi dan notifikasi saat agent butuh izin",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P2",
         "depends_on": [],
         "scope": [
@@ -394,13 +400,13 @@
         "references": [
           "shared/rpc-contract/notifications-params.ts"
         ],
-        "notes": ""
+        "notes": "Approval OS notifications already existed at extension_ui_request. Added persistent notification sound toggle in Settings; notification builder omits sound when disabled (tested). OS-focus/native notification smoke pending."
       },
       {
         "id": "O3-01",
         "phase": "O3",
         "name": "Komentar baris diff dikirim ke agent",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -421,13 +427,13 @@
           "renderer/src/store/worktree-diff-comments-selector.ts",
           "renderer/src/components/editor/combined-diff/review-controls/use-combined-diff-notes-actions.ts"
         ],
-        "notes": ""
+        "notes": "Delivery review requested by user; implementation remains partial: Batch comments held in ChatView across diff closes/file switches. ExpandedDiffPanel line selector uses parsed old/new line locations and Markdown input, send batch paths/lines as one prompt; clears only if sendRaw succeeds. Follow-up: accessible buttons on diff line numbers open the correct hunk comment form; pending batch displays path/line/text and supports removal. Component test verifies click/add/remove/send callbacks. Pure formatting/line tests pass. Still needs parent send-failure/close-reopen integration test and native visual check before Review."
       },
       {
         "id": "O3-02",
         "phase": "O3",
         "name": "Buat PR dan lihat status CI lewat gh",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P2",
         "depends_on": [],
         "scope": [
@@ -446,13 +452,13 @@
         "references": [
           "Emdash juga referensi bagus untuk alur PR: https://github.com/generalaction/emdash"
         ],
-        "notes": "Token per akun bisa diambil dengan `gh auth token --user <akun>` dan diberikan lewat env GH_TOKEN ke proses gh, bukan argv."
+        "notes": "Delivery review requested by user; implementation remains partial: PR/CI controls added per SCM repository; explicit account persisted keyed by worktree path; title/body editable. scm_pull_request validates repository/account, loads gh auth token --user into GH_TOKEN only, GH_HOST github.com, no account switch, explicit --head prevents auto-push. Refresh displays raw pr view JSON statusCheckRollup. cargo check/typecheck passed. Follow-up implemented structured PR title/state/check names and conclusions plus explicit Send CI status to agent draft (not auto-send), with component test. Still needs mocked backend command tests, account picker/discovery, and per-owning-repo rather than per-worktree preference. No real PR created."
       },
       {
         "id": "O4-01",
         "phase": "O4",
         "name": "Command palette",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P2",
         "depends_on": [
           "O2-02"
@@ -468,7 +474,7 @@
           "src/App.tsx"
         ],
         "references": [],
-        "notes": "SSH remote, mobile, dan Design Mode sengaja di luar scope fitur ini."
+        "notes": "Delivery review requested by user; implementation remains partial: Cmd/Ctrl+K command palette implemented with keyboard navigation, filtering, settings/sidebar/dashboard/new-global-chat and saved chat titles including archived. Model picker action and shortcut reference now added. Tests pass. Full O2-02 message search dependency (message anchor, coverage) and native shortcut focus validation remain."
       }
     ]
   }

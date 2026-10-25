@@ -25,6 +25,7 @@ const API_TEST_EXTENSION: &str = include_str!("../extensions/api-test.ts");
 const JEV_ROUTING_EXTENSION: &str = include_str!("../extensions/jev-routing.ts");
 const JEV_CLIENT: &str = include_str!("../extensions/jev-client.ts");
 const FOLLOW_UP: &str = include_str!("../extensions/follow-up.ts");
+const IMAGE_FALLBACK: &str = include_str!("../extensions/image-fallback.ts");
 const KERN_MCP_SERVER: &str = include_str!("../extensions/kern-mcp.mjs");
 
 #[derive(Debug, Clone, Serialize)]
@@ -286,6 +287,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("jev-routing.ts", JEV_ROUTING_EXTENSION),
         ("jev-client.ts", JEV_CLIENT),
         ("follow-up.ts", FOLLOW_UP),
+        ("image-fallback.ts", IMAGE_FALLBACK),
         ("kern-mcp.mjs", KERN_MCP_SERVER),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;

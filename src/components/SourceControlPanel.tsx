@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { groupScmFiles } from "./scm-utils";
+import PullRequestControls from "./PullRequestControls";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -81,6 +82,7 @@ type Props = {
   onCommitDiff: (repository: string, file: CommitFile) => void;
   confirm: Confirm;
   toast: (message: string) => void;
+  onSendToAgent?: (text: string) => void;
 };
 
 export default function SourceControlPanel({
@@ -90,6 +92,7 @@ export default function SourceControlPanel({
   onCommitDiff,
   confirm,
   toast,
+  onSendToAgent,
 }: Props) {
   const roots: Repo[] = repositories.length
     ? repositories.map((repo) => ({ ...repo, worktree: `${cwd}/${repo.name}` }))
@@ -200,6 +203,11 @@ export default function SourceControlPanel({
               <b>{repo.name}</b>
               <span className="kscm-count">{changeCount || ""}</span>
             </summary>
+            <PullRequestControls
+              path={repo.worktree ?? repo.path}
+              onToast={toast}
+              onSendToAgent={onSendToAgent}
+            />
             <div className="kscm-commit">
               <textarea
                 value={messages[repo.name] ?? ""}

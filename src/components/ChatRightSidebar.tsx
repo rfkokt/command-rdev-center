@@ -35,6 +35,7 @@ export type ChatRightSidebarProps = {
   onOpenDiff: (key: string) => void;
   onWorktreeDiffChange: (diff: WorktreeDiff) => void;
   onToast: (message: string) => void;
+  onSendToAgent?: (text: string) => void;
   office: { tools: readonly ToolCall[]; running: boolean; writing: boolean };
   /** This chat is the one on screen. */
   active: boolean;
@@ -73,6 +74,7 @@ export default function ChatRightSidebar({
   onOpenDiff,
   onWorktreeDiffChange,
   onToast,
+  onSendToAgent,
   office,
   active,
   officeView,
@@ -195,6 +197,7 @@ export default function ChatRightSidebar({
             />
           ) : (
             <SourceControlPanel
+              onSendToAgent={onSendToAgent}
               cwd={isWorkspace ? cwd : (worktree?.worktree_path ?? cwd)}
               repositories={isWorkspace ? repositoryStatuses : []}
               onDiff={(repository, path) =>

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { createPortal } from "react-dom";
 import ListPicker from "./ListPicker";
+import ChatSessionActions, { type ChatMetadata } from "./ChatSessionActions";
 import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
 import {
@@ -30,6 +31,8 @@ export type ProjectInfo = {
 };
 
 type Tab = {
+  pinned?: boolean;
+  archived?: boolean;
   id: string;
   project: ProjectInfo;
   title?: string;
@@ -54,6 +57,7 @@ export default function ProjectList({
   onPipelineSettings,
   onNewSession,
   onToast,
+  onChatChange,
 }: {
   onOpen: (project: ProjectInfo) => void;
   onSelect: (project: ProjectInfo) => void;
@@ -63,7 +67,9 @@ export default function ProjectList({
   onPipelineSettings: (project: ProjectInfo) => void;
   onNewSession: (project: ProjectInfo) => void;
   onToast: (message: string) => void;
+  onChatChange?: (id: string, patch: ChatMetadata) => void;
 }) {
+  const [showArchived, setShowArchived] = useState(false);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
@@ -1032,10 +1038,21 @@ export default function ProjectList({
           </div>,
           document.body,
         )}
+      <button
+        className="settings-button"
+        aria-pressed={showArchived}
+        onClick={() => setShowArchived((value) => !value)}
+      >
+        {showArchived ? "Hide archived chats" : "Show archived chats"}
+      </button>
       {projects.map((project) => {
-        const projectTabs = tabs.filter(
-          (tab) => tab.project.path === project.path,
-        );
+        const projectTabs = tabs
+          .filter(
+            (tab) =>
+              tab.project.path === project.path &&
+              (showArchived || !tab.archived),
+          )
+          .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned));
         const isCollapsed = collapsed.has(project.path);
         return (
           <div className="project-group" key={project.path}>
@@ -1099,27 +1116,38 @@ export default function ProjectList({
             <div className="project-sessions" data-collapsed={isCollapsed}>
               <div>
                 {projectTabs.map((tab) => (
-                  <button
-                    key={tab.id}
-                    className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
-                    onClick={() => onResume(tab.id, project)}
-                  >
-                    <span>{tab.title ?? "Untitled session"}</span>
-                    {tab.interrupted ? (
-                      <span
-                        className="agent-working-mark"
-                        aria-label="Agent working"
-                      >
-                        <i />
-                        <i />
-                        <i />
+                  <div key={tab.id} className="project-row-wrap">
+                    <button
+                      className={`conversation-row ${tab.id === activeTabId ? "active" : ""}`}
+                      onClick={() => onResume(tab.id, project)}
+                    >
+                      <span>
+                        {tab.pinned ? "★ " : ""}
+                        {tab.archived ? "[Archived] " : ""}
+                        {tab.title ?? "Untitled session"}
                       </span>
-                    ) : (
-                      !!tab.unread && (
-                        <span className="unread-badge">{tab.unread}</span>
-                      )
+                      {tab.interrupted ? (
+                        <span
+                          className="agent-working-mark"
+                          aria-label="Agent working"
+                        >
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      ) : (
+                        !!tab.unread && (
+                          <span className="unread-badge">{tab.unread}</span>
+                        )
+                      )}
+                    </button>
+                    {onChatChange && (
+                      <ChatSessionActions
+                        chat={tab}
+                        onChange={(patch) => onChatChange(tab.id, patch)}
+                      />
                     )}
-                  </button>
+                  </div>
                 ))}
               </div>
             </div>

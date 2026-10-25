@@ -524,6 +524,7 @@ export function agentNotification(
   projectName: string,
   chatId?: string,
   response?: string,
+  soundEnabled = true,
 ) {
   const preview = response?.replace(/\s+/g, " ").trim().slice(0, 240);
   return {
@@ -533,12 +534,12 @@ export function agentNotification(
           body: preview
             ? `${projectName}: ${preview}`
             : `${projectName} siap ditinjau.`,
-          sound: "Glass",
+          ...(soundEnabled ? { sound: "Glass" } : {}),
         }
       : {
           title: "Agent perlu jawaban",
           body: `${projectName} menunggu respons.`,
-          sound: "Ping",
+          ...(soundEnabled ? { sound: "Ping" } : {}),
         }),
     ...(chatId ? { actionTypeId: "agent-finished", extra: { chatId } } : {}),
   };

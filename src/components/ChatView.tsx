@@ -36,15 +36,17 @@ import {
   type ImageSupport,
 } from "../lib/model-capabilities";
 import {
-  composerImageId,
+  prepareComposerImage,
   dropLandsOn,
   fileName,
   inlineImageMime,
   storeAttachmentFile,
   storePastedFile,
   toChatImage,
-  type ComposerImage,
 } from "../lib/attachments";
+import { planImageDelivery } from "../lib/attachment-delivery";
+import { useChatDraft } from "../lib/use-chat-draft";
+import { formatDiffComments, type DiffComment } from "../lib/diff-comments";
 import {
   formatTokens,
   cacheHitPercent,
@@ -109,6 +111,7 @@ import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
 import type { OfficeView } from "./OfficePanel";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel from "./SessionTreePanel";
+import WorktreeSetup from "./WorktreeSetup";
 import Mascot from "./Mascot";
 import {
   buildPhase,
@@ -346,8 +349,18 @@ async function notifyAgent(
 ) {
   const granted =
     (await isPermissionGranted()) || (await requestPermission()) === "granted";
-  if (granted)
-    sendNotification(agentNotification(kind, projectName, chatId, response));
+  if (granted) {
+    let soundEnabled = true;
+    try {
+      soundEnabled =
+        localStorage.getItem("kern:notification-sound") !== "false";
+    } catch {
+      /* OS default sound when preferences are unavailable. */
+    }
+    sendNotification(
+      agentNotification(kind, projectName, chatId, response, soundEnabled),
+    );
+  }
 }
 
 function extractMarkdownTables(
@@ -508,13 +521,20 @@ export default function ChatView({
       dispatch(false);
     };
   }, [chatId, isActive, isHistoryLoading]);
-  const [input, setInput] = useState("");
+  const {
+    input,
+    setInput,
+    files,
+    setFiles,
+    images,
+    setImages,
+    restoring: restoringDraft,
+  } = useChatDraft(chatId, onToast);
   // Cursor-style Plan/Build mode. Plan mode only prefixes the message sent to
   // pi; the displayed user message stays raw.
   const [planMode, setPlanMode] = useState(false);
   const [sessionTreeOpen, setSessionTreeOpen] = useState(false);
-  const [images, setImages] = useState<ComposerImage[]>([]);
-  const [files, setFiles] = useState<ChatFile[]>([]);
+  const [diffComments, setDiffComments] = useState<DiffComment[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -3151,15 +3171,14 @@ export default function ChatView({
     scrollToBottom("smooth");
     window.setTimeout(() => scrollToBottom("auto"), 60);
     await maybeCreateCheckpoint(text);
-    await sendRaw({
+    return sendRaw({
       type: "prompt",
       message: `${text}${await taskContext(text)}`,
       images: [],
     });
-    return true;
   }
 
-  async function sendWithSkill(text: string) {
+  async function sendWithSkill(text: string, inlineImages: ChatImage[]) {
     const context = globalChat
       ? await invoke<string>("get_rag_context", { query: text }).catch(
           (error) => {
@@ -3168,10 +3187,10 @@ export default function ChatView({
           },
         )
       : await taskContext(text);
-    await sendRaw({
+    return sendRaw({
       type: "prompt",
       message: `${applyPlanModePrefix(text, planMode)}${context}`,
-      images: images.map(toChatImage),
+      images: inlineImages,
     });
   }
 
@@ -3206,6 +3225,7 @@ export default function ChatView({
     if (
       !chatReady ||
       forkHistoryLoadingRef.current ||
+      restoringDraft ||
       (!text && images.length === 0 && files.length === 0) ||
       driveDetached ||
       agentStatus === "stopped"
@@ -3218,7 +3238,18 @@ export default function ChatView({
       onToast(`File attachment: ${String(error)}`);
       return;
     }
-    const message = `${text}${fileContext}`;
+    let delivery;
+    try {
+      delivery = planImageDelivery(
+        `${text}${fileContext}`,
+        images,
+        imageSupportOf(modelRef.current),
+      );
+    } catch (error) {
+      onToast(String(error));
+      return;
+    }
+    const message = delivery.message;
     const visibleMessage =
       text || files.map((file) => `@${file.name}`).join(" ");
     if (visibleMessage) {
@@ -3254,7 +3285,11 @@ export default function ChatView({
     scrollToBottom("smooth");
     window.setTimeout(() => scrollToBottom("auto"), 60);
     await maybeCreateCheckpoint(text || visibleMessage);
-    await sendWithSkill(message);
+    if (!(await sendWithSkill(message, delivery.images))) {
+      setInput((current) => current || text);
+      setImages((current) => [...images, ...current]);
+      setFiles((current) => [...files, ...current]);
+    }
   }
 
   useEffect(() => {
@@ -3346,22 +3381,12 @@ export default function ChatView({
       ]);
     for (const path of imagePaths) {
       void storeAttachmentFile(chatId, path)
-        .then((stored) => {
-          if (!stored.data) return;
+        .then(prepareComposerImage)
+        .then((image) => {
           setImages((prev) =>
-            prev.some((image) => image.path === stored.path)
+            prev.some((item) => item.path === image.path)
               ? prev
-              : [
-                  ...prev,
-                  {
-                    type: "image",
-                    id: composerImageId(),
-                    data: stored.data!,
-                    mimeType: stored.mime,
-                    name: stored.name,
-                    path: stored.path,
-                  },
-                ],
+              : [...prev, image],
           );
         })
         .catch((error) =>
@@ -3377,33 +3402,13 @@ export default function ChatView({
     if (files.length > 0) {
       event.preventDefault();
       files.forEach((file) => {
-        const id = composerImageId();
-        const reader = new FileReader();
-        reader.onload = () => {
-          const data = String(reader.result).split(",", 2)[1];
-          if (data)
-            setImages((prev) => [
-              ...prev,
-              { type: "image", id, data, mimeType: file.type, name: file.name },
-            ]);
-        };
-        // Keep a copy on disk too, so the agent gets a path it can use.
+        // Only expose a sendable chip after its durable copy exists.
         void storePastedFile(chatId, file)
-          .then((stored) =>
-            setImages((prev) =>
-              prev.map((image) =>
-                image.id === id
-                  ? { ...image, path: stored.path, name: stored.name }
-                  : image,
-              ),
-            ),
-          )
+          .then(prepareComposerImage)
+          .then((image) => setImages((prev) => [...prev, image]))
           .catch((error) =>
             onToast(`Couldn't store pasted image: ${String(error)}`),
           );
-        reader.onerror = () =>
-          onToast(`Couldn't paste ${file.name || "image"}`);
-        reader.readAsDataURL(file);
       });
       return;
     }
@@ -4041,6 +4046,17 @@ export default function ChatView({
     filePickerQuery !== null
       ? `Searching: ${filePickerQuery || "(all)"} — ↑↓ navigate · Enter/Tab insert.`
       : "";
+  useEffect(() => {
+    const open = () => {
+      if (isActive) {
+        setModelPickerOpen(true);
+        void sendRaw({ type: "get_available_models" });
+      }
+    };
+    window.addEventListener("kern-open-model-picker", open);
+    return () => window.removeEventListener("kern-open-model-picker", open);
+  }, [isActive, sendRaw]);
+
   function openModelPicker() {
     setModelPickerOpen(true);
   }
@@ -4269,7 +4285,11 @@ export default function ChatView({
       return;
     }
     if (agentStatus === "running") {
-      if (!text && images.length === 0 && files.length === 0) return;
+      if (
+        restoringDraft ||
+        (!text && images.length === 0 && files.length === 0)
+      )
+        return;
       let fileContext = "";
       try {
         fileContext = await readAttachments();
@@ -4277,7 +4297,18 @@ export default function ChatView({
         onToast(`File attachment: ${String(error)}`);
         return;
       }
-      const messageText = `${text}${fileContext}`;
+      let delivery;
+      try {
+        delivery = planImageDelivery(
+          `${text}${fileContext}`,
+          images,
+          imageSupportOf(modelRef.current),
+        );
+      } catch (error) {
+        onToast(String(error));
+        return;
+      }
+      const messageText = delivery.message;
       const type = submitMode === "steer" ? "steer" : "follow_up";
       setMessages((prev) => {
         const message = {
@@ -4301,11 +4332,20 @@ export default function ChatView({
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
       scrollToBottom("smooth");
       window.setTimeout(() => scrollToBottom("auto"), 60);
-      await sendRaw({
-        type,
-        message: messageText,
-        images: images.map(toChatImage),
-      });
+      if (
+        !(await sendRaw({
+          type,
+          message: messageText,
+          images: delivery.images,
+        }))
+      ) {
+        setInput((current) => current || text);
+        setImages((current) => [...images, ...current]);
+        setFiles((current) => [...files, ...current]);
+        if (type === "follow_up")
+          setPendingMessageCount((count) => Math.max(0, count - 1));
+        return;
+      }
       onToast(
         type === "steer"
           ? "Steering current turn"
@@ -5781,7 +5821,15 @@ export default function ChatView({
               Terminal
             </button>
             <button
-              onClick={() => setSessionTreeOpen(true)}
+              onClick={() => {
+                if (currentHarness !== "pi") {
+                  onToast(
+                    "Edit/resend via session branching is currently available for pi only. Worktree files are unchanged.",
+                  );
+                  return;
+                }
+                setSessionTreeOpen(true);
+              }}
               className="dev-control dev-control-tree"
               title="Session tree — fork a new branch from a past user message"
               aria-label="Open session tree"
@@ -6136,6 +6184,13 @@ export default function ChatView({
             )}
           </div>
         )}
+        {worktree && (
+          <WorktreeSetup
+            project={projectPath}
+            worktree={worktree.worktree_path}
+            onToast={onToast}
+          />
+        )}
         <ChatComposer
           globalChat={globalChat}
           planMode={planMode}
@@ -6144,7 +6199,7 @@ export default function ChatView({
           agentStatus={
             compaction?.status === "running" ? "running" : agentStatus
           }
-          isNewSessionLoading={isNewSessionLoading}
+          isNewSessionLoading={isNewSessionLoading || restoringDraft}
           chatReady={chatReady}
           isAborting={isAborting}
           researchBusy={researchBusy}
@@ -6152,7 +6207,11 @@ export default function ChatView({
           projectPath={projectPath}
           inputPlaceholder={inputPlaceholder}
           input={input}
+          promptHistory={messages
+            .filter((message) => message.role === "user")
+            .map((message) => message.text)}
           images={images}
+          imageSupport={imageSupportOf(currentModel)}
           dropActive={dropActive}
           files={files}
           currentThinking={currentThinking}
@@ -6216,6 +6275,10 @@ export default function ChatView({
       {/* VSCode right sidebar: activity rail + explorer + diff; global chat
           has no project, so it only gets the office and usage panels. */}
       <ChatRightSidebar
+        onSendToAgent={(text) => {
+          setInput((current) => (current ? `${current}\n\n${text}` : text));
+          onToast("CI status added to your draft. Review it before sending.");
+        }}
         open={rightSidebarOpen}
         activity={rightActivity}
         panelWidth={rightPanelWidth}
@@ -6400,6 +6463,36 @@ export default function ChatView({
             worktreeDiff={worktreeDiff}
             position={diffPos}
             dialogRef={expandedDiffRef}
+            comments={diffComments}
+            onRemoveComment={(id) =>
+              setDiffComments((current) =>
+                current.filter((comment) => comment.id !== id),
+              )
+            }
+            onComment={(path, line, text) =>
+              setDiffComments((current) => [
+                ...current,
+                { id: uid(), path, line, text },
+              ])
+            }
+            onSendComments={() => {
+              if (agentStatus !== "idle") {
+                onToast(
+                  "Wait until the agent is idle to send review comments.",
+                );
+                return;
+              }
+              const batch = diffComments;
+              void sendPrompt(formatDiffComments(batch)).then((sent) => {
+                if (sent)
+                  setDiffComments((current) =>
+                    current.filter(
+                      (comment) =>
+                        !batch.some((item) => item.id === comment.id),
+                    ),
+                  );
+              });
+            }}
             onPositionChange={setDiffPos}
             onClose={() => setExpandedDiff(null)}
             worktreePath={worktree?.worktree_path ?? null}
