@@ -2,7 +2,12 @@ import * as THREE from "three";
 import {
   DISCUSSION_CENTER,
   OFFICE_VISITS,
+  PROPS,
+  ROOMS,
   STUDIO_COLORS,
+  VIDEO_WALL,
+  WALLS,
+  WORLD,
 } from "./office-layout";
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -18,6 +23,8 @@ import {
 import {
   advanceOfficeRoutine,
   createOfficeRoutine,
+  endErrand,
+  sendOnErrand,
   setRoutineReducedMotion,
   setRoutineWorking,
 } from "./office-routine";
@@ -27,6 +34,18 @@ export interface OfficeScene {
   /** Per-member state for the side panel; replaces single-activity bubbles. */
   setCrew(crew: SceneCrew): void;
   setSelected(id: AgentId | null): void;
+  /** Walk `id` over to `to`'s post, stay `dwell` s, then return. */
+  visit(
+    id: AgentId,
+    to: AgentId,
+    options?: { dwell?: number; say?: string },
+  ): boolean;
+  /** Send `id` back to their post now. */
+  recall(id: AgentId): void;
+  /** Glide the camera to follow a member, or back to the whole floor. */
+  focusOn(id: AgentId | null, zoom?: number): void;
+  /** Glide the camera to a floor point (and zoom), ending any follow. */
+  glideTo(x: number, z: number, zoom?: number): void;
   /** Scene graph access for overlays drawn on top of the office. */
   stage(): {
     scene: THREE.Scene;
@@ -187,126 +206,15 @@ export function createOfficeScene(
     return mesh;
   }
 
-  // Hallmark · component: night studio · reference: user screenshot
-  // pre-emit critique: P4 H4 E4 S5 R4 V4
-  // Continue the parquet beyond the desks so the studio fills the viewport.
-  // One tiled plane avoids thousands of extra floor meshes on wide screens.
-  const floorPixels = new Uint8Array(128 * 128 * 4);
-  const floorColors = C.woodFloor.map((value) =>
-    new THREE.Color(value).convertLinearToSRGB(),
-  );
-  const seamColor = new THREE.Color(C.woodDark).convertLinearToSRGB();
-  for (let y = 0; y < 128; y++)
-    for (let x = 0; x < 128; x++) {
-      const row = Math.floor(y / 64);
-      const offsetX = (x + row * 16) % 128;
-      const color =
-        offsetX % 32 === 0 || y % 64 === 0
-          ? seamColor
-          : floorColors[(Math.floor(offsetX / 32) + row * 3) % 4];
-      const at = (y * 128 + x) * 4;
-      // DataTexture with SRGBColorSpace expects sRGB byte values.
-      floorPixels[at] = Math.round(color.r * 255);
-      floorPixels[at + 1] = Math.round(color.g * 255);
-      floorPixels[at + 2] = Math.round(color.b * 255);
-      floorPixels[at + 3] = 255;
-    }
-  const floorTexture = new THREE.DataTexture(floorPixels, 128, 128);
-  floorTexture.colorSpace = THREE.SRGBColorSpace;
-  floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
-  floorTexture.repeat.set(48, 30);
-  floorTexture.magFilter = THREE.LinearFilter;
-  floorTexture.minFilter = THREE.LinearMipmapLinearFilter;
-  floorTexture.generateMipmaps = true;
-  floorTexture.needsUpdate = true;
-  const continuousFloor = new THREE.Mesh(
-    new THREE.PlaneGeometry(96, 96),
-    new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 1 }),
-  );
-  continuousFloor.rotation.x = -Math.PI / 2;
-  continuousFloor.position.set(38.85, -0.025, 41.75);
-  room.add(continuousFloor);
-  for (let x = 0; x < 36; x++) {
-    for (let z = 0; z < 8; z++) {
-      box(
-        room,
-        C.woodFloor[(x + z * 3) % 4],
-        [0.495, 0.035, 1.57],
-        [-8.75 + x * 0.5, 0, -5.6 + z * 1.6],
-      );
-    }
-  }
-  function tileZone(x: number, z: number, columns: number, rows: number) {
-    for (let col = 0; col < columns; col++)
-      for (let row = 0; row < rows; row++)
-        box(
-          room,
-          C.tiles[(col + row) % 3],
-          [0.89, 0.025, 0.89],
-          [x + col * 0.92, 0.025, z + row * 0.92],
-        );
-  }
-  tileZone(-8.55, -0.7, 5, 8);
-  tileZone(-1.6, -2.75, 11, 3); // console floor in front of the video wall
-  tileZone(1.6, 1.75, 5, 4); // lead desk
-
-  // Two low cutaway walls, coloured charcoal-plum against the midnight city.
-  box(room, C.wall, [48, 8, 0.22], [14.8, 4, -6.25]);
-  box(room, C.wall, [0.22, 8, 48], [-9.15, 4, 17.7]);
-  box(room, C.trim, [48, 0.16, 0.16], [14.8, 0.15, -6.08]);
-  box(room, C.trim, [0.16, 0.16, 48], [-9.0, 0.15, 17.7]);
-  box(room, C.trim, [48, 0.18, 0.3], [14.8, 5.52, -6.22]);
-  box(room, C.trim, [0.3, 0.18, 48], [-9.15, 5.52, 17.7]);
-  box(room, C.cyan, [0.04, 0.055, 48], [-9.0, 5.15, 17.7], false, 2.5);
-  box(room, C.amber, [48, 0.055, 0.04], [14.8, 5.15, -6.1], false, 2.5);
-
-  // Window panels: separate buildings and lit windows keep the skyline legible.
-  const skyMaterial = material(C.skyNight, 0.3);
-  for (const centerX of [0.0, 3.5, 7.0]) {
-    const pane = box(
-      room,
-      C.skyNight,
-      [2.85, 3.35, 0.06],
-      [centerX, 3.1, -6.09],
-      false,
-      0.3,
-    );
-    pane.castShadow = false;
-    for (let building = 0; building < 6; building++) {
-      const h = 1.1 + ((building * 7 + Math.round(centerX * 2)) % 9) * 0.19;
-      const bx = centerX - 1.17 + building * 0.46;
-      box(
-        room,
-        C.city[building % 3],
-        [0.4, h, 0.035],
-        [bx, 1.46 + h / 2, -6.035],
-      );
-      for (let row = 0; row < Math.floor(h / 0.21) - 1; row++)
-        for (let col = 0; col < 3; col++)
-          if ((row * 3 + col + building) % 4 !== 0)
-            box(
-              room,
-              (row + building) % 5 === 0 ? C.windowWarm : C.windowCool,
-              [0.055, 0.045, 0.018],
-              [bx - 0.12 + col * 0.12, 1.62 + row * 0.21, -6.009],
-              false,
-              0.55,
-            );
-    }
-    for (const dx of [-1.48, 1.48])
-      box(room, C.trim, [0.09, 3.55, 0.18], [centerX + dx, 3.1, -5.96]);
-    for (const y of [1.34, 4.86])
-      box(room, C.trim, [3.04, 0.09, 0.18], [centerX, y, -5.96]);
-    box(room, C.metal, [3.15, 0.1, 0.38], [centerX, 1.3, -5.87]);
-  }
-
-  // Glass server room occupies the rear-left corner. Glass is kept out of opaque batches.
+  // Kern HQ: a whole floor of rooms built from office-layout. Everything here
+  // is static and gets baked into a few material batches below.
+  const W = WORLD;
   const glassGroup = new THREE.Group();
   scene.add(glassGroup);
   const glassMaterial = new THREE.MeshStandardMaterial({
     color: C.glass,
     transparent: true,
-    opacity: 0.13,
+    opacity: 0.12,
     roughness: 0.2,
     metalness: 0,
     depthWrite: false,
@@ -318,103 +226,213 @@ export function createOfficeScene(
     pane.position.set(...at);
     glassGroup.add(pane);
   }
-  for (let col = 0; col < 7; col++)
-    for (let row = 0; row < 3; row++)
-      box(
-        room,
-        C.serverFloor[(col + row) % 2],
-        [0.88, 0.04, 0.98],
-        [-7.85 + col * 0.9, 0.035, -5.5 + row],
-      );
-  for (const x of [-7.75, -6.2, -4.65, -3.1]) {
-    box(room, C.serverBody, [1.24, 3.9, 0.85], [x, 2, -5.35]);
-    box(room, C.trim, [1.08, 3.64, 0.03], [x, 2.0, -4.9]);
-    for (let slot = 0; slot < 12; slot++) {
-      box(room, C.metal, [0.96, 0.18, 0.045], [x, 0.38 + slot * 0.28, -4.86]);
-      for (let led = 0; led < 5; led++)
-        box(
-          room,
-          led % 3 ? C.serverGreen : C.cyan,
-          [0.045, 0.038, 0.018],
-          [x - 0.36 + led * 0.12, 0.38 + slot * 0.28, -4.83],
-          false,
-          1.3,
-        );
-      box(
-        room,
-        C.serverBody,
-        [0.21, 0.038, 0.02],
-        [x + 0.32, 0.38 + slot * 0.28, -4.825],
-      );
+
+  // Corridor floor: one dark parquet plane under the whole building.
+  const floorPixels = new Uint8Array(128 * 128 * 4);
+  const floorColors = C.woodFloor.map((value) =>
+    new THREE.Color(value).multiplyScalar(0.72).convertLinearToSRGB(),
+  );
+  const seamColor = new THREE.Color(C.woodDark).convertLinearToSRGB();
+  for (let y = 0; y < 128; y++)
+    for (let x = 0; x < 128; x++) {
+      const row = Math.floor(y / 64);
+      const offsetX = (x + row * 16) % 128;
+      const color =
+        offsetX % 32 === 0 || y % 64 === 0
+          ? seamColor
+          : floorColors[(Math.floor(offsetX / 32) + row * 3) % 4];
+      const at = (y * 128 + x) * 4;
+      floorPixels[at] = Math.round(color.r * 255);
+      floorPixels[at + 1] = Math.round(color.g * 255);
+      floorPixels[at + 2] = Math.round(color.b * 255);
+      floorPixels[at + 3] = 255;
+    }
+  const floorTexture = new THREE.DataTexture(floorPixels, 128, 128);
+  floorTexture.colorSpace = THREE.SRGBColorSpace;
+  floorTexture.wrapS = floorTexture.wrapT = THREE.RepeatWrapping;
+  const floorW = W.maxX - W.minX,
+    floorD = W.maxZ - W.minZ;
+  floorTexture.repeat.set(floorW / 2, floorD / 3.2);
+  floorTexture.magFilter = THREE.LinearFilter;
+  floorTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  floorTexture.generateMipmaps = true;
+  floorTexture.needsUpdate = true;
+  const continuousFloor = new THREE.Mesh(
+    new THREE.PlaneGeometry(floorW, floorD),
+    new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 1 }),
+  );
+  continuousFloor.rotation.x = -Math.PI / 2;
+  continuousFloor.position.set((W.minX + W.maxX) / 2, -0.025, (W.minZ + W.maxZ) / 2);
+  room.add(continuousFloor);
+  // Building slab edge
+  box(room, C.trim, [floorW + 0.4, 0.5, floorD + 0.4], [(W.minX + W.maxX) / 2, -0.29, (W.minZ + W.maxZ) / 2]);
+
+  function roomFloor(r: (typeof ROOMS)[number]) {
+    const w = r.maxX - r.minX,
+      d = r.maxZ - r.minZ;
+    if (r.floor === "carpet") {
+      box(room, "#3b3446", [w, 0.03, d], [(r.minX + r.maxX) / 2, 0.005, (r.minZ + r.maxZ) / 2]);
+      box(room, "#463d55", [w - 1.6, 0.035, d - 1.6], [(r.minX + r.maxX) / 2, 0.01, (r.minZ + r.maxZ) / 2]);
+      return;
+    }
+    if (r.floor === "wood") {
+      for (let x = 0; x < Math.round(w / 0.5); x++)
+        for (let z = 0; z < Math.round(d / 1.6); z++)
+          box(room, C.woodFloor[(x + z * 3) % 4], [0.495, 0.035, 1.57], [r.minX + 0.25 + x * 0.5, 0, r.minZ + 0.8 + z * 1.6]);
+      return;
+    }
+    const palette = r.floor === "slate" ? C.serverFloor : C.tiles;
+    const cols = Math.round(w / 0.92),
+      rows = Math.round(d / 0.92);
+    const step = w / cols,
+      stepZ = d / rows;
+    for (let col = 0; col < cols; col++)
+      for (let row = 0; row < rows; row++)
+        box(room, palette[(col + row) % palette.length], [step - 0.03, 0.025, stepZ - 0.03], [r.minX + step / 2 + col * step, 0.012, r.minZ + stepZ / 2 + row * stepZ]);
+  }
+  ROOMS.forEach(roomFloor);
+
+  // Walls. Exterior north/west walls are tall with windows; interior ones are
+  // a low wainscot under glass so neighbouring rooms stay visible.
+  const isExterior = (w: (typeof WALLS)[number]) =>
+    (w.z1 === w.z2 && w.z1 === -15) || (w.x1 === w.x2 && w.x1 === -21);
+  function skyline(centerX: number, z: number, width: number) {
+    const pane = box(room, C.skyNight, [width, 1.7, 0.06], [centerX, 2.15, z + 0.12], false, 0.3);
+    pane.castShadow = false;
+    const n = Math.floor(width / 0.46);
+    for (let building = 0; building < n; building++) {
+      const h = 0.5 + ((building * 7 + Math.round(centerX * 3)) % 7) * 0.13;
+      const bx = centerX - width / 2 + 0.25 + building * 0.46;
+      box(room, C.city[building % 3], [0.4, h, 0.035], [bx, 1.32 + h / 2, z + 0.16]);
+      for (let row = 0; row < Math.floor(h / 0.2) - 1; row++)
+        for (let col = 0; col < 3; col++)
+          if ((row * 3 + col + building) % 4 !== 0)
+            box(room, (row + building) % 5 === 0 ? C.windowWarm : C.windowCool, [0.055, 0.045, 0.018], [bx - 0.12 + col * 0.12, 1.45 + row * 0.2, z + 0.185], false, 0.55);
+    }
+    for (const y of [1.3, 3.02]) box(room, C.trim, [width + 0.1, 0.09, 0.2], [centerX, y, z + 0.18]);
+    box(room, C.metal, [width + 0.2, 0.1, 0.36], [centerX, 1.26, z + 0.28]);
+  }
+  const skyMaterial = material(C.skyNight, 0.3);
+  for (const w of WALLS) {
+    const horizontal = w.z1 === w.z2;
+    const len = Math.hypot(w.x2 - w.x1, w.z2 - w.z1);
+    const cx = (w.x1 + w.x2) / 2,
+      cz = (w.z1 + w.z2) / 2;
+    const exterior = isExterior(w);
+    const tall = w.height > 1;
+    const h = exterior ? 3.4 : tall ? 1.05 : w.height;
+    const size: [number, number, number] = horizontal ? [len + 0.22, h, 0.22] : [0.22, h, len + 0.22];
+    box(room, exterior ? C.wall : "#2c2832", size, [cx, h / 2, cz]);
+    box(room, C.trim, horizontal ? [len + 0.26, 0.08, 0.3] : [0.3, 0.08, len + 0.26], [cx, h + 0.04, cz]);
+    if (!exterior && tall) {
+      glass(horizontal ? [len, 1.35, 0.03] : [0.03, 1.35, len], [cx, h + 0.75, cz]);
+      box(room, C.metal, horizontal ? [len + 0.1, 0.06, 0.08] : [0.08, 0.06, len + 0.1], [cx, h + 1.45, cz]);
+      for (let i = 0; i <= Math.floor(len / 2); i++) {
+        const t = len < 0.5 ? 0.5 : i / Math.max(1, Math.floor(len / 2));
+        const px = w.x1 + (w.x2 - w.x1) * t,
+          pz = w.z1 + (w.z2 - w.z1) * t;
+        box(room, C.metal, [0.07, 1.45, 0.07], [px, h + 0.72, pz]);
+      }
+    }
+    if (exterior && horizontal) {
+      // Windows on the north façade, between pillars.
+      for (let x = Math.min(w.x1, w.x2) + 2; x + 2 <= Math.max(w.x1, w.x2); x += 4) skyline(x + 1, cz, 3.2);
     }
   }
-  // Sliding glass doorway on the left; the aisle in front stays open.
-  for (const x of [-8.35, -6.7, -5.05, -3.4, -1.75])
-    box(room, C.metal, [0.065, 4.7, 0.12], [x, 2.35, -2.75]);
-  for (const y of [0.09, 4.68])
-    box(room, C.metal, [6.7, 0.08, 0.14], [-5.05, y, -2.75]);
-  for (const x of [-7.525, -5.875, -4.225, -2.575]) {
-    glass([1.55, 4.5, 0.025], [x, 2.35, -2.75]);
-    box(
-      room,
-      C.glassEdge,
-      [0.025, 4.4, 0.025],
-      [x + 0.7, 2.35, -2.7],
-      false,
-      0.45,
+  // Accent strip above each room's tall walls, in the owner's colour.
+  for (const r of ROOMS)
+    if (r.walls) {
+      box(room, r.accent, [r.maxX - r.minX, 0.05, 0.04], [(r.minX + r.maxX) / 2, r.minZ === -15 ? 3.25 : 0.98, r.minZ + 0.13], false, 1.6);
+    }
+
+  // Floor signs, drawn on canvas: they keep their texture, so they are not baked.
+  for (const r of ROOMS) {
+    const canvas2 = document.createElement("canvas");
+    canvas2.width = 512;
+    canvas2.height = 96;
+    const g = canvas2.getContext("2d");
+    if (!g) continue;
+    g.font = "600 54px ui-monospace, Menlo, monospace";
+    g.fillStyle = r.accent;
+    g.globalAlpha = 0.85;
+    g.fillText(r.name.toUpperCase(), 12, 66);
+    const tex = new THREE.CanvasTexture(canvas2);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 0.75),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false }),
     );
+    sign.rotation.x = -Math.PI / 2;
+    sign.position.set(r.minX + 2.4, 0.06, r.maxZ - 0.75);
+    sign.renderOrder = 1;
+    scene.add(sign);
   }
-  glass([0.025, 4.5, 3.2], [-1.75, 2.35, -4.4]);
-  box(room, C.metal, [0.08, 0.08, 3.4], [-1.75, 4.68, -4.4]);
-  box(room, C.metal, [0.045, 0.55, 0.08], [-7.0, 2.0, -2.65]);
-  box(room, C.cyan, [6.3, 0.04, 0.04], [-5.1, 4.5, -5.96], false, 1.8);
 
-  // Pantry on the left wall: cupboards, sink, warm coffee machine and open shelves.
-  const pantry = new THREE.Group();
-  pantry.position.set(-8.45, 0, 2.0);
-  pantry.rotation.y = Math.PI / 2;
-  room.add(pantry);
-  box(pantry, C.woodDark, [5.8, 1.0, 0.85], [0, 0.5, 0]);
-  box(pantry, C.wood, [6.0, 0.1, 1.05], [0, 1.05, 0]);
-  for (let door = 0; door < 6; door++) {
-    box(pantry, C.wood, [0.88, 0.79, 0.04], [-2.4 + door * 0.96, 0.5, 0.45]);
-    box(pantry, C.metal, [0.045, 0.21, 0.05], [-2.1 + door * 0.96, 0.67, 0.49]);
+  // Box-built furniture kinds plus the voxel models.
+  function serverRack(parent: THREE.Object3D) {
+    box(parent, C.serverBody, [1.24, 2.4, 0.85], [0, 1.2, 0]);
+    box(parent, C.trim, [1.08, 2.2, 0.03], [0, 1.2, 0.44]);
+    for (let slot = 0; slot < 7; slot++) {
+      box(parent, C.metal, [0.96, 0.18, 0.045], [0, 0.38 + slot * 0.29, 0.47]);
+      for (let led = 0; led < 5; led++)
+        box(parent, led % 3 ? C.serverGreen : C.cyan, [0.045, 0.038, 0.018], [-0.36 + led * 0.12, 0.38 + slot * 0.29, 0.5], false, 1.3);
+    }
   }
-  box(pantry, C.metal, [1.12, 0.05, 0.72], [1.85, 1.12, 0]);
-  box(pantry, C.serverBody, [0.8, 0.055, 0.47], [1.85, 1.13, 0]);
-  box(pantry, C.silver, [0.07, 0.44, 0.07], [1.85, 1.34, -0.3]);
-  box(pantry, C.silver, [0.07, 0.07, 0.28], [1.85, 1.53, -0.19]);
-  voxelModel(pantry, "office_coffee_machine", [-0.95, 1.1, 0], 0, 1.0);
-  box(pantry, C.amber, [0.42, 0.25, 0.035], [-0.95, 1.46, 0.32], false, 1.2);
-  for (const x of [-2.3, 0.2, 0.65, 2.65])
-    voxelModel(pantry, "office_mug", [x, 1.11, 0.13], 0, 0.75);
-  for (const y of [2.0, 2.95]) {
-    box(pantry, C.wood, [4.8, 0.1, 0.5], [0.0, y, -0.16]);
-    for (let book = 0; book < 6; book++)
-      box(
-        pantry,
-        C.books[book % 4],
-        [0.14, 0.3 + (book % 3) * 0.06, 0.23],
-        [-1.65 + book * 0.19, y + 0.2, -0.16],
-      );
-    voxelModel(pantry, "office_plant_big", [1.6, y + 0.05, -0.16], 0, 0.65);
-  }
-  voxelModel(room, "office_plant_tall", [-7.2, 0, -1.6], 0, 1.15);
-  voxelModel(room, "office_plant_big", [8.3, 0, 5.65], 0.8, 1.0);
-
-  // Framed studio art is geometric, with no generated UI or fake window chrome.
-  for (const z of [-0.8, 4.7]) {
-    box(room, C.trim, [0.1, 1.18, 0.86], [-8.98, 3.85, z]);
-    box(room, C.art, [0.12, 0.99, 0.67], [-8.96, 3.85, z]);
-    for (let line = 0; line < 5; line++)
-      box(
-        room,
-        C.books[line % 4],
-        [0.025, 0.055, 0.25 + (line % 3) * 0.1],
-        [-8.88, 3.56 + line * 0.14, z],
-        false,
-        0.15,
-      );
+  for (const p of PROPS) {
+    const group = new THREE.Group();
+    group.position.set(p.at[0], 0, p.at[1]);
+    group.rotation.y = p.rot ?? 0;
+    room.add(group);
+    if (p.model) {
+      voxelModel(group, p.model, [0, 0, 0], 0, p.scale ?? 1);
+      continue;
+    }
+    const [sx, sy, sz] = p.size ?? [1, 1, 1];
+    switch (p.kind) {
+      case "shelf": {
+        box(group, C.woodDark, [sx, sy, sz], [0, sy / 2, -0.05]);
+        for (let shelf = 0; shelf < 4; shelf++) {
+          const y = 0.25 + shelf * 0.55;
+          box(group, C.wood, [sx - 0.1, 0.06, sz + 0.04], [0, y, 0.02]);
+          for (let book = 0; book < Math.floor(sx / 0.19); book++)
+            if ((book * 7 + shelf * 3) % 9 !== 0)
+              box(group, C.books[(book + shelf) % 4], [0.14, 0.3 + ((book + shelf) % 3) * 0.06, 0.32], [-sx / 2 + 0.15 + book * 0.19, y + 0.2, 0.06]);
+        }
+        break;
+      }
+      case "rack":
+        serverRack(group);
+        break;
+      case "bench": {
+        box(group, C.metal, [sx, 0.08, sz], [0, 0.95, 0]);
+        box(group, C.trim, [sx - 0.2, 0.85, sz - 0.2], [0, 0.45, 0]);
+        // device grid under test
+        for (let i = 0; i < 4; i++) {
+          box(group, C.trim, [0.42, 0.62, 0.05], [-sx / 2 + 0.5 + i * 0.66, 1.3, -0.2]);
+          const pane = box(group, i % 2 ? C.serverGreen : C.screen, [0.34, 0.52, 0.01], [-sx / 2 + 0.5 + i * 0.66, 1.3, -0.17], false, 0.6);
+          pane.castShadow = false;
+        }
+        break;
+      }
+      case "counter": {
+        box(group, C.woodDark, [sx, sy, sz], [0, sy / 2, 0]);
+        box(group, C.wood, [sx + 0.1, 0.08, sz + 0.1], [0, sy + 0.04, 0]);
+        for (let door = 0; door < Math.floor(sx / 0.96); door++)
+          box(group, C.wood, [0.86, 0.8, 0.04], [-sx / 2 + 0.5 + door * 0.96, 0.5, -sz / 2 - 0.01]);
+        for (const x of [-1.4, -0.9]) voxelModel(group, "office_mug", [x, sy + 0.06, 0], 0, 0.75);
+        break;
+      }
+      case "desk": {
+        voxelModel(group, "office_table_desk", [0, 0, 0], 0, 0.85);
+        voxelModel(group, "office_pc", [0, 0.88, -0.1], 0, 0.6);
+        break;
+      }
+      case "rug":
+        box(group, "#22303a", [sx, 0.02, sz], [0, 0.03, 0]);
+        box(group, C.cyan, [sx - 0.3, 0.022, 0.05], [0, 0.035, -sz / 2 + 0.2], false, 0.6);
+        box(group, C.cyan, [sx - 0.3, 0.022, 0.05], [0, 0.035, sz / 2 - 0.2], false, 0.6);
+        break;
+    }
   }
 
   const screens: THREE.MeshStandardMaterial[] = [];
@@ -582,47 +600,31 @@ export function createOfficeScene(
     }
   }
 
-  // Video wall behind the console arc: one panel per helper, mirrored live.
-  const wallZ = -3.25;
+  // Video wall at the north edge of the hub: one live panel per helper.
+  const wallZ = VIDEO_WALL.z;
   const helpers = TEAM.filter((member) => member.post === "console");
-  const wallLeft = Math.min(...helpers.map((m) => m.home.x)) - 1.05;
-  const wallRight = Math.max(...helpers.map((m) => m.home.x)) + 1.05;
-  const wallWidth = wallRight - wallLeft;
-  const wallCenter = (wallLeft + wallRight) / 2;
+  const panelStep = 1.95;
+  const wallWidth = helpers.length * panelStep;
+  const wallCenter = 0;
+  const panelX = (index: number) =>
+    wallCenter - wallWidth / 2 + panelStep / 2 + index * panelStep;
   box(room, C.trim, [wallWidth + 0.3, 1.75, 0.22], [wallCenter, 2.25, wallZ]);
-  box(
-    room,
-    C.metal,
-    [wallWidth + 0.3, 0.08, 0.3],
-    [wallCenter, 1.34, wallZ + 0.04],
-  );
-  box(
-    room,
-    C.metal,
-    [wallWidth + 0.3, 0.08, 0.3],
-    [wallCenter, 3.16, wallZ + 0.04],
-  );
-  for (const x of [wallLeft - 0.05, wallRight + 0.05])
+  for (const y of [1.34, 3.16])
+    box(room, C.metal, [wallWidth + 0.3, 0.08, 0.3], [wallCenter, y, wallZ + 0.04]);
+  for (const x of [wallCenter - wallWidth / 2 - 0.1, wallCenter + wallWidth / 2 + 0.1])
     box(room, C.metal, [0.14, 3.5, 0.14], [x, 1.75, wallZ - 0.05]);
-  box(
-    room,
-    C.cyan,
-    [wallWidth + 0.3, 0.04, 0.04],
-    [wallCenter, 3.22, wallZ + 0.14],
-    false,
-    1.8,
-  );
+  box(room, C.cyan, [wallWidth + 0.3, 0.04, 0.04], [wallCenter, 3.22, wallZ + 0.14], false, 1.8);
   const wallScreens = {} as Record<AgentId, THREE.Mesh>;
-  for (const member of helpers) {
+  helpers.forEach((member, index) => {
     const panel = new THREE.Mesh(
       new THREE.PlaneGeometry(1.72, 1.5),
       new THREE.MeshBasicMaterial({ color: "#0d1c24", toneMapped: false }),
     );
-    panel.position.set(member.home.x, 2.25, wallZ + 0.115);
+    panel.position.set(panelX(index), 2.25, wallZ + 0.115);
     panel.name = `wall-${member.id}`;
     scene.add(panel);
     wallScreens[member.id] = panel;
-  }
+  });
 
   // A small wooden break table furnishes the pantry corner.
   const { x: tableX, z: tableZ } = DISCUSSION_CENTER;
@@ -650,19 +652,19 @@ export function createOfficeScene(
     wash.position.set(wallCenter, 3.2, wallZ + 1.6);
     scene.add(wash);
   }
-  const ambient = new THREE.HemisphereLight(C.ambient, C.woodDark, 1.1);
+  const ambient = new THREE.HemisphereLight(C.ambient, C.woodDark, 1.15);
   scene.add(ambient);
   const sunlight = new THREE.DirectionalLight(C.moon, 1.8);
-  sunlight.position.set(3, 10, 4);
+  sunlight.position.set(6, 22, 9);
   sunlight.castShadow = true;
-  sunlight.shadow.mapSize.set(1024, 1024);
+  sunlight.shadow.mapSize.set(2048, 2048);
   Object.assign(sunlight.shadow.camera, {
-    left: -14,
-    right: 14,
-    top: 12,
-    bottom: -12,
+    left: -28,
+    right: 28,
+    top: 24,
+    bottom: -24,
     near: 0.5,
-    far: 40,
+    far: 70,
   });
   sunlight.shadow.bias = 0.001;
   sunlight.shadow.normalBias = 0.05;
@@ -670,12 +672,12 @@ export function createOfficeScene(
   const fill = new THREE.DirectionalLight(C.cyan, 0.6);
   fill.position.set(-5, 5, -5);
   scene.add(fill);
-  const warm = new THREE.PointLight(C.amber, 28, 10, 2);
-  warm.position.set(-7.5, 2.4, 1.8);
-  scene.add(warm);
-  const serverLight = new THREE.PointLight(C.cyan, 18, 8, 2);
-  serverLight.position.set(-5, 3.5, -3.7);
-  scene.add(serverLight);
+  // One coloured practical per room keeps each space readable from afar.
+  for (const r of ROOMS) {
+    const light = new THREE.PointLight(r.accent, 22, 11, 2);
+    light.position.set((r.minX + r.maxX) / 2, 2.8, (r.minZ + r.maxZ) / 2);
+    scene.add(light);
+  }
 
   // Bake static transforms into material batches: the room stays inexpensive to draw.
   room.updateMatrixWorld(true);
@@ -847,9 +849,18 @@ export function createOfficeScene(
     height = 1;
   const projected = new THREE.Vector3();
   const baseCamera = new THREE.Vector3();
-  const focus = options.focus ?? { x: 0.8, z: 0.7 };
+  const homeFocus = options.focus ?? { x: 0.8, z: 0.7 };
+  const homeZoom = options.zoom ?? 1;
+  // Current and target framing; focusOn() glides between them.
+  const focus = { ...homeFocus };
+  let zoom = homeZoom;
+  const framing = {
+    x: homeFocus.x,
+    z: homeFocus.z,
+    zoom: homeZoom,
+    followId: null as AgentId | null,
+  };
   const lookAt = new THREE.Vector3(focus.x, 1.25, focus.z);
-  const zoom = options.zoom ?? 1;
   let labelsNeedLayout = true;
   let workAmount = 0;
 
@@ -865,8 +876,13 @@ export function createOfficeScene(
       ),
     );
     renderer.setSize(Math.ceil(width), Math.ceil(height), false);
+    frameCamera();
+    draw(0);
+  }
+  function frameCamera() {
     const aspect = width / height;
     const halfHeight = Math.max(6.3, 9.5 / aspect) / zoom;
+    lookAt.set(focus.x, 1.25, focus.z);
     camera.left = -halfHeight * aspect;
     camera.right = halfHeight * aspect;
     camera.top = halfHeight;
@@ -878,7 +894,6 @@ export function createOfficeScene(
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
     labelsNeedLayout = true;
-    draw(0);
   }
   function setTheme(value: boolean) {
     dark = value;
@@ -887,8 +902,6 @@ export function createOfficeScene(
     sunlight.intensity = dark ? 1.5 : 3.1;
     sunlight.color.set(dark ? C.moon : C.daylight);
     fill.intensity = dark ? 0.55 : 0.8;
-    warm.intensity = dark ? 28 : 10;
-    serverLight.intensity = dark ? 18 : 8;
     skyMaterial.color.set(dark ? C.skyNight : C.skyDay);
     skyMaterial.emissive.set(dark ? C.skyNight : C.skyDay);
     renderer.toneMappingExposure = dark ? 0.95 : 1.1;
@@ -1001,19 +1014,43 @@ export function createOfficeScene(
       dt,
       characters.map((actor) => actor.sit < 0.12),
     );
+    if (framing.followId) {
+      const followed = characters.find(
+        (a) => a.member.id === framing.followId,
+      )!;
+      framing.x = followed.walker.position.x;
+      framing.z = followed.walker.position.z - 0.6;
+    }
+    const k = reduced ? 1 : 1 - Math.exp(-3.2 * dt);
+    if (
+      Math.abs(focus.x - framing.x) > 0.001 ||
+      Math.abs(focus.z - framing.z) > 0.001 ||
+      Math.abs(zoom - framing.zoom) > 0.001
+    ) {
+      // Long moves pull back a little mid-flight, like a crane shot.
+      const far = Math.hypot(framing.x - focus.x, framing.z - focus.z);
+      const travelZoom = framing.zoom / (1 + far / 16);
+      focus.x += (framing.x - focus.x) * (dt ? k : 1);
+      focus.z += (framing.z - focus.z) * (dt ? k : 1);
+      zoom += ((dt ? travelZoom : framing.zoom) - zoom) * (dt ? Math.min(1, k * 1.4) : 1);
+      frameCamera();
+    }
     characters.forEach((actor, index) => {
       const { walker } = actor;
       const stage = routine.stages[index];
       const atDesk = stage === "desk";
-      const visiting = routine.active === index && stage === "visiting";
+      const errand = routine.errands[index];
+      const visiting =
+        stage === "visiting" && (routine.active === index || !!errand);
       const visit = OFFICE_VISITS[routine.visit];
       const walking = stage === "outbound" || stage === "returning";
       if (atDesk || visiting) {
+        const target = errand ? errand.lookAt : visit.lookAt;
         const heading = atDesk
           ? facingOf(actor.member)
           : Math.atan2(
-              visit.lookAt.x - walker.position.x,
-              visit.lookAt.z - walker.position.z,
+              target.x - walker.position.x,
+              target.z - walker.position.z,
             );
         const turn = Math.atan2(
           Math.sin(heading - walker.heading),
@@ -1048,11 +1085,11 @@ export function createOfficeScene(
       const pace = walking && !reduced ? Math.min(1, walker.speed / 1.25) : 0;
       const gait = walker.distance * 8.5;
       const sip =
-        visiting && visit.kind === "coffee"
+        visiting && !errand && visit.kind === "coffee"
           ? Math.sin(Math.PI * (1 - routine.dwelling / visit.duration))
           : 0;
       const inspect =
-        visiting && visit.kind === "server"
+        visiting && !errand && visit.kind === "server"
           ? Math.sin(Math.PI * (1 - routine.dwelling / visit.duration))
           : 0;
       const cheer = reduced ? 0 : envelope(actor.cheerFrom, 2.2);
@@ -1130,15 +1167,24 @@ export function createOfficeScene(
             ? 0.4
             : 0.18;
       const realBubble = actor.bubbleUntil > elapsed;
-      const ambientText =
-        !working && routine.active === index
+      const ambientText = errand
+        ? stage === "returning"
+          ? ""
+          : errand.say
+        : !working && routine.active === index
           ? stage === "outbound"
             ? visit.outbound
             : stage === "visiting"
               ? visit.visiting
               : "Back to my desk"
           : "";
-      const text = realBubble ? actor.activityText : ambientText;
+      // What someone says on a visit wins over their status bubble.
+      const text =
+        errand && stage !== "returning"
+          ? ambientText
+          : realBubble
+            ? actor.activityText
+            : ambientText;
       if (actor.bubble.textContent !== text) actor.bubble.textContent = text;
       for (const [key, value] of Object.entries({
         active: actor.focused,
@@ -1189,6 +1235,50 @@ export function createOfficeScene(
     setActivity,
     setCrew,
     setSelected,
+    visit(id, to, opts = {}) {
+      const index = TEAM.findIndex((m) => m.id === id);
+      const host = TEAM.find((m) => m.id === to)!;
+      const f = facingOf(host);
+      // Stand across the host's desk/console, facing them.
+      const reach = host.post === "lead" ? 2.4 : 1.65;
+      const destination = {
+        x: host.home.x + Math.sin(f) * reach,
+        z: host.home.z + Math.cos(f) * reach,
+      };
+      const ok = sendOnErrand(routine, index, {
+        destination,
+        lookAt: host.home,
+        dwell: opts.dwell ?? 3,
+        say: opts.say ?? `Checking with ${host.name}`,
+      });
+      if (reduced || !previous) draw(0);
+      return ok;
+    },
+    recall(id) {
+      endErrand(
+        routine,
+        TEAM.findIndex((m) => m.id === id),
+      );
+    },
+    glideTo(x, z, zoomLevel) {
+      framing.followId = null;
+      framing.x = x;
+      framing.z = z;
+      framing.zoom = zoomLevel ?? framing.zoom;
+      if (reduced || !previous) draw(0);
+    },
+    focusOn(id, zoomLevel) {
+      if (id) {
+        framing.followId = id;
+        framing.zoom = zoomLevel ?? homeZoom * 1.9;
+      } else {
+        framing.followId = null;
+        framing.x = homeFocus.x;
+        framing.z = homeFocus.z;
+        framing.zoom = homeZoom;
+      }
+      if (reduced || !previous) draw(0);
+    },
     stage: () => ({
       scene,
       camera,

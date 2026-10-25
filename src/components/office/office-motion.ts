@@ -1,4 +1,4 @@
-import { FIXED_OBSTACLES, type FloorObstacle } from "./office-layout";
+import { FIXED_OBSTACLES, WORLD, type FloorObstacle } from "./office-layout";
 
 /** World coordinates are metres on the office floor (x/z). */
 export type AgentId = "kern" | "ada" | "linus" | "alan" | "bob" | "grace";
@@ -10,7 +10,7 @@ export const TEAM = [
     color: "#b499dc",
     skin: "#b97e5b",
     hair: "#342526",
-    home: { x: 1.5, z: -1.35 },
+    home: { x: -15, z: -9.2 },
     post: "console",
   },
   {
@@ -19,7 +19,7 @@ export const TEAM = [
     color: "#73a98e",
     skin: "#e2b28c",
     hair: "#593d2b",
-    home: { x: 3.4, z: -1.5 },
+    home: { x: 15, z: -9.2 },
     post: "console",
   },
   {
@@ -28,7 +28,7 @@ export const TEAM = [
     color: "#71b6c5",
     skin: "#996747",
     hair: "#25252d",
-    home: { x: -0.4, z: -0.9 },
+    home: { x: 0, z: -9.6 },
     post: "console",
   },
   {
@@ -37,7 +37,7 @@ export const TEAM = [
     color: "#db929b",
     skin: "#edbd98",
     hair: "#9b6036",
-    home: { x: 5.3, z: -1.35 },
+    home: { x: 15, z: 2.6 },
     post: "console",
   },
   {
@@ -46,7 +46,7 @@ export const TEAM = [
     color: "#d5ad69",
     skin: "#b77d59",
     hair: "#332e38",
-    home: { x: 7.2, z: -0.9 },
+    home: { x: -15, z: 2.4 },
     post: "console",
   },
   {
@@ -55,7 +55,7 @@ export const TEAM = [
     color: "#6faecb",
     skin: "#d9a382",
     hair: "#313440",
-    home: { x: 3.4, z: 3.4 },
+    home: { x: 0, z: 3.6 },
     post: "lead",
   },
 ] as const;
@@ -67,8 +67,12 @@ export type Post = "lead" | "console";
  * Facing is a Y rotation: 0 looks toward +z, π toward −z.
  */
 export const LEAD_DESK = TEAM.find((member) => member.id === "kern")!.home;
-/** Consoles face the viewer (the studio camera sits at +x/+z), so faces read. */
-export const CONSOLE_FACING = Math.atan2(17, 21);
+/**
+ * Consoles face +z, toward the viewer (the studio camera sits at +x/+z), so
+ * faces read three-quarter on. Kept axis-aligned: a turned console's floor
+ * bounds would swallow the operator's own standing spot and block every route.
+ */
+export const CONSOLE_FACING = 0;
 export function facingOf(member: { post: Post; home: Point }) {
   return member.post === "lead" ? Math.PI : CONSOLE_FACING;
 }
@@ -213,6 +217,8 @@ export type Walker = {
   route: Point[];
   heading: number;
   speed: number;
+  /** Cruising speed in m/s; defaults to a calm 1.25 (errands hurry). */
+  pace?: number;
   distance: number;
   blockedFor: number;
 };
@@ -286,6 +292,11 @@ export function isWalkableSegment(a: Point, b: Point) {
     return false;
   });
 }
+const inWorld = (point: Point) =>
+  point.x > WORLD.minX + 0.3 &&
+  point.x < WORLD.maxX - 0.3 &&
+  point.z > WORLD.minZ + 0.3 &&
+  point.z < WORLD.maxZ - 0.3;
 const corners = obstacles
   .flatMap(({ minX, maxX, minZ, maxZ }) => [
     { x: minX - 0.02, z: minZ - 0.02 },
@@ -295,10 +306,7 @@ const corners = obstacles
   ])
   .filter(
     (point) =>
-      point.x > -8.8 &&
-      point.x < 8.8 &&
-      point.z > -5.9 &&
-      point.z < 6.1 &&
+      inWorld(point) &&
       isWalkableSegment(point, point),
   );
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
@@ -344,23 +352,22 @@ export function aisleRoute(
   if (clear(from, to)) return [{ ...to }];
   // A circumscribed octagon supplies safe detours around each occupied position.
   const radius = (clearance + 0.025) / Math.cos(Math.PI / 8);
+  const free = (a: Point, b: Point) =>
+    occupied.every((point) => distanceToSegment(point, a, b) >= clearance);
   const detours = occupied.length
     ? [
+        // Corner indices must stay aligned with cornerLinks; blocked corners
+        // are never linked because every link checks its endpoints.
         ...corners,
-        ...occupied.flatMap((point) =>
-          Array.from({ length: 8 }, (_, index) => ({
-            x: point.x + Math.cos((index * Math.PI) / 4) * radius,
-            z: point.z + Math.sin((index * Math.PI) / 4) * radius,
-          })),
-        ),
-      ].filter(
-        (point) =>
-          point.x > -8.8 &&
-          point.x < 8.8 &&
-          point.z > -5.9 &&
-          point.z < 6.1 &&
-          clear(point, point),
-      )
+        ...occupied
+          .flatMap((point) =>
+            Array.from({ length: 8 }, (_, index) => ({
+              x: point.x + Math.cos((index * Math.PI) / 4) * radius,
+              z: point.z + Math.sin((index * Math.PI) / 4) * radius,
+            })),
+          )
+          .filter((point) => inWorld(point) && clear(point, point)),
+      ]
     : corners;
   const points = [from, to, ...detours];
   const costs = points.map(() => Infinity),
@@ -375,12 +382,27 @@ export function aisleRoute(
     if (current < 0 || !Number.isFinite(costs[current])) return [];
     if (current === 1) break;
     visited.add(current);
+    // Corners keep their static visibility links (only re-checked against
+    // occupied spots); octagon detours and the start are linked on demand.
     const links =
-      current >= 2 && !occupied.length
-        ? cornerLinks[current - 2].map(({ next, cost }) => ({
-            next: next + 2,
-            cost,
-          }))
+      current >= 2 && current - 2 < corners.length
+        ? [
+            ...cornerLinks[current - 2].flatMap(({ next, cost }) =>
+              !occupied.length || free(points[current], corners[next])
+                ? [{ next: next + 2, cost }]
+                : [],
+            ),
+            ...detours.slice(corners.length).flatMap((point, index) =>
+              clear(points[current], point)
+                ? [
+                    {
+                      next: corners.length + index + 2,
+                      cost: distance(points[current], point),
+                    },
+                  ]
+                : [],
+            ),
+          ]
         : detours.flatMap((point, index) =>
             current !== index + 2 && clear(points[current], point)
               ? [{ next: index + 2, cost: distance(points[current], point) }]
@@ -500,7 +522,8 @@ export function advanceWalker(walker: Walker, delta: number) {
     walker.route.shift();
     return;
   }
-  const speed = walker.route.length === 1 ? Math.min(1.25, distance * 3) : 1.25;
+  const pace = walker.pace ?? 1.25;
+  const speed = walker.route.length === 1 ? Math.min(pace, distance * 3) : pace;
   walker.speed = damp(walker.speed, speed, 7, dt);
   const step = Math.min(distance, walker.speed * dt);
   walker.position.x += (dx / distance) * step;
