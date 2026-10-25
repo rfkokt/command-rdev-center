@@ -1,11 +1,22 @@
-import { BranchIcon, CloseIcon, FilesIcon, GaugeIcon } from "./ui-icons";
+import { lazy, Suspense, useState } from "react";
+import {
+  BranchIcon,
+  CloseIcon,
+  CrewIcon,
+  FilesIcon,
+  GaugeIcon,
+} from "./ui-icons";
 import ProjectFilesSidebar from "./ProjectFilesSidebar";
 import SourceControlPanel from "./SourceControlPanel";
 import QuotaPanel from "./QuotaPanel";
 import { confirm } from "./ConfirmDialog";
 import type { ChatRepository, WorktreeDiff, WorktreeInfo } from "./ChatView";
+import type { ToolCall } from "../lib/rpc";
 
-export type RightActivity = "explorer" | "scm" | "usage";
+// Three.js and the voxel models only load once the office is first opened.
+const OfficePanel = lazy(() => import("./OfficePanel"));
+
+export type RightActivity = "office" | "explorer" | "scm" | "usage";
 
 export type ChatRightSidebarProps = {
   open: boolean;
@@ -23,9 +34,11 @@ export type ChatRightSidebarProps = {
   onOpenDiff: (key: string) => void;
   onWorktreeDiffChange: (diff: WorktreeDiff) => void;
   onToast: (message: string) => void;
+  office: { tools: readonly ToolCall[]; running: boolean; writing: boolean };
 };
 
 const TITLES: Record<RightActivity, string> = {
+  office: "Office",
   explorer: "Files",
   scm: "Changes",
   usage: "Usage",
@@ -47,7 +60,13 @@ export default function ChatRightSidebar({
   onOpenDiff,
   onWorktreeDiffChange,
   onToast,
+  office,
 }: ChatRightSidebarProps) {
+  const showOffice = open && activity === "office";
+  const [officeMounted, setOfficeMounted] = useState(showOffice);
+  if (showOffice && !officeMounted) setOfficeMounted(true);
+  // The office reads better wider than the file/diff panels.
+  const maxWidth = activity === "office" ? 720 : 480;
   const changeCount = worktreeDiff?.files.length ?? 0;
   const canShowChanges = Boolean(worktree || isWorkspace);
   const toggle = (next: RightActivity) => {
@@ -74,12 +93,12 @@ export default function ChatRightSidebar({
           aria-label="Resize code sidebar"
           aria-orientation="vertical"
           aria-valuemin={240}
-          aria-valuemax={480}
+          aria-valuemax={maxWidth}
           aria-valuenow={panelWidth}
           tabIndex={0}
           onKeyDown={(e) => {
             if (e.key === "ArrowLeft")
-              onPanelWidthChange(Math.min(480, panelWidth + 10));
+              onPanelWidthChange(Math.min(maxWidth, panelWidth + 10));
             if (e.key === "ArrowRight")
               onPanelWidthChange(Math.max(240, panelWidth - 10));
           }}
@@ -92,7 +111,7 @@ export default function ChatRightSidebar({
               onPanelWidthChange(
                 Math.max(
                   240,
-                  Math.min(480, startWidth + (startX - ev.clientX)),
+                  Math.min(maxWidth, startWidth + (startX - ev.clientX)),
                 ),
               );
             target.onpointerup = () => {
@@ -106,11 +125,15 @@ export default function ChatRightSidebar({
           <div className="krs-head-text">
             <strong>{TITLES[activity]}</strong>
             <small title={activity === "scm" ? branch : projectName}>
-              {activity === "usage"
-                ? "Subscription quota"
-                : activity === "explorer"
-                  ? projectName
-                  : branch || projectName}
+              {activity === "office"
+                ? office.running
+                  ? "Agents at work"
+                  : "Your agent crew"
+                : activity === "usage"
+                  ? "Subscription quota"
+                  : activity === "explorer"
+                    ? projectName
+                    : branch || projectName}
             </small>
           </div>
           <button
@@ -124,7 +147,19 @@ export default function ChatRightSidebar({
           </button>
         </header>
         <div className="krs-body">
-          {activity === "usage" ? (
+          {officeMounted && (
+            <div hidden={!showOffice} className="krs-office">
+              <Suspense fallback={null}>
+                <OfficePanel
+                  tools={office.tools}
+                  running={office.running}
+                  writing={office.writing}
+                  visible={showOffice}
+                />
+              </Suspense>
+            </div>
+          )}
+          {activity === "office" ? null : activity === "usage" ? (
             <QuotaPanel onToast={onToast} />
           ) : activity === "explorer" ? (
             <ProjectFilesSidebar
@@ -157,6 +192,16 @@ export default function ChatRightSidebar({
         </div>
       </div>
       <nav className="krs-rail" aria-label="Code panels">
+        <button
+          type="button"
+          className={`${open && activity === "office" ? "active" : ""}${office.running ? " is-live" : ""}`}
+          onClick={() => toggle("office")}
+          title={open && activity === "office" ? "Hide office" : "Office"}
+          aria-label={`Office${office.running ? " (agents working)" : ""}`}
+          aria-expanded={open && activity === "office"}
+        >
+          <CrewIcon size={18} />
+        </button>
         <button
           type="button"
           className={open && activity === "explorer" ? "active" : ""}

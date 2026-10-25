@@ -280,3 +280,60 @@ it("keeps reduced motion still while work indicators and real activity remain li
   office.setWorking(false);
   expect(labels.querySelectorAll('[data-working="true"]')).toHaveLength(0);
 });
+
+it("shows each crew member's own work, reactions and selection", () => {
+  const label = (id: string) =>
+    labels.children[TEAM.findIndex((m) => m.id === id)] as HTMLElement;
+  const crew = (
+    bob: "idle" | "working" | "done" | "error",
+    text = "Running tests",
+  ) => ({
+    working: true,
+    members: [
+      { id: "ada" as const, status: "working" as const, text: "Reading a.ts" },
+      { id: "bob" as const, status: bob, text },
+    ],
+  });
+  office.setCrew(crew("working"));
+  advance(0.2);
+  // Two members work at once; their bubbles do not time out.
+  expect(label("ada").dataset.active).toBe("true");
+  expect(label("bob").dataset.active).toBe("true");
+  advance(10);
+  expect(label("ada").textContent).toContain("Reading a.ts");
+
+  const bob = roots[TEAM.findIndex((m) => m.id === "bob")];
+  const restingHead = bob.children[0].children[0].rotation.y;
+  office.setCrew(crew("error", "Failed 1 of 12 tests"));
+  advance(0.3);
+  expect(label("bob").dataset.status).toBe("error");
+  expect(label("bob").dataset.error).toBe("true");
+  expect(bob.children[0].children[0].rotation.y).not.toBe(restingHead);
+
+  office.setCrew(crew("done", "Passed 12 of 12 tests"));
+  advance(0.5);
+  expect(label("bob").dataset.status).toBe("done");
+  expect(bob.children[0].position.y).toBeGreaterThan(-0.24);
+
+  office.setSelected("bob");
+  advance(0.1);
+  expect(label("bob").dataset.selected).toBe("true");
+  expect(label("ada").dataset.selected).toBe("false");
+});
+
+it("lets labels select a member when a handler is given", () => {
+  office.dispose();
+  const canvas = document.createElement("canvas");
+  const host = document.createElement("div");
+  labels = document.createElement("div");
+  host.append(canvas, labels);
+  document.body.append(host);
+  const onSelect = vi.fn();
+  office = createOfficeScene(canvas, labels, { onSelect });
+  const linus = labels.children[
+    TEAM.findIndex((m) => m.id === "linus")
+  ] as HTMLElement;
+  linus.click();
+  linus.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  expect(onSelect.mock.calls).toEqual([["linus"], ["linus"]]);
+});

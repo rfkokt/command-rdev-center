@@ -800,11 +800,15 @@ export default function App() {
       </aside>
 
       <section className="workspace">
-        <BackgroundMotion
-          activeTabId={activeTab?.id}
-          isWorking={Boolean(activeTab?.interrupted)}
-          isBlurred={bgBlurred}
-        />
+        {/* Behind an open chat the office lives in the Office side panel
+            instead, so it is not rendered (and hidden) twice. */}
+        {(!activeTab || dashboard !== null) && (
+          <BackgroundMotion
+            activeTabId={activeTab?.id}
+            isWorking={Boolean(activeTab?.interrupted)}
+            isBlurred={bgBlurred}
+          />
+        )}
         <header className="app-toolbar glass-surface">
           {!sidebarOpen && (
             <button

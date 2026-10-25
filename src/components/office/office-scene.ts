@@ -7,7 +7,13 @@ import {
 import { createVoxelCharacter } from "./voxel-character";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { VOXEL_MODELS, OFFICE_PALETTE_BASE64 } from "./office-voxel-models";
-import { TEAM, damp, type Activity } from "./office-motion";
+import {
+  TEAM,
+  damp,
+  type Activity,
+  type AgentId,
+  type SceneCrew,
+} from "./office-motion";
 import {
   advanceOfficeRoutine,
   createOfficeRoutine,
@@ -17,6 +23,9 @@ import {
 
 export interface OfficeScene {
   setActivity(activity: Activity): void;
+  /** Per-member state for the side panel; replaces single-activity bubbles. */
+  setCrew(crew: SceneCrew): void;
+  setSelected(id: AgentId | null): void;
   setWorking(working: boolean): void;
   setTheme(dark: boolean): void;
   setReducedMotion(reduced: boolean): void;
@@ -29,6 +38,13 @@ export interface OfficeScene {
 export function createOfficeScene(
   canvas: HTMLCanvasElement,
   labels: HTMLElement,
+  options: {
+    onSelect?: (id: AgentId) => void;
+    /** >1 frames tighter, for small viewports such as the side panel. */
+    zoom?: number;
+    /** Floor point to centre on (defaults to the whole studio). */
+    focus?: { x: number; z: number };
+  } = {},
 ): OfficeScene {
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -662,6 +678,20 @@ export function createOfficeScene(
     const bubble = document.createElement("span");
     bubble.className = "office-agent-activity";
     label.append(name, bubble);
+    if (options.onSelect) {
+      label.classList.add("is-interactive");
+      label.tabIndex = 0;
+      label.setAttribute("role", "button");
+      label.setAttribute("aria-label", `${member.name}: show work`);
+      const select = () => options.onSelect?.(member.id);
+      label.addEventListener("click", select);
+      label.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          select();
+        }
+      });
+    }
     labels.append(label);
     root.position.set(member.home.x, 0, member.home.z);
     root.rotation.y = Math.PI;
@@ -687,6 +717,10 @@ export function createOfficeScene(
       bubbleUntil: 0,
       activityText: "",
       activityError: false,
+      status: "idle" as SceneCrew["members"][number]["status"],
+      cheerFrom: -Infinity,
+      shakeFrom: -Infinity,
+      selected: false,
     };
   }
   const characters = TEAM.map(character);
@@ -702,7 +736,9 @@ export function createOfficeScene(
     height = 1;
   const projected = new THREE.Vector3();
   const baseCamera = new THREE.Vector3();
-  const lookAt = new THREE.Vector3(0.8, 1.25, 0.7);
+  const focus = options.focus ?? { x: 0.8, z: 0.7 };
+  const lookAt = new THREE.Vector3(focus.x, 1.25, focus.z);
+  const zoom = options.zoom ?? 1;
   let labelsNeedLayout = true;
   let workAmount = 0;
 
@@ -719,12 +755,13 @@ export function createOfficeScene(
     );
     renderer.setSize(Math.ceil(width), Math.ceil(height), false);
     const aspect = width / height;
-    const halfHeight = Math.max(6.3, 9.5 / aspect);
+    const halfHeight = Math.max(6.3, 9.5 / aspect) / zoom;
     camera.left = -halfHeight * aspect;
     camera.right = halfHeight * aspect;
     camera.top = halfHeight;
     camera.bottom = -halfHeight;
-    baseCamera.set(17, 16, 21);
+    // Same view direction; shifted with the focus point.
+    baseCamera.set(17 + focus.x - 0.8, 16, 21 + focus.z - 0.7);
     camera.position.copy(baseCamera);
     camera.lookAt(lookAt);
     camera.updateProjectionMatrix();
@@ -776,6 +813,40 @@ export function createOfficeScene(
     if (reduced || !previous) draw(0);
     scheduleBubbleExpiry();
   }
+  let crewSeen = false;
+  function setCrew(crew: SceneCrew) {
+    clearTimeout(bubbleTimeout);
+    working = crew.working;
+    setRoutineWorking(routine, crew.working);
+    for (const state of crew.members) {
+      const actor = characters.find((item) => item.member.id === state.id);
+      if (!actor) continue;
+      // React to changes, not to the state found when the panel opens.
+      if (crewSeen && state.status !== actor.status) {
+        if (state.status === "done") actor.cheerFrom = elapsed;
+        if (state.status === "error") actor.shakeFrom = elapsed;
+      }
+      actor.status = state.status;
+      actor.focused = state.status === "working";
+      const text = state.text.replace(/\s+/g, " ").trim();
+      actor.activityText = text.length > 58 ? `${text.slice(0, 57)}…` : text;
+      actor.activityError = state.status === "error";
+      actor.bubbleUntil = state.status === "idle" || !text ? 0 : Infinity;
+    }
+    crewSeen = true;
+    if (reduced || !previous) draw(0);
+  }
+  function setSelected(id: AgentId | null) {
+    characters.forEach((actor) => {
+      actor.selected = actor.member.id === id;
+    });
+    if (reduced || !previous) draw(0);
+  }
+  // 0 → 1 → 0 over `duration` seconds after `from`.
+  const envelope = (from: number, duration: number) => {
+    const t = elapsed - from;
+    return t < 0 || t > duration ? 0 : Math.sin((Math.PI * t) / duration);
+  };
   function scheduleBubbleExpiry() {
     clearTimeout(bubbleTimeout);
     const remaining = Math.max(
@@ -862,8 +933,13 @@ export function createOfficeScene(
         visiting && visit.kind === "server"
           ? Math.sin(Math.PI * (1 - routine.dwelling / visit.duration))
           : 0;
+      const cheer = reduced ? 0 : envelope(actor.cheerFrom, 2.2);
+      const shake = reduced ? 0 : envelope(actor.shakeFrom, 1.4);
       actor.body.position.y =
         -actor.sit * 0.24 +
+        (cheer
+          ? Math.abs(Math.sin((elapsed - actor.cheerFrom) * 8)) * 0.11 * cheer
+          : 0) +
         breathe +
         typing * Math.sin(phase) * 0.008 +
         Math.abs(Math.sin(gait)) * 0.035 * pace;
@@ -872,7 +948,9 @@ export function createOfficeScene(
         sip * 0.045 +
         inspect * 0.08;
       actor.body.rotation.z =
-        typing * Math.sin(phase * 0.6) * 0.008 + Math.sin(gait) * 0.03 * pace;
+        typing * Math.sin(phase * 0.6) * 0.008 +
+        Math.sin(gait) * 0.03 * pace +
+        Math.sin(elapsed * 30) * 0.05 * shake;
       actor.body.rotation.y = reduced
         ? 0
         : typing *
@@ -881,7 +959,8 @@ export function createOfficeScene(
           inspect * Math.sin(elapsed * 1.2) * 0.16;
       actor.head.rotation.y = reduced
         ? 0
-        : Math.sin(elapsed * 0.65 + index * 2) * (working ? 0.025 : 0.09);
+        : Math.sin(elapsed * 0.65 + index * 2) * (working ? 0.025 : 0.09) +
+          Math.sin(elapsed * 26) * 0.38 * shake;
       for (let side = 0; side < 2; side++) {
         const stride = Math.sin(gait + side * Math.PI) * pace;
         actor.legs[side].rotation.x =
@@ -894,7 +973,8 @@ export function createOfficeScene(
           (side === 1 ? sip * 0.8 : 0) +
           typing *
             Math.sin(elapsed * (9 + index * 0.4) + side * 1.8 + index) *
-            0.07;
+            0.07 -
+          cheer * 2.3;
       }
       actor.mug.visible =
         routine.active === index &&
@@ -907,10 +987,17 @@ export function createOfficeScene(
       );
       actor.mug.rotation.x = -sip * 0.2;
       actor.ringMaterial.opacity = reduced
-        ? actor.focused
-          ? 0.65
-          : 0
-        : damp(actor.ringMaterial.opacity, actor.focused ? 0.65 : 0, 6, dt);
+        ? actor.selected
+          ? 0.95
+          : actor.focused
+            ? 0.65
+            : 0
+        : damp(
+            actor.ringMaterial.opacity,
+            actor.selected ? 0.95 : actor.focused ? 0.65 : 0,
+            6,
+            dt,
+          );
       screens[index * 2].emissiveIntensity = screens[
         index * 2 + 1
       ].emissiveIntensity = actor.focused
@@ -936,6 +1023,8 @@ export function createOfficeScene(
         working: working && atDesk,
         bubble: !!text,
         error: realBubble && actor.activityError,
+        status: actor.status,
+        selected: actor.selected,
       })) {
         const next = String(value);
         if (actor.label.dataset[key] !== next) actor.label.dataset[key] = next;
@@ -975,6 +1064,8 @@ export function createOfficeScene(
   schedule();
   return {
     setActivity,
+    setCrew,
+    setSelected,
     setWorking,
     setTheme,
     resize,

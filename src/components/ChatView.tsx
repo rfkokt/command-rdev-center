@@ -261,6 +261,7 @@ const ElapsedLabel = memo(function ElapsedLabel({
   return <>{s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`}</>;
 });
 const GRAPHIGNORE_PROMPTED_KEY = "crc-graphignore-prompted";
+const OFFICE_AUTOSHOW_KEY = "crc-office-autoshow";
 
 function formatTaskDuration(ms: number) {
   const seconds = Math.max(1, Math.round(ms / 1000));
@@ -504,6 +505,65 @@ export default function ChatView({
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [rightActivity, setRightActivity] = useState<RightActivity>("explorer");
   const [rightPanelWidth, setRightPanelWidth] = useState(300);
+  // Tool calls of the current turn drive the office crew in the side panel.
+  const officeData = useMemo(() => {
+    let lastUser = -1;
+    for (let i = messages.length - 1; i >= 0; i--)
+      if (messages[i].role === "user") {
+        lastUser = i;
+        break;
+      }
+    const turn = messages.slice(lastUser + 1);
+    const tools = turn.flatMap((message) => message.toolCalls);
+    const streaming = turn.find((m) => m.role === "assistant" && m.isStreaming);
+    return {
+      tools,
+      running: agentStatus === "running",
+      writing:
+        Boolean(streaming?.text.trim()) &&
+        tools.every((tool) => tool.phase === "end"),
+    };
+  }, [messages, agentStatus]);
+  // Show the office when a run starts, unless the user closed it last time.
+  useEffect(() => {
+    if (globalChat || !isActive || agentStatus !== "running") return;
+    let autoShow = true;
+    try {
+      autoShow = localStorage.getItem(OFFICE_AUTOSHOW_KEY) !== "false";
+    } catch {
+      /* storage unavailable: keep the default */
+    }
+    if (!autoShow || rightSidebarOpen) return;
+    setRightActivity("office");
+    setRightPanelWidth((width) => Math.max(width, 400));
+    setRightSidebarOpen(true);
+    // Only react to the run starting, not to every sidebar change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentStatus, globalChat, isActive]);
+  const handleRightSidebarOpen = useCallback(
+    (open: boolean) => {
+      if (rightActivity === "office") {
+        try {
+          localStorage.setItem(OFFICE_AUTOSHOW_KEY, String(open));
+        } catch {
+          /* ignore */
+        }
+      }
+      setRightSidebarOpen(open);
+    },
+    [rightActivity],
+  );
+  const handleRightActivity = useCallback((next: RightActivity) => {
+    if (next === "office") {
+      setRightPanelWidth((width) => Math.max(width, 400));
+      try {
+        localStorage.setItem(OFFICE_AUTOSHOW_KEY, "true");
+      } catch {
+        /* ignore */
+      }
+    }
+    setRightActivity(next);
+  }, []);
   const [expandedDiff, setExpandedDiff] = useState<string | null>(null);
   const [diffPos, setDiffPos] = useState({ x: 0, y: 0 });
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
@@ -526,7 +586,13 @@ export default function ChatView({
     if (!isActive) return;
     void loadTerminalPanel().catch(() => undefined);
     warmTerminalWhenIdle();
-  }, [isActive]);
+    // The Office panel opens when a run starts; have its 3D chunk ready.
+    if (!globalChat)
+      window.setTimeout(() => {
+        void import("./OfficePanel").catch(() => undefined);
+        void import("./office/office-scene").catch(() => undefined);
+      }, 1500);
+  }, [isActive, globalChat]);
   const [devError, setDevError] = useState<string | null>(null);
   const [pendingDevCommand, setPendingDevCommand] = useState<string | null>(
     null,
@@ -5848,8 +5914,9 @@ export default function ChatView({
           cwd={cwd}
           projectName={projectName}
           repositoryStatuses={repositoryStatuses}
-          onOpenChange={setRightSidebarOpen}
-          onActivityChange={setRightActivity}
+          onOpenChange={handleRightSidebarOpen}
+          onActivityChange={handleRightActivity}
+          office={officeData}
           onPanelWidthChange={setRightPanelWidth}
           onOpenDiff={setExpandedDiff}
           onWorktreeDiffChange={setWorktreeDiff}

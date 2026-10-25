@@ -52,6 +52,15 @@ export const GaugeIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const CrewIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="5.5" cy="5" r="2" />
+    <circle cx="11" cy="5.75" r="1.5" />
+    <path d="M1.75 13.25c0-2.2 1.7-3.75 3.75-3.75s3.75 1.55 3.75 3.75" />
+    <path d="M10.5 9.6c1.9 0 3.75 1.3 3.75 3.65" />
+  </Icon>
+);
+
 export const PinIcon = (props: IconProps) => (
   <Icon {...props}>
     <path d="m10 2 4 4-2.5.5-3 3-.5 2.5L4 8l2.5-.5 3-3z" />

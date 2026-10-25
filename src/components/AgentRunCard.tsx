@@ -13,7 +13,7 @@ import type { ToolCall } from "../lib/rpc";
  * finished tool call settles in with its duration (Claude-run style).
  */
 
-type StepKind =
+export type StepKind =
   | "search"
   | "read"
   | "edit"
@@ -58,6 +58,19 @@ export function noteToolPhase(callId: string, phase?: ToolCall["phase"]) {
   const now = Date.now();
   const entry = timings.get(callId) ?? remember(callId, { start: now });
   if (phase === "end" && entry.end === undefined) entry.end = now;
+}
+
+/** Start/end times recorded for a tool call, if its start was observed. */
+export function toolTiming(callId: string): { start?: number; end?: number } {
+  const entry = timings.get(callId);
+  if (!entry) return {};
+  return {
+    start: Number.isFinite(entry.start) ? entry.start : undefined,
+    end:
+      entry.end !== undefined && Number.isFinite(entry.end)
+        ? entry.end
+        : undefined,
+  };
 }
 
 function track(tool: ToolCall) {
@@ -151,9 +164,20 @@ export function describeStep(tool: ToolCall): Omit<RunStep, "id"> {
           ? testSummary(resultText(tool.result), failed)
           : "Running tests",
       };
-    const push = /git\s+push\b(?:\s+\S+)?(?:\s+([^\s-][^\s]*))?/.exec(cmd);
+    const push = /\bgit\s+push\b([^;&|]*)/.exec(cmd);
     if (push) {
-      const branch = push[1]?.replace(/^HEAD:/, "") ?? "";
+      // `git push [flags] [remote] [refspec]`: the branch is the refspec's
+      // destination, never the remote (`-u origin fix/x` → fix/x).
+      const words = push[1]
+        .trim()
+        .split(/\s+/)
+        .filter((word) => word && !word.startsWith("-"));
+      const refspec = words.length > 1 ? words[words.length - 1] : "";
+      const branch = refspec
+        .split(":")
+        .pop()!
+        .replace(/^\+/, "")
+        .replace(/^refs\/heads\//, "");
       return {
         ...base,
         kind: "git",
@@ -381,7 +405,7 @@ const paths: Record<StepKind, ReactNode> = {
   ),
 };
 
-function StepIcon({ kind }: { kind: StepKind }) {
+export function StepIcon({ kind }: { kind: StepKind }) {
   return (
     <svg
       className="run-step-icon"
@@ -400,7 +424,7 @@ function StepIcon({ kind }: { kind: StepKind }) {
   );
 }
 
-function fmtStep(ms: number) {
+export function fmtStep(ms: number) {
   if (!Number.isFinite(ms) || ms < 0) return "";
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   const s = Math.round(ms / 1000);

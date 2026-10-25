@@ -47,6 +47,14 @@ describe("AgentRunCard steps", () => {
       "Pushing fix/x",
     );
     expect(describeStep(tool(push)).label).toBe("Pushed fix/x");
+    const label = (command: string) =>
+      describeStep(tool({ name: "bash", args: { command } })).label;
+    expect(label("git push -u origin fix/proration-rounding")).toBe(
+      "Pushed fix/proration-rounding",
+    );
+    expect(label("git push origin HEAD:refs/heads/main")).toBe("Pushed main");
+    expect(label("git push --force-with-lease")).toBe("Pushed branch");
+    expect(label("git push && echo ok")).toBe("Pushed branch");
   });
 
   it("collapses consecutive finished edits", () => {

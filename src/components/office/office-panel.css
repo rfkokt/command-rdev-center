@@ -1,0 +1,280 @@
+/* Office side panel: live 3D crew + who-does-what list (OfficePanel.tsx). */
+.office-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  font-family: var(--font-ui);
+  font-size: var(--fs-ui);
+  color: var(--text-body);
+}
+
+/* ---- 3D stage ---- */
+.office-panel-stage.office-scene {
+  position: relative;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  min-height: 200px;
+  max-height: 46vh;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+}
+.office-panel-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.office-panel-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+}
+
+/* Labels are smaller in the panel than over the full-window backdrop. */
+.office-panel-stage .office-agent-label {
+  max-width: min(200px, 70%);
+}
+.office-panel-stage .office-agent-name,
+.office-panel-stage .office-agent-activity {
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+}
+.office-panel-stage .office-agent-label.is-interactive {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.office-panel-stage .office-agent-label.is-interactive:focus-visible {
+  outline: 2px solid var(--agent-color);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.office-panel-stage
+  .office-agent-label[data-selected="true"]
+  .office-agent-name {
+  border-color: var(--agent-color);
+  color: var(--office-label-ink);
+}
+.office-panel-stage
+  .office-agent-label[data-status="done"]
+  .office-agent-name::after {
+  content: "✓";
+  color: #5fbf7f;
+  font-weight: 700;
+}
+.office-panel-stage
+  .office-agent-label[data-status="done"]
+  .office-agent-activity::before {
+  content: "✓ ";
+  color: #5fbf7f;
+}
+.office-panel-stage
+  .office-agent-label[data-status="error"]
+  .office-agent-activity::before {
+  content: "✕ ";
+}
+
+/* ---- summary + members ---- */
+.office-panel-summary {
+  padding: 8px 12px 6px;
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.office-members {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0 6px 8px;
+  list-style: none;
+}
+.office-member {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+.office-member:hover {
+  background: color-mix(in srgb, var(--member-color) 8%, transparent);
+}
+.office-member.is-selected {
+  border-color: color-mix(in srgb, var(--member-color) 55%, transparent);
+  background: color-mix(in srgb, var(--member-color) 10%, transparent);
+}
+.office-member:focus-visible {
+  outline: 2px solid var(--member-color);
+  outline-offset: 1px;
+}
+.office-member-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--member-color);
+  opacity: 0.45;
+}
+.office-member.is-working .office-member-dot {
+  opacity: 1;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--member-color) 60%, transparent);
+  animation: office-pulse 1.4s ease-out infinite;
+}
+.office-member-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.office-member-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.office-member-name strong {
+  color: var(--text-strong);
+  font-size: var(--fs-small);
+}
+.office-member-name small,
+.office-member-text {
+  overflow: hidden;
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.office-member.is-working .office-member-text {
+  color: var(--text-body);
+}
+.office-member-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-semibold);
+}
+.office-member-status em {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--line);
+  font-style: normal;
+  text-align: center;
+}
+.office-member.is-working .office-member-status {
+  color: var(--member-color);
+}
+.office-member.is-done .office-member-status {
+  color: #5fbf7f;
+}
+.office-member.is-error .office-member-status,
+.office-member.is-error .office-member-text {
+  color: var(--status-red, #e5484d);
+}
+
+/* ---- selected member's work ---- */
+.office-detail {
+  margin: 0 8px 12px;
+  padding: 10px 10px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  animation: office-detail-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.office-detail header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.office-detail header strong {
+  color: var(--text-strong);
+  font-size: var(--fs-small);
+}
+.office-detail header small,
+.office-detail-empty {
+  color: var(--text-quiet);
+  font-size: var(--fs-caption);
+}
+.office-detail-empty {
+  margin: 0 0 6px;
+}
+.office-detail ol {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.office-detail li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  color: var(--text-body);
+  font-size: var(--fs-caption);
+}
+.office-detail li svg {
+  width: 14px;
+  height: 14px;
+  color: var(--text-quiet);
+}
+.office-detail li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.office-detail li b {
+  margin-right: 6px;
+  color: var(--text-strong);
+  font-weight: var(--fw-semibold);
+}
+.office-detail li time {
+  color: var(--text-quiet);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.office-detail li.is-active span {
+  color: var(--text-strong);
+}
+.office-detail li.is-failed span,
+.office-detail li.is-failed svg {
+  color: var(--status-red, #e5484d);
+}
+
+@keyframes office-pulse {
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes office-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .office-member.is-working .office-member-dot,
+  .office-detail {
+    animation: none;
+  }
+}

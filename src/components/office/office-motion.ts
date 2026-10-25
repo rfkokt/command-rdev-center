@@ -76,6 +76,46 @@ export type Activity = {
   error?: boolean;
 };
 
+/** Which crew member acts out a tool call, and a generic caption for it. */
+export function agentForTool(
+  toolName: string,
+  args?: Record<string, unknown>,
+): { id: AgentId; text: string } {
+  const name = toolName.replace(/^functions\./, "").toLowerCase();
+  const command = String(args?.CommandLine || args?.command || args?.cmd || "")
+    .trim()
+    .toLowerCase();
+  if (/(bash|run_command|exec_command|terminal|shell)/.test(name)) {
+    if (/\b(test|vitest|jest|pytest)\b/.test(command))
+      return { id: "bob", text: "Running tests…" };
+    if (/\bgit\b/.test(command))
+      return { id: "linus", text: "Updating the repository…" };
+    return {
+      id: "grace",
+      text: /\b(build|compile)\b/.test(command)
+        ? "Building the project…"
+        : "Running a command…",
+    };
+  }
+  if (/(search|grep|graph|web|fetch|find|glob)/.test(name))
+    return { id: "alan", text: "Researching the code…" };
+  if (/(write|edit|replace|patch)/.test(name))
+    return { id: "linus", text: "Making changes…" };
+  if (/(view|read)/.test(name))
+    return { id: "ada", text: "Reading the details…" };
+  return { id: "kern", text: "Working on the task…" };
+}
+
+/** What the scene needs per member; office-crew builds the full version. */
+export type SceneCrew = {
+  working: boolean;
+  members: readonly {
+    id: AgentId;
+    status: "idle" | "working" | "done" | "error";
+    text: string;
+  }[];
+};
+
 export function belongsToTab(event: AgentEvent, activeTabId?: string) {
   return !event.tabId || event.tabId === activeTabId;
 }
@@ -140,37 +180,7 @@ export function activityFor(
   if (event.type !== "tool" || !event.toolName) return null;
   // End packets often omit args: do not accidentally assign the tool to another agent.
   if (event.phase === "end") return null;
-  const name = event.toolName.replace(/^functions\./, "").toLowerCase();
-  const command = String(
-    event.args?.CommandLine || event.args?.command || event.args?.cmd || "",
-  )
-    .trim()
-    .toLowerCase();
-  let id: AgentId = "kern";
-  let text = "Working on the task…";
-  if (/(bash|run_command|exec_command|terminal)/.test(name)) {
-    if (/\b(test|vitest|jest|pytest)\b/.test(command)) {
-      id = "bob";
-      text = "Running tests…";
-    } else if (/\bgit\b/.test(command)) {
-      id = "linus";
-      text = "Updating the repository…";
-    } else {
-      id = "grace";
-      text = /\b(build|compile)\b/.test(command)
-        ? "Building the project…"
-        : "Running a command…";
-    }
-  } else if (/(search|grep|graph|web|fetch)/.test(name)) {
-    id = "alan";
-    text = "Researching the code…";
-  } else if (/(write|edit|replace|patch)/.test(name)) {
-    id = "linus";
-    text = "Making changes…";
-  } else if (/(view|read)/.test(name)) {
-    id = "ada";
-    text = "Reading the details…";
-  }
+  const { id, text } = agentForTool(event.toolName, event.args);
   return {
     id,
     text: event.isError ? "Checking a tool error…" : text,
