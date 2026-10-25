@@ -10,6 +10,7 @@ import { VOXEL_MODELS, OFFICE_PALETTE_BASE64 } from "./office-voxel-models";
 import {
   TEAM,
   damp,
+  facingOf,
   type Activity,
   type AgentId,
   type SceneCrew,
@@ -26,6 +27,19 @@ export interface OfficeScene {
   /** Per-member state for the side panel; replaces single-activity bubbles. */
   setCrew(crew: SceneCrew): void;
   setSelected(id: AgentId | null): void;
+  /** Scene graph access for overlays drawn on top of the office. */
+  stage(): {
+    scene: THREE.Scene;
+    camera: THREE.Camera;
+    /** Live floor position of a member (follows walks). */
+    positionOf(id: AgentId): THREE.Vector3;
+    /** A member's desk position (where they sit). */
+    homeOf(id: AgentId): THREE.Vector3;
+    /** Video-wall panel behind each helper's console. */
+    wallScreens: Partial<Record<AgentId, THREE.Mesh>>;
+    /** Called after each drawn frame, before rendering. */
+    onFrame(callback: ((elapsed: number, dt: number) => void) | null): void;
+  };
   setWorking(working: boolean): void;
   setTheme(dark: boolean): void;
   setReducedMotion(reduced: boolean): void;
@@ -233,8 +247,8 @@ export function createOfficeScene(
         );
   }
   tileZone(-8.55, -0.7, 5, 8);
-  tileZone(-2.0, -2.9, 12, 3);
-  tileZone(-2.0, 2.0, 12, 4);
+  tileZone(-1.6, -2.75, 11, 3); // console floor in front of the video wall
+  tileZone(1.6, 1.75, 5, 4); // lead desk
 
   // Two low cutaway walls, coloured charcoal-plum against the midnight city.
   box(room, C.wall, [48, 8, 0.22], [14.8, 4, -6.25]);
@@ -471,51 +485,143 @@ export function createOfficeScene(
       );
     }
   }
+  // Each post is built facing −z in local space, then turned to its facing.
   for (const member of TEAM) {
-    const { x, z } = member.home;
-    const deskZ = z - 0.95;
     const station = new THREE.Group();
+    station.position.set(member.home.x, 0, member.home.z);
+    station.rotation.y = facingOf(member) - Math.PI;
     room.add(station);
-    box(station, C.wood, [2.7, 0.12, 1.15], [x, 1.0, deskZ]);
-    box(station, C.woodEdge, [2.7, 0.045, 1.15], [x, 0.92, deskZ]);
-    for (const dx of [-1.2, 1.2])
-      for (const dz of [-0.44, 0.44])
-        box(station, C.woodDark, [0.1, 0.92, 0.1], [x + dx, 0.46, deskZ + dz]);
-    screens.push(monitor(station, x - 0.46, deskZ - 0.23, member.color));
-    screens.push(monitor(station, x + 0.36, deskZ - 0.23, member.color));
-    box(station, C.trim, [0.9, 0.06, 0.32], [x, 1.1, deskZ + 0.22]);
-    for (let row = 0; row < 4; row++)
-      for (let key = 0; key < 12; key++)
-        box(
+    const x = 0;
+    if (member.post === "lead") {
+      const deskZ = -0.95;
+      box(station, C.wood, [2.7, 0.12, 1.15], [x, 1.0, deskZ]);
+      box(station, C.woodEdge, [2.7, 0.045, 1.15], [x, 0.92, deskZ]);
+      for (const dx of [-1.2, 1.2])
+        for (const dz of [-0.44, 0.44])
+          box(
+            station,
+            C.woodDark,
+            [0.1, 0.92, 0.1],
+            [x + dx, 0.46, deskZ + dz],
+          );
+      screens.push(monitor(station, x - 0.46, deskZ - 0.23, member.color));
+      screens.push(monitor(station, x + 0.36, deskZ - 0.23, member.color));
+      box(station, C.trim, [0.9, 0.06, 0.32], [x, 1.1, deskZ + 0.22]);
+      for (let row = 0; row < 4; row++)
+        for (let key = 0; key < 12; key++)
+          box(
+            station,
+            C.key,
+            [0.052, 0.012, 0.045],
+            [x - 0.39 + key * 0.069, 1.138, deskZ + 0.12 + row * 0.065],
+          );
+      box(
+        station,
+        C.mousePad,
+        [0.42, 0.014, 0.37],
+        [x + 0.79, 1.065, deskZ + 0.22],
+      );
+      box(station, C.metal, [0.14, 0.06, 0.2], [x + 0.79, 1.1, deskZ + 0.21]);
+      box(station, C.serverBody, [0.38, 0.7, 0.7], [x + 0.98, 0.36, deskZ]);
+      box(
+        station,
+        member.color,
+        [0.025, 0.36, 0.025],
+        [x + 0.85, 0.4, deskZ + 0.36],
+        false,
+        0.75,
+      );
+      voxelModel(
+        station,
+        "office_mug",
+        [x - 1.05, 1.06, deskZ + 0.15],
+        0.5,
+        0.65,
+      );
+      // desk lamp
+      box(station, C.woodDark, [0.28, 0.035, 0.28], [x + 1.06, 1.08, deskZ]);
+      box(station, C.amber, [0.045, 0.4, 0.045], [x + 1.06, 1.29, deskZ]);
+      shape(
+        station,
+        "cylinder",
+        C.lamp,
+        [0.2, 0.27, 0.2],
+        [x + 1.06, 1.56, deskZ],
+        0.8,
+      );
+      officeChair(station, x, 0.1);
+    } else {
+      // Standing console: low enough that the operator stays visible behind it.
+      const consoleZ = -0.62;
+      box(station, C.serverBody, [1.2, 0.6, 0.32], [x, 0.3, consoleZ]);
+      const top = box(station, C.metal, [1.3, 0.06, 0.5], [x, 0.66, consoleZ]);
+      top.rotation.x = 0.22;
+      box(
+        station,
+        member.color,
+        [1.2, 0.035, 0.03],
+        [x, 0.52, consoleZ - 0.175],
+        false,
+        0.9,
+      );
+      // two small tilted panes on the console top, lit by activity
+      for (const dx of [-0.31, 0.31]) {
+        const pane = box(
           station,
-          C.key,
-          [0.052, 0.012, 0.045],
-          [x - 0.39 + key * 0.069, 1.138, deskZ + 0.12 + row * 0.065],
+          C.screen,
+          [0.5, 0.02, 0.3],
+          [x + dx, 0.705, consoleZ + 0.02],
+          false,
+          0.35,
         );
-    box(
-      station,
-      C.mousePad,
-      [0.42, 0.014, 0.37],
-      [x + 0.79, 1.065, deskZ + 0.22],
+        pane.rotation.x = 0.22;
+        pane.material = (pane.material as THREE.MeshStandardMaterial).clone();
+        screens.push(pane.material as THREE.MeshStandardMaterial);
+      }
+      box(station, C.trim, [1.26, 0.05, 0.05], [x, 0.05, consoleZ - 0.16]);
+    }
+  }
+
+  // Video wall behind the console arc: one panel per helper, mirrored live.
+  const wallZ = -3.25;
+  const helpers = TEAM.filter((member) => member.post === "console");
+  const wallLeft = Math.min(...helpers.map((m) => m.home.x)) - 1.05;
+  const wallRight = Math.max(...helpers.map((m) => m.home.x)) + 1.05;
+  const wallWidth = wallRight - wallLeft;
+  const wallCenter = (wallLeft + wallRight) / 2;
+  box(room, C.trim, [wallWidth + 0.3, 1.75, 0.22], [wallCenter, 2.25, wallZ]);
+  box(
+    room,
+    C.metal,
+    [wallWidth + 0.3, 0.08, 0.3],
+    [wallCenter, 1.34, wallZ + 0.04],
+  );
+  box(
+    room,
+    C.metal,
+    [wallWidth + 0.3, 0.08, 0.3],
+    [wallCenter, 3.16, wallZ + 0.04],
+  );
+  for (const x of [wallLeft - 0.05, wallRight + 0.05])
+    box(room, C.metal, [0.14, 3.5, 0.14], [x, 1.75, wallZ - 0.05]);
+  box(
+    room,
+    C.cyan,
+    [wallWidth + 0.3, 0.04, 0.04],
+    [wallCenter, 3.22, wallZ + 0.14],
+    false,
+    1.8,
+  );
+  const wallScreens = {} as Record<AgentId, THREE.Mesh>;
+  for (const member of helpers) {
+    const panel = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.72, 1.5),
+      new THREE.MeshBasicMaterial({ color: "#0d1c24", toneMapped: false }),
     );
-    box(station, C.metal, [0.14, 0.06, 0.2], [x + 0.79, 1.1, deskZ + 0.21]);
-    box(station, C.serverBody, [0.38, 0.7, 0.7], [x + 0.98, 0.36, deskZ]);
-    box(
-      station,
-      member.color,
-      [0.025, 0.36, 0.025],
-      [x + 0.85, 0.4, deskZ + 0.36],
-      false,
-      0.75,
-    );
-    voxelModel(
-      station,
-      "office_mug",
-      [x - 1.05, 1.06, deskZ + 0.15],
-      0.5,
-      0.65,
-    );
-    officeChair(station, x, z + 0.1);
+    panel.position.set(member.home.x, 2.25, wallZ + 0.115);
+    panel.name = `wall-${member.id}`;
+    scene.add(panel);
+    wallScreens[member.id] = panel;
   }
 
   // A small wooden break table furnishes the pantry corner.
@@ -529,15 +635,20 @@ export function createOfficeScene(
       officeChair(room, tableX + dx, tableZ + dz, dz < 0 ? Math.PI : 0, 0.8);
   voxelModel(room, "office_mug", [tableX - 0.55, 0.94, tableZ], 0, 0.65);
 
-  // Practical desk lamps and architectural strips carry the amber / cyan balance.
-  for (const z of [-2.55, 1.95]) {
-    const x = 2.4;
-    box(room, C.woodDark, [0.28, 0.035, 0.28], [x + 1.06, 1.08, z]);
-    box(room, C.amber, [0.045, 0.4, 0.045], [x + 1.06, 1.29, z]);
-    shape(room, "cylinder", C.lamp, [0.2, 0.27, 0.2], [x + 1.06, 1.56, z], 0.8);
+  // The lead desk lamp and a cool wash on the video wall carry the amber / cyan balance.
+  {
+    const lead = TEAM.find((member) => member.post === "lead")!;
     const lamp = new THREE.PointLight(C.amber, 9, 4, 2);
-    lamp.position.set(x + 1.06, 1.7, z);
+    const f = facingOf(lead) - Math.PI;
+    lamp.position.set(
+      lead.home.x + Math.cos(f) * 1.06 + Math.sin(f) * -0.95,
+      1.7,
+      lead.home.z - Math.sin(f) * 1.06 + Math.cos(f) * -0.95,
+    );
     scene.add(lamp);
+    const wash = new THREE.PointLight(C.cyan, 10, 7, 2);
+    wash.position.set(wallCenter, 3.2, wallZ + 1.6);
+    scene.add(wash);
   }
   const ambient = new THREE.HemisphereLight(C.ambient, C.woodDark, 1.1);
   scene.add(ambient);
@@ -694,7 +805,7 @@ export function createOfficeScene(
     }
     labels.append(label);
     root.position.set(member.home.x, 0, member.home.z);
-    root.rotation.y = Math.PI;
+    root.rotation.y = facingOf(member);
     return {
       member,
       root,
@@ -862,6 +973,7 @@ export function createOfficeScene(
     }
   }
 
+  let frameHook: ((elapsed: number, dt: number) => void) | null = null;
   function draw(dt: number) {
     if (disposed || !visible) return;
     elapsed += dt;
@@ -870,8 +982,17 @@ export function createOfficeScene(
     if (Math.abs(workAmount - targetWork) < 0.001) workAmount = targetWork;
     characters.forEach((actor, index) => {
       actor.sit = reduced
-        ? 1
-        : damp(actor.sit, routine.stages[index] === "desk" ? 1 : 0, 8, dt);
+        ? actor.member.post === "lead"
+          ? 1
+          : 0
+        : damp(
+            actor.sit,
+            routine.stages[index] === "desk" && actor.member.post === "lead"
+              ? 1
+              : 0,
+            8,
+            dt,
+          );
       if (actor.sit < 0.001) actor.sit = 0;
       if (actor.sit > 0.999) actor.sit = 1;
     });
@@ -889,7 +1010,7 @@ export function createOfficeScene(
       const walking = stage === "outbound" || stage === "returning";
       if (atDesk || visiting) {
         const heading = atDesk
-          ? Math.PI
+          ? facingOf(actor.member)
           : Math.atan2(
               visit.lookAt.x - walker.position.x,
               visit.lookAt.z - walker.position.z,
@@ -922,7 +1043,8 @@ export function createOfficeScene(
       // Animate rigid GLBs as well as fallback limbs; their arms are not rigged.
       const phase = elapsed * (4.1 + index * 0.17) + index * 1.7;
       const breathe = reduced ? 0 : Math.sin(elapsed * 1.8 + index) * 0.009;
-      const typing = workAmount * actor.sit;
+      // Seated at the lead desk or standing at a console, both type at their post.
+      const typing = workAmount * (atDesk ? 1 : 0);
       const pace = walking && !reduced ? Math.min(1, walker.speed / 1.25) : 0;
       const gait = walker.distance * 8.5;
       const sip =
@@ -1048,6 +1170,7 @@ export function createOfficeScene(
       }
     });
     labelsNeedLayout = false;
+    frameHook?.(elapsed, dt);
     renderer.render(scene, camera);
   }
   function frame(now: number) {
@@ -1066,6 +1189,26 @@ export function createOfficeScene(
     setActivity,
     setCrew,
     setSelected,
+    stage: () => ({
+      scene,
+      camera,
+      wallScreens,
+      positionOf(id) {
+        const actor = characters.find((item) => item.member.id === id)!;
+        return new THREE.Vector3(
+          actor.walker.position.x,
+          0,
+          actor.walker.position.z,
+        );
+      },
+      homeOf(id) {
+        const member = TEAM.find((item) => item.id === id)!;
+        return new THREE.Vector3(member.home.x, 0, member.home.z);
+      },
+      onFrame(callback) {
+        frameHook = callback;
+      },
+    }),
     setWorking,
     setTheme,
     resize,

@@ -4,6 +4,7 @@ import {
   advanceWalkers,
   aisleRoute,
   createWalker,
+  facingOf,
   type Point,
 } from "./office-motion";
 
@@ -36,7 +37,7 @@ function plannedTrips() {
 export function createOfficeRoutine() {
   plannedTrips();
   return {
-    walkers: TEAM.map((member) => createWalker(member.home)),
+    walkers: TEAM.map((member) => createWalker(member.home, facingOf(member))),
     stages: TEAM.map(() => "desk" as RoutineStage),
     active: null as number | null,
     visit: 0,
@@ -89,7 +90,7 @@ export function setRoutineReducedMotion(
     walker.position = { ...TEAM[index].home };
     walker.route = [];
     walker.speed = 0;
-    walker.heading = Math.PI;
+    walker.heading = facingOf(TEAM[index]);
     walker.blockedFor = 0;
     routine.stages[index] = "desk";
   });

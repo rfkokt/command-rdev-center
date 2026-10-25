@@ -10,7 +10,8 @@ export const TEAM = [
     color: "#b499dc",
     skin: "#b97e5b",
     hair: "#342526",
-    home: { x: -1.2, z: -1.5 },
+    home: { x: 1.5, z: -1.35 },
+    post: "console",
   },
   {
     id: "linus",
@@ -18,7 +19,8 @@ export const TEAM = [
     color: "#73a98e",
     skin: "#e2b28c",
     hair: "#593d2b",
-    home: { x: 2.4, z: -1.5 },
+    home: { x: 3.4, z: -1.5 },
+    post: "console",
   },
   {
     id: "alan",
@@ -26,7 +28,8 @@ export const TEAM = [
     color: "#71b6c5",
     skin: "#996747",
     hair: "#25252d",
-    home: { x: 6.0, z: -1.5 },
+    home: { x: -0.4, z: -0.9 },
+    post: "console",
   },
   {
     id: "bob",
@@ -34,7 +37,8 @@ export const TEAM = [
     color: "#db929b",
     skin: "#edbd98",
     hair: "#9b6036",
-    home: { x: 6.0, z: 3.0 },
+    home: { x: 5.3, z: -1.35 },
+    post: "console",
   },
   {
     id: "grace",
@@ -42,7 +46,8 @@ export const TEAM = [
     color: "#d5ad69",
     skin: "#b77d59",
     hair: "#332e38",
-    home: { x: -1.2, z: 3.0 },
+    home: { x: 7.2, z: -0.9 },
+    post: "console",
   },
   {
     id: "kern",
@@ -50,9 +55,23 @@ export const TEAM = [
     color: "#6faecb",
     skin: "#d9a382",
     hair: "#313440",
-    home: { x: 2.4, z: 3.0 },
+    home: { x: 3.4, z: 3.4 },
+    post: "lead",
   },
 ] as const;
+
+export type Post = "lead" | "console";
+/**
+ * Command-floor layout: helpers stand at consoles in an arc in front of the
+ * video wall, turned toward the viewer; Kern sits at the lead desk facing them.
+ * Facing is a Y rotation: 0 looks toward +z, π toward −z.
+ */
+export const LEAD_DESK = TEAM.find((member) => member.id === "kern")!.home;
+/** Consoles face the viewer (the studio camera sits at +x/+z), so faces read. */
+export const CONSOLE_FACING = Math.atan2(17, 21);
+export function facingOf(member: { post: Post; home: Point }) {
+  return member.post === "lead" ? Math.PI : CONSOLE_FACING;
+}
 
 export type AgentEvent = {
   tabId?: string;
@@ -197,11 +216,11 @@ export type Walker = {
   distance: number;
   blockedFor: number;
 };
-export function createWalker(home: Point): Walker {
+export function createWalker(home: Point, heading = Math.PI): Walker {
   return {
     position: { ...home },
     route: [],
-    heading: Math.PI,
+    heading,
     speed: 0,
     distance: 0,
     blockedFor: 0,
@@ -212,28 +231,38 @@ export const damp = (value: number, target: number, rate: number, dt: number) =>
 
 // Inflate physical furniture by the character radius; routes can use clear aisle corners.
 const WALKER_RADIUS = 0.24;
-const obstacles: FloorObstacle[] = [
-  ...FIXED_OBSTACLES,
-  ...TEAM.flatMap(({ home }) => [
-    {
-      minX: home.x - 1.35,
-      maxX: home.x + 1.35,
-      minZ: home.z - 1.525,
-      maxZ: home.z - 0.375,
-    },
-    {
-      minX: home.x - 0.43,
-      maxX: home.x + 0.43,
-      minZ: home.z + 0.33,
-      maxZ: home.z + 0.56,
-    },
-  ]),
-].map(({ minX, maxX, minZ, maxZ }) => ({
-  minX: minX - WALKER_RADIUS,
-  maxX: maxX + WALKER_RADIUS,
-  minZ: minZ - WALKER_RADIUS,
-  maxZ: maxZ + WALKER_RADIUS,
-}));
+/** Axis-aligned bounds of a rectangle centred `forward` metres ahead of a post. */
+function postRect(
+  member: (typeof TEAM)[number],
+  forward: number,
+  halfWidth: number,
+  halfDepth: number,
+): FloorObstacle {
+  const f = facingOf(member);
+  const fx = Math.sin(f),
+    fz = Math.cos(f);
+  const cx = member.home.x + fx * forward,
+    cz = member.home.z + fz * forward;
+  const ex = Math.abs(fz) * halfWidth + Math.abs(fx) * halfDepth;
+  const ez = Math.abs(fx) * halfWidth + Math.abs(fz) * halfDepth;
+  return { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez };
+}
+export const POST_OBSTACLES: FloorObstacle[] = TEAM.flatMap((member) =>
+  member.post === "lead"
+    ? [
+        postRect(member, 0.95, 1.35, 0.575),
+        postRect(member, -0.445, 0.43, 0.115),
+      ]
+    : [postRect(member, 0.62, 0.75, 0.3)],
+);
+const obstacles: FloorObstacle[] = [...FIXED_OBSTACLES, ...POST_OBSTACLES].map(
+  ({ minX, maxX, minZ, maxZ }) => ({
+    minX: minX - WALKER_RADIUS,
+    maxX: maxX + WALKER_RADIUS,
+    minZ: minZ - WALKER_RADIUS,
+    maxZ: maxZ + WALKER_RADIUS,
+  }),
+);
 
 /** Segment/rectangle clipping; boundaries are blocked too, avoiding furniture clipping. */
 export function isWalkableSegment(a: Point, b: Point) {
