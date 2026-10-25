@@ -30,7 +30,17 @@
       "O2-04",
       "O3-01",
       "O3-02",
-      "O4-01"
+      "O4-01",
+      "O5-01",
+      "O5-04",
+      "O5-02",
+      "O5-06",
+      "O5-05",
+      "O5-03",
+      "O5-07",
+      "O5-08",
+      "O5-09",
+      "O5-10"
     ],
     "principles": [
       "Port per fitur, bukan fork atau salin mentah: logika UI diadaptasi, logika backend ditulis ulang di Rust.",
@@ -475,6 +485,280 @@
         ],
         "references": [],
         "notes": "Review 2026-10-26 (Claude): depends on O2-02, now complete (message jump + coverage note). Palette search results stay stable while App re-renders."
+      },
+      {
+        "id": "O5-01",
+        "phase": "O5",
+        "name": "Gambar dari agent tampil di chat (hasil tool + ACP)",
+        "status": "To Do",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "pi: blok {type:\"image\",data,mimeType} di content toolResult tool apa pun (read file gambar, codemode image(), MCP) ditampilkan di bawah tool call terkait, live dan saat riwayat dimuat ulang. Saat ini hanya browser_screenshot yang tampil.",
+          "ACP: blok image di tool_call/tool_call_update content dan di agent_message_chunk diteruskan ke frontend (acp_bridge.rs kini hanya mengambil teks lewat content_text).",
+          "Viewer: klik untuk ukuran penuh, copy ke clipboard, download, dan 'simpan ke worktree' (dialog path relatif).",
+          "Gambar besar tidak membekukan UI: decode lazy, batas ukuran tampilan, riwayat tidak menyimpan salinan base64 tambahan di state."
+        ],
+        "acceptance_criteria": [
+          "Agent menjalankan read pada .png di worktree: gambar muncul di chat.",
+          "Gambar dari hasil tool tetap tampil setelah app restart (riwayat).",
+          "Agent ACP yang mengirim image chunk: gambar tampil, bukan diam-diam hilang.",
+          "Copy dan download bekerja.",
+          "Test komponen untuk ekstraksi image block dari toolResult pi dan event ACP."
+        ],
+        "files": [
+          "src/components/ChatView.tsx",
+          "src/components/ToolCall.tsx",
+          "src-tauri/src/acp_bridge.rs"
+        ],
+        "references": [
+          "renderer/src/components/native-chat/NativeChatImageAttachmentPreview.tsx",
+          "renderer/src/components/native-chat/native-chat-image-copy.ts",
+          "renderer/src/components/editor/PanZoomImageDialog.tsx"
+        ],
+        "notes": "Generator gambar diserahkan ke model (keputusan user 2026-10-26): Kern tidak menambah tool generate_image sendiri; cukup menampilkan gambar apa pun yang dikembalikan agent. Lihat O5-03 untuk codemode pi."
+      },
+      {
+        "id": "O5-02",
+        "phase": "O5",
+        "name": "Gambar Markdown di jawaban agent (path lokal)",
+        "status": "To Do",
+        "priority": "P0",
+        "depends_on": [
+          "O5-01"
+        ],
+        "scope": [
+          "![alt](path) di pesan assistant di-render bila path relatif ke worktree chat, absolut di dalam worktree/project, attachment store, atau file gambar codemode di temp dir pi.",
+          "Command Rust baru untuk membaca gambar lokal yang sudah divalidasi (ekstensi gambar, batas ukuran, canonicalize, di dalam root yang diizinkan); tidak mengaktifkan asset protocol global.",
+          "Path di luar root yang diizinkan atau file tidak ada: tampilkan placeholder dengan alasan, bukan gambar rusak.",
+          "URL https tetap boleh (CSP sudah mengizinkan)."
+        ],
+        "acceptance_criteria": [
+          "Agent menulis ![](assets/logo.png) setelah membuat file itu: gambar tampil.",
+          "![](/etc/passwd) atau path di luar root: ditolak dengan placeholder.",
+          "Unit test Rust untuk validasi path dan test komponen MarkdownMessage untuk gambar lokal."
+        ],
+        "files": [
+          "src/components/MarkdownMessage.tsx",
+          "src-tauri/src/files.rs",
+          "src-tauri/src/lib.rs"
+        ],
+        "references": [
+          "renderer/src/components/native-chat/NativeChatMarkdownImage.tsx",
+          "renderer/src/components/editor/markdown-preview-local-images.ts",
+          "renderer/src/components/editor/local-image-src-reader.ts"
+        ]
+      },
+      {
+        "id": "O5-03",
+        "phase": "O5",
+        "name": "Aktifkan codemode pi (model bisa pakai model gambar kalau tersedia)",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [
+          "O5-01"
+        ],
+        "scope": [
+          "Toggle di Settings > Harness/Agent: 'codemode (skrip + model gambar/klasifikasi)', default mati.",
+          "Saat aktif, tambahkan codemode ke tool pi: lewat --tools bila Kern memakai allowlist (global chat, api-test, browser menambah allowlist di pi_rpc.rs), atau defaultTools +codemode bila tidak.",
+          "Tidak ada provider/key baru: pi memakai kredensial sesi (mis. OpenRouter google/gemini-2.5-flash-image). Kalau tidak ada model gambar, model cukup bilang tidak bisa.",
+          "Gambar hasil image() tampil lewat O5-01; path temp yang disebut di hasil bisa dipakai di O5-02."
+        ],
+        "acceptance_criteria": [
+          "Dengan OpenRouter terhubung dan codemode aktif, minta 'buat gambar X': gambar muncul di chat.",
+          "Tanpa model gambar: agent menjawab tidak tersedia, tidak error.",
+          "Toggle tersimpan dan berlaku untuk chat baru; chat lama diberi tahu perlu restart agent."
+        ],
+        "files": [
+          "src-tauri/src/pi_rpc.rs",
+          "src/components/HarnessSettings.tsx",
+          "src-tauri/src/settings.rs"
+        ],
+        "references": [
+          "pi docs: docs/codemode.md (Generate images), docs/models.md (Use image models), docs/cli.md (Enable codemode) di @earendil-works/pi-coding-agent 1.4.0"
+        ]
+      },
+      {
+        "id": "O5-04",
+        "phase": "O5",
+        "name": "Path file di chat bisa diklik + pill file dari agent",
+        "status": "To Do",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Di teks assistant (dan inline code), path seperti src/App.tsx, ./a/b.ts:120 atau a.ts:12:5 menjadi link bila file ada di worktree chat (cek keberadaan di backend, batched, dicache).",
+          "Klik: buka di file viewer Kern pada baris itu. Cmd/Ctrl+klik: buka di editor eksternal (O5-05).",
+          "Tool write/edit agent menampilkan pill file target (nama + baris) di tool call; klik membuka file.",
+          "Path yang tidak ada tetap teks biasa; tidak ada link mati."
+        ],
+        "acceptance_criteria": [
+          "Agent menyebut src/App.tsx:42: klik membuka file di baris 42.",
+          "Path fiktif tidak menjadi link.",
+          "Test untuk parser path (termasuk :line:col, tanda baca di akhir, URL tidak ikut terdeteksi)."
+        ],
+        "files": [
+          "src/components/MarkdownMessage.tsx",
+          "src/components/ToolCall.tsx",
+          "src/components/ProjectFilesSidebar.tsx",
+          "src-tauri/src/files.rs"
+        ],
+        "references": [
+          "renderer/src/components/native-chat/native-chat-file-link.ts",
+          "renderer/src/components/native-chat/native-chat-file-link-existence.ts",
+          "renderer/src/components/native-chat/NativeChatFileReferencePill.tsx",
+          "renderer/src/components/native-chat/NativeChatToolFileTarget.tsx"
+        ]
+      },
+      {
+        "id": "O5-05",
+        "phase": "O5",
+        "name": "Buka di VS Code / Zed",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Tombol 'Open in editor' di header chat (worktree) dan di file viewer (file + baris).",
+          "Pilihan editor di Settings: VS Code, Cursor, Zed, deteksi otomatis yang terpasang; buka dengan baris (code -g file:line, zed file:line).",
+          "Command Rust dengan argumen terpisah (bukan string shell) dan path divalidasi."
+        ],
+        "acceptance_criteria": [
+          "Klik membuka worktree chat di editor terpilih.",
+          "File + baris dari O5-04 terbuka di baris yang benar."
+        ],
+        "files": [
+          "src-tauri/src/projects.rs",
+          "src/components/ChatView.tsx",
+          "src/components/SettingsPanel.tsx"
+        ],
+        "references": [
+          "main/external-editor-launch.ts"
+        ]
+      },
+      {
+        "id": "O5-06",
+        "phase": "O5",
+        "name": "Mac tidak sleep selama agent jalan",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Selama ada chat yang running, tahan assertion sleep (caffeinate -i ditautkan ke pid app atau IOPMAssertion); lepas saat semua settle/app keluar.",
+          "Toggle di Settings (default aktif); layar tetap boleh mati."
+        ],
+        "acceptance_criteria": [
+          "pmset -g assertions menunjukkan assertion Kern saat agent jalan dan hilang setelah selesai.",
+          "Crash app tidak meninggalkan caffeinate yatim."
+        ],
+        "files": [
+          "src-tauri/src/lib.rs",
+          "src/App.tsx",
+          "src/components/SettingsPanel.tsx"
+        ],
+        "references": [
+          "main/agent-awake-service.ts",
+          "main/macos-system-sleep-assertion.ts"
+        ]
+      },
+      {
+        "id": "O5-07",
+        "phase": "O5",
+        "name": "Titik status per chat di sidebar",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Satu indikator per chat: working, butuh izin/jawaban, error, selesai belum dibaca.",
+          "Sumber dari event yang sudah ada (agent_start/settled, extension_ui_request, error) lewat onAgentRunning/onUnread; tooltip menjelaskan status.",
+          "Chat yang butuh izin naik terlihat (mis. badge di grup project yang di-collapse)."
+        ],
+        "acceptance_criteria": [
+          "Agent minta approval di chat yang tidak aktif: sidebar menunjukkan 'butuh izin'.",
+          "Status hilang setelah chat dibuka/diselesaikan."
+        ],
+        "files": [
+          "src/App.tsx",
+          "src/components/ProjectList.tsx",
+          "src/components/ChatView.tsx"
+        ],
+        "references": [
+          "renderer/src/components/AgentStateDot.tsx",
+          "renderer/src/components/StateIndicatorTooltip.tsx"
+        ]
+      },
+      {
+        "id": "O5-08",
+        "phase": "O5",
+        "name": "Preview gambar sebelum/sesudah di FILES CHANGED",
+        "status": "To Do",
+        "priority": "P2",
+        "depends_on": [
+          "O5-02"
+        ],
+        "scope": [
+          "File gambar yang berubah di diff (saat ini 'Binary or untracked — no textual diff') menampilkan before (git show merge_base:path) dan after (worktree) berdampingan, dengan ukuran dan dimensi.",
+          "File baru: hanya after; dihapus: hanya before."
+        ],
+        "acceptance_criteria": [
+          "Agent mengganti logo.png: diff menampilkan dua gambar.",
+          "Gambar > batas ukuran ditampilkan sebagai info, bukan dimuat."
+        ],
+        "files": [
+          "src/components/ExpandedDiffPanel.tsx",
+          "src-tauri/src/diff.rs"
+        ],
+        "references": [
+          "renderer/src/components/editor/ImageDiffViewer.tsx"
+        ]
+      },
+      {
+        "id": "O5-09",
+        "phase": "O5",
+        "name": "Quick open file (Cmd/Ctrl+P)",
+        "status": "To Do",
+        "priority": "P2",
+        "depends_on": [],
+        "scope": [
+          "Palet fuzzy file di worktree chat aktif (termasuk dotfile, menghormati .gitignore), dengan daftar file terakhir dibuka di atas.",
+          "Enter membuka di file viewer Kern; Cmd+Enter di editor eksternal (O5-05).",
+          "Listing di backend dengan batas jumlah; tidak membekukan UI di repo besar."
+        ],
+        "acceptance_criteria": [
+          "Cmd+P, ketik 'chatvw': ChatView.tsx muncul teratas.",
+          "Repo dengan >50k file tetap responsif."
+        ],
+        "files": [
+          "src/App.tsx",
+          "src/components/FilePicker.tsx",
+          "src-tauri/src/files.rs"
+        ],
+        "references": [
+          "renderer/src/components/QuickOpen.tsx",
+          "renderer/src/components/quick-open-search.ts",
+          "renderer/src/components/quick-open-history-ranking.ts"
+        ]
+      },
+      {
+        "id": "O5-10",
+        "phase": "O5",
+        "name": "Search di terminal + scrollback tahan restart",
+        "status": "To Do",
+        "priority": "P2",
+        "depends_on": [],
+        "scope": [
+          "Cmd+F di terminal chat membuka search (xterm SearchAddon): next/prev, case-sensitive, jumlah hasil.",
+          "Scrollback per pane disimpan (dibatasi, mis. 2 MB) saat app keluar dan diputar ulang saat chat dibuka lagi, ditandai '[restored]'."
+        ],
+        "acceptance_criteria": [
+          "Cari kata di output panjang: lompat ke hasil.",
+          "Restart app: output terminal sebelumnya masih terlihat."
+        ],
+        "files": [
+          "src/components/TerminalPanel.tsx",
+          "src-tauri/src/terminal.rs"
+        ],
+        "references": [
+          "renderer/src/components/TerminalSearch.tsx"
+        ]
       }
     ]
   }
