@@ -50,7 +50,7 @@
         "id": "O0-01",
         "phase": "O0",
         "name": "Atribusi lisensi Orca",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [],
         "scope": [
@@ -61,9 +61,13 @@
           "THIRD_PARTY_NOTICES.md ada dan memuat teks lisensi lengkap.",
           "Rencana menyebut aturan komentar header."
         ],
-        "files": ["THIRD_PARTY_NOTICES.md"],
-        "references": ["LICENSE"],
-        "notes": ""
+        "files": [
+          "THIRD_PARTY_NOTICES.md"
+        ],
+        "references": [
+          "LICENSE"
+        ],
+        "notes": "THIRD_PARTY_NOTICES.md berisi lisensi MIT Orca; aturan komentar header ada di rencana."
       },
       {
         "id": "O0-02",
@@ -83,8 +87,15 @@
           "Harness ACP melaporkan image sesuai promptCapabilities.",
           "Unit test Rust untuk parsing models.json."
         ],
-        "files": ["src-tauri/src/pi_rpc.rs", "src-tauri/src/acp_bridge.rs", "src/lib/rpc.ts", "src/components/ModelPicker.tsx"],
-        "references": ["opencode: packages/app/src/composer/attachments/destination.ts (input.image / input.pdf)"],
+        "files": [
+          "src-tauri/src/pi_rpc.rs",
+          "src-tauri/src/acp_bridge.rs",
+          "src/lib/rpc.ts",
+          "src/components/ModelPicker.tsx"
+        ],
+        "references": [
+          "opencode: packages/app/src/composer/attachments/destination.ts (input.image / input.pdf)"
+        ],
         "notes": "acp_bridge.rs (sekitar baris 840) saat ini hanya mendorong blok image kalau self.image_supported, selain itu gambar dibuang tanpa pemberitahuan."
       },
       {
@@ -93,7 +104,9 @@
         "name": "Attachment store per chat (Rust)",
         "status": "Backlog",
         "priority": "P0",
-        "depends_on": ["O0-01"],
+        "depends_on": [
+          "O0-01"
+        ],
         "scope": [
           "Command Tauri untuk menyimpan lampiran (bytes dari paste, atau path dari drop/picker) ke folder per upload di bawah data app, nama file asli dipertahankan.",
           "Batas ukuran per file (mis. 20 MB) dengan error yang jelas.",
@@ -106,7 +119,10 @@
           "Upload yatim terhapus oleh sweep; yang masih dirujuk tidak.",
           "Unit test Rust untuk simpan, batas ukuran, dan sweep."
         ],
-        "files": ["src-tauri/src/attachments.rs (baru)", "src-tauri/src/lib.rs"],
+        "files": [
+          "src-tauri/src/attachments.rs (baru)",
+          "src-tauri/src/lib.rs"
+        ],
         "references": [
           "main/native-chat/agent-session-attachments/agent-session-attachment-store.ts",
           "main/native-chat/agent-session-attachments/agent-session-attachment-sweep.ts",
@@ -120,7 +136,9 @@
         "name": "Intake lampiran: drag-drop, tombol attach, paste lewat satu jalur",
         "status": "Backlog",
         "priority": "P0",
-        "depends_on": ["O1-01"],
+        "depends_on": [
+          "O1-01"
+        ],
         "scope": [
           "Drag-drop file/gambar ke composer memakai getCurrentWindow().onDragDropEvent (pola sudah ada di RagKnowledge.tsx).",
           "Tombol attach (attachFiles di ChatView.tsx) menerima gambar dan PDF, bukan hanya path.",
@@ -133,7 +151,10 @@
           "Drop di luar composer tidak memicu lampiran.",
           "Test komponen untuk penambahan dan penghapusan chip."
         ],
-        "files": ["src/components/ChatView.tsx", "src/components/ChatComposer.tsx"],
+        "files": [
+          "src/components/ChatView.tsx",
+          "src/components/ChatComposer.tsx"
+        ],
         "references": [
           "renderer/src/hooks/composer-native-file-drop.ts",
           "shared/native-file-drop.ts",
@@ -147,7 +168,11 @@
         "name": "Pengiriman hybrid sesuai kemampuan model",
         "status": "Backlog",
         "priority": "P0",
-        "depends_on": ["O0-02", "O1-01", "O1-02"],
+        "depends_on": [
+          "O0-02",
+          "O1-01",
+          "O1-02"
+        ],
         "scope": [
           "Selalu sebut path lampiran di prompt.",
           "image=true: kirim gambar inline + path.",
@@ -161,8 +186,14 @@
           "Fallback setelah penolakan berjalan sekali, tidak berulang.",
           "Test untuk ketiga cabang keputusan."
         ],
-        "files": ["src/components/ChatView.tsx", "src-tauri/src/pi_rpc.rs", "src-tauri/src/acp_bridge.rs"],
-        "references": ["opencode: packages/app/src/composer/attachments/attachments.ts (native(mime, input), MAX_INLINE_BYTES)"],
+        "files": [
+          "src/components/ChatView.tsx",
+          "src-tauri/src/pi_rpc.rs",
+          "src-tauri/src/acp_bridge.rs"
+        ],
+        "references": [
+          "opencode: packages/app/src/composer/attachments/attachments.ts (native(mime, input), MAX_INLINE_BYTES)"
+        ],
         "notes": "Orca sendiri menyerahkan keputusan ke agent CLI; Kern harus memutuskan sendiri karena pi menyusun pesan ke model."
       },
       {
@@ -171,7 +202,9 @@
         "name": "Perkecil gambar dan tampilkan perkiraan token",
         "status": "Backlog",
         "priority": "P1",
-        "depends_on": ["O1-03"],
+        "depends_on": [
+          "O1-03"
+        ],
         "scope": [
           "Sebelum dikirim inline, perkecil gambar sehingga sisi terpanjang maksimal 1568 px (canvas di frontend atau crate image di Rust).",
           "Chip menampilkan perkiraan token (Claude: lebar x tinggi / 750 setelah resize)."
@@ -181,7 +214,10 @@
           "Chip menampilkan perkiraan token yang masuk akal (mis. ~2.5k untuk 1568x1176).",
           "File asli di attachment store tidak diubah."
         ],
-        "files": ["src/components/ChatComposer.tsx", "src/lib/ (helper baru)"],
+        "files": [
+          "src/components/ChatComposer.tsx",
+          "src/lib/ (helper baru)"
+        ],
         "references": [],
         "notes": "Tidak ada di Orca; tambahan Kern."
       },
@@ -201,8 +237,13 @@
           "Saat picker command terbuka, panah tetap menggerakkan picker.",
           "Teks yang sedang diketik tidak hilang saat kembali ke bawah."
         ],
-        "files": ["src/components/ChatComposer.tsx", "src/components/ChatView.tsx"],
-        "references": ["renderer/src/components/native-chat/native-chat-sent-prompt-history.ts"],
+        "files": [
+          "src/components/ChatComposer.tsx",
+          "src/components/ChatView.tsx"
+        ],
+        "references": [
+          "renderer/src/components/native-chat/native-chat-sent-prompt-history.ts"
+        ],
         "notes": ""
       },
       {
@@ -220,8 +261,12 @@
           "Ketik, tutup app, buka lagi: teks masih ada di chat yang sama.",
           "Draft chat A tidak muncul di chat B."
         ],
-        "files": ["src/components/ChatView.tsx"],
-        "references": ["renderer/src/lib/native-chat-draft-owner.ts"],
+        "files": [
+          "src/components/ChatView.tsx"
+        ],
+        "references": [
+          "renderer/src/lib/native-chat-draft-owner.ts"
+        ],
         "notes": ""
       },
       {
@@ -241,8 +286,15 @@
           "Perilaku file worktree jelas dan diberitahukan ke user.",
           "Keputusan spike dicatat di notes."
         ],
-        "files": ["src/components/ChatView.tsx", "src/components/SessionTreePanel.tsx", "src/components/CheckpointTimeline.tsx", "src-tauri/src/pi_rpc.rs"],
-        "references": ["main/claude/claude-rewind-transcript.ts"],
+        "files": [
+          "src/components/ChatView.tsx",
+          "src/components/SessionTreePanel.tsx",
+          "src/components/CheckpointTimeline.tsx",
+          "src-tauri/src/pi_rpc.rs"
+        ],
+        "references": [
+          "main/claude/claude-rewind-transcript.ts"
+        ],
         "notes": "Pertanyaan terbuka di dokumen: apakah file ikut dikembalikan atau hanya percakapan. Tanyakan user sebelum implementasi."
       },
       {
@@ -260,7 +312,11 @@
           "Nama baru, pin, dan archive bertahan setelah restart.",
           "Chat yang di-archive tidak menghapus worktree-nya."
         ],
-        "files": ["src/components/ProjectList.tsx", "src/App.tsx", "src-tauri/src/projects.rs"],
+        "files": [
+          "src/components/ProjectList.tsx",
+          "src/App.tsx",
+          "src-tauri/src/projects.rs"
+        ],
         "references": [],
         "notes": ""
       },
@@ -279,8 +335,14 @@
           "Kata yang ada di pesan lama ditemukan dan bisa dibuka.",
           "Pencarian tidak membekukan UI pada riwayat besar (jalan di luar main thread)."
         ],
-        "files": ["src/App.tsx", "src-tauri/src/ (indeks/pencarian sesi)"],
-        "references": ["renderer/src/app-shell/AppRootSurfaces.tsx", "renderer/src/lib/quick-open-file-history.ts"],
+        "files": [
+          "src/App.tsx",
+          "src-tauri/src/ (indeks/pencarian sesi)"
+        ],
+        "references": [
+          "renderer/src/app-shell/AppRootSurfaces.tsx",
+          "renderer/src/lib/quick-open-file-history.ts"
+        ],
         "notes": ""
       },
       {
@@ -299,8 +361,14 @@
           "Worktree baru berisi .env yang disalin dan dependency terpasang.",
           "Setup yang gagal menampilkan error tanpa mematikan chat."
         ],
-        "files": ["src-tauri/src/worktree.rs", "src/components/ChatView.tsx"],
-        "references": ["main/runtime/runtime-local-worktree-setup.ts", "orca.yaml (root repo Orca)"],
+        "files": [
+          "src-tauri/src/worktree.rs",
+          "src/components/ChatView.tsx"
+        ],
+        "references": [
+          "main/runtime/runtime-local-worktree-setup.ts",
+          "orca.yaml (root repo Orca)"
+        ],
         "notes": "Pertimbangkan juga node_modules symlink yang sudah dibuat app (lihat kern-context: Turbopack menolak symlink keluar root)."
       },
       {
@@ -318,8 +386,14 @@
           "Permintaan izin saat app tidak fokus memunculkan notifikasi.",
           "Toggle bunyi tersimpan."
         ],
-        "files": ["src/components/ChatView.tsx", "src/components/ApprovalDialog.tsx", "src/components/SettingsPanel.tsx"],
-        "references": ["shared/rpc-contract/notifications-params.ts"],
+        "files": [
+          "src/components/ChatView.tsx",
+          "src/components/ApprovalDialog.tsx",
+          "src/components/SettingsPanel.tsx"
+        ],
+        "references": [
+          "shared/rpc-contract/notifications-params.ts"
+        ],
         "notes": ""
       },
       {
@@ -337,7 +411,11 @@
           "Beberapa komentar di file berbeda terkirim dalam satu pesan berformat jelas.",
           "Komentar terkirim dibersihkan; yang belum terkirim bertahan saat diff ditutup."
         ],
-        "files": ["src/components/ExpandedDiffPanel.tsx", "src/components/chat-diff-utils.tsx", "src/components/ChatView.tsx"],
+        "files": [
+          "src/components/ExpandedDiffPanel.tsx",
+          "src/components/chat-diff-utils.tsx",
+          "src/components/ChatView.tsx"
+        ],
         "references": [
           "renderer/src/components/diff-comments/",
           "renderer/src/store/worktree-diff-comments-selector.ts",
@@ -361,8 +439,13 @@
           "PR terbuat dengan akun yang benar tanpa mengubah akun aktif gh global.",
           "Status CI tampil dan bisa di-refresh."
         ],
-        "files": ["src/components/SourceControlPanel.tsx", "src-tauri/src/scm.rs"],
-        "references": ["Emdash juga referensi bagus untuk alur PR: https://github.com/generalaction/emdash"],
+        "files": [
+          "src/components/SourceControlPanel.tsx",
+          "src-tauri/src/scm.rs"
+        ],
+        "references": [
+          "Emdash juga referensi bagus untuk alur PR: https://github.com/generalaction/emdash"
+        ],
         "notes": "Token per akun bisa diambil dengan `gh auth token --user <akun>` dan diberikan lewat env GH_TOKEN ke proses gh, bukan argv."
       },
       {
@@ -371,7 +454,9 @@
         "name": "Command palette",
         "status": "Backlog",
         "priority": "P2",
-        "depends_on": ["O2-02"],
+        "depends_on": [
+          "O2-02"
+        ],
         "scope": [
           "Satu palet untuk aksi app (chat baru, buka panel, ganti model, settings) dan daftar shortcut.",
           "Bisa digabung dengan palet pencarian O2-02."
@@ -379,7 +464,9 @@
         "acceptance_criteria": [
           "Aksi utama bisa dijalankan dari palet dengan keyboard saja."
         ],
-        "files": ["src/App.tsx"],
+        "files": [
+          "src/App.tsx"
+        ],
         "references": [],
         "notes": "SSH remote, mobile, dan Design Mode sengaja di luar scope fitur ini."
       }
