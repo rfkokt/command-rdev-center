@@ -36,7 +36,7 @@ pub struct Config {
     pub projects: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_config() -> Result<Config, String> {
     let raw = std::fs::read_to_string(projects::config_path()).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
