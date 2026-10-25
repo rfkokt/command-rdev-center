@@ -1,0 +1,388 @@
+{
+  "feature": {
+    "id": "orca-essentials",
+    "name": "Fitur dasar dari Orca untuk Kern",
+    "type": "feature",
+    "status": "active",
+    "created_at": "2026-10-25",
+    "summary": "Port fitur dasar yang belum dimiliki Kern dari Orca (MIT), per fitur: lampiran gambar/file dengan pengiriman hybrid, riwayat prompt, draft, edit & kirim ulang, kelola dan cari sesi, setup worktree, notifikasi izin, komentar diff ke agent, PR + CI, command palette.",
+    "source_plan": "docs/plans/2026-10-25-001-feat-orca-essentials-plan.md",
+    "shared_doc": "https://claude.ai/artifact/FfdgvdJu21ZUFpQAANheva",
+    "orca_reference": {
+      "repo": "https://github.com/stablyai/orca",
+      "license": "MIT, Copyright (c) 2026 Lovecast Inc.",
+      "local_clone": "/tmp/refs/orca (git clone --depth 1 https://github.com/stablyai/orca.git /tmp/refs/orca)",
+      "paths_relative_to": "src/"
+    },
+    "implementation_order": [
+      "O0-01",
+      "O0-02",
+      "O1-01",
+      "O1-02",
+      "O1-03",
+      "O1-04",
+      "O1-05",
+      "O1-06",
+      "O1-07",
+      "O2-01",
+      "O2-02",
+      "O2-03",
+      "O2-04",
+      "O3-01",
+      "O3-02",
+      "O4-01"
+    ],
+    "principles": [
+      "Port per fitur, bukan fork atau salin mentah: logika UI diadaptasi, logika backend ditulis ulang di Rust.",
+      "Tidak menambah dukungan banyak CLI lewat terminal (keputusan user 2026-10-25).",
+      "Tidak ada lampiran yang hilang diam-diam: kalau model tidak bisa membaca gambar, user diberi tahu dan agent tetap menerima path file.",
+      "Keunggulan Kern (Office, Deep Research, RAG, Kanban, Pipeline, Graphify, quota 9router) tidak boleh rusak.",
+      "Status: Backlog -> In Progress -> Review (sudah dicek agent) -> Done (sudah dicoba user)."
+    ],
+    "checks": [
+      "pnpm exec tsc --noEmit -p .",
+      "pnpm exec vitest run",
+      "cd src-tauri && cargo check && cargo test --lib",
+      "cargo fmt -- <file Rust yang disentuh>"
+    ],
+    "tasks": [
+      {
+        "id": "O0-01",
+        "phase": "O0",
+        "name": "Atribusi lisensi Orca",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Buat THIRD_PARTY_NOTICES.md di root berisi teks lisensi MIT Orca dan copyright Lovecast Inc.",
+          "Tetapkan format komentar header untuk file yang diadaptasi: `Adapted from stablyai/orca <path> (MIT)`."
+        ],
+        "acceptance_criteria": [
+          "THIRD_PARTY_NOTICES.md ada dan memuat teks lisensi lengkap.",
+          "Rencana menyebut aturan komentar header."
+        ],
+        "files": ["THIRD_PARTY_NOTICES.md"],
+        "references": ["LICENSE"],
+        "notes": ""
+      },
+      {
+        "id": "O0-02",
+        "phase": "O0",
+        "name": "Metadata kemampuan model (gambar/PDF) sampai ke frontend",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "pi: baca field `input` per model dari ~/.pi/agent/models.json (list_available_models di src-tauri/src/pi_rpc.rs saat ini membuang field itu).",
+          "ACP: ekspos `promptCapabilities.image` yang sudah dibaca acp_bridge.rs (field image_supported) ke frontend.",
+          "Bentuk data: { image: true | false | null, pdf: true | false | null } dengan null = tidak diketahui.",
+          "Frontend bisa menanyakan kemampuan model/harness yang sedang aktif di chat."
+        ],
+        "acceptance_criteria": [
+          "Model pi dengan input [\"text\",\"image\"] terbaca image=true, [\"text\"] terbaca image=false, tanpa field terbaca null.",
+          "Harness ACP melaporkan image sesuai promptCapabilities.",
+          "Unit test Rust untuk parsing models.json."
+        ],
+        "files": ["src-tauri/src/pi_rpc.rs", "src-tauri/src/acp_bridge.rs", "src/lib/rpc.ts", "src/components/ModelPicker.tsx"],
+        "references": ["opencode: packages/app/src/composer/attachments/destination.ts (input.image / input.pdf)"],
+        "notes": "acp_bridge.rs (sekitar baris 840) saat ini hanya mendorong blok image kalau self.image_supported, selain itu gambar dibuang tanpa pemberitahuan."
+      },
+      {
+        "id": "O1-01",
+        "phase": "O1",
+        "name": "Attachment store per chat (Rust)",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": ["O0-01"],
+        "scope": [
+          "Command Tauri untuk menyimpan lampiran (bytes dari paste, atau path dari drop/picker) ke folder per upload di bawah data app, nama file asli dipertahankan.",
+          "Batas ukuran per file (mis. 20 MB) dengan error yang jelas.",
+          "Pembersihan otomatis untuk upload yang tidak dirujuk chat mana pun (sweep saat startup / berkala).",
+          "Kembalikan path absolut yang bisa dibaca agent (worktree chat atau folder data app yang diizinkan)."
+        ],
+        "acceptance_criteria": [
+          "Dua file dengan nama sama tidak saling menimpa.",
+          "File di atas batas ditolak dengan pesan yang bisa ditampilkan.",
+          "Upload yatim terhapus oleh sweep; yang masih dirujuk tidak.",
+          "Unit test Rust untuk simpan, batas ukuran, dan sweep."
+        ],
+        "files": ["src-tauri/src/attachments.rs (baru)", "src-tauri/src/lib.rs"],
+        "references": [
+          "main/native-chat/agent-session-attachments/agent-session-attachment-store.ts",
+          "main/native-chat/agent-session-attachments/agent-session-attachment-sweep.ts",
+          "shared/rpc-contract/clipboard-params.ts (saveImageAsTempFile, batas ukuran)"
+        ],
+        "notes": ""
+      },
+      {
+        "id": "O1-02",
+        "phase": "O1",
+        "name": "Intake lampiran: drag-drop, tombol attach, paste lewat satu jalur",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": ["O1-01"],
+        "scope": [
+          "Drag-drop file/gambar ke composer memakai getCurrentWindow().onDragDropEvent (pola sudah ada di RagKnowledge.tsx).",
+          "Tombol attach (attachFiles di ChatView.tsx) menerima gambar dan PDF, bukan hanya path.",
+          "Paste gambar (handlePaste) memakai jalur yang sama.",
+          "Chip lampiran dengan preview gambar, nama file, tombol hapus."
+        ],
+        "acceptance_criteria": [
+          "Gambar dari Finder bisa di-drop ke composer dan muncul sebagai chip.",
+          "Tombol attach menghasilkan chip yang sama untuk gambar.",
+          "Drop di luar composer tidak memicu lampiran.",
+          "Test komponen untuk penambahan dan penghapusan chip."
+        ],
+        "files": ["src/components/ChatView.tsx", "src/components/ChatComposer.tsx"],
+        "references": [
+          "renderer/src/hooks/composer-native-file-drop.ts",
+          "shared/native-file-drop.ts",
+          "renderer/src/hooks/composer-state/attachment-drop-state.ts"
+        ],
+        "notes": ""
+      },
+      {
+        "id": "O1-03",
+        "phase": "O1",
+        "name": "Pengiriman hybrid sesuai kemampuan model",
+        "status": "Backlog",
+        "priority": "P0",
+        "depends_on": ["O0-02", "O1-01", "O1-02"],
+        "scope": [
+          "Selalu sebut path lampiran di prompt.",
+          "image=true: kirim gambar inline + path.",
+          "image=null: kirim inline + path; kalau provider menolak karena gambar, kirim ulang path saja dan tampilkan pemberitahuan.",
+          "image=false: path saja, chip diberi tanda 'model ini tidak bisa melihat gambar'.",
+          "ACP: hapus pembuangan diam-diam di acp_bridge.rs; agent tanpa dukungan gambar menerima path."
+        ],
+        "acceptance_criteria": [
+          "Tidak ada jalur di mana gambar hilang tanpa pemberitahuan.",
+          "Model text-only menerima path dan tidak error.",
+          "Fallback setelah penolakan berjalan sekali, tidak berulang.",
+          "Test untuk ketiga cabang keputusan."
+        ],
+        "files": ["src/components/ChatView.tsx", "src-tauri/src/pi_rpc.rs", "src-tauri/src/acp_bridge.rs"],
+        "references": ["opencode: packages/app/src/composer/attachments/attachments.ts (native(mime, input), MAX_INLINE_BYTES)"],
+        "notes": "Orca sendiri menyerahkan keputusan ke agent CLI; Kern harus memutuskan sendiri karena pi menyusun pesan ke model."
+      },
+      {
+        "id": "O1-04",
+        "phase": "O1",
+        "name": "Perkecil gambar dan tampilkan perkiraan token",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": ["O1-03"],
+        "scope": [
+          "Sebelum dikirim inline, perkecil gambar sehingga sisi terpanjang maksimal 1568 px (canvas di frontend atau crate image di Rust).",
+          "Chip menampilkan perkiraan token (Claude: lebar x tinggi / 750 setelah resize)."
+        ],
+        "acceptance_criteria": [
+          "Gambar 4000x3000 dikirim sebagai 1568x1176.",
+          "Chip menampilkan perkiraan token yang masuk akal (mis. ~2.5k untuk 1568x1176).",
+          "File asli di attachment store tidak diubah."
+        ],
+        "files": ["src/components/ChatComposer.tsx", "src/lib/ (helper baru)"],
+        "references": [],
+        "notes": "Tidak ada di Orca; tambahan Kern."
+      },
+      {
+        "id": "O1-05",
+        "phase": "O1",
+        "name": "Riwayat prompt dengan panah atas/bawah",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Di composer kosong (atau kursor di baris pertama), panah atas memanggil prompt yang pernah dikirim di chat ini; panah bawah kembali.",
+          "Tidak bentrok dengan navigasi daftar slash command/file picker yang memakai ArrowUp/ArrowDown di ChatComposer.tsx."
+        ],
+        "acceptance_criteria": [
+          "Panah atas di composer kosong memunculkan prompt terakhir.",
+          "Saat picker command terbuka, panah tetap menggerakkan picker.",
+          "Teks yang sedang diketik tidak hilang saat kembali ke bawah."
+        ],
+        "files": ["src/components/ChatComposer.tsx", "src/components/ChatView.tsx"],
+        "references": ["renderer/src/components/native-chat/native-chat-sent-prompt-history.ts"],
+        "notes": ""
+      },
+      {
+        "id": "O1-06",
+        "phase": "O1",
+        "name": "Draft per chat tetap ada setelah restart",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Simpan teks composer (dan referensi lampiran) per chat, pulihkan saat chat dibuka atau app dijalankan ulang.",
+          "Hapus draft setelah terkirim."
+        ],
+        "acceptance_criteria": [
+          "Ketik, tutup app, buka lagi: teks masih ada di chat yang sama.",
+          "Draft chat A tidak muncul di chat B."
+        ],
+        "files": ["src/components/ChatView.tsx"],
+        "references": ["renderer/src/lib/native-chat-draft-owner.ts"],
+        "notes": ""
+      },
+      {
+        "id": "O1-07",
+        "phase": "O1",
+        "name": "Edit lalu kirim ulang pesan user",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Spike dulu: cara memotong riwayat sesi di pi RPC (session tree/fork) dan di ACP.",
+          "Pesan user bisa diedit; jawaban sesudahnya diganti dengan jawaban baru.",
+          "Opsional: kembalikan file worktree lewat checkpoint Kern yang sudah ada."
+        ],
+        "acceptance_criteria": [
+          "Edit pesan menghasilkan cabang percakapan baru tanpa sisa jawaban lama di konteks model.",
+          "Perilaku file worktree jelas dan diberitahukan ke user.",
+          "Keputusan spike dicatat di notes."
+        ],
+        "files": ["src/components/ChatView.tsx", "src/components/SessionTreePanel.tsx", "src/components/CheckpointTimeline.tsx", "src-tauri/src/pi_rpc.rs"],
+        "references": ["main/claude/claude-rewind-transcript.ts"],
+        "notes": "Pertanyaan terbuka di dokumen: apakah file ikut dikembalikan atau hanya percakapan. Tanyakan user sebelum implementasi."
+      },
+      {
+        "id": "O2-01",
+        "phase": "O2",
+        "name": "Rename, pin, dan archive chat",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Aksi di sidebar per chat: rename, pin (tetap di atas), archive (disembunyikan, bisa dibuka lagi).",
+          "Disimpan persisten."
+        ],
+        "acceptance_criteria": [
+          "Nama baru, pin, dan archive bertahan setelah restart.",
+          "Chat yang di-archive tidak menghapus worktree-nya."
+        ],
+        "files": ["src/components/ProjectList.tsx", "src/App.tsx", "src-tauri/src/projects.rs"],
+        "references": [],
+        "notes": ""
+      },
+      {
+        "id": "O2-02",
+        "phase": "O2",
+        "name": "Pencarian lintas sesi",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Palet pencarian dengan shortcut (mis. Cmd+K) yang mencari judul chat dan isi pesan di semua project.",
+          "Hasil membuka chat dan menggulir ke pesan yang cocok."
+        ],
+        "acceptance_criteria": [
+          "Kata yang ada di pesan lama ditemukan dan bisa dibuka.",
+          "Pencarian tidak membekukan UI pada riwayat besar (jalan di luar main thread)."
+        ],
+        "files": ["src/App.tsx", "src-tauri/src/ (indeks/pencarian sesi)"],
+        "references": ["renderer/src/app-shell/AppRootSurfaces.tsx", "renderer/src/lib/quick-open-file-history.ts"],
+        "notes": ""
+      },
+      {
+        "id": "O2-03",
+        "phase": "O2",
+        "name": "Setup script worktree (kern.yaml)",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "File config per project (kern.yaml) berisi file yang disalin ke worktree baru (mis. .env) dan perintah setup (mis. pnpm install).",
+          "Dijalankan setelah worktree chat dibuat; output tampil di terminal chat.",
+          "Gagal setup tidak memblokir chat."
+        ],
+        "acceptance_criteria": [
+          "Worktree baru berisi .env yang disalin dan dependency terpasang.",
+          "Setup yang gagal menampilkan error tanpa mematikan chat."
+        ],
+        "files": ["src-tauri/src/worktree.rs", "src/components/ChatView.tsx"],
+        "references": ["main/runtime/runtime-local-worktree-setup.ts", "orca.yaml (root repo Orca)"],
+        "notes": "Pertimbangkan juga node_modules symlink yang sudah dibuat app (lihat kern-context: Turbopack menolak symlink keluar root)."
+      },
+      {
+        "id": "O2-04",
+        "phase": "O2",
+        "name": "Bunyi dan notifikasi saat agent butuh izin",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [],
+        "scope": [
+          "Notifikasi OS saat approval dibutuhkan (notifikasi selesai sudah ada di ChatView.tsx).",
+          "Bunyi opsional (bisa dimatikan di Settings) saat selesai atau butuh izin."
+        ],
+        "acceptance_criteria": [
+          "Permintaan izin saat app tidak fokus memunculkan notifikasi.",
+          "Toggle bunyi tersimpan."
+        ],
+        "files": ["src/components/ChatView.tsx", "src/components/ApprovalDialog.tsx", "src/components/SettingsPanel.tsx"],
+        "references": ["shared/rpc-contract/notifications-params.ts"],
+        "notes": ""
+      },
+      {
+        "id": "O3-01",
+        "phase": "O3",
+        "name": "Komentar baris diff dikirim ke agent",
+        "status": "Backlog",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Di diff viewer, klik baris untuk menulis komentar Markdown; komentar dikumpulkan per chat.",
+          "Tombol kirim mengirim semua komentar sebagai satu pesan dengan path file dan nomor baris."
+        ],
+        "acceptance_criteria": [
+          "Beberapa komentar di file berbeda terkirim dalam satu pesan berformat jelas.",
+          "Komentar terkirim dibersihkan; yang belum terkirim bertahan saat diff ditutup."
+        ],
+        "files": ["src/components/ExpandedDiffPanel.tsx", "src/components/chat-diff-utils.tsx", "src/components/ChatView.tsx"],
+        "references": [
+          "renderer/src/components/diff-comments/",
+          "renderer/src/store/worktree-diff-comments-selector.ts",
+          "renderer/src/components/editor/combined-diff/review-controls/use-combined-diff-notes-actions.ts"
+        ],
+        "notes": ""
+      },
+      {
+        "id": "O3-02",
+        "phase": "O3",
+        "name": "Buat PR dan lihat status CI lewat gh",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": [],
+        "scope": [
+          "Dari panel Changes: buat PR dari branch worktree chat (judul dan isi bisa diedit).",
+          "Tampilkan status CI PR; CI gagal bisa dikirim ke agent.",
+          "Akun gh bisa dipilih per repo (mesin user punya rdev-nashta dan rfkokt)."
+        ],
+        "acceptance_criteria": [
+          "PR terbuat dengan akun yang benar tanpa mengubah akun aktif gh global.",
+          "Status CI tampil dan bisa di-refresh."
+        ],
+        "files": ["src/components/SourceControlPanel.tsx", "src-tauri/src/scm.rs"],
+        "references": ["Emdash juga referensi bagus untuk alur PR: https://github.com/generalaction/emdash"],
+        "notes": "Token per akun bisa diambil dengan `gh auth token --user <akun>` dan diberikan lewat env GH_TOKEN ke proses gh, bukan argv."
+      },
+      {
+        "id": "O4-01",
+        "phase": "O4",
+        "name": "Command palette",
+        "status": "Backlog",
+        "priority": "P2",
+        "depends_on": ["O2-02"],
+        "scope": [
+          "Satu palet untuk aksi app (chat baru, buka panel, ganti model, settings) dan daftar shortcut.",
+          "Bisa digabung dengan palet pencarian O2-02."
+        ],
+        "acceptance_criteria": [
+          "Aksi utama bisa dijalankan dari palet dengan keyboard saja."
+        ],
+        "files": ["src/App.tsx"],
+        "references": [],
+        "notes": "SSH remote, mobile, dan Design Mode sengaja di luar scope fitur ini."
+      }
+    ]
+  }
+}
