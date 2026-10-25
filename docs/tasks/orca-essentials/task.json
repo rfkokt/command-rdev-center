@@ -134,7 +134,7 @@
         "id": "O1-02",
         "phase": "O1",
         "name": "Intake lampiran: drag-drop, tombol attach, paste lewat satu jalur",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [
           "O1-01"
@@ -160,7 +160,7 @@
           "shared/native-file-drop.ts",
           "renderer/src/hooks/composer-state/attachment-drop-state.ts"
         ],
-        "notes": ""
+        "notes": "Drag-drop (getCurrentWindow().onDragDropEvent, posisi fisik dicocokkan ke kotak .chat-composer, hanya chat aktif), tombol attach, dan paste lewat addAttachmentPaths/handlePaste. Gambar png/jpg/gif/webp disalin ke attachment store (store_attachment_file kini mengembalikan base64) dan tetap inline; paste juga disimpan lewat save_attachment_bytes (raw body). File lain tetap lewat alur teks/PDF lama. Field tambahan (id, name, path) dibuang sebelum dikirim (toChatImage). Belum dicoba drag-drop sungguhan di app; HEIC/SVG belum didukung."
       },
       {
         "id": "O1-03",

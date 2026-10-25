@@ -1373,3 +1373,25 @@ body,
   height: var(--minimal-header) !important;
   min-height: var(--minimal-header) !important;
 }
+
+/* ================================================== composer drop target */
+/* ChatView matches native drops against the composer (Tauri owns drops). */
+.app-shell .chat-composer.is-drop-target {
+  position: relative;
+  border-color: var(--accent) !important;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    var(--shadow-soft) !important;
+}
+.app-shell .chat-composer .kc-drop-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+  color: var(--text-primary, var(--text-body));
+  font: 600 13px var(--font-ui);
+  pointer-events: none;
+}

@@ -25,6 +25,9 @@ pub struct StoredAttachment {
     pub path: String,
     pub mime: String,
     pub size: u64,
+    /// Base64 bytes for images a model can take inline (preview + sending).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
 }
 
 fn store_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -145,7 +148,40 @@ fn commit(
         name,
         path: path.to_string_lossy().into_owned(),
         size,
+        data: None,
     })
+}
+
+/// Formats every vision API takes inline; anything else travels as a path.
+pub fn is_inline_image(mime: &str) -> bool {
+    matches!(
+        mime,
+        "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+    )
+}
+
+/// Standard base64 with padding (no crate needed for this one use).
+pub fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 pub fn store_bytes(
@@ -255,7 +291,12 @@ pub fn store_attachment_file(
     chat_id: String,
     path: String,
 ) -> Result<StoredAttachment, String> {
-    store_file(&store_root(&app)?, &chat_id, Path::new(&path))
+    let mut stored = store_file(&store_root(&app)?, &chat_id, Path::new(&path))?;
+    if is_inline_image(&stored.mime) {
+        let bytes = std::fs::read(&stored.path).map_err(|e| format!("attachment store: {e}"))?;
+        stored.data = Some(base64(&bytes));
+    }
+    Ok(stored)
 }
 
 #[cfg(test)]
@@ -311,6 +352,16 @@ mod tests {
         assert_eq!(stored.mime, "application/pdf");
         assert_eq!(stored.size, 4);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn base64_matches_the_standard_alphabet() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
     }
 
     #[test]

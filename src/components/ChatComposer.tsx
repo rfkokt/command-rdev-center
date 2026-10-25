@@ -9,6 +9,7 @@ import {
 } from "react";
 import FilePicker, { type FilePickerHandle } from "./FilePicker";
 import type { ChatImage } from "../lib/rpc";
+import type { ComposerImage } from "../lib/attachments";
 import type { ChatFile, SlashCommand } from "./ChatView";
 import { shouldSubmitCommand } from "./chat-utils";
 import CustomSelect from "./CustomSelect";
@@ -27,7 +28,9 @@ export type ChatComposerProps = {
   projectPath: string;
   inputPlaceholder?: string;
   input: string;
-  images: ChatImage[];
+  images: ComposerImage[];
+  /** Files are being dragged over the composer. */
+  dropActive?: boolean;
   files: ChatFile[];
   currentThinking: string;
   slashCommands: SlashCommand[];
@@ -38,7 +41,7 @@ export type ChatComposerProps = {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   filePickerRef: RefObject<FilePickerHandle | null>;
   setInput: Dispatch<SetStateAction<string>>;
-  setImages: Dispatch<SetStateAction<ChatImage[]>>;
+  setImages: Dispatch<SetStateAction<ComposerImage[]>>;
   setFiles: Dispatch<SetStateAction<ChatFile[]>>;
   setPreviewImage: (image: ChatImage | null) => void;
   setFilePickerQuery: (query: string | null) => void;
@@ -182,6 +185,7 @@ export default function ChatComposer({
   inputPlaceholder,
   input,
   images,
+  dropActive = false,
   files,
   currentThinking,
   slashCommands,
@@ -226,7 +230,12 @@ export default function ChatComposer({
           : "Send";
   return (
     <div className="chat-composer-dock">
-      <div className="chat-composer kc">
+      <div className={`chat-composer kc${dropActive ? " is-drop-target" : ""}`}>
+        {dropActive && (
+          <div className="kc-drop-hint" aria-hidden="true">
+            Drop to attach
+          </div>
+        )}
         {slashCommands.length > 0 && (
           <div className="slash-menu" role="listbox">
             {slashCommands.map((command, index) => (
@@ -300,24 +309,26 @@ export default function ChatComposer({
         )}
         {images.length > 0 && (
           <div className="image-previews">
-            {images.map((image, index) => (
-              <div key={index}>
+            {images.map((image) => (
+              <div key={image.id}>
                 <button
                   onClick={() => setPreviewImage(image)}
-                  title="Preview image"
+                  title={image.name ? `Preview ${image.name}` : "Preview image"}
                 >
                   <img
                     src={`data:${image.mimeType};base64,${image.data}`}
-                    alt="Pasted attachment preview"
+                    alt={image.name ?? "Attached image preview"}
                   />
                 </button>
                 <button
                   className="image-remove"
                   onClick={() =>
-                    setImages((prev) => prev.filter((_, i) => i !== index))
+                    setImages((prev) =>
+                      prev.filter((item) => item.id !== image.id),
+                    )
                   }
                   title="Remove image"
-                  aria-label="Remove image"
+                  aria-label={`Remove ${image.name ?? "image"}`}
                 >
                   ×
                 </button>

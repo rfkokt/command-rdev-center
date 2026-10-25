@@ -13,6 +13,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import {
   isPermissionGranted,
@@ -34,6 +35,16 @@ import {
   modelInputs,
   type ImageSupport,
 } from "../lib/model-capabilities";
+import {
+  composerImageId,
+  dropLandsOn,
+  fileName,
+  inlineImageMime,
+  storeAttachmentFile,
+  storePastedFile,
+  toChatImage,
+  type ComposerImage,
+} from "../lib/attachments";
 import {
   formatTokens,
   cacheHitPercent,
@@ -502,7 +513,7 @@ export default function ChatView({
   // pi; the displayed user message stays raw.
   const [planMode, setPlanMode] = useState(false);
   const [sessionTreeOpen, setSessionTreeOpen] = useState(false);
-  const [images, setImages] = useState<ChatImage[]>([]);
+  const [images, setImages] = useState<ComposerImage[]>([]);
   const [files, setFiles] = useState<ChatFile[]>([]);
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -3160,7 +3171,7 @@ export default function ChatView({
     await sendRaw({
       type: "prompt",
       message: `${applyPlanModePrefix(text, planMode)}${context}`,
-      images,
+      images: images.map(toChatImage),
     });
   }
 
@@ -3228,7 +3239,7 @@ export default function ChatView({
           id: uid(),
           role: "user",
           text: visibleMessage,
-          images,
+          images: images.map(toChatImage),
           thinking: "",
           toolCalls: [],
           createdAt: Date.now(),
@@ -3284,18 +3295,78 @@ export default function ChatView({
         title: "Attach files to chat",
       });
       if (!paths) return;
-      const selected = (Array.isArray(paths) ? paths : [paths]).map((path) => ({
-        path,
-        name: path.split(/[\\/]/).pop() || path,
-      }));
-      setFiles((current) => [
-        ...current,
-        ...selected.filter(
-          (file) => !current.some((item) => item.path === file.path),
-        ),
-      ]);
+      addAttachmentPaths(Array.isArray(paths) ? paths : [paths]);
     } catch (error) {
       onToast(`File attachment: ${String(error)}`);
+    }
+  }
+
+  // Files dragged from Finder: Tauri owns native drops, so match the drop
+  // point against the composer instead of relying on DOM drop events.
+  const [dropActive, setDropActive] = useState(false);
+  const addAttachmentPathsRef = useRef(addAttachmentPaths);
+  addAttachmentPathsRef.current = addAttachmentPaths;
+  useEffect(() => {
+    if (!isActive) return;
+    const composer = () => inputRef.current?.closest(".chat-composer");
+    let unlisten: Promise<() => void>;
+    try {
+      unlisten = getCurrentWindow().onDragDropEvent(({ payload }) => {
+        if (payload.type === "leave") {
+          setDropActive(false);
+          return;
+        }
+        const inside = dropLandsOn(composer(), payload.position);
+        if (payload.type === "drop") {
+          setDropActive(false);
+          if (inside && payload.paths.length)
+            addAttachmentPathsRef.current(payload.paths);
+        } else setDropActive(inside);
+      });
+    } catch {
+      return; // not inside a Tauri window (tests)
+    }
+    return () => {
+      setDropActive(false);
+      void unlisten.then((stop) => stop()).catch(() => undefined);
+    };
+  }, [isActive]);
+
+  /** One way in for picked and dropped files: images go to the attachment
+   * store and stay inline; other files keep the text/PDF context route. */
+  function addAttachmentPaths(paths: string[]) {
+    const imagePaths = paths.filter((path) => inlineImageMime(path));
+    const otherPaths = paths.filter((path) => !inlineImageMime(path));
+    if (otherPaths.length)
+      setFiles((current) => [
+        ...current,
+        ...otherPaths
+          .filter((path) => !current.some((item) => item.path === path))
+          .map((path) => ({ path, name: fileName(path) })),
+      ]);
+    for (const path of imagePaths) {
+      void storeAttachmentFile(chatId, path)
+        .then((stored) => {
+          if (!stored.data) return;
+          setImages((prev) =>
+            prev.some((image) => image.path === stored.path)
+              ? prev
+              : [
+                  ...prev,
+                  {
+                    type: "image",
+                    id: composerImageId(),
+                    data: stored.data!,
+                    mimeType: stored.mime,
+                    name: stored.name,
+                    path: stored.path,
+                  },
+                ],
+          );
+        })
+        .catch((error) =>
+          onToast(`Couldn't attach ${fileName(path)}: ${String(error)}`),
+        );
     }
   }
 
@@ -3306,15 +3377,30 @@ export default function ChatView({
     if (files.length > 0) {
       event.preventDefault();
       files.forEach((file) => {
+        const id = composerImageId();
         const reader = new FileReader();
         reader.onload = () => {
           const data = String(reader.result).split(",", 2)[1];
           if (data)
             setImages((prev) => [
               ...prev,
-              { type: "image", data, mimeType: file.type },
+              { type: "image", id, data, mimeType: file.type, name: file.name },
             ]);
         };
+        // Keep a copy on disk too, so the agent gets a path it can use.
+        void storePastedFile(chatId, file)
+          .then((stored) =>
+            setImages((prev) =>
+              prev.map((image) =>
+                image.id === id
+                  ? { ...image, path: stored.path, name: stored.name }
+                  : image,
+              ),
+            ),
+          )
+          .catch((error) =>
+            onToast(`Couldn't store pasted image: ${String(error)}`),
+          );
         reader.onerror = () =>
           onToast(`Couldn't paste ${file.name || "image"}`);
         reader.readAsDataURL(file);
@@ -4198,7 +4284,7 @@ export default function ChatView({
           id: uid(),
           role: "user",
           text: messageText,
-          images,
+          images: images.map(toChatImage),
           thinking: "",
           toolCalls: [],
           createdAt: Date.now(),
@@ -4215,7 +4301,11 @@ export default function ChatView({
       if (type === "follow_up") setPendingMessageCount((count) => count + 1);
       scrollToBottom("smooth");
       window.setTimeout(() => scrollToBottom("auto"), 60);
-      await sendRaw({ type, message: messageText, images });
+      await sendRaw({
+        type,
+        message: messageText,
+        images: images.map(toChatImage),
+      });
       onToast(
         type === "steer"
           ? "Steering current turn"
@@ -6063,6 +6153,7 @@ export default function ChatView({
           inputPlaceholder={inputPlaceholder}
           input={input}
           images={images}
+          dropActive={dropActive}
           files={files}
           currentThinking={currentThinking}
           slashCommands={slashCommands}
