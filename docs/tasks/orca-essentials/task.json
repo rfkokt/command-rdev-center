@@ -102,7 +102,7 @@
         "id": "O1-01",
         "phase": "O1",
         "name": "Attachment store per chat (Rust)",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [
           "O0-01"
@@ -128,7 +128,7 @@
           "main/native-chat/agent-session-attachments/agent-session-attachment-sweep.ts",
           "shared/rpc-contract/clipboard-params.ts (saveImageAsTempFile, batas ukuran)"
         ],
-        "notes": ""
+        "notes": "src-tauri/src/attachments.rs: <app_data>/attachments/<chat>/<upload-id>/<nama>, tulis atomik lewat .partial + rename, batas 20 MB, sweep saat startup untuk upload > 30 hari (bukan berbasis klaim seperti Orca; gambar inline tetap ada di riwayat sesi). Command: save_attachment_bytes (raw IPC body + header x-chat-id/x-file-name/x-mime, percent-encoded) dan store_attachment_file(chatId, path). Belum ada pemanggil di frontend (O1-02)."
       },
       {
         "id": "O1-02",

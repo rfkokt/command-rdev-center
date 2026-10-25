@@ -3,6 +3,7 @@ use tauri::Manager;
 
 mod acp_bridge;
 mod agent_updates;
+mod attachments;
 mod browser_spike;
 mod connections;
 mod deep_research;
@@ -51,6 +52,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             projects::init_config(app.handle())?;
+            attachments::sweep_in_background(app.handle());
             let browser_app = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(30));
@@ -193,6 +195,8 @@ pub fn run() {
             pi_rpc::get_global_chat_cwd,
             pi_rpc::list_available_models,
             pi_rpc::models_without_declared_input,
+            attachments::save_attachment_bytes,
+            attachments::store_attachment_file,
             skills::list_pi_skills,
             skills::list_skill_manifests,
             skills::load_skill_instructions,
