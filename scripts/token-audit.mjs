@@ -1,12 +1,18 @@
 #!/usr/bin/env node
-// Where do Kern's tokens go? Reads pi session files (JSONL) and reports, per
-// session and in total: model requests per user prompt, input / cache read /
-// cache write / output tokens, cache hit rate, the size of the first request
-// (system prompt + tools baseline), cache warming and compaction usage, and
-// how many requests went to Kern's own bookkeeping tools.
+// Where do Kern's tokens go? Reads local agent session files (JSONL) and
+// reports model requests per user prompt, input / cache read / cache write /
+// output tokens, cache hit rate, the size of the first request (system prompt
+// + tools baseline), cache warming and compaction usage, and how many calls
+// went to Kern's own bookkeeping tools.
 //
-// Usage: node scripts/token-audit.mjs [sessions-dir] [--days 7] [--top 15]
-// Default dir: ~/.pi/agent/sessions. Nothing is sent anywhere.
+// Understands two formats:
+//   - pi sessions (pi harness): ~/.pi/agent/sessions, or `sessionDir` from
+//     ~/.pi/agent/settings.json
+//   - Claude Code / claude-agent-acp sessions (Claude Code harness over ACP):
+//     ~/.claude/projects
+//
+// Usage: node scripts/token-audit.mjs [dir ...] [--days 7] [--top 15]
+// Nothing is sent anywhere.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -19,13 +25,27 @@ const flag = (name, fallback) => {
 };
 const days = flag("--days", 7);
 const top = flag("--top", 15);
-const root =
-  args.find(
-    (arg, i) => !arg.startsWith("--") && !args[i - 1]?.startsWith("--"),
-  ) ?? path.join(os.homedir(), ".pi/agent/sessions");
 const since = Date.now() - days * 86_400_000;
+const home = os.homedir();
 
-// Kern's extensions: tools/messages that cost a full model round trip each.
+function defaultRoots() {
+  const roots = [];
+  try {
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(home, ".pi/agent/settings.json"), "utf8"),
+    );
+    if (typeof settings.sessionDir === "string" && settings.sessionDir.trim())
+      roots.push(settings.sessionDir.replace(/^~/, home));
+  } catch {}
+  roots.push(path.join(home, ".pi"), path.join(home, ".claude/projects"));
+  return roots;
+}
+const explicit = args.filter(
+  (arg, i) => !arg.startsWith("--") && !args[i - 1]?.startsWith("--"),
+);
+const roots = [...new Set(explicit.length ? explicit : defaultRoots())];
+
+// Kern's extensions: tools that cost a full model round trip each.
 const KERN_TOOLS = new Set([
   "set_task_contract",
   "run_check",
@@ -45,8 +65,10 @@ const KERN_TOOLS = new Set([
   "provide_pipeline_input",
 ]);
 const KERN_MESSAGES = /^kern-|^crc-/;
+const toolName = (name) => String(name ?? "").replace(/^mcp__[^_]+__/, "");
 
-function walk(dir, out = []) {
+function walk(dir, out = [], depth = 0) {
+  if (depth > 6) return out;
   let entries = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -55,8 +77,10 @@ function walk(dir, out = []) {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(full, out);
-    else if (entry.name.endsWith(".jsonl")) {
+    if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name === "bin") continue;
+      walk(full, out, depth + 1);
+    } else if (entry.name.endsWith(".jsonl")) {
       try {
         if (fs.statSync(full).mtimeMs >= since) out.push(full);
       } catch {}
@@ -78,55 +102,67 @@ const blank = () => ({
   compaction: 0,
   kernToolCalls: 0,
   toolCalls: 0,
+  continuations: 0,
   kernMessages: {},
   tools: {},
   models: {},
-  continuations: 0,
 });
-const add = (a, u) => {
-  a.input += u?.input ?? 0;
-  a.cacheRead += u?.cacheRead ?? 0;
-  a.cacheWrite += u?.cacheWrite ?? 0;
-  a.output += u?.output ?? 0;
+const addUsage = (s, u) => {
+  s.input += u.input;
+  s.cacheRead += u.cacheRead;
+  s.cacheWrite += u.cacheWrite;
+  s.output += u.output;
 };
+const request = (s, u, model, toolNames) => {
+  s.requests++;
+  addUsage(s, u);
+  const size = u.input + u.cacheRead + u.cacheWrite;
+  if (!s.firstRequest) s.firstRequest = size;
+  s.maxRequest = Math.max(s.maxRequest, size);
+  s.models[model] = (s.models[model] ?? 0) + 1;
+  for (const raw of toolNames) {
+    const name = toolName(raw);
+    s.toolCalls++;
+    s.tools[name] = (s.tools[name] ?? 0) + 1;
+    if (KERN_TOOLS.has(name)) s.kernToolCalls++;
+  }
+};
+const piUsage = (u) => ({
+  input: u?.input ?? 0,
+  cacheRead: u?.cacheRead ?? 0,
+  cacheWrite: u?.cacheWrite ?? 0,
+  output: u?.output ?? 0,
+});
+const claudeUsage = (u) => ({
+  input: u?.input_tokens ?? 0,
+  cacheRead: u?.cache_read_input_tokens ?? 0,
+  cacheWrite: u?.cache_creation_input_tokens ?? 0,
+  output: u?.output_tokens ?? 0,
+});
 
-const sessions = [];
-for (const file of walk(root)) {
-  const s = blank();
-  s.file = file;
+function parsePi(s, lines) {
   let lastRole = null;
-  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  for (const entry of lines) {
     if (entry.type === "session") s.cwd = entry.cwd;
     if (entry.type === "usage") {
-      if (entry.kind === "cache_warm") s.warm += entry.usage?.totalTokens ?? 0;
-      add(s, entry.usage);
+      const u = piUsage(entry.usage);
+      if (entry.kind === "cache_warm")
+        s.warm += u.input + u.cacheRead + u.cacheWrite + u.output;
+      addUsage(s, u);
       continue;
     }
     if (entry.type === "compaction" || entry.type === "branch_summary") {
-      const u = entry.usage;
-      s.compaction +=
-        (u?.input ?? 0) +
-        (u?.cacheRead ?? 0) +
-        (u?.cacheWrite ?? 0) +
-        (u?.output ?? 0);
-      add(s, u);
+      const u = piUsage(entry.usage);
+      s.compaction += u.input + u.cacheRead + u.cacheWrite + u.output;
+      addUsage(s, u);
       continue;
     }
-    if (
-      entry.type === "custom_message" &&
-      KERN_MESSAGES.test(entry.customType ?? "")
-    ) {
-      s.kernMessages[entry.customType] =
-        (s.kernMessages[entry.customType] ?? 0) + 1;
-      // A hidden Kern message right before a model request = an extra turn.
-      lastRole = "kern";
+    if (entry.type === "custom_message") {
+      if (KERN_MESSAGES.test(entry.customType ?? "")) {
+        s.kernMessages[entry.customType] =
+          (s.kernMessages[entry.customType] ?? 0) + 1;
+        lastRole = "kern";
+      }
       continue;
     }
     if (entry.type !== "message") continue;
@@ -135,52 +171,85 @@ for (const file of walk(root)) {
       s.prompts++;
       lastRole = "user";
     } else if (m.role === "assistant" && m.usage) {
-      s.requests++;
       if (lastRole === "kern") s.continuations++;
       lastRole = "assistant";
-      add(s, m.usage);
-      const size =
-        (m.usage.input ?? 0) +
-        (m.usage.cacheRead ?? 0) +
-        (m.usage.cacheWrite ?? 0);
-      if (!s.firstRequest) s.firstRequest = size;
-      s.maxRequest = Math.max(s.maxRequest, size);
-      const model = `${m.provider ?? "?"}/${m.model ?? "?"}`;
-      s.models[model] = (s.models[model] ?? 0) + 1;
-      for (const block of Array.isArray(m.content) ? m.content : []) {
-        if (block?.type !== "toolCall") continue;
-        s.toolCalls++;
-        s.tools[block.name] = (s.tools[block.name] ?? 0) + 1;
-        if (KERN_TOOLS.has(block.name)) s.kernToolCalls++;
-      }
+      request(
+        s,
+        piUsage(m.usage),
+        `${m.provider ?? "?"}/${m.model ?? "?"}`,
+        (Array.isArray(m.content) ? m.content : [])
+          .filter((block) => block?.type === "toolCall")
+          .map((block) => block.name),
+      );
     } else if (m.role === "toolResult") lastRole = "tool";
   }
-  if (s.requests) sessions.push(s);
 }
 
-const total = blank();
-for (const s of sessions) {
-  for (const key of [
-    "prompts",
-    "requests",
-    "input",
-    "cacheRead",
-    "cacheWrite",
-    "output",
-    "warm",
-    "compaction",
-    "kernToolCalls",
-    "toolCalls",
-    "continuations",
-  ])
-    total[key] += s[key];
-  for (const [k, v] of Object.entries(s.tools))
-    total.tools[k] = (total.tools[k] ?? 0) + v;
-  for (const [k, v] of Object.entries(s.kernMessages))
-    total.kernMessages[k] = (total.kernMessages[k] ?? 0) + v;
-  for (const [k, v] of Object.entries(s.models))
-    total.models[k] = (total.models[k] ?? 0) + v;
+function parseClaude(s, lines) {
+  // One API response is split over several lines sharing message.id.
+  const responses = new Map();
+  for (const entry of lines) {
+    if (entry.cwd && !s.cwd) s.cwd = entry.cwd;
+    const m = entry.message;
+    if (entry.type === "user" && m) {
+      const content = m.content;
+      const isToolResult =
+        Array.isArray(content) &&
+        content.some((block) => block?.type === "tool_result");
+      if (!isToolResult && !entry.isMeta && !entry.isCompactSummary)
+        s.prompts++;
+      continue;
+    }
+    if (entry.type !== "assistant" || !m?.usage) continue;
+    const id = m.id ?? entry.uuid;
+    const response = responses.get(id) ?? {
+      usage: m.usage,
+      model: m.model ?? "?",
+      tools: [],
+      sidechain: !!entry.isSidechain,
+    };
+    response.usage = m.usage; // last line carries the final output count
+    for (const block of Array.isArray(m.content) ? m.content : [])
+      if (block?.type === "tool_use") response.tools.push(block.name);
+    responses.set(id, response);
+  }
+  for (const response of responses.values())
+    request(
+      s,
+      claudeUsage(response.usage),
+      `claude/${response.model}${response.sidechain ? " (subagent)" : ""}`,
+      response.tools,
+    );
 }
+
+const sessions = [];
+const filesSeen = new Set();
+for (const root of roots) {
+  for (const file of walk(root)) {
+    if (filesSeen.has(file)) continue;
+    filesSeen.add(file);
+    const lines = [];
+    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        lines.push(JSON.parse(line));
+      } catch {}
+    }
+    const s = blank();
+    s.file = file;
+    if (lines.some((entry) => entry.type === "session" && entry.version)) {
+      s.kind = "pi";
+      parsePi(s, lines);
+    } else if (
+      lines.some((entry) => entry.type === "assistant" && entry.message?.usage)
+    ) {
+      s.kind = "claude-code";
+      parseClaude(s, lines);
+    } else continue;
+    if (s.requests) sessions.push(s);
+  }
+}
+
 const k = (n) =>
   n >= 1e6
     ? `${(n / 1e6).toFixed(2)}M`
@@ -192,62 +261,95 @@ const sent = (s) => s.input + s.cacheRead + s.cacheWrite;
 
 if (!sessions.length) {
   console.log(
-    `No pi sessions with usage in ${root} from the last ${days} days.`,
+    `No sessions with token usage in the last ${days} days under:\n  ${roots.join("\n  ")}`,
   );
   console.log(
-    "If Kern uses a custom sessionDir (pi settings.json), pass it as the first argument.",
+    "Pass the folder holding your session .jsonl files as an argument, or try --days 30.",
   );
   process.exit(0);
 }
 
-console.log(
-  `\nKern / pi token audit — ${sessions.length} sessions, last ${days} days, ${root}\n`,
-);
-console.log("TOTAL");
-console.log(`  user prompts           ${total.prompts}`);
-console.log(
-  `  model requests         ${total.requests}  (${(total.requests / Math.max(1, total.prompts)).toFixed(1)} per prompt)`,
-);
-console.log(
-  `  tokens sent            ${k(sent(total))}  (fresh input ${k(total.input)}, cache read ${k(total.cacheRead)}, cache write ${k(total.cacheWrite)})`,
-);
-console.log(
-  `  cache hit              ${pct(total.cacheRead, sent(total))} of tokens sent`,
-);
-console.log(`  output                 ${k(total.output)}`);
-console.log(`  cache warming          ${k(total.warm)}`);
-console.log(`  compaction/summaries   ${k(total.compaction)}`);
-console.log(
-  `  avg first request      ${k(Math.round(sessions.reduce((a, s) => a + s.firstRequest, 0) / sessions.length))}  (system prompt + tools + first message)`,
-);
-console.log(
-  `  tool calls             ${total.toolCalls}, of which Kern bookkeeping tools ${total.kernToolCalls} (${pct(total.kernToolCalls, total.toolCalls)})`,
-);
-console.log(
-  `  requests after a hidden Kern message (forced continuations) ${total.continuations}`,
-);
-console.log("\nModels");
-for (const [name, n] of Object.entries(total.models).sort(
-  (a, b) => b[1] - a[1],
-))
-  console.log(`  ${String(n).padStart(5)}  ${name}`);
-console.log("\nTop tools (each call = one more full-context request)");
-for (const [name, n] of Object.entries(total.tools)
-  .sort((a, b) => b[1] - a[1])
-  .slice(0, top))
+function report(label, group) {
+  const total = blank();
+  for (const s of group) {
+    for (const key of [
+      "prompts",
+      "requests",
+      "input",
+      "cacheRead",
+      "cacheWrite",
+      "output",
+      "warm",
+      "compaction",
+      "kernToolCalls",
+      "toolCalls",
+      "continuations",
+    ])
+      total[key] += s[key];
+    for (const field of ["tools", "kernMessages", "models"])
+      for (const [name, n] of Object.entries(s[field]))
+        total[field][name] = (total[field][name] ?? 0) + n;
+  }
+  console.log(`\n=== ${label}: ${group.length} sessions, last ${days} days`);
+  console.log(`  user prompts           ${total.prompts}`);
   console.log(
-    `  ${String(n).padStart(5)}  ${name}${KERN_TOOLS.has(name) ? "   <- Kern" : ""}`,
+    `  model requests         ${total.requests}  (${(total.requests / Math.max(1, total.prompts)).toFixed(1)} per prompt)`,
   );
-if (Object.keys(total.kernMessages).length) {
-  console.log("\nHidden Kern messages injected into context");
-  for (const [name, n] of Object.entries(total.kernMessages).sort(
+  console.log(
+    `  tokens sent            ${k(sent(total))}  (fresh input ${k(total.input)}, cache read ${k(total.cacheRead)}, cache write ${k(total.cacheWrite)})`,
+  );
+  console.log(
+    `  cache hit              ${pct(total.cacheRead, sent(total))} of tokens sent`,
+  );
+  console.log(`  output                 ${k(total.output)}`);
+  if (total.warm) console.log(`  cache warming          ${k(total.warm)}`);
+  if (total.compaction)
+    console.log(`  compaction/summaries   ${k(total.compaction)}`);
+  console.log(
+    `  avg first request      ${k(Math.round(group.reduce((a, s) => a + s.firstRequest, 0) / group.length))}  (system prompt + tools + first message)`,
+  );
+  console.log(
+    `  tool calls             ${total.toolCalls}, Kern bookkeeping tools ${total.kernToolCalls} (${pct(total.kernToolCalls, total.toolCalls)})`,
+  );
+  if (total.continuations)
+    console.log(
+      `  forced continuations   ${total.continuations} (request right after a hidden Kern message)`,
+    );
+  console.log("  models:");
+  for (const [name, n] of Object.entries(total.models).sort(
     (a, b) => b[1] - a[1],
   ))
-    console.log(`  ${String(n).padStart(5)}  ${name}`);
+    console.log(`    ${String(n).padStart(5)}  ${name}`);
+  console.log("  top tools (each call = one more full-context request):");
+  for (const [name, n] of Object.entries(total.tools)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, top))
+    console.log(
+      `    ${String(n).padStart(5)}  ${name}${KERN_TOOLS.has(name) ? "   <- Kern" : ""}`,
+    );
+  if (Object.keys(total.kernMessages).length) {
+    console.log("  hidden Kern messages:");
+    for (const [name, n] of Object.entries(total.kernMessages).sort(
+      (a, b) => b[1] - a[1],
+    ))
+      console.log(`    ${String(n).padStart(5)}  ${name}`);
+  }
+  console.log("  heaviest sessions:");
+  for (const s of [...group].sort((a, b) => sent(b) - sent(a)).slice(0, 6))
+    console.log(
+      `    ${k(sent(s)).padStart(7)} · ${String(s.requests).padStart(4)} req / ${s.prompts} prompts · first ${k(s.firstRequest)} · peak ${k(s.maxRequest)} · hit ${pct(s.cacheRead, sent(s))} · ${s.cwd ?? path.basename(s.file)}`,
+    );
 }
-console.log("\nHeaviest sessions");
-for (const s of sessions.sort((a, b) => sent(b) - sent(a)).slice(0, 8))
-  console.log(
-    `  ${k(sent(s)).padStart(7)} sent · ${String(s.requests).padStart(4)} req / ${s.prompts} prompts · first ${k(s.firstRequest)} · peak ${k(s.maxRequest)} · hit ${pct(s.cacheRead, sent(s))} · ${s.cwd ?? path.basename(s.file)}`,
-  );
+
+console.log(`Token audit — searched:\n  ${roots.join("\n  ")}`);
+for (const kind of ["pi", "claude-code"]) {
+  const group = sessions.filter((s) => s.kind === kind);
+  if (group.length)
+    report(
+      kind === "pi"
+        ? "pi harness"
+        : "Claude Code / ACP (incl. terminal Claude Code)",
+      group,
+    );
+}
 console.log("");
