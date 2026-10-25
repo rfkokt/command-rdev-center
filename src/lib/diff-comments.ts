@@ -20,3 +20,31 @@ export function diffLineLocations(header: string, lines: string[]) {
     return location;
   });
 }
+
+/** Unsent review comments survive closing the diff and restarting the app. */
+const storageKey = (chatId: string) => `kern:diff-comments:${chatId}`;
+export function loadDiffComments(chatId: string): DiffComment[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey(chatId)) ?? "[]");
+    return Array.isArray(value)
+      ? value.filter(
+          (comment): comment is DiffComment =>
+            !!comment &&
+            ["id", "path", "line", "text"].every(
+              (field) => typeof comment[field] === "string",
+            ),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+export function saveDiffComments(chatId: string, comments: DiffComment[]) {
+  try {
+    if (comments.length)
+      localStorage.setItem(storageKey(chatId), JSON.stringify(comments));
+    else localStorage.removeItem(storageKey(chatId));
+  } catch {
+    /* Comments still live in memory for this session. */
+  }
+}

@@ -8,6 +8,7 @@ import {
   inlineImageSize,
   estimatedImageTokens,
   prepareComposerImage,
+  MAX_INLINE_IMAGE_BASE64,
 } from "./attachments";
 
 afterEach(() => vi.restoreAllMocks());
@@ -36,8 +37,8 @@ describe("attachments", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
       drawImage,
     } as any);
-    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(
-      "data:image/png;base64,RESIZED",
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(
+      (mime?: string) => `data:${mime};base64,RESIZED`,
     );
     const stored = Object.freeze({
       id: "a",
@@ -50,7 +51,7 @@ describe("attachments", () => {
     const image = await prepareComposerImage(stored);
     expect(image).toMatchObject({
       data: "RESIZED",
-      mimeType: "image/png",
+      mimeType: "image/jpeg",
       path: stored.path,
       width: 1568,
       height: 1176,
@@ -59,6 +60,74 @@ describe("attachments", () => {
     expect(stored.data).toBe("ORIGINAL");
     expect(stored.mime).toBe("image/jpeg");
   });
+  it("keeps transparency for PNG and falls back to JPEG when PNG is too big", async () => {
+    vi.spyOn(window, "Image").mockImplementation(function () {
+      return {
+        naturalWidth: 3000,
+        naturalHeight: 2000,
+        onload: null,
+        set src(_value: string) {
+          queueMicrotask(() => (this as any).onload());
+        },
+      } as any;
+    });
+    const context = {
+      drawImage: vi.fn(),
+      fillRect: vi.fn(),
+      globalCompositeOperation: "source-over",
+      fillStyle: "",
+    };
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
+      context as any,
+    );
+    const encode = vi
+      .spyOn(HTMLCanvasElement.prototype, "toDataURL")
+      .mockImplementation((mime?: string) =>
+        mime === "image/png"
+          ? `data:image/png;base64,${"P".repeat(MAX_INLINE_IMAGE_BASE64 + 1)}`
+          : "data:image/jpeg;base64,SMALL",
+      );
+    const image = await prepareComposerImage({
+      id: "a",
+      name: "shot.png",
+      path: "/store/shot.png",
+      mime: "image/png",
+      size: 1,
+      data: "ORIGINAL",
+    });
+    expect(encode).toHaveBeenNthCalledWith(1, "image/png", undefined);
+    expect(image).toMatchObject({ data: "SMALL", mimeType: "image/jpeg" });
+    expect(context.fillRect).toHaveBeenCalled();
+  });
+
+  it("re-encodes small-dimension images whose bytes exceed the inline cap", async () => {
+    vi.spyOn(window, "Image").mockImplementation(function () {
+      return {
+        naturalWidth: 800,
+        naturalHeight: 600,
+        onload: null,
+        set src(_value: string) {
+          queueMicrotask(() => (this as any).onload());
+        },
+      } as any;
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage: vi.fn(),
+    } as any);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue(
+      "data:image/jpeg;base64,SMALLER",
+    );
+    const image = await prepareComposerImage({
+      id: "a",
+      name: "big.jpg",
+      path: "/store/big.jpg",
+      mime: "image/jpeg",
+      size: 1,
+      data: "J".repeat(MAX_INLINE_IMAGE_BASE64 + 1),
+    });
+    expect(image).toMatchObject({ data: "SMALLER", width: 800, height: 600 });
+  });
+
   it("rejects decode errors instead of sending unprocessed bytes", async () => {
     vi.spyOn(window, "Image").mockImplementation(function () {
       return {

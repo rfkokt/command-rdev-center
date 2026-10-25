@@ -864,21 +864,24 @@ impl AcpBridge {
         self.turn = Some(Turn::default());
         self.tools.clear();
         self.announced.clear();
-        let mut out = vec![
-            self.request(
-                "session/prompt",
-                json!({ "sessionId": session_id, "prompt": blocks }),
-                Pending::Prompt,
-            ),
-            Self::ui(json!({ "type": "agent_start" })),
-            Self::ui(json!({ "type": "message_start", "message": { "role": "assistant" } })),
-        ];
+        let mut out = vec![self.request(
+            "session/prompt",
+            json!({ "sessionId": session_id, "prompt": blocks }),
+            Pending::Prompt,
+        )];
+        // The notice lands before the assistant turn opens: appended after
+        // message_start it would sit below the streaming bubble and make the
+        // next delta open a second, empty assistant bubble.
         if omitted_images {
             out.push(Self::ui(json!({"type":"message_end", "message": {
                 "role":"custom", "customType":"kern-image-fallback", "display":true,
                 "content":"This agent cannot receive inline images. Only the attachment text and saved paths were sent."
             }})));
         }
+        out.push(Self::ui(json!({ "type": "agent_start" })));
+        out.push(Self::ui(
+            json!({ "type": "message_start", "message": { "role": "assistant" } }),
+        ));
         out
     }
 
@@ -1648,15 +1651,30 @@ mod tests {
     fn unsupported_inline_images_have_an_explicit_notice_and_keep_paths() {
         let mut bridge = ready_bridge(false);
         bridge.image_supported = false;
-        let out = bridge.start_prompt("look /store/shot.png".into(), vec![json!({"data":"AAAA", "mimeType":"image/png"})]);
+        let out = bridge.start_prompt(
+            "look /store/shot.png".into(),
+            vec![json!({"data":"AAAA", "mimeType":"image/png"})],
+        );
         let sent = agent(&out);
         let blocks = sent[0]["params"]["prompt"].as_array().unwrap();
         assert_eq!(blocks.len(), 1);
         let text = blocks[0]["text"].as_str().unwrap();
         assert!(text.contains("/store/shot.png"));
         assert!(text.contains("cannot receive inline images"));
-        assert!(ui(&out).iter().any(|event| event["message"]["customType"] == "kern-image-fallback"));
-        assert!(bridge.history.last().unwrap()["content"][0]["text"].as_str().unwrap().contains("cannot receive inline images"));
+        let events = ui(&out);
+        let notice = events
+            .iter()
+            .position(|event| event["message"]["customType"] == "kern-image-fallback")
+            .expect("notice");
+        let opened = events
+            .iter()
+            .position(|event| event["type"] == "message_start")
+            .expect("assistant turn");
+        assert!(notice < opened, "notice must precede the assistant turn");
+        assert!(bridge.history.last().unwrap()["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("cannot receive inline images"));
     }
 
     #[test]

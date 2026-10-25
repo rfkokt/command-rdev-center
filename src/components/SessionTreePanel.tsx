@@ -123,6 +123,84 @@ export function flattenEntries(entries: RawEntry[]): SessionTreeNode[] {
   return flattenTree(roots);
 }
 
+/** Full text of an entry's message (no truncation). */
+export function entryText(entry: RawEntry | undefined): string {
+  const content = entry?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content))
+    return content
+      .filter(
+        (part): part is { type: string; text?: string } =>
+          typeof part === "object" &&
+          part !== null &&
+          (part as { type?: unknown }).type === "text",
+      )
+      .map((part) => part.text ?? "")
+      .join("\n");
+  return typeof entry?.text === "string" ? entry.text : "";
+}
+
+/** User message entries on the active branch (root → leaf), oldest first. */
+export function activeBranchUserEntries(
+  entries: RawEntry[],
+  leafId?: string,
+): Array<{ id: string; text: string }> {
+  const byId = new Map<string, RawEntry>();
+  for (const entry of entries)
+    if (typeof entry.id === "string") byId.set(entry.id, entry);
+  let cursor: RawEntry | undefined =
+    (leafId && byId.get(leafId)) || entries[entries.length - 1] || undefined;
+  const path: RawEntry[] = [];
+  const seen = new Set<RawEntry>();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    path.push(cursor);
+    cursor =
+      typeof cursor.parentId === "string"
+        ? byId.get(cursor.parentId)
+        : undefined;
+  }
+  return path
+    .reverse()
+    .filter(
+      (entry) =>
+        entry.type === "message" &&
+        entry.message?.role === "user" &&
+        typeof entry.id === "string",
+    )
+    .map((entry) => ({ id: entry.id as string, text: entryText(entry) }));
+}
+
+const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * Which session entry a chat's user message is, for Edit & resend. The chat
+ * shows what the user typed while the entry holds what the agent received
+ * (plan prefix, attachments, context), so entries are matched by containment,
+ * then by position among equal texts. Null when it can't be told safely.
+ */
+export function pickEditTarget(
+  branch: Array<{ id: string; text: string }>,
+  shownUserTexts: string[],
+  index: number,
+): string | null {
+  const shown = squash(shownUserTexts[index] ?? "").slice(0, 200);
+  const matches = (entry: { text: string }) =>
+    !shown || squash(entry.text).includes(shown);
+  if (
+    branch.length === shownUserTexts.length &&
+    branch[index] &&
+    matches(branch[index])
+  )
+    return branch[index].id;
+  if (!shown) return null;
+  const same = shownUserTexts
+    .slice(0, index)
+    .filter((text) => squash(text).slice(0, 200) === shown).length;
+  const candidates = branch.filter(matches);
+  return candidates[same]?.id ?? null;
+}
+
 export function canForkNode(node: SessionTreeNode): boolean {
   return Boolean(node.id) && node.kind === "message" && node.role === "user";
 }

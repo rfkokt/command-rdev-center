@@ -75,6 +75,24 @@ export function estimatedImageTokens(width: number, height: number) {
   return Math.ceil((width * height) / 750);
 }
 
+/**
+ * Vision APIs cap one inline image at about 5 MB (Anthropic: 5 MB). Kept a
+ * little under so the base64 body, not the decoded bytes, stays in bounds.
+ */
+export const MAX_INLINE_IMAGE_BASE64 = 4_900_000;
+
+function encodeCanvas(
+  canvas: HTMLCanvasElement,
+  mime: string,
+  quality?: number,
+) {
+  const encoded = canvas.toDataURL(mime, quality);
+  const prefix = `data:${mime};base64,`;
+  if (!encoded.startsWith(prefix))
+    throw new Error("Couldn't encode resized image");
+  return encoded.slice(prefix.length);
+}
+
 /** Prepare inline bytes only. The attachment store's original is never changed. */
 export async function prepareComposerImage(
   stored: StoredAttachment,
@@ -89,22 +107,35 @@ export async function prepareComposerImage(
   const size = inlineImageSize(image.naturalWidth, image.naturalHeight);
   let data = stored.data;
   let mimeType = stored.mime;
-  if (
-    size.width !== image.naturalWidth ||
-    size.height !== image.naturalHeight
-  ) {
+  const resized =
+    size.width !== image.naturalWidth || size.height !== image.naturalHeight;
+  if (resized || data.length > MAX_INLINE_IMAGE_BASE64) {
     const canvas = document.createElement("canvas");
     canvas.width = size.width;
     canvas.height = size.height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Image resizing is unavailable");
     context.drawImage(image, 0, 0, size.width, size.height);
-    // PNG preserves transparency; animated input becomes a static inline frame.
-    const encoded = canvas.toDataURL("image/png");
-    if (!encoded.startsWith("data:image/png;base64,"))
-      throw new Error("Couldn't encode resized image");
-    data = encoded.slice("data:image/png;base64,".length);
-    mimeType = "image/png";
+    // Photos stay JPEG: a 1568px photo re-encoded as PNG is often several MB
+    // and can exceed the provider's inline limit. Other formats become PNG to
+    // keep transparency; animated input becomes a static inline frame.
+    if (stored.mime === "image/jpeg") {
+      data = encodeCanvas(canvas, "image/jpeg", 0.9);
+      mimeType = "image/jpeg";
+    } else {
+      data = encodeCanvas(canvas, "image/png");
+      mimeType = "image/png";
+    }
+    if (data.length > MAX_INLINE_IMAGE_BASE64) {
+      // Last resort for huge PNG screenshots: flatten onto white as JPEG.
+      context.globalCompositeOperation = "destination-over";
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, size.width, size.height);
+      data = encodeCanvas(canvas, "image/jpeg", 0.85);
+      mimeType = "image/jpeg";
+    }
+    if (data.length > MAX_INLINE_IMAGE_BASE64)
+      throw new Error("Image is too large to send inline even after resizing");
   }
   return {
     type: "image",
@@ -115,6 +146,11 @@ export async function prepareComposerImage(
     mimeType,
     ...size,
   };
+}
+
+/** Re-open a file already in the attachment store (draft restore) without copying it. */
+export function readStoredAttachment(path: string) {
+  return invoke<StoredAttachment>("read_stored_attachment", { path });
 }
 
 /** Copy a dropped or picked file into the chat's store (images come back with data). */

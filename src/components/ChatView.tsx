@@ -44,9 +44,22 @@ import {
   storePastedFile,
   toChatImage,
 } from "../lib/attachments";
-import { planImageDelivery } from "../lib/attachment-delivery";
+import {
+  planImageDelivery,
+  stripDeliveryEnvelope,
+} from "../lib/attachment-delivery";
 import { useChatDraft } from "../lib/use-chat-draft";
-import { formatDiffComments, type DiffComment } from "../lib/diff-comments";
+import {
+  findMatchIndex,
+  REVEAL_EVENT,
+  takeReveal,
+} from "../lib/message-reveal";
+import {
+  formatDiffComments,
+  loadDiffComments,
+  saveDiffComments,
+  type DiffComment,
+} from "../lib/diff-comments";
 import {
   formatTokens,
   cacheHitPercent,
@@ -110,7 +123,10 @@ import ChatComposer from "./ChatComposer";
 import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
 import type { OfficeView } from "./OfficePanel";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
-import SessionTreePanel from "./SessionTreePanel";
+import SessionTreePanel, {
+  activeBranchUserEntries,
+  pickEditTarget,
+} from "./SessionTreePanel";
 import WorktreeSetup from "./WorktreeSetup";
 import Mascot from "./Mascot";
 import {
@@ -534,7 +550,13 @@ export default function ChatView({
   // pi; the displayed user message stays raw.
   const [planMode, setPlanMode] = useState(false);
   const [sessionTreeOpen, setSessionTreeOpen] = useState(false);
-  const [diffComments, setDiffComments] = useState<DiffComment[]>([]);
+  const [diffComments, setDiffComments] = useState<DiffComment[]>(() =>
+    loadDiffComments(chatId),
+  );
+  useEffect(
+    () => saveDiffComments(chatId, diffComments),
+    [chatId, diffComments],
+  );
   const [previewImage, setPreviewImage] = useState<ChatImage | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isAborting, setIsAborting] = useState(false);
@@ -2176,6 +2198,9 @@ export default function ChatView({
                   }
                   if (!text && typeof mm.text === "string")
                     text = mm.text as string;
+                  // The agent got image paths + a fallback marker; show what
+                  // the user typed.
+                  if (role === "user") text = stripDeliveryEnvelope(text);
                   if (!text && historyImages.length === 0) return null;
                   return {
                     id: (mm.id as string) ?? uid(),
@@ -4057,6 +4082,26 @@ export default function ChatView({
     return () => window.removeEventListener("kern-open-model-picker", open);
   }, [isActive, sendRaw]);
 
+  const worktreePathRef = useRef<string | null>(null);
+  worktreePathRef.current = worktree?.worktree_path ?? null;
+  // Type a command into the chat terminal's first pane, opening it if needed.
+  // terminal_open is idempotent (returns scrollback for a live session).
+  const runInChatTerminal = useCallback(
+    async (command: string) => {
+      setTerminalMounted(true);
+      setShowTerminal(true);
+      const key = `${chatId}__0`;
+      await invoke("terminal_open", {
+        chatId: key,
+        cwd: worktreePathRef.current ?? cwdRef.current,
+        cols: 120,
+        rows: 32,
+      });
+      await invoke("terminal_write", { chatId: key, data: `${command}\r` });
+    },
+    [chatId],
+  );
+
   function openModelPicker() {
     setModelPickerOpen(true);
   }
@@ -4533,7 +4578,71 @@ export default function ChatView({
       }
     >(),
   );
-  const rowFlags = `${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${fixingPiIssueId}|${globalChat}|${terminalApprovalStatus}`;
+  // Edit & resend (O1-07): branch the pi session just before this user
+  // message (pi `fork`), put its text back in the composer, and let the user
+  // edit and send. Later turns leave the model context but stay in the
+  // session tree; worktree files are not rewound.
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const editAndResend = async (m: ChatMessage) => {
+    if (agentStatus === "running" || editingMessageId) {
+      onToast("Wait until the agent is idle to edit a message.");
+      return;
+    }
+    if (currentHarness !== "pi") {
+      onToast(
+        "Edit & resend needs session branching, which only pi supports right now.",
+      );
+      return;
+    }
+    const users = messages.filter((item) => item.role === "user");
+    const index = users.findIndex((item) => item.id === m.id);
+    setEditingMessageId(m.id);
+    try {
+      const tree = await invoke<{
+        entries?: Array<Record<string, unknown>>;
+        leafId?: string;
+      }>("get_session_tree", { sessionId });
+      const target = pickEditTarget(
+        activeBranchUserEntries(
+          (tree.entries ?? []) as Parameters<typeof activeBranchUserEntries>[0],
+          tree.leafId,
+        ),
+        users.map((item) => stripDeliveryEnvelope(item.text)),
+        index,
+      );
+      if (!target) {
+        onToast(
+          "Couldn't match this message in the session. Pick it in the session tree.",
+        );
+        setSessionTreeOpen(true);
+        return;
+      }
+      const data = await invoke<{ text?: string; cancelled?: boolean }>(
+        "fork_session",
+        { sessionId, nodeId: target },
+      );
+      if (data.cancelled) {
+        onToast("Edit cancelled");
+        return;
+      }
+      // The chat shows what the user typed; pi returns what the agent got
+      // (plan prefix, attachment and task context). Edit the typed text.
+      handleSessionForked(
+        stripDeliveryEnvelope(m.text) || stripDeliveryEnvelope(data.text ?? ""),
+      );
+      onToast(
+        "Edit the message and send. Later replies left the model context; worktree files are unchanged.",
+      );
+    } catch (error) {
+      onToast(`Edit & resend: ${String(error)}`);
+    } finally {
+      setEditingMessageId(null);
+    }
+  };
+  const editAndResendRef = useRef(editAndResend);
+  editAndResendRef.current = editAndResend;
+
+  const rowFlags = `${currentHarness}|${editingMessageId}|${chatId}|${copiedMessageId}|${savingMessageId}|${agentStatus}|${messages[messages.length - 1]?.id}|${worktreeDiff?.files.length}|${lastAssistantId}|${isRestarting}|${fixingPiIssueId}|${globalChat}|${terminalApprovalStatus}`;
   if (rowCacheRef.current.size > messages.length + 32) {
     const alive = new Set(messages.map((message) => message.id));
     for (const id of rowCacheRef.current.keys())
@@ -4600,6 +4709,58 @@ export default function ChatView({
 
   // Renders one virtualized feed row. Unchanged message rows are served from
   // rowCacheRef so streamed tokens only re-render the active row.
+  // Session search (O2-02): scroll to the message that matched and flash it.
+  const [revealedMessageId, setRevealedMessageId] = useState<string | null>(
+    null,
+  );
+  const feedItemsRef = useRef(feedItems);
+  feedItemsRef.current = feedItems;
+  useEffect(() => {
+    if (!isActive || isHistoryLoading) return;
+    const timers: number[] = [];
+    const reveal = (query: string) => {
+      const items = feedItemsRef.current;
+      const index = findMatchIndex(
+        items.map((item) =>
+          item.kind === "message"
+            ? stripDeliveryEnvelope(item.message.text)
+            : null,
+        ),
+        query,
+      );
+      const item = items[index];
+      if (index < 0 || item?.kind !== "message") {
+        onToast(
+          "Opened the chat; the matching message is older than the loaded history.",
+        );
+        return;
+      }
+      atBottomRef.current = false;
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: "center",
+        behavior: "auto",
+      });
+      setRevealedMessageId(item.message.id);
+      timers.push(window.setTimeout(() => setRevealedMessageId(null), 2400));
+    };
+    const queued = takeReveal(chatId);
+    // After the activation scroll-to-bottom (0 and 80 ms) has run.
+    if (queued) timers.push(window.setTimeout(() => reveal(queued), 160));
+    const onReveal = (event: Event) => {
+      const detail = (event as CustomEvent<{ chatId: string; query: string }>)
+        .detail;
+      if (detail?.chatId !== chatId) return;
+      const query = takeReveal(chatId);
+      if (query) timers.push(window.setTimeout(() => reveal(query), 160));
+    };
+    window.addEventListener(REVEAL_EVENT, onReveal);
+    return () => {
+      window.removeEventListener(REVEAL_EVENT, onReveal);
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [isActive, isHistoryLoading, chatId, onToast]);
+
   const renderFeedItemInner = (item: FeedItem): ReactNode => {
     if (item.kind === "session-loading") {
       return (
@@ -5063,6 +5224,20 @@ export default function ChatView({
               {fixingPiIssueId === m.id ? "AI IS FIXING…" : "✦ FIX WITH AI"}
             </button>
           )}
+          {m.role === "user" &&
+            currentHarness === "pi" &&
+            agentStatus !== "running" &&
+            !globalChat && (
+              <button
+                className="chat-edit-resend"
+                onClick={() => void editAndResendRef.current(m)}
+                disabled={editingMessageId !== null}
+                title="Edit & resend: branch the chat from this message"
+                aria-label="Edit and resend this message"
+              >
+                {editingMessageId === m.id ? "…" : "EDIT"}
+              </button>
+            )}
           {(m.createdAt || m.durationMs) && (
             <div className="chat-message-meta">
               {m.createdAt && (
@@ -5549,6 +5724,11 @@ export default function ChatView({
 
   const renderFeedItem = (index: number, item: FeedItem): ReactNode => (
     <div
+      className={
+        item.kind === "message" && item.message.id === revealedMessageId
+          ? "feed-item-revealed"
+          : undefined
+      }
       style={
         index === 0
           ? { ...FEED_ITEM_STYLE, paddingTop: "var(--spacing-xl)" }
@@ -6189,6 +6369,7 @@ export default function ChatView({
             project={projectPath}
             worktree={worktree.worktree_path}
             onToast={onToast}
+            runInTerminal={runInChatTerminal}
           />
         )}
         <ChatComposer
@@ -6209,7 +6390,7 @@ export default function ChatView({
           input={input}
           promptHistory={messages
             .filter((message) => message.role === "user")
-            .map((message) => message.text)}
+            .map((message) => stripDeliveryEnvelope(message.text))}
           images={images}
           imageSupport={imageSupportOf(currentModel)}
           dropActive={dropActive}

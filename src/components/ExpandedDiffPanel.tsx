@@ -7,7 +7,8 @@ import {
   type Ref,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { diffLineLocations, type DiffComment } from "../lib/diff-comments";
+import type { DiffComment } from "../lib/diff-comments";
+import { sideBySide } from "./chat-diff-utils";
 import {
   buildHunkPatch,
   flattenHunks,
@@ -79,7 +80,11 @@ export default function ExpandedDiffPanel({
   onToast,
   onDiffInvalidated,
 }: ExpandedDiffPanelProps) {
-  const [commentLine, setCommentLine] = useState<string | null>(null);
+  // Inline comment zone under one split row (Orca's diff-comment zone).
+  const [commentTarget, setCommentTarget] = useState<{
+    row: string;
+    line: string;
+  } | null>(null);
   const [commentText, setCommentText] = useState("");
   const dragRef = useRef<{
     startX: number;
@@ -102,6 +107,8 @@ export default function ExpandedDiffPanel({
     [file?.patch],
   );
   const hunks = useMemo(() => flattenHunks(sections), [sections]);
+  const hunkPatch = (entry: { hunk: { header: string; lines: string[] } }) =>
+    `${entry.hunk.header}\n${entry.hunk.lines.join("\n")}`;
 
   // Hunk ids explicitly accepted / rejected in this review session.
   // Accept is the default state: the change is already in the worktree.
@@ -338,6 +345,44 @@ export default function ExpandedDiffPanel({
               className="split-diff vscode-split"
               style={{ maxHeight: "none" }}
             >
+              {comments.length > 0 && (
+                <section
+                  className="diff-comment-batch"
+                  aria-label="Pending review comments"
+                >
+                  <div>
+                    <strong>
+                      {comments.length} pending review comment
+                      {comments.length === 1 ? "" : "s"}
+                    </strong>
+                    <button type="button" onClick={onSendComments}>
+                      Send {comments.length} review comment
+                      {comments.length === 1 ? "" : "s"} to agent
+                    </button>
+                  </div>
+                  <ul>
+                    {comments.map((comment) => (
+                      <li key={comment.id}>
+                        <code>
+                          {comment.path} {comment.line}
+                        </code>{" "}
+                        {comment.text.length > 80
+                          ? `${comment.text.slice(0, 80)}…`
+                          : comment.text}
+                        {comment.path !== diffKey && (
+                          <button
+                            type="button"
+                            onClick={() => onRemoveComment?.(comment.id)}
+                            aria-label={`Remove comment ${comment.path} ${comment.line}`}
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               <header>
                 <span>BEFORE</span>
                 <span>AFTER</span>
@@ -403,103 +448,128 @@ export default function ExpandedDiffPanel({
                         </button>
                       </div>
                     </div>
-                    <pre
-                      className="diff-code"
-                      aria-label={`Diff lines for ${diffKey}`}
-                    >
-                      {entry.hunk.lines.map((text, index) => {
-                        const line = diffLineLocations(
-                          entry.hunk.header,
-                          entry.hunk.lines,
-                        )[index];
-                        return (
-                          <div key={index}>
-                            {onComment && line !== "metadata" && (
+                    {sideBySide(hunkPatch(entry)).map((row, rowIndex) => {
+                      const rowKey = `${id}|${rowIndex}`;
+                      const rowComments = comments.filter(
+                        (comment) =>
+                          comment.path === diffKey &&
+                          [row.before, row.after].some(
+                            (side, si) =>
+                              side.number !== undefined &&
+                              comment.line ===
+                                `${si === 0 ? "old" : "new"}:${side.number}`,
+                          ),
+                      );
+                      return (
+                        <div key={rowIndex}>
+                          <div className="split-row">
+                            {[row.before, row.after].map((side, si) => {
+                              const location =
+                                side.number === undefined ||
+                                side.kind === "empty"
+                                  ? null
+                                  : `${si === 0 ? "old" : "new"}:${side.number}`;
+                              return (
+                                <div
+                                  className={`diff-line ${side.kind}`}
+                                  key={si}
+                                >
+                                  {onComment && location ? (
+                                    <button
+                                      type="button"
+                                      className="diff-line-comment"
+                                      aria-label={`Comment on ${diffKey} ${location}`}
+                                      title="Add a review comment on this line"
+                                      onClick={() => {
+                                        setCommentTarget({
+                                          row: rowKey,
+                                          line: location,
+                                        });
+                                        setCommentText("");
+                                      }}
+                                    >
+                                      {side.number}
+                                    </button>
+                                  ) : (
+                                    <span>{side.number ?? ""}</span>
+                                  )}
+                                  <code>{side.text || " "}</code>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {rowComments.map((comment) => (
+                            <div className="diff-comment-card" key={comment.id}>
+                              <small>{comment.line}</small>
+                              <p>{comment.text}</p>
                               <button
-                                aria-label={`Comment on ${diffKey} ${line}`}
-                                onClick={() => setCommentLine(`${id}|${line}`)}
+                                type="button"
+                                onClick={() => onRemoveComment?.(comment.id)}
+                                aria-label={`Remove comment ${comment.path} ${comment.line}`}
                               >
-                                {line}
+                                Remove
                               </button>
-                            )}
-                            <code>{text}</code>
-                          </div>
-                        );
-                      })}
-                    </pre>
-                    {onComment && (
-                      <details
-                        open={commentLine?.startsWith(`${id}|`) || undefined}
-                      >
-                        <summary>Add line comment</summary>
-                        <select
-                          aria-label="Diff line"
-                          value={
-                            commentLine?.startsWith(`${id}|`) ? commentLine : ""
-                          }
-                          onChange={(event) =>
-                            setCommentLine(event.target.value)
-                          }
-                        >
-                          <option value="">Choose a line</option>
-                          {diffLineLocations(
-                            entry.hunk.header,
-                            entry.hunk.lines,
-                          ).map((line, index) => (
-                            <option
-                              key={`${line}-${index}`}
-                              value={`${id}|${line}`}
-                            >
-                              {line} {entry.hunk.lines[index].slice(0, 100)}
-                            </option>
+                            </div>
                           ))}
-                        </select>
-                        <textarea
-                          aria-label="Diff comment"
-                          value={commentText}
-                          onChange={(event) =>
-                            setCommentText(event.target.value)
-                          }
-                        />
-                        <button
-                          disabled={
-                            !commentLine?.startsWith(`${id}|`) ||
-                            !commentText.trim()
-                          }
-                          onClick={() => {
-                            onComment(
-                              diffKey,
-                              commentLine!.split("|")[1],
-                              commentText.trim(),
-                            );
-                            setCommentText("");
-                          }}
-                        >
-                          Add comment
-                        </button>
-                      </details>
-                    )}
-                    {comments.length > 0 && (
-                      <section aria-label="Pending review comments">
-                        {comments.map((comment) => (
-                          <div key={comment.id}>
-                            <strong>
-                              {comment.path} {comment.line}
-                            </strong>
-                            <p>{comment.text}</p>
-                            <button
-                              onClick={() => onRemoveComment?.(comment.id)}
-                              aria-label={`Remove comment ${comment.path} ${comment.line}`}
+                          {onComment && commentTarget?.row === rowKey && (
+                            <form
+                              className="diff-comment-card diff-comment-form"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                if (!commentText.trim()) return;
+                                onComment(
+                                  diffKey,
+                                  commentTarget.line,
+                                  commentText.trim(),
+                                );
+                                setCommentText("");
+                                setCommentTarget(null);
+                              }}
                             >
-                              Remove
-                            </button>
-                          </div>
-                        ))}
-                        <button onClick={onSendComments}>
-                          Send {comments.length} review comments
-                        </button>
-                      </section>
-                    )}
+                              <small>
+                                Comment on {diffKey} {commentTarget.line} ·
+                                Markdown
+                              </small>
+                              <textarea
+                                aria-label="Diff comment"
+                                autoFocus
+                                value={commentText}
+                                onChange={(event) =>
+                                  setCommentText(event.target.value)
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Escape") {
+                                    event.stopPropagation();
+                                    setCommentTarget(null);
+                                  }
+                                  if (
+                                    event.key === "Enter" &&
+                                    (event.metaKey || event.ctrlKey)
+                                  ) {
+                                    event.preventDefault();
+                                    event.currentTarget.form?.requestSubmit();
+                                  }
+                                }}
+                              />
+                              <div>
+                                <button
+                                  type="submit"
+                                  disabled={!commentText.trim()}
+                                >
+                                  Add comment
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCommentTarget(null)}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })}

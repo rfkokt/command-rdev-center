@@ -43,12 +43,54 @@ test("clicks a diff line to add a located comment and manages pending batch", ()
   fireEvent.change(screen.getByRole("textbox", { name: "Diff comment" }), {
     target: { value: "Fix this" },
   });
-  fireEvent.click(screen.getByText("Add comment"));
+  fireEvent.click(screen.getByRole("button", { name: "Add comment" }));
   expect(add).toHaveBeenCalledWith("a.ts", "new:1", "Fix this");
   fireEvent.click(
     screen.getByRole("button", { name: "Remove comment b.ts new:4" }),
   );
   expect(remove).toHaveBeenCalledWith("c");
-  fireEvent.click(screen.getByText("Send 1 review comments"));
+  fireEvent.click(screen.getByText("Send 1 review comment to agent"));
   expect(send).toHaveBeenCalledOnce();
+});
+
+test("keeps the side-by-side view and renders the batch once across hunks", () => {
+  render(
+    <ExpandedDiffPanel
+      diffKey="a.ts"
+      worktreeDiff={{
+        merge_base: "main",
+        files: [
+          {
+            path: "a.ts",
+            status: "M",
+            added: 2,
+            removed: 2,
+            patch:
+              "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n@@ -10 +10 @@\n-x\n+y",
+          },
+        ],
+      }}
+      position={{ x: 0, y: 0 }}
+      dialogRef={createRef()}
+      onPositionChange={vi.fn()}
+      onClose={vi.fn()}
+      worktreePath="/repo"
+      onToast={vi.fn()}
+      comments={[{ id: "c", path: "a.ts", line: "new:10", text: "Look here" }]}
+      onComment={vi.fn()}
+      onRemoveComment={vi.fn()}
+      onSendComments={vi.fn()}
+    />,
+  );
+  expect(screen.getAllByLabelText("Pending review comments")).toHaveLength(1);
+  expect(document.querySelectorAll(".split-row").length).toBeGreaterThanOrEqual(
+    2,
+  );
+  // The card for new:10 sits under its own row.
+  const cards = document.querySelectorAll(".diff-comment-card");
+  expect(cards).toHaveLength(1);
+  expect(cards[0].textContent).toContain("Look here");
+  expect(
+    screen.getByRole("button", { name: "Comment on a.ts old:10" }),
+  ).toBeTruthy();
 });

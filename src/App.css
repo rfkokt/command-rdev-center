@@ -5536,3 +5536,149 @@ select:focus-visible {
   padding: 8px 16px;
   border-top: 1px solid var(--colors-hairline);
 }
+
+/* kern.yaml worktree setup banner (orca-essentials O2-03) */
+.worktree-setup {
+  margin: 8px 16px;
+}
+.worktree-setup p {
+  margin: 0;
+  color: var(--colors-ink-muted, inherit);
+  font-size: var(--fs-small);
+}
+.worktree-setup-rerun {
+  margin: 4px 16px;
+  font-size: var(--fs-small);
+  color: var(--colors-ink-muted, inherit);
+}
+.worktree-setup-rerun summary {
+  cursor: pointer;
+}
+.worktree-setup-rerun pre {
+  margin: 6px 0;
+  white-space: pre-wrap;
+  font: 12px/1.5 var(--font-mono);
+}
+
+/* Session search jump target (orca-essentials O2-02) */
+.feed-item-revealed {
+  border-radius: 8px;
+  animation: feed-item-reveal 2.4s ease-out;
+}
+@keyframes feed-item-reveal {
+  0%,
+  40% {
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .feed-item-revealed {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+}
+
+/* Diff review comments (orca-essentials O3-01): the line number is the
+   comment affordance; cards and the inline form sit under the row. */
+.diff-line > .diff-line-comment {
+  padding: 1px 8px;
+  border: 0;
+  border-right: 1px solid #292b25;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+  user-select: none;
+}
+.diff-line > .diff-line-comment:hover,
+.diff-line > .diff-line-comment:focus-visible {
+  background: var(--accent);
+  color: var(--colors-canvas);
+  outline: none;
+}
+.diff-comment-card {
+  display: grid;
+  gap: 6px;
+  min-width: 760px;
+  margin: 4px 8px 6px 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--colors-surface-card, #151612);
+  font: var(--fs-small) / 1.45 var(--font-sans, inherit);
+}
+.diff-comment-card small {
+  color: var(--accent);
+  font-family: var(--font-mono);
+}
+.diff-comment-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+.diff-comment-card > button,
+.diff-comment-form > div {
+  justify-self: start;
+}
+.diff-comment-form textarea {
+  min-height: 64px;
+  resize: vertical;
+  font: 12px/1.5 var(--font-mono);
+}
+.diff-comment-form > div {
+  display: flex;
+  gap: 6px;
+}
+.diff-comment-batch {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--accent);
+  background: #141310;
+  font-size: var(--fs-small);
+}
+.diff-comment-batch > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.diff-comment-batch ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+/* Edit & resend on a user message (orca-essentials O1-07) */
+.chat-bubble-user > .chat-edit-resend {
+  position: absolute;
+  right: 0;
+  bottom: -30px;
+  padding: 3px 8px;
+  border: 1px solid var(--colors-hairline-strong, #3b3c35);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--colors-muted);
+  font-size: var(--type-xs);
+  letter-spacing: 0.08em;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.chat-bubble-user:hover > .chat-edit-resend,
+.chat-bubble-user > .chat-edit-resend:focus-visible,
+.chat-bubble-user > .chat-edit-resend:disabled {
+  opacity: 1;
+}
+.chat-bubble-user > .chat-edit-resend:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

@@ -1235,3 +1235,61 @@
 .chat-office-layer.is-collapsed .chat-office-pip-grip {
   visibility: hidden;
 }
+
+/* Pull request & CI (orca-essentials O3-02) */
+.app-shell .kscm-pr {
+  margin: 0 12px 8px;
+  font-size: var(--fs-small);
+}
+.app-shell .kscm-pr > summary {
+  cursor: pointer;
+  color: var(--text-muted, inherit);
+  padding: 4px 0;
+}
+.app-shell .kscm-pr label {
+  display: grid;
+  gap: 3px;
+  margin-top: 6px;
+}
+.app-shell .kscm-pr input,
+.app-shell .kscm-pr select,
+.app-shell .kscm-pr textarea {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-card);
+  color: var(--text-strong);
+  font: inherit;
+}
+.app-shell .kscm-pr textarea {
+  min-height: 52px;
+  resize: vertical;
+}
+.app-shell .kscm-pr-note {
+  margin: 6px 0;
+  color: var(--text-muted, inherit);
+}
+.app-shell .kscm-pr-actions {
+  display: flex;
+  gap: 6px;
+}
+.app-shell .kscm-pr-actions > button {
+  flex: 1;
+  height: 28px;
+}
+.app-shell .kscm-pr-status {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0;
+}
+.app-shell .kscm-pr-status ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.app-shell .kscm-pr-status li[data-tone="failed"] {
+  color: #ff9b96;
+}
+.app-shell .kscm-pr-status li[data-tone="passed"] {
+  color: #9fe0ab;
+}

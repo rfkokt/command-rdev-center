@@ -217,6 +217,54 @@ pub fn store_file(root: &Path, chat: &str, source: &Path) -> Result<StoredAttach
     commit(root, chat, &name, None, |temp| std::fs::copy(source, temp))
 }
 
+/// Re-open an upload that already lives under `root` (draft restore), without
+/// copying it again. Anything outside the store is refused.
+pub fn read_stored(root: &Path, path: &Path) -> Result<StoredAttachment, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("attachment store: {e}"))?;
+    let path = path
+        .canonicalize()
+        .map_err(|e| format!("Attachment is no longer available: {e}"))?;
+    if !path.starts_with(&root) {
+        return Err("Not an attachment-store file".into());
+    }
+    let metadata = std::fs::metadata(&path).map_err(|e| format!("attachment store: {e}"))?;
+    if !metadata.is_file() {
+        return Err("Not an attachment-store file".into());
+    }
+    if metadata.len() > MAX_ATTACHMENT_BYTES {
+        return Err(too_large(metadata.len()));
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("attachment")
+        .to_string();
+    let id = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let mime = mime_for(&name);
+    let data = if is_inline_image(&mime) {
+        Some(base64(
+            &std::fs::read(&path).map_err(|e| format!("attachment store: {e}"))?,
+        ))
+    } else {
+        None
+    };
+    Ok(StoredAttachment {
+        id,
+        name,
+        path: path.to_string_lossy().into_owned(),
+        mime,
+        size: metadata.len(),
+        data,
+    })
+}
+
 /// Remove upload directories last touched before `now - keep`; then any chat
 /// directory left empty. Returns how many uploads went.
 pub fn sweep(root: &Path, keep: Duration, now: SystemTime) -> usize {
@@ -299,9 +347,34 @@ pub fn store_attachment_file(
     Ok(stored)
 }
 
+/// Reload a stored attachment for a restored draft (no new copy).
+#[tauri::command(async)]
+pub fn read_stored_attachment(app: AppHandle, path: String) -> Result<StoredAttachment, String> {
+    read_stored(&store_root(&app)?, Path::new(&path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_stored_reopens_without_copying_and_refuses_outside_files() {
+        let root = temp_root("reopen");
+        let stored = store_bytes(&root, "chat-1", "shot.png", None, b"png").unwrap();
+        let again = read_stored(&root, Path::new(&stored.path)).unwrap();
+        assert_eq!(
+            Path::new(&again.path),
+            Path::new(&stored.path).canonicalize().unwrap()
+        );
+        assert_eq!(again.mime, "image/png");
+        assert_eq!(again.data.as_deref(), Some(base64(b"png").as_str()));
+        assert_eq!(std::fs::read_dir(root.join("chat-1")).unwrap().count(), 1);
+        let outside = root.with_extension("outside.png");
+        std::fs::write(&outside, b"x").unwrap();
+        assert!(read_stored(&root, &outside).is_err());
+        let _ = std::fs::remove_file(outside);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     fn temp_root(tag: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!("kern-attachments-{tag}-{}", upload_id()));

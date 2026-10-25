@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { planImageDelivery } from "./attachment-delivery";
+import {
+  planImageDelivery,
+  stripDeliveryEnvelope,
+} from "./attachment-delivery";
 import type { ComposerImage } from "./attachments";
 
 const stored: ComposerImage = {
@@ -62,5 +65,30 @@ describe("planImageDelivery", () => {
       path: image.path,
       mime: image.mimeType,
     });
+  });
+});
+
+describe("stripDeliveryEnvelope", () => {
+  it.each([true, false, null] as const)(
+    "recovers the typed text when support is %s",
+    (support) => {
+      const { message } = planImageDelivery(
+        "look at this",
+        [stored, stored],
+        support,
+      );
+      expect(stripDeliveryEnvelope(message)).toBe("look at this");
+      const withContext = `${message}\n\n<authoritative_project_tasks>\n[]\n</authoritative_project_tasks>`;
+      expect(stripDeliveryEnvelope(withContext)).toBe(
+        "look at this\n\n<authoritative_project_tasks>\n[]\n</authoritative_project_tasks>",
+      );
+      expect(stripDeliveryEnvelope(withContext)).not.toContain("kern:");
+    },
+  );
+
+  it("leaves ordinary text untouched", () => {
+    expect(stripDeliveryEnvelope("plain {json} text")).toBe(
+      "plain {json} text",
+    );
   });
 });

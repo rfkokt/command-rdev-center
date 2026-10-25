@@ -2,8 +2,57 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Accounts `gh` is signed in to on github.com, from `gh auth status`
+/// ("Logged in to github.com account NAME" or, on older gh, "as NAME").
+pub fn parse_gh_accounts(status: &str) -> Vec<String> {
+    let mut accounts = Vec::new();
+    for line in status.lines() {
+        let Some(rest) = line.split("Logged in to github.com").nth(1) else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let rest = rest
+            .strip_prefix("account ")
+            .or_else(|| rest.strip_prefix("as "))
+            .unwrap_or("");
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
+        if !name.is_empty() && !accounts.contains(&name) {
+            accounts.push(name);
+        }
+    }
+    accounts
+}
+
 #[tauri::command]
-pub async fn scm_pull_request(repository_path: String, account: String, title: Option<String>, body: Option<String>) -> Result<String, String> {
+pub async fn scm_github_accounts() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let out = Command::new("gh")
+            .args(["auth", "status", "--hostname", "github.com"])
+            .env("GH_PROMPT_DISABLED", "1")
+            .output()
+            .map_err(|_| "GitHub CLI (gh) is not installed".to_string())?;
+        // gh prints status on stdout (new) or stderr (old).
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        Ok(parse_gh_accounts(&text))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn scm_pull_request(
+    repository_path: String,
+    account: String,
+    title: Option<String>,
+    body: Option<String>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let repo = repository(&repository_path)?;
         if account.is_empty() || account.len() > 39 || !account.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
@@ -26,7 +75,16 @@ pub async fn scm_pull_request(repository_path: String, account: String, title: O
             cmd.args(["pr", "view", "--json", "url,title,state,statusCheckRollup"]);
         }
         let out = cmd.output().map_err(|e| e.to_string())?;
-        if !out.status.success() { return Err(String::from_utf8_lossy(&out.stderr).trim().to_string()); }
+        if !out.status.success() {
+            let error = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            if error.contains("must first push") || error.contains("No commits between") || error.contains("not found on remote") {
+                return Err(format!("Push the branch first (Push in Source Control), then create the PR. gh: {error}"));
+            }
+            if error.contains("no pull requests found") {
+                return Err("No pull request for this branch yet.".into());
+            }
+            return Err(error);
+        }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }).await.map_err(|e| e.to_string())?
 }
@@ -459,6 +517,17 @@ pub async fn scm_commit_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_gh_auth_status_accounts() {
+        let status = "github.com\n  ✓ Logged in to github.com account rfkokt (keyring)\n  - Active account: true\n  ✓ Logged in to github.com account rdev-nashta (keyring)\n  - Active account: false\n";
+        assert_eq!(parse_gh_accounts(status), vec!["rfkokt", "rdev-nashta"]);
+        assert_eq!(
+            parse_gh_accounts("  ✓ Logged in to github.com as octo-cat (oauth_token)"),
+            vec!["octo-cat"]
+        );
+        assert!(parse_gh_accounts("You are not logged into any GitHub hosts.").is_empty());
+    }
     #[test]
     fn parses_status_groups() {
         let dir = std::env::temp_dir().join(format!("crc-scm-{}", std::process::id()));
