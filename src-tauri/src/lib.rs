@@ -192,6 +192,7 @@ pub fn run() {
             worktree::restore_checkpoint,
             pi_rpc::get_global_chat_cwd,
             pi_rpc::list_available_models,
+            pi_rpc::models_without_declared_input,
             skills::list_pi_skills,
             skills::list_skill_manifests,
             skills::load_skill_instructions,

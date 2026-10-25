@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type Ref } from "react";
+import type { ImageSupport } from "../lib/model-capabilities";
 
 export default function ModelPickerDialog({
   models,
@@ -6,12 +7,15 @@ export default function ModelPickerDialog({
   dialogRef,
   onClose,
   onSelect,
+  imageSupportOf,
 }: {
   models: string[];
   currentModel: string;
   dialogRef: Ref<HTMLElement>;
   onClose: () => void;
   onSelect: (model: string) => void;
+  /** Tags each model with whether it reads images (unknown: no tag). */
+  imageSupportOf?: (model: string) => ImageSupport;
 }) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(() =>
@@ -75,6 +79,7 @@ export default function ModelPickerDialog({
             const slash = model.indexOf("/");
             const provider = slash === -1 ? "default" : model.slice(0, slash);
             const name = slash === -1 ? model : model.slice(slash + 1);
+            const image = imageSupportOf?.(model) ?? null;
             return (
               <button
                 key={model}
@@ -88,7 +93,22 @@ export default function ModelPickerDialog({
                   {itemIndex === index ? "→" : ""}
                 </span>
                 <strong>{name}</strong>
-                <small>[{provider}]</small>
+                <small>
+                  [{provider}]
+                  {image !== null && (
+                    <i
+                      className="model-input"
+                      data-image={image}
+                      title={
+                        image
+                          ? "Reads images you attach"
+                          : "Text only: attached images are sent as files"
+                      }
+                    >
+                      {image ? " · images" : " · text only"}
+                    </i>
+                  )}
+                </small>
                 <b>{model === currentModel ? "✓" : ""}</b>
               </button>
             );

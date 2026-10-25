@@ -30,6 +30,11 @@ import type {
 import { parseApprovalRequest } from "../lib/rpc";
 import { withTimeout } from "../lib/with-timeout";
 import {
+  imageSupport,
+  modelInputs,
+  type ImageSupport,
+} from "../lib/model-capabilities";
+import {
   formatTokens,
   cacheHitPercent,
   applyToolPatches,
@@ -530,6 +535,24 @@ export default function ChatView({
   // Reconnect the startup effect after installation or a failed connection.
   const [piInstallRetry, setPiInstallRetry] = useState(0);
   const [models, setModels] = useState<string[]>([]);
+  // What each model reads (text/image), so attachments go inline only where
+  // they will be seen; see src/lib/model-capabilities.ts.
+  const [inputsByModel, setInputsByModel] = useState<Record<string, string[]>>(
+    {},
+  );
+  const [undeclaredModels, setUndeclaredModels] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [harnessImage, setHarnessImage] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    invoke<string[]>("models_without_declared_input")
+      .then((list) => alive && setUndeclaredModels(new Set(list)))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [currentModel, setCurrentModel] = useState(initialModel ?? "");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [resumePickerOpen, setResumePickerOpen] = useState(false);
@@ -1940,6 +1963,9 @@ export default function ChatView({
           } else if (cmd === "get_available_models") {
             const arr =
               (data.models as Array<{ id: string; provider?: string }>) ?? [];
+            const inputs = modelInputs(arr);
+            if (Object.keys(inputs).length > 0)
+              setInputsByModel((current) => ({ ...current, ...inputs }));
             if (arr.length > 0) {
               setModels(
                 arr.map((x) =>
@@ -2019,8 +2045,15 @@ export default function ChatView({
               sessionFileRef.current = data.sessionFile;
               onSessionFile(chatId, data.sessionFile);
             }
+            if ("imageInput" in data)
+              setHarnessImage(
+                typeof data.imageInput === "boolean" ? data.imageInput : null,
+              );
             if (data.model) {
               const m = data.model as { id: string; provider?: string };
+              const inputs = modelInputs([m]);
+              if (Object.keys(inputs).length > 0)
+                setInputsByModel((current) => ({ ...current, ...inputs }));
               modelRef.current = `${m.provider ?? ""}/${m.id}`.replace(
                 /^\//,
                 "",
@@ -3722,6 +3755,19 @@ export default function ChatView({
     compaction?.status === "running";
   const currentHarness =
     harness ?? harnessOptions.find((item) => item.is_default)?.id ?? "pi";
+  // A different agent answers for itself once it is up.
+  useEffect(() => setHarnessImage(null), [currentHarness]);
+  const imageSupportOf = useCallback(
+    (model: string): ImageSupport =>
+      imageSupport({
+        harness: currentHarness,
+        model,
+        inputs: inputsByModel,
+        undeclared: undeclaredModels,
+        harnessImage,
+      }),
+    [currentHarness, inputsByModel, undeclaredModels, harnessImage],
+  );
   const harnessLabel = (id: string) =>
     harnessOptions.find((item) => item.id === id)?.label ?? id;
 
@@ -5767,6 +5813,7 @@ export default function ChatView({
           dialogRef={modelDialogRef}
           onClose={() => setModelPickerOpen(false)}
           onSelect={(model) => void handleSetModel(model)}
+          imageSupportOf={imageSupportOf}
         />
       )}
 

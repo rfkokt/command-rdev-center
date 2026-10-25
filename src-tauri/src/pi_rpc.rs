@@ -63,24 +63,67 @@ fn read_pi_config() -> Result<(String, serde_json::Value), String> {
     Ok((pi_path, v))
 }
 
-#[tauri::command(async)]
-pub fn list_available_models() -> Result<Vec<String>, String> {
+fn read_pi_models_json() -> Result<serde_json::Value, String> {
     let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
     let raw = std::fs::read_to_string(PathBuf::from(home).join(".pi/agent/models.json"))
         .map_err(|e| e.to_string())?;
-    let value: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+/// `(provider/id, declared input)` for every custom model in pi's models.json.
+fn custom_models(value: &serde_json::Value) -> Vec<(String, Option<Vec<String>>)> {
     let mut models = Vec::new();
     if let Some(providers) = value.get("providers").and_then(|item| item.as_object()) {
         for (provider, config) in providers {
             if let Some(entries) = config.get("models").and_then(|item| item.as_array()) {
                 for model in entries {
                     if let Some(id) = model.get("id").and_then(|item| item.as_str()) {
-                        models.push(format!("{provider}/{id}"));
+                        let input =
+                            model
+                                .get("input")
+                                .and_then(|item| item.as_array())
+                                .map(|kinds| {
+                                    kinds
+                                        .iter()
+                                        .filter_map(|kind| kind.as_str().map(str::to_string))
+                                        .collect()
+                                });
+                        models.push((format!("{provider}/{id}"), input));
                     }
                 }
             }
         }
     }
+    models
+}
+
+#[tauri::command(async)]
+pub fn list_available_models() -> Result<Vec<String>, String> {
+    let value = read_pi_models_json()?;
+    let mut models: Vec<String> = custom_models(&value)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    models.sort();
+    models.dedup();
+    Ok(models)
+}
+
+/// Custom models whose models.json entry has no `input`. pi fills those in as
+/// text-only, but nobody declared it, so Kern treats their image support as
+/// unknown rather than trusting pi's default.
+#[tauri::command(async)]
+pub fn models_without_declared_input() -> Result<Vec<String>, String> {
+    let value = match read_pi_models_json() {
+        Ok(value) => value,
+        // No custom models file: every model comes from pi's own catalog.
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut models: Vec<String> = custom_models(&value)
+        .into_iter()
+        .filter(|(_, input)| input.is_none())
+        .map(|(id, _)| id)
+        .collect();
     models.sort();
     models.dedup();
     Ok(models)
@@ -1984,6 +2027,30 @@ pub fn list_pi_sessions() -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_models_keep_declared_input_or_none() {
+        let value = serde_json::json!({
+            "providers": {
+                "router": { "models": [
+                    { "id": "vision", "input": ["text", "image"] },
+                    { "id": "text", "input": ["text"] },
+                    { "id": "unknown" }
+                ] }
+            }
+        });
+        assert_eq!(
+            custom_models(&value),
+            vec![
+                (
+                    "router/vision".into(),
+                    Some(vec!["text".into(), "image".into()])
+                ),
+                ("router/text".into(), Some(vec!["text".into()])),
+                ("router/unknown".into(), None),
+            ]
+        );
+    }
 
     fn make_line_reader(bytes: Vec<u8>) -> LfLineReader<std::io::Cursor<Vec<u8>>> {
         LfLineReader::new(std::io::Cursor::new(bytes))

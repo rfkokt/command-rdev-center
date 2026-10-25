@@ -86,6 +86,8 @@ pub struct AcpBridge {
     ready: bool,
     load_supported: bool,
     image_supported: bool,
+    /// `initialize` answered, so `image_supported` is the agent's own answer.
+    capabilities_known: bool,
     /// UI commands received before the ACP session exists.
     waiting: VecDeque<Value>,
     /// Prompts sent while a turn is running (ACP has no mid-turn steering).
@@ -301,6 +303,7 @@ impl AcpBridge {
             ready: false,
             load_supported: false,
             image_supported: false,
+            capabilities_known: false,
             waiting: VecDeque::new(),
             queued_prompts: VecDeque::new(),
             turn: None,
@@ -497,6 +500,8 @@ impl AcpBridge {
             "isCompacting": false,
             "harness": self.harness,
             "pendingMessageCount": self.queued_prompts.len(),
+            // ACP: an agent that omits promptCapabilities.image cannot take images.
+            "imageInput": if self.capabilities_known { json!(self.image_supported) } else { Value::Null },
         });
         if let Some(file) = self.session_file() {
             data["sessionFile"] = json!(file);
@@ -1044,6 +1049,7 @@ impl AcpBridge {
                     .pointer("/agentCapabilities/promptCapabilities/image")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                self.capabilities_known = true;
                 match self.resume.clone() {
                     Some(session_id) if self.load_supported => {
                         self.replaying = true;
@@ -1594,6 +1600,18 @@ mod tests {
     }
 
     #[test]
+    fn state_reports_image_input_once_initialized() {
+        let mut bridge = AcpBridge::new("opencode", "/repo", json!([]), None, None);
+        assert_eq!(bridge.state_data()["imageInput"], Value::Null);
+        bridge.start();
+        bridge.on_agent(&reply(
+            1,
+            json!({ "agentCapabilities": { "promptCapabilities": { "image": true } } }),
+        ));
+        assert_eq!(bridge.state_data()["imageInput"], true);
+    }
+
+    #[test]
     fn commands_before_ready_are_queued_then_answered() {
         let mut bridge = AcpBridge::new("opencode", "/repo", json!([]), None, None);
         bridge.start();
@@ -1607,6 +1625,8 @@ mod tests {
         assert_eq!(state["command"], "get_state");
         assert_eq!(state["id"], "a");
         assert_eq!(state["data"]["sessionFile"], "acp:opencode:s1");
+        // No promptCapabilities.image: the agent cannot take images.
+        assert_eq!(state["data"]["imageInput"], false);
         assert_eq!(state["data"]["model"]["id"], "anthropic/claude-sonnet");
         assert_eq!(state["data"]["isStreaming"], false);
     }

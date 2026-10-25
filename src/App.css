@@ -2089,6 +2089,12 @@ select:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.model-list .model-input {
+  font-style: normal;
+}
+.model-list .model-input[data-image="true"] {
+  color: var(--accent);
+}
 .model-list b,
 .model-arrow {
   color: var(--accent);

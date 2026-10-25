@@ -73,7 +73,7 @@
         "id": "O0-02",
         "phase": "O0",
         "name": "Metadata kemampuan model (gambar/PDF) sampai ke frontend",
-        "status": "Backlog",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [],
         "scope": [
@@ -96,7 +96,7 @@
         "references": [
           "opencode: packages/app/src/composer/attachments/destination.ts (input.image / input.pdf)"
         ],
-        "notes": "acp_bridge.rs (sekitar baris 840) saat ini hanya mendorong blok image kalau self.image_supported, selain itu gambar dibuang tanpa pemberitahuan."
+        "notes": "pi: imageSupport() memakai input dari get_available_models/get_state; model custom di models.json tanpa input = null (command models_without_declared_input), karena pi mengisi default [\"text\"]. ACP: get_state kini membawa imageInput (null sebelum initialize, false kalau promptCapabilities.image tidak ada). Model picker menandai 'images' / 'text only'. Belum dicoba di app; pdf belum dilacak (belum ada sumber data)."
       },
       {
         "id": "O1-01",
