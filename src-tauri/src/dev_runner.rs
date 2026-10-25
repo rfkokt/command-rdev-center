@@ -514,9 +514,7 @@ fn start_dev_server_blocking(
                     .map(|mut runners| runners.insert(chat_id.clone(), child))
                 {
                     if let Some(record) = remove_record(&chat_id)? {
-                        let _ = Command::new("kill")
-                            .args(["-TERM", &format!("-{}", record.process_group)])
-                            .status();
+                        signal_group_id(record.process_group, libc::SIGTERM);
                     }
                     return Err(error.into());
                 }
@@ -536,16 +534,32 @@ fn start_dev_server_blocking(
     Err("dev server did not become reachable within 30 seconds".into())
 }
 
+// killpg(2) directly: `kill -TERM -<pgid>` via the procps `kill` binary reads
+// the negative pid as an option, so on Linux the group was never signalled.
+fn signal_group_id(group: impl TryInto<libc::pid_t>, signal: libc::c_int) {
+    let Ok(group) = group.try_into() else { return };
+    if group <= 1 {
+        return; // never signal init or "every process"
+    }
+    // SAFETY: plain syscall on a process group id this app created.
+    unsafe {
+        libc::killpg(group, signal);
+    }
+}
+
+fn signal_process_group(child: &Child, signal: libc::c_int) {
+    signal_group_id(child.id(), signal);
+}
+
 fn kill_process_group(child: &mut Child) {
-    let group = format!("-{}", child.id());
-    let _ = Command::new("kill").args(["-TERM", &group]).status();
+    signal_process_group(child, libc::SIGTERM);
     for _ in 0..20 {
         if child.try_wait().is_ok_and(|status| status.is_some()) {
             return;
         }
         thread::sleep(Duration::from_millis(100));
     }
-    let _ = Command::new("kill").args(["-KILL", &group]).status();
+    signal_process_group(child, libc::SIGKILL);
     let _ = child.wait();
 }
 
@@ -627,9 +641,7 @@ fn stop_dev_server_blocking(chat_id: String) -> Result<(), String> {
         kill_process_group(&mut child);
     } else if let Some(record) = &record {
         if record_is_live(record) {
-            let _ = Command::new("kill")
-                .args(["-TERM", &format!("-{}", record.process_group)])
-                .status();
+            signal_group_id(record.process_group, libc::SIGTERM);
         }
     }
     if let Some(record) = record {
@@ -786,7 +798,10 @@ mod tests {
 
     #[test]
     fn localhost_reaches_ipv6_listener() {
-        let listener = TcpListener::bind("[::1]:0").unwrap();
+        // Hosts without IPv6 (some CI containers) cannot run this check.
+        let Ok(listener) = TcpListener::bind("[::1]:0") else {
+            return;
+        };
         assert!(port_is_reachable(listener.local_addr().unwrap().port()));
     }
 

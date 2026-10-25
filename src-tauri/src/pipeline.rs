@@ -1432,11 +1432,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("crc-pipeline-nonutf8-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&dir)
-            .status()
-            .unwrap();
+        // `git diff HEAD` needs a commit, or the error is "bad revision".
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.email", "test@example.com"],
+            &["config", "user.name", "Test"],
+            &["commit", "-q", "--allow-empty", "-m", "init"],
+        ] {
+            Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .status()
+                .unwrap();
+        }
+        // APFS rejects non-UTF-8 names, so on macOS this check is skipped.
         if std::fs::write(
             dir.join(std::ffi::OsString::from_vec(vec![b'x', 0xff])),
             "x",
