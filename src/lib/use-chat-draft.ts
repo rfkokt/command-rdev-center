@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   prepareComposerImage,
-  storeAttachmentFile,
+  readStoredAttachment,
   type ComposerImage,
 } from "./attachments";
 
@@ -60,9 +60,9 @@ export function useChatDraft(chatId: string, onToast: (text: string) => void) {
     void Promise.all(
       initial.current.imagePaths.map(async (path) => {
         try {
-          return await prepareComposerImage(
-            await storeAttachmentFile(chatId, path),
-          );
+          // The draft points at the store copy already; re-reading it (not
+          // re-storing) keeps restarts from piling up duplicate uploads.
+          return await prepareComposerImage(await readStoredAttachment(path));
         } catch (error) {
           if (active)
             toast.current(`Draft image unavailable: ${String(error)}`);

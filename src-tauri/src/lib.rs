@@ -4,7 +4,6 @@ use tauri::Manager;
 mod acp_bridge;
 mod agent_updates;
 mod attachments;
-mod worktree_setup;
 mod browser_spike;
 mod connections;
 mod deep_research;
@@ -27,6 +26,7 @@ mod skills;
 mod state_lock;
 mod terminal;
 mod worktree;
+mod worktree_setup;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -131,10 +131,11 @@ pub fn run() {
             diff::reject_hunks,
             diff::apply_hunks,
             worktree_setup::inspect_worktree_setup,
-            worktree_setup::run_worktree_setup,
+            worktree_setup::prepare_worktree_setup,
             session_search::search_saved_sessions,
             scm::scm_status,
             scm::scm_pull_request,
+            scm::scm_github_accounts,
             scm::scm_paths,
             scm::scm_all,
             scm::scm_commit,
@@ -203,6 +204,7 @@ pub fn run() {
             pi_rpc::models_without_declared_input,
             attachments::save_attachment_bytes,
             attachments::store_attachment_file,
+            attachments::read_stored_attachment,
             skills::list_pi_skills,
             skills::list_skill_manifests,
             skills::load_skill_instructions,

@@ -22,6 +22,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import ProjectList, { type ProjectInfo } from "./components/ProjectList";
 import ChatView from "./components/ChatView";
 import CommandPalette from "./components/CommandPalette";
+import { requestReveal } from "./lib/message-reveal";
 import ChatSessionActions, {
   type ChatMetadata,
 } from "./components/ChatSessionActions";
@@ -567,28 +568,53 @@ export default function App() {
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
           search={async (query) => {
-            const hits = await invoke<Array<{ id: string; text: string }>>(
-              "search_saved_sessions",
-              {
-                query,
-                candidates: tabs
-                  .filter((tab) => tab.sessionFile)
-                  .map((tab) => ({ id: tab.id, path: tab.sessionFile })),
-              },
-            );
-            return hits.map((hit) => ({
-              id: `message:${hit.id}`,
-              label: `Message: ${hit.text}`,
-              run: () => {
+            const { hits, truncated, skipped } = await invoke<{
+              hits: Array<{ id: string; text: string }>;
+              truncated: boolean;
+              skipped: number;
+            }>("search_saved_sessions", {
+              query,
+              candidates: tabs
+                .filter((tab) => tab.sessionFile)
+                .map((tab) => ({ id: tab.id, path: tab.sessionFile })),
+            });
+            const coverage =
+              truncated || skipped
+                ? [
+                    {
+                      id: "search-coverage",
+                      label: [
+                        truncated ? "Search stopped at its size limit" : "",
+                        skipped
+                          ? `${skipped} chat${skipped === 1 ? "" : "s"} not searchable (ACP or missing history)`
+                          : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · "),
+                      run: () => {},
+                      disabled: true,
+                    },
+                  ]
+                : [];
+            return [
+              ...hits.map((hit) => {
                 const tab = tabs.find((item) => item.id === hit.id);
-                if (!tab) return;
-                if (tab.archived)
-                  changeChatMetadata(tab.id, { archived: false });
-                setDashboard(null);
-                setSelectedProject(tab.global ? null : tab.project);
-                activateTab(tab.id);
-              },
-            }));
+                return {
+                  id: `message:${hit.id}`,
+                  label: `Message · ${tab?.title ?? "Untitled session"}: ${hit.text}`,
+                  run: () => {
+                    if (!tab) return;
+                    if (tab.archived)
+                      changeChatMetadata(tab.id, { archived: false });
+                    setDashboard(null);
+                    setSelectedProject(tab.global ? null : tab.project);
+                    activateTab(tab.id);
+                    requestReveal(tab.id, query);
+                  },
+                };
+              }),
+              ...coverage,
+            ];
           }}
           actions={[
             { id: "new", label: "New global chat", run: newGlobalChat },

@@ -198,7 +198,7 @@
         "references": [
           "opencode: packages/app/src/composer/attachments/attachments.ts (native(mime, input), MAX_INLINE_BYTES)"
         ],
-        "notes": "Implemented: inline+saved path for vision/unknown; path-only and visible note for text-only; paste chip appears only after durable save. Unknown prompts carry a marker. pi image-fallback extension observes user message_start (including queued messages), handles explicit unsupported-image errors at agent_before_settle, applies append-only context_edit entries removing image blocks from projected context while preserving original history and plan/RAG/task text, adds visible notice and continues once. Abort, unrelated errors, pending work and prior continuation do not retry. ACP now sends and displays an explicit omission notice rather than silently dropping inline images. Focused lifecycle tests and real installed pi SessionManager projection check cover path-only context and single retry. Requires pi with agent_before_settle/context_edit support (verified installed 1.4.0); native/provider smoke test still pending. Status Review, not user-accepted Done. Typecheck uses node node_modules/typescript/lib/tsc.js because pnpm exec tsc resolves a broken global installation."
+        "notes": "Review 2026-10-26 (Claude): ACP notice now precedes the assistant turn (appended after message_start it opened a second empty bubble). Agent-facing image envelope + [kern:image-support-unknown] marker are stripped from reloaded user messages and prompt-history recall (stripDeliveryEnvelope). image-fallback.ts now imports types from @earendil-works/pi-coding-agent like the other extensions and type-checks against pi 1.4.0. Native provider rejection still unverified."
       },
       {
         "id": "O1-04",
@@ -223,7 +223,7 @@
           "src/lib/ (helper baru)"
         ],
         "references": [],
-        "notes": "Implemented with native Image/canvas in prepareComposerImage (src/lib/attachments.ts), shared by paste/drop/picker after storing originals. Inline longest side capped at 1568px, no upscale; resized bytes PNG preserve transparency, large animated inputs become static inline frames (original animation remains saved). Chip shows Claude area/750 estimate and dimension tooltip; text-only says Path only. Tests cover dimensions, resize bytes vs unchanged store metadata, decode errors, and chip labels. Typecheck via local TypeScript CLI. Native canvas/provider/visual smoke test pending; estimate is not provider billing."
+        "notes": "Review 2026-10-26 (Claude): JPEG inputs stay JPEG (q0.9) when resized — a 1568px photo as PNG is often several MB and could exceed the ~5 MB inline limit; PNG over the cap falls back to JPEG on white; images under 1568px whose bytes exceed the cap are re-encoded too; still too large → error instead of a doomed send."
       },
       {
         "id": "O1-05",
@@ -273,7 +273,7 @@
         "references": [
           "renderer/src/lib/native-chat-draft-owner.ts"
         ],
-        "notes": "Implemented useChatDraft keyed by chatId in localStorage: text, file refs, saved image paths only (no base64). Images restored through storeAttachmentFile/prepareComposerImage; composer disabled during restore. Empty draft removes storage; parse/storage failures never block typing, write failures notify once. Send/queue/steer IPC failure restores draft data. Tests cover remount restore, isolation, clear, invalid/storage errors and missing image notices. Image restoration copies stored file again (existing command), no additional backend API. Attachment retention remains 30 days; missing images notify, text survives. Native restart smoke test pending."
+        "notes": "Review 2026-10-26 (Claude): restoring a draft re-reads the stored file (new read_stored_attachment, refuses paths outside the store) instead of copying it again — every restart used to create a duplicate upload and move the draft to the copy."
       },
       {
         "id": "O1-07",
@@ -301,7 +301,7 @@
         "references": [
           "main/claude/claude-rewind-transcript.ts"
         ],
-        "notes": "Delivery review requested by user; implementation remains partial: Existing pi session tree fork already restores full original prompt into composer and reloads forked history. UI now labels Edit & resend and explains files unchanged; ACP explicitly blocked with notice (no fork protocol). Need full UI integration validation and ACP-compatible design before Review."
+        "notes": "Review 2026-10-26 (Claude): EDIT button on each user message (pi only, agent idle). Kern finds the message's entry on the active session branch (get_entries, containment + position match, see pickEditTarget), calls pi fork, and puts the original text back in the composer to edit and send. Later replies leave model context but stay in the session tree; worktree files are not rewound (toast says so). No match → opens the session tree. ACP: still blocked with a notice (no fork in ACP). Native click-through unverified."
       },
       {
         "id": "O2-01",
@@ -349,7 +349,7 @@
           "renderer/src/app-shell/AppRootSurfaces.tsx",
           "renderer/src/lib/quick-open-file-history.ts"
         ],
-        "notes": "Delivery review requested by user; implementation remains partial: Initial Cmd/Ctrl+K message search uses search_saved_sessions spawn_blocking over saved tab sessionFile JSONL; 5MB per file / 50MB total / 50 hits, query bounds and allowed-path guard, text parts only. Debounce 250ms and stale-result guard. Opens matching chat but does not yet scroll to matched message. ACP/closed-not-saved tabs/custom session dirs unsupported; add worker tests, explicit truncation/coverage UI and message anchor before Review. cargo check/typecheck pass."
+        "notes": "Review 2026-10-26 (Claude): picking a message hit opens the chat and scrolls to + flashes the matching message (message-reveal.ts; works when the chat was not mounted yet). Backend returns {hits, truncated, skipped}; the palette shows a note when the size budget cut the search or chats were not searchable (ACP / missing history). Palette no longer re-runs/clears search on every App re-render. Rust tests for the scanner. Matches older than the 600 loaded messages open the chat with a toast."
       },
       {
         "id": "O2-03",
@@ -375,7 +375,7 @@
           "main/runtime/runtime-local-worktree-setup.ts",
           "orca.yaml (root repo Orca)"
         ],
-        "notes": "Delivery review requested by user; implementation remains partial: Initial kern.yaml schema {copy:[relative-file],commands:[shell-command]} and inspect/run Tauri commands implemented; per-chat setup details with explicit confirmation, output and failure keeping chat alive. Copy rejects traversal, outside source symlinks/destination parents, skips existing files. Focused path test and compilation pass. Approved config snapshot and Git common-directory ownership are validated; commands stop at 120s/1MB output via process-group kill with private temporary log, displayed output capped at 100KB. NOT READY: stream output to terminal, add copy/symlink/process integration tests and verify native behavior; no automatic execution. Do not mark Review yet."
+        "notes": "Review 2026-10-26 (Claude), now Orca-style: when the chat worktree is ready and kern.yaml has setup, a banner asks to run it (first time per config); approved configs run automatically for new worktrees, once per worktree; a changed kern.yaml asks again; Skip leaves the chat alone. Files are copied in Rust (no overwrite, no symlink/traversal escape, missing files skipped); commands go into a set -e script typed into the chat terminal, so output streams live and Ctrl-C works; failure prints in the terminal only. Rust tests for copy guards and fail-fast script; component tests for trust/auto-run/skip. Native terminal run unverified."
       },
       {
         "id": "O2-04",
@@ -427,7 +427,7 @@
           "renderer/src/store/worktree-diff-comments-selector.ts",
           "renderer/src/components/editor/combined-diff/review-controls/use-combined-diff-notes-actions.ts"
         ],
-        "notes": "Delivery review requested by user; implementation remains partial: Batch comments held in ChatView across diff closes/file switches. ExpandedDiffPanel line selector uses parsed old/new line locations and Markdown input, send batch paths/lines as one prompt; clears only if sendRaw succeeds. Follow-up: accessible buttons on diff line numbers open the correct hunk comment form; pending batch displays path/line/text and supports removal. Component test verifies click/add/remove/send callbacks. Pure formatting/line tests pass. Still needs parent send-failure/close-reopen integration test and native visual check before Review."
+        "notes": "Review 2026-10-26 (Claude): restored the side-by-side diff (the earlier change had replaced it with a plain unified <pre>); line numbers on both sides are now the comment buttons, the Markdown form opens inline under the row (Cmd/Ctrl+Enter to add, Esc to cancel), comment cards show under their line, and the pending batch renders once (it was repeated under every hunk). Unsent comments persist per chat in localStorage. Line ranges (Orca drag-select) not ported."
       },
       {
         "id": "O3-02",
@@ -452,7 +452,7 @@
         "references": [
           "Emdash juga referensi bagus untuk alur PR: https://github.com/generalaction/emdash"
         ],
-        "notes": "Delivery review requested by user; implementation remains partial: PR/CI controls added per SCM repository; explicit account persisted keyed by worktree path; title/body editable. scm_pull_request validates repository/account, loads gh auth token --user into GH_TOKEN only, GH_HOST github.com, no account switch, explicit --head prevents auto-push. Refresh displays raw pr view JSON statusCheckRollup. cargo check/typecheck passed. Follow-up implemented structured PR title/state/check names and conclusions plus explicit Send CI status to agent draft (not auto-send), with component test. Still needs mocked backend command tests, account picker/discovery, and per-owning-repo rather than per-worktree preference. No real PR created."
+        "notes": "Review 2026-10-26 (Claude): account picker lists signed-in gh accounts (gh auth status, parsed in Rust, tested); single account preselected; choice remembered per owning repository (falls back to the old per-worktree key). Clear errors for unpushed branch / no PR. Checks colour-coded; failing check names included in the agent draft. Styled with the SCM panel. No real PR created from here."
       },
       {
         "id": "O4-01",
@@ -474,7 +474,7 @@
           "src/App.tsx"
         ],
         "references": [],
-        "notes": "Delivery review requested by user; implementation remains partial: Cmd/Ctrl+K command palette implemented with keyboard navigation, filtering, settings/sidebar/dashboard/new-global-chat and saved chat titles including archived. Model picker action and shortcut reference now added. Tests pass. Full O2-02 message search dependency (message anchor, coverage) and native shortcut focus validation remain."
+        "notes": "Review 2026-10-26 (Claude): depends on O2-02, now complete (message jump + coverage note). Palette search results stay stable while App re-renders."
       }
     ]
   }

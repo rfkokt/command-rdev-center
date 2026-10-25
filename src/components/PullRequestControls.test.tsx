@@ -19,7 +19,9 @@ test("renders structured CI and inserts evidence only on explicit request", asyn
     state: "OPEN",
     statusCheckRollup: [{ name: "Tests", conclusion: "FAILURE" }],
   });
-  vi.mocked(invoke).mockResolvedValueOnce(result);
+  vi.mocked(invoke).mockImplementation(async (command: string) =>
+    command === "scm_github_accounts" ? [] : result,
+  );
   localStorage.setItem("kern:github-account:/repo", "rfkokt");
   const send = vi.fn();
   render(
@@ -30,6 +32,7 @@ test("renders structured CI and inserts evidence only on explicit request", asyn
   expect(send).not.toHaveBeenCalled();
   fireEvent.click(screen.getByText("Send CI status to agent draft"));
   expect(send).toHaveBeenCalledWith(expect.stringContaining(result));
+  expect(send).toHaveBeenCalledWith(expect.stringContaining("failing: Tests"));
 });
 afterEach(() => {
   cleanup();
@@ -44,7 +47,10 @@ test("creates only on explicit click with selected account and edited fields", a
   fireEvent.change(screen.getByRole("textbox", { name: "PR title" }), {
     target: { value: "My PR" },
   });
-  expect(invoke).not.toHaveBeenCalled();
+  expect(invoke).not.toHaveBeenCalledWith(
+    "scm_pull_request",
+    expect.anything(),
+  );
   fireEvent.click(screen.getByText("Create PR"));
   await waitFor(() =>
     expect(invoke).toHaveBeenCalledWith("scm_pull_request", {
@@ -67,4 +73,31 @@ test("refreshes read-only status using saved account", async () => {
       body: null,
     }),
   );
+});
+
+test("offers signed-in gh accounts and remembers the choice per owning repository", async () => {
+  vi.mocked(invoke).mockImplementation(async (command: string) =>
+    command === "scm_github_accounts" ? ["rfkokt", "rdev-nashta"] : "{}",
+  );
+  render(
+    <PullRequestControls
+      path="/repo/.worktrees/chat"
+      accountKey="/repo"
+      onToast={vi.fn()}
+    />,
+  );
+  const picker = await screen.findByRole("combobox", {
+    name: "GitHub account",
+  });
+  fireEvent.change(picker, { target: { value: "rdev-nashta" } });
+  fireEvent.click(screen.getByText("Refresh PR / CI"));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("scm_pull_request", {
+      repositoryPath: "/repo/.worktrees/chat",
+      account: "rdev-nashta",
+      title: null,
+      body: null,
+    }),
+  );
+  expect(localStorage.getItem("kern:github-account:/repo")).toBe("rdev-nashta");
 });

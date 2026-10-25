@@ -205,6 +205,7 @@ export default function SourceControlPanel({
             </summary>
             <PullRequestControls
               path={repo.worktree ?? repo.path}
+              accountKey={repo.path}
               onToast={toast}
               onSendToAgent={onSendToAgent}
             />

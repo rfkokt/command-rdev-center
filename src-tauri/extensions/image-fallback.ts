@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MARKER = "[kern:image-support-unknown]";
 
@@ -52,10 +52,11 @@ export default function imageFallback(pi: ExtensionAPI) {
         )
           return [];
         const message = messages[0];
+        const content =
+          message && "content" in message ? message.content : undefined;
         if (
-          !message ||
-          !Array.isArray(message.content) ||
-          !message.content.some((block) => block.type === "image")
+          !Array.isArray(content) ||
+          !content.some((block) => block.type === "image")
         )
           return [];
         return [
@@ -63,9 +64,7 @@ export default function imageFallback(pi: ExtensionAPI) {
             type: "context_edit" as const,
             targetId: sourceEntry.id,
             replacement: {
-              content: message.content.filter(
-                (block) => block.type !== "image",
-              ),
+              content: content.filter((block) => block.type !== "image"),
             },
           },
         ];

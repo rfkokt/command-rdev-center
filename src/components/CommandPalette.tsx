@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useModalFocus } from "./useModalFocus";
-export type PaletteAction = { id: string; label: string; run: () => void };
+export type PaletteAction = {
+  id: string;
+  label: string;
+  run: () => void;
+  /** Informational row (e.g. search coverage); not selectable. */
+  disabled?: boolean;
+};
 export default function CommandPalette({
   actions,
   onClose,
@@ -14,13 +20,18 @@ export default function CommandPalette({
   const [index, setIndex] = useState(0);
   const [results, setResults] = useState<PaletteAction[]>([]);
   const [error, setError] = useState("");
+  // The parent recreates `search` on every render (App re-renders while agents
+  // stream); keying the effect on it would wipe results and re-run the scan.
+  const searchRef = useRef(search);
+  searchRef.current = search;
   useEffect(() => {
     let active = true;
     setResults([]);
     setError("");
     const timer = window.setTimeout(() => {
-      if (!search || query.trim().length < 2) return;
-      void search(query)
+      const run = searchRef.current;
+      if (!run || query.trim().length < 2) return;
+      void run(query)
         .then((items) => {
           if (active) setResults(items);
         })
@@ -32,14 +43,15 @@ export default function CommandPalette({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [query, search]);
+  }, [query]);
   const root = useModalFocus<HTMLDivElement>(onClose);
   const matches = [
     ...actions.filter((action) =>
       action.label.toLowerCase().includes(query.toLowerCase()),
     ),
-    ...results,
+    ...results.filter((result) => !result.disabled),
   ];
+  const notes = results.filter((result) => result.disabled);
   useEffect(() => setIndex(0), [query]);
   const choose = (action?: PaletteAction) => {
     if (action) {
@@ -99,6 +111,11 @@ export default function CommandPalette({
             </button>
           ))}
           {!matches.length && <p>No matching commands or chats</p>}
+          {notes.map((note) => (
+            <p key={note.id} className="palette-note" role="note">
+              {note.label}
+            </p>
+          ))}
         </div>
         <small>
           Cmd/Ctrl+K: palette · Ctrl+L: model · Ctrl+P: cycle model · Shift+Tab:

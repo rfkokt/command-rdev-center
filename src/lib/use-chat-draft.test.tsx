@@ -2,7 +2,7 @@
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
 vi.mock("./attachments", () => ({
-  storeAttachmentFile: vi.fn(async (_chat: string, path: string) => ({
+  readStoredAttachment: vi.fn(async (path: string) => ({
     path,
     name: "shot.png",
   })),
@@ -15,7 +15,7 @@ vi.mock("./attachments", () => ({
   })),
 }));
 import { readDraft, writeDraft, useChatDraft } from "./use-chat-draft";
-import { storeAttachmentFile } from "./attachments";
+import { readStoredAttachment } from "./attachments";
 afterEach(() => {
   cleanup();
   localStorage.clear();
@@ -76,7 +76,7 @@ test("corrupt or blocked storage never blocks typing", () => {
 
 test("reports a missing image but keeps the text draft", async () => {
   writeDraft("a", { text: "keep me", files: [], imagePaths: ["/missing.png"] });
-  vi.mocked(storeAttachmentFile).mockRejectedValueOnce(new Error("missing"));
+  vi.mocked(readStoredAttachment).mockRejectedValueOnce(new Error("missing"));
   const toast = vi.fn();
   const h = renderHook(() => useChatDraft("a", toast));
   await waitFor(() => expect(h.result.current.restoring).toBe(false));
@@ -84,4 +84,15 @@ test("reports a missing image but keeps the text draft", async () => {
   expect(toast).toHaveBeenCalledWith(
     expect.stringContaining("Draft image unavailable"),
   );
+});
+
+test("restoring a draft re-reads the stored copy instead of storing it again", async () => {
+  writeDraft("c", { text: "", files: [], imagePaths: ["/store/c/1/shot.png"] });
+  vi.mocked(readStoredAttachment).mockClear();
+  const h = renderHook(() => useChatDraft("c", vi.fn()));
+  await waitFor(() => expect(h.result.current.restoring).toBe(false));
+  expect(readStoredAttachment).toHaveBeenCalledWith("/store/c/1/shot.png");
+  expect(h.result.current.images.map((image) => image.path)).toEqual([
+    "/store/c/1/shot.png",
+  ]);
 });
