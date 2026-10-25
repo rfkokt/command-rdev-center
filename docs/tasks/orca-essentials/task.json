@@ -31,6 +31,8 @@
       "O3-01",
       "O3-02",
       "O4-01",
+      "O5-11",
+      "O5-12",
       "O5-01",
       "O5-04",
       "O5-02",
@@ -759,6 +761,64 @@
         "references": [
           "renderer/src/components/TerminalSearch.tsx"
         ]
+      },
+      {
+        "id": "O5-11",
+        "phase": "O5",
+        "name": "Batasi ukuran konteks: auto-compact di ambang token (ACP + pi)",
+        "status": "To Do",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Setting 'Compact when context exceeds' (default 200k token), per harness; berlaku walau window model 1M.",
+          "ACP (Claude Code): saat usage request terakhir (input+cache read+cache write) melewati ambang dan agent idle, jalankan /compact yang sudah ada (acp_bridge.rs compact()) sebelum prompt berikutnya, dengan notice di chat.",
+          "pi: set ambang compaction pi sesuai setting (lihat compaction settings pi 1.4.0: reserveTokens/keepRecentTokens) atau panggil compact dari Kern di ambang yang sama.",
+          "Meter konteks di header chat: ukuran konteks saat ini vs ambang, warna saat mendekati.",
+          "Saran 'mulai chat baru dengan ringkasan' ketika compact sudah berkali-kali di satu chat."
+        ],
+        "acceptance_criteria": [
+          "Sesi Claude via ACP tidak lagi mencapai ~500k token per request; compact terjadi di sekitar ambang.",
+          "token-audit setelah seminggu: rata-rata token per request turun jelas dibanding baseline 2026-10-26 (ACP: ~285k/request di sesi terberat).",
+          "Compact tidak pernah jalan di tengah turn."
+        ],
+        "files": [
+          "src-tauri/src/acp_bridge.rs",
+          "src-tauri/src/pi_rpc.rs",
+          "src/components/ChatView.tsx",
+          "src/components/SettingsPanel.tsx"
+        ],
+        "references": [
+          "scripts/token-audit.mjs"
+        ],
+        "notes": "Baseline token-audit 2026-10-26 (7 hari): Claude Code/ACP 66 prompt, 676 request (10.2/prompt), 178.9M token terkirim, cache hit 99%; dua sesi worktree Kern 96.4M dan 81.8M dengan peak 528k dan 496k token per request. Overhead extension Kern = 0 di jalur ACP; penyebabnya ukuran konteks x jumlah request. pi (9router, bukan kuota Claude): 4153 request, 11.7/prompt, peak 792k."
+      },
+      {
+        "id": "O5-12",
+        "phase": "O5",
+        "name": "Kurangi request pembukuan Kern di pi (task-verification, Jev)",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "task-verification opt-in per chat/Settings (default: hanya saat user minta verifikasi atau mode Pipeline), bukan memaksa set_task_contract/run_check/report_task di setiap task coding.",
+          "Tanpa forced continuation 'Verification needed' kecuali mode verifikasi aktif.",
+          "kern-jev-status tidak dikirim sebagai pesan di konteks; cukup UI/trace.",
+          "kern-task-guidance tidak disisipkan di setiap prompt; hanya sekali per task bila mode aktif."
+        ],
+        "acceptance_criteria": [
+          "token-audit: porsi tool pembukuan Kern turun dari 35% dan forced continuations mendekati 0 bila mode verifikasi mati.",
+          "Mode verifikasi tetap tersedia dan berfungsi seperti sekarang bila dinyalakan."
+        ],
+        "files": [
+          "src-tauri/extensions/task-verification.ts",
+          "src-tauri/extensions/jev-routing.ts",
+          "src-tauri/src/pi_rpc.rs",
+          "src/components/SettingsPanel.tsx"
+        ],
+        "references": [
+          "scripts/token-audit.mjs"
+        ],
+        "notes": "Baseline 2026-10-26 (pi, 7 hari): 1305 dari 3782 tool call adalah tool Kern (run_check 368, report_task 134, set_task_contract 99, format_changed_files 53, track_kanban_task 49; execute_terminal_command 498 termasuk kerja nyata global chat), 412 forced continuations, hidden messages: kern-jev-status 426, kern-task-guidance 214, kern-verification 125, kern-jev-routing 111."
       }
     ]
   }
