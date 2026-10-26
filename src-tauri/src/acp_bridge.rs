@@ -47,12 +47,24 @@ pub enum Out {
 #[derive(Debug)]
 enum Pending {
     Initialize,
-    NewSession { pi_id: Option<Value> },
+    NewSession {
+        pi_id: Option<Value>,
+    },
     LoadSession,
     Prompt,
-    Compact { pi_id: Option<Value> },
-    SetModel { pi_id: Option<Value>, value: String },
-    SetThinking { pi_id: Option<Value>, value: String },
+    /// `auto`: started by the context threshold, not by the user.
+    Compact {
+        pi_id: Option<Value>,
+        auto: bool,
+    },
+    SetModel {
+        pi_id: Option<Value>,
+        value: String,
+    },
+    SetThinking {
+        pi_id: Option<Value>,
+        value: String,
+    },
 }
 
 #[derive(Default)]
@@ -110,6 +122,9 @@ pub struct AcpBridge {
     tokens: Option<Value>,
     /// Last request size, not cumulative turn/session usage.
     request_tokens: Option<u64>,
+    /// Threshold compaction failed or is unavailable for this context; stop
+    /// retrying it (and never hold prompts back) until a compaction succeeds.
+    auto_compact_off: bool,
     /// Session cost in USD when the adapter reports it (`usage_update.cost`).
     cost: Option<f64>,
     /// A `/compact` prompt is running; user prompts wait for it.
@@ -321,6 +336,7 @@ impl AcpBridge {
             usage: None,
             tokens: None,
             request_tokens: None,
+            auto_compact_off: false,
             cost: None,
             compacting: false,
             preamble: None,
@@ -732,6 +748,7 @@ impl AcpBridge {
                 self.usage = None;
                 self.tokens = None;
                 self.request_tokens = None;
+                self.auto_compact_off = false;
                 self.cost = None;
                 self.ready = false;
                 vec![self.request(
@@ -794,6 +811,10 @@ impl AcpBridge {
     /// ACP has no compaction method, but Claude Code, Codex and others offer
     /// a `/compact` slash command; run it as a hidden prompt.
     fn compact(&mut self, id: Option<&Value>) -> Vec<Out> {
+        self.compact_as(id, false)
+    }
+
+    fn compact_as(&mut self, id: Option<&Value>, auto: bool) -> Vec<Out> {
         if self.turn.is_some() || self.compacting {
             return vec![Self::fail("compact", id, "Stop the running turn first")];
         }
@@ -814,14 +835,19 @@ impl AcpBridge {
         };
         self.compacting = true;
         vec![
-            Self::ui(json!({ "type": "compaction_start", "reason": "manual" })),
+            Self::ui(
+                json!({ "type": "compaction_start", "reason": if auto { "threshold" } else { "manual" } }),
+            ),
             self.request(
                 "session/prompt",
                 json!({
                     "sessionId": session_id,
                     "prompt": [{ "type": "text", "text": format!("/{command}") }]
                 }),
-                Pending::Compact { pi_id: id.cloned() },
+                Pending::Compact {
+                    pi_id: id.cloned(),
+                    auto,
+                },
             ),
         ]
     }
@@ -831,15 +857,25 @@ impl AcpBridge {
         let used = self
             .request_tokens
             .or_else(|| self.usage.map(|(used, _)| used));
-        if self.turn.is_none() && !self.compacting && used.is_some_and(|used| used >= threshold) {
-            let out = self.compact(None);
+        let mut notice = Vec::new();
+        if self.turn.is_none()
+            && !self.compacting
+            && !self.auto_compact_off
+            && used.is_some_and(|used| used >= threshold)
+        {
+            let out = self.compact_as(None, true);
             if self.compacting {
+                // Runs right after compaction, ahead of anything queued later.
                 self.queued_prompts.push_front((message, images));
                 return out;
             }
-            // Do not silently send another oversized request if compaction is unavailable.
-            return out.into_iter().chain([Self::fail("prompt", None,
-                "Context threshold reached but this harness cannot compact. Start a new chat with a summary.")]).collect();
+            // No compaction in this agent (or not ready): say so once and
+            // send anyway — the user's prompt is never held back.
+            self.auto_compact_off = true;
+            notice.push(Self::ui(json!({"type":"message_end", "message": {
+                "role":"custom", "customType":"kern-context-threshold", "display":true,
+                "content": format!("Context is over the {threshold}-token threshold, but {} cannot compact here. Consider a new chat with a summary.", self.harness)
+            }})));
         }
         let Some(session_id) = self.session_id.clone() else {
             return vec![Self::fail("prompt", None, "ACP session is not ready")];
@@ -885,11 +921,12 @@ impl AcpBridge {
         self.turn = Some(Turn::default());
         self.tools.clear();
         self.announced.clear();
-        let mut out = vec![self.request(
+        let mut out = notice;
+        out.push(self.request(
             "session/prompt",
             json!({ "sessionId": session_id, "prompt": blocks }),
             Pending::Prompt,
-        )];
+        ));
         // The notice lands before the assistant turn opens: appended after
         // message_start it would sit below the streaming bubble and make the
         // next delta open a second, empty assistant bubble.
@@ -1182,8 +1219,8 @@ impl AcpBridge {
                     .unwrap_or("end_turn");
                 self.finish_turn(reason, error)
             }
-            Pending::Compact { pi_id } => {
-                let mut end = json!({ "type": "compaction_end", "reason": "manual" });
+            Pending::Compact { pi_id, auto } => {
+                let mut end = json!({ "type": "compaction_end", "reason": if auto { "threshold" } else { "manual" } });
                 if let Some(error) = &error {
                     end["errorMessage"] = json!(error);
                 }
@@ -1194,21 +1231,18 @@ impl AcpBridge {
                 if error.is_none() {
                     self.usage = None;
                     self.request_tokens = None;
+                    self.auto_compact_off = false;
+                } else if auto {
+                    // Don't loop on a failing compaction; carry on without it.
+                    self.auto_compact_off = true;
                 }
                 self.compacting = false;
-                let failed = error.is_some();
                 let ack = match error {
                     Some(error) => Self::fail("compact", pi_id.as_ref(), error),
                     None => Self::respond("compact", pi_id.as_ref(), None),
                 };
                 let mut out = vec![Self::ui(end), ack];
-                if failed {
-                    out.push(Self::fail(
-                        "prompt",
-                        None,
-                        "Compaction failed; your prompt is still queued. Retry compaction first.",
-                    ));
-                } else if let Some((message, images)) = self.queued_prompts.pop_front() {
+                if let Some((message, images)) = self.queued_prompts.pop_front() {
                     out.push(self.queue_update());
                     out.extend(self.start_prompt(message, images));
                 }
@@ -1865,20 +1899,39 @@ mod tests {
     }
 
     #[test]
-    fn threshold_failure_does_not_send_oversized_prompt() {
+    fn threshold_compaction_failure_still_sends_the_prompt_and_stops_retrying() {
         let mut bridge = ready_bridge(false);
         bridge.commands = vec![json!({"name":"compact"})];
         bridge.request_tokens = Some(250_000);
         let out = bridge.on_ui(r#"{"type":"prompt","message":"keep this"}"#);
-        let id = agent(&out)[0]["id"].as_u64().unwrap();
-        let failed = bridge.on_agent(
+        let compact = agent(&out);
+        assert_eq!(compact[0]["params"]["prompt"][0]["text"], "/compact");
+        let id = compact[0]["id"].as_u64().unwrap();
+        let after = bridge.on_agent(
             &json!({"jsonrpc":"2.0","id":id,"error":{"code":-1,"message":"failed"}}).to_string(),
         );
-        assert!(agent(&failed).is_empty());
-        assert_eq!(bridge.request_tokens, Some(250_000));
-        assert!(ui(&failed)
+        // The held prompt goes out anyway; no second compaction attempt.
+        let sent = agent(&after);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["params"]["prompt"][0]["text"], "keep this");
+        assert!(bridge.auto_compact_off);
+    }
+
+    #[test]
+    fn threshold_without_compaction_support_sends_with_one_notice() {
+        let mut bridge = ready_bridge(false);
+        bridge.commands = vec![];
+        bridge.request_tokens = Some(250_000);
+        let out = bridge.on_ui(r#"{"type":"prompt","message":"go"}"#);
+        assert_eq!(agent(&out)[0]["params"]["prompt"][0]["text"], "go");
+        assert!(ui(&out)
             .iter()
-            .any(|event| event["command"] == "prompt" && event["success"] == false));
+            .any(|event| event["message"]["customType"] == "kern-context-threshold"));
+        bridge.turn = None;
+        let again = bridge.on_ui(r#"{"type":"prompt","message":"again"}"#);
+        assert!(!ui(&again)
+            .iter()
+            .any(|event| event["message"]["customType"] == "kern-context-threshold"));
     }
 
     #[test]

@@ -795,8 +795,12 @@ export default function ChatView({
     Record<string, number>
   >({});
   const [compactCount, setCompactCount] = useState(() => {
-    const saved = Number(localStorage.getItem(`kern-compact-count:${chatId}`));
-    return Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
+    try {
+      const saved = Number(localStorage.getItem(`kern-compact-count:${chatId}`));
+      return Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
+    } catch {
+      return 0;
+    }
   });
   const [compaction, setCompaction] = useState<CompactionState | null>(null);
   const [autoCompactionEnabled, setAutoCompactionEnabled] = useState<
@@ -1532,10 +1536,14 @@ export default function ChatView({
             : stats,
         );
         setCompactCount((count) => {
-          localStorage.setItem(
-            `kern-compact-count:${chatId}`,
-            String(count + 1),
-          );
+          try {
+            localStorage.setItem(
+              `kern-compact-count:${chatId}`,
+              String(count + 1),
+            );
+          } catch {
+            /* The suggestion just resets with the session. */
+          }
           return count + 1;
         });
         onToast("Context compacted");
@@ -2011,7 +2019,11 @@ export default function ChatView({
               compactionProbeRef.current = null;
               setSessionStats(null);
               setCompactCount(0);
-              localStorage.removeItem(`kern-compact-count:${chatId}`);
+              try {
+                localStorage.removeItem(`kern-compact-count:${chatId}`);
+              } catch {
+                /* Nothing stored. */
+              }
               setMessages([]);
               setPendingMessageCount(0);
               trackedTaskRef.current = false;
