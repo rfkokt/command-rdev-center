@@ -2,9 +2,12 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant},
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -208,13 +211,28 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
         &["tugas", "task", "title", "deskripsi", "description"],
     )
     .ok_or("sheet needs a task/title column")?;
-    let no = field_index(&headers, &["no", "nomor", "id", "key"]);
+    let rows = rows.collect::<Vec<_>>();
+    // Some sheets leave the number column's header as "Column 1"; accept an
+    // otherwise-unnamed first column when every value in it is a number.
+    let no = field_index(&headers, &["no", "nomor", "id", "key"]).or_else(|| {
+        let values = rows
+            .iter()
+            .filter_map(|record| record.first().map(|value| value.trim()))
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        (title != 0
+            && !values.is_empty()
+            && values
+                .iter()
+                .all(|value| value.chars().all(|c| c.is_ascii_digit())))
+        .then_some(0)
+    });
     let pic = field_index(&headers, &["pic", "assignee", "owner", "penanggungjawab"]);
     let status_column = field_index(&headers, &["status", "state"]);
     let notes = field_index(&headers, &["catatan", "notes", "note", "keterangan"]);
     let url = field_index(&headers, &["url", "link"]);
     let mut tasks = Vec::new();
-    for (index, record) in rows.enumerate() {
+    for (index, record) in rows.into_iter().enumerate() {
         let description = record
             .get(title)
             .map(String::as_str)
@@ -277,8 +295,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
     Ok(tasks)
 }
 
-pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> {
-    let csv_url = google_sheet_csv_url(url, sheet)?;
+fn curl_bytes(url: &str) -> Result<Vec<u8>, String> {
     let output = std::process::Command::new("curl")
         .args([
             "--fail",
@@ -287,14 +304,96 @@ pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> 
             "--location",
             "--max-time",
             "15",
-            &csv_url,
+            url,
         ])
         .output()
         .map_err(|error| error.to_string())?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    String::from_utf8(output.stdout).map_err(|_| "Google Sheet is not UTF-8".into())
+    Ok(output.stdout)
+}
+
+/// Worksheet name → gid pairs from the public edit page's bootstrap data,
+/// e.g. `[1,0,\"584496886\",[{\"1\":[[0,0,\"Backlogs\"`.
+fn parse_google_sheet_gids(html: &str) -> Vec<(String, String)> {
+    let marker = r#"\",[{\"1\":[[0,0,\""#;
+    html.match_indices(marker)
+        .filter_map(|(index, _)| {
+            let gid = html[..index].rsplit(r#"\""#).next()?;
+            if gid.is_empty() || !gid.chars().all(|c| c.is_ascii_digit()) {
+                return None;
+            }
+            let mut rest = &html[index + marker.len()..];
+            let mut name = String::new();
+            loop {
+                if let Some(next) = rest.strip_prefix(r"\\\\") {
+                    name.push('\\');
+                    rest = next;
+                } else if let Some(next) = rest.strip_prefix(r#"\\\""#) {
+                    name.push('"');
+                    rest = next;
+                } else if let Some(hex) = rest.strip_prefix(r"\\u").and_then(|r| r.get(..4)) {
+                    name.push(char::from_u32(u32::from_str_radix(hex, 16).ok()?)?);
+                    rest = &rest[7..];
+                } else if rest.starts_with(r#"\""#) {
+                    break;
+                } else {
+                    let c = rest.chars().next()?;
+                    name.push(c);
+                    rest = &rest[c.len_utf8()..];
+                }
+            }
+            Some((name, gid.to_string()))
+        })
+        .collect()
+}
+
+/// gid of a named worksheet, cached briefly per spreadsheet.
+fn google_sheet_gid(url: &str, sheet: &str) -> Option<String> {
+    type Gids = HashMap<String, (Instant, Vec<(String, String)>)>;
+    static CACHE: OnceLock<Mutex<Gids>> = OnceLock::new();
+    let sheet = sheet.trim();
+    if sheet.is_empty() {
+        return None;
+    }
+    let id = google_sheet_id(url).ok()?.to_string();
+    let cache = CACHE.get_or_init(Default::default);
+    let cached = cache
+        .lock()
+        .ok()?
+        .get(&id)
+        .and_then(|(at, gids)| (at.elapsed() < Duration::from_secs(300)).then(|| gids.clone()));
+    let gids = match cached {
+        Some(gids) => gids,
+        None => {
+            let html =
+                curl_bytes(&format!("https://docs.google.com/spreadsheets/d/{id}/edit")).ok()?;
+            let gids = parse_google_sheet_gids(&String::from_utf8_lossy(&html));
+            cache
+                .lock()
+                .ok()?
+                .insert(id, (Instant::now(), gids.clone()));
+            gids
+        }
+    };
+    gids.into_iter()
+        .find(|(name, _)| name.trim() == sheet)
+        .map(|(_, gid)| gid)
+}
+
+pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> {
+    // gviz infers one type per column and silently drops rows that do not
+    // fit it (a real Backlogs tab lost 254 of 387 rows), so export by gid
+    // whenever the worksheet's gid is known.
+    let csv_url = match google_sheet_gid(url, sheet) {
+        Some(gid) => format!(
+            "https://docs.google.com/spreadsheets/d/{}/export?format=csv&gid={gid}",
+            google_sheet_id(url)?
+        ),
+        None => google_sheet_csv_url(url, sheet)?,
+    };
+    String::from_utf8(curl_bytes(&csv_url)?).map_err(|_| "Google Sheet is not UTF-8".into())
 }
 
 fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
@@ -326,22 +425,7 @@ pub fn list_google_sheet_names(url: String) -> Result<Vec<String>, String> {
         "https://docs.google.com/spreadsheets/d/{}/edit",
         google_sheet_id(&url)?
     );
-    let output = std::process::Command::new("curl")
-        .args([
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-time",
-            "15",
-            &page_url,
-        ])
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    let sheets = parse_google_sheet_names(&String::from_utf8_lossy(&output.stdout));
+    let sheets = parse_google_sheet_names(&String::from_utf8_lossy(&curl_bytes(&page_url)?));
     if sheets.is_empty() {
         Err("No worksheets found. Make sure the spreadsheet is public.".into())
     } else {
@@ -792,6 +876,31 @@ mod tests {
             ),
             vec!["Sprint-0", "API & Docs"]
         );
+    }
+
+    #[test]
+    fn parses_sheet_gids_from_bootstrap_data() {
+        let html = r#"x[1,0,\"584496886\",[{\"1\":[[0,0,\"Backlogs\"]]}],[8,0,\"277522010\",[{\"1\":[[0,0,\"Dokumen \\u0026 \\\"Akses\\\"\",1]]"#;
+        assert_eq!(
+            parse_google_sheet_gids(html),
+            vec![
+                ("Backlogs".to_string(), "584496886".to_string()),
+                (r#"Dokumen & "Akses""#.to_string(), "277522010".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn numeric_unnamed_first_column_is_the_task_number() {
+        let tasks = parse_sheet_tasks(
+            b"Column 1,Tugas,PIC,Status\n352,Draft dates,Rifky,Testing\n,Section,,\n329,Non roster,Rifky,Done\n",
+        )
+        .unwrap();
+        assert_eq!(tasks[0].no, json!("352"));
+        assert_eq!(tasks[2].no, json!("329"));
+        assert!(!tasks[0].extra.contains_key("Column 1"));
+        let titled = parse_sheet_tasks(b"Column 1,Tugas\nabc,Task\n").unwrap();
+        assert_eq!(titled[0].no, json!(1));
     }
 
     #[test]
