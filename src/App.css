@@ -5682,3 +5682,18 @@ select:focus-visible {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Usage limit → continue with another model (O5) */
+.usage-limit-banner {
+  margin: 8px 16px;
+}
+.usage-limit-banner p {
+  margin: 0;
+  font-size: var(--fs-small);
+  color: var(--colors-muted);
+}
+.terminal-command-approval > .usage-limit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

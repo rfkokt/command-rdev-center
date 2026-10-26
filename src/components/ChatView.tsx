@@ -50,6 +50,11 @@ import {
 } from "../lib/attachment-delivery";
 import { useChatDraft } from "../lib/use-chat-draft";
 import {
+  buildChatHandoff,
+  buildFullTranscript,
+  isUsageLimitError,
+} from "../lib/handoff";
+import {
   findMatchIndex,
   REVEAL_EVENT,
   takeReveal,
@@ -65,7 +70,6 @@ import {
   cacheHitPercent,
   applyToolPatches,
   type ToolCallPatch,
-  buildHandoff,
   mergeAssistantMessage,
   recentItems,
   uid,
@@ -3887,39 +3891,108 @@ export default function ChatView({
   const harnessLabel = (id: string) =>
     harnessOptions.find((item) => item.id === id)?.label ?? id;
 
+  /**
+   * Context for the agent taking over: goal, every request, files changed,
+   * commands run, worktree state and the recent conversation inline, plus the
+   * full transcript saved to a file it can read on demand. Built without the
+   * outgoing model, which may be out of quota.
+   */
+  const prepareHandoff = useCallback(
+    async (from: string) => {
+      let source: ChatMessage[] = messages;
+      // A reloaded chat only shows text; take the tool calls from the session.
+      if (
+        !messages.some((message) => message.toolCalls.length) &&
+        sessionFileRef.current
+      ) {
+        try {
+          const calls = await invoke<
+            Array<{
+              name: string;
+              args: Record<string, unknown>;
+              isError: boolean;
+            }>
+          >("session_tool_calls", { sessionFile: sessionFileRef.current });
+          if (calls.length)
+            source = [
+              {
+                id: "session-tools",
+                role: "assistant",
+                text: "",
+                toolCalls: calls.map((call, index) => ({
+                  callId: `session-${index}`,
+                  name: call.name,
+                  args: call.args ?? {},
+                  isError: call.isError,
+                  phase: "end",
+                })),
+              },
+              ...messages,
+            ];
+        } catch {
+          /* The text-only handoff still works. */
+        }
+      }
+      let fullPath: string | undefined;
+      try {
+        fullPath = await invoke<string>("write_chat_handoff", {
+          chatId,
+          content: buildFullTranscript(source, from),
+        });
+      } catch {
+        fullPath = undefined;
+      }
+      return buildChatHandoff({
+        messages: source,
+        from,
+        changes: worktreeDiff?.files ?? [],
+        fullPath,
+      });
+    },
+    [chatId, messages, worktreeDiff],
+  );
+
+  const switchingAgentRef = useRef(false);
   /** Start the chosen agent in this chat. Each agent keeps its own session,
-   * so a chat already underway hands the new one its conversation so far. */
+   * so a chat already underway hands the new one its conversation so far.
+   * `resume` continues the interrupted request right away. */
   const changeHarness = useCallback(
-    (next: string) => {
-      if (agentLocked || next === currentHarness) return;
-      const from = harnessLabel(currentHarness);
-      const label = harnessLabel(next);
-      handoffRef.current = hasUserMessage
-        ? buildHandoff(messages, from)
-        : undefined;
-      setHarness(next);
-      harnessRef.current = next;
-      sessionFileRef.current = undefined;
-      onSessionFile(chatId, "");
-      onHarnessChange?.(chatId, next);
-      // A model id from one agent means nothing to another.
-      modelRef.current = "";
-      setCurrentModel("");
-      if (hasUserMessage)
-        setMessages((previous) => [
-          ...previous,
-          {
-            id: uid(),
-            role: "system",
-            text: `Switched from ${from} to ${label}. ${label} starts a new session and gets this conversation as context.`,
-            thinking: "",
-            toolCalls: [],
-            createdAt: Date.now(),
-            isStreaming: false,
-          },
-        ]);
-      onToast(`Starting ${label}…`);
-      void handleRestart();
+    async (next: string, resume = false) => {
+      if (agentLocked || next === currentHarness || switchingAgentRef.current)
+        return;
+      switchingAgentRef.current = true;
+      try {
+        const from = `${harnessLabel(currentHarness)}${modelRef.current ? ` (${modelRef.current})` : ""}`;
+        const label = harnessLabel(next);
+        handoffRef.current = hasUserMessage
+          ? await prepareHandoff(from)
+          : undefined;
+        setHarness(next);
+        harnessRef.current = next;
+        sessionFileRef.current = undefined;
+        onSessionFile(chatId, "");
+        onHarnessChange?.(chatId, next);
+        // A model id from one agent means nothing to another.
+        modelRef.current = "";
+        setCurrentModel("");
+        if (hasUserMessage)
+          setMessages((previous) => [
+            ...previous,
+            {
+              id: uid(),
+              role: "system",
+              text: `Switched from ${from} to ${label}. ${label} starts a new session and gets this chat's goal, requests, changed files, commands and recent conversation as context${resume ? ", and continues the last request" : ""}.`,
+              thinking: "",
+              toolCalls: [],
+              createdAt: Date.now(),
+              isStreaming: false,
+            },
+          ]);
+        onToast(`Starting ${label}…`);
+        await handleRestart(resume);
+      } finally {
+        switchingAgentRef.current = false;
+      }
     },
     [
       agentLocked,
@@ -3928,12 +4001,55 @@ export default function ChatView({
       handleRestart,
       harnessOptions,
       hasUserMessage,
-      messages,
       onHarnessChange,
       onSessionFile,
       onToast,
+      prepareHandoff,
     ],
   );
+
+  // Usage limit (O5): the latest turn ended on a quota / rate-limit error.
+  const usageLimitError = useMemo(() => {
+    if (agentStatus === "running") return null;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.role === "user") return null;
+      const at = message.text.lastIndexOf("Agent error:");
+      if (at >= 0 && isUsageLimitError(message.text.slice(at)))
+        return message.text.slice(at + "Agent error:".length).trim();
+    }
+    return null;
+  }, [messages, agentStatus]);
+  const [limitDismissed, setLimitDismissed] = useState<string | null>(null);
+  const continueAfterModelRef = useRef(false);
+  const FALLBACK_KEY = "kern:fallback-agent";
+  const fallbackAgent = (() => {
+    try {
+      const id = localStorage.getItem(FALLBACK_KEY);
+      return id &&
+        id !== currentHarness &&
+        harnessOptions.some((item) => item.id === id)
+        ? id
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  const continueWithAgent = (id: string) => {
+    try {
+      localStorage.setItem(FALLBACK_KEY, id);
+    } catch {
+      /* Remembering the fallback is a convenience. */
+    }
+    setLimitDismissed(usageLimitError);
+    void changeHarness(id, true);
+  };
+  const continueWithOtherModel = () => {
+    // Same agent, other model: the session (full context) stays as it is.
+    continueAfterModelRef.current = true;
+    setModelPickerOpen(true);
+    void sendRaw({ type: "get_available_models" });
+  };
 
   const handleFixPiIssue = useCallback(
     async (issue: ChatMessage) => {
@@ -4050,12 +4166,19 @@ export default function ChatView({
     const parts = m.split("/");
     const provider = parts.length > 1 ? parts[0] : undefined;
     const modelId = parts.length > 1 ? parts.slice(1).join("/") : m;
-    await sendRaw({
+    const switched = await sendRaw({
       type: "set_model",
       provider: provider || undefined,
       modelId,
     });
     setModelPickerOpen(false);
+    if (continueAfterModelRef.current && switched) {
+      continueAfterModelRef.current = false;
+      setLimitDismissed(usageLimitError);
+      void sendPrompt(
+        "The previous model stopped before finishing (usage limit). Continue my last request from where it stopped. Check the current state of the files first and do not redo finished work.",
+      );
+    }
   }
 
   async function handleSetThinking(lvl: string) {
@@ -6372,6 +6495,59 @@ export default function ChatView({
             runInTerminal={runInChatTerminal}
           />
         )}
+        {usageLimitError && limitDismissed !== usageLimitError && (
+          <section
+            className="terminal-command-approval usage-limit-banner"
+            role="alert"
+            aria-label="Usage limit reached"
+          >
+            <small>
+              {harnessLabel(currentHarness)}
+              {currentModel ? ` · ${currentModel}` : ""} hit a usage limit
+            </small>
+            <p>
+              Continue this chat with another model. The same agent keeps the
+              full session; another agent gets the goal, requests, changed
+              files, commands and recent conversation, plus the full transcript
+              on file.
+            </p>
+            <div className="usage-limit-actions">
+              {fallbackAgent && (
+                <button
+                  className="approval-primary"
+                  disabled={agentLocked}
+                  onClick={() => continueWithAgent(fallbackAgent)}
+                >
+                  Continue with {harnessLabel(fallbackAgent)}
+                </button>
+              )}
+              <button
+                className={fallbackAgent ? undefined : "approval-primary"}
+                disabled={agentLocked}
+                onClick={continueWithOtherModel}
+              >
+                Other {harnessLabel(currentHarness)} model…
+              </button>
+              {harnessOptions
+                .filter(
+                  (item) =>
+                    item.id !== currentHarness && item.id !== fallbackAgent,
+                )
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    disabled={agentLocked}
+                    onClick={() => continueWithAgent(item.id)}
+                  >
+                    Continue with {item.label}
+                  </button>
+                ))}
+              <button onClick={() => setLimitDismissed(usageLimitError)}>
+                Dismiss
+              </button>
+            </div>
+          </section>
+        )}
         <ChatComposer
           globalChat={globalChat}
           planMode={planMode}
@@ -6421,7 +6597,7 @@ export default function ChatView({
           agentOptions={harnessOptions}
           agentValue={currentHarness}
           agentLocked={agentLocked}
-          onAgentChange={changeHarness}
+          onAgentChange={(next) => void changeHarness(next)}
         />
       </div>
       {officeFull && (
