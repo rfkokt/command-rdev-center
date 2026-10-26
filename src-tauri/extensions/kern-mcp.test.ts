@@ -117,6 +117,27 @@ describe("kern MCP server", () => {
     expect(detail).toContain("## Referenced task #1");
     const missing = await call("get_project_task", { taskNo: "9" }, env);
     expect(missing.result.isError).toBe(true);
+    const repeated = taskEnv([
+      {
+        no: 329,
+        deskripsi: "Sort",
+        status: "Done",
+        _sheet: "Backlogs",
+        _row: 330,
+      },
+      {
+        no: 329,
+        deskripsi: "Sort",
+        status: "Testing",
+        _sheet: "Backlogs",
+        _row: 361,
+      },
+    ]);
+    const testing = (
+      await call("list_project_tasks", { status: "Testing" }, repeated)
+    ).result.content[0].text;
+    expect(testing).toContain("| 329 (Backlogs row 361) |");
+    expect(testing).not.toContain("row 330");
     const noContext = await call("list_project_tasks", {}, {});
     expect(noContext.result.content[0].text).toContain("unavailable");
   });
@@ -146,6 +167,7 @@ describe("kern MCP server", () => {
           source_url: "https://api.example.com/v3/api-docs",
           document: {
             paths: {
+              "/grup-roster": { get: { operationId: "listGrupRoster" } },
               "/presensi/roster/non-roster": {
                 post: {
                   operationId: "presensiNonRoster",
@@ -185,6 +207,7 @@ describe("kern MCP server", () => {
         .content[0].text,
     );
     expect(found.operations[0].operationId).toBe("presensiNonRoster");
+    expect(found.totalMatches).toBe(1);
     const detail = await call(
       "api_operation_detail",
       { method: "POST", path: "/presensi/roster/non-roster" },
@@ -192,6 +215,8 @@ describe("kern MCP server", () => {
     );
     expect(detail.result.isError).toBeUndefined();
     expect(detail.result.content[0].text).toContain('"sort"');
+    // Kern's request tools are pi-only; ACP guidance must not name them.
+    expect(detail.result.content[0].text).not.toContain("api_contract_test");
     const missing = await call(
       "api_operation_detail",
       { method: "GET", path: "/nope" },

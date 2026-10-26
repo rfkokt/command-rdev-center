@@ -157,7 +157,7 @@ export function searchOperations(
       (!input.contractId || item.contract.id === input.contractId) &&
       (!input.method || item.method === input.method.toUpperCase()),
   );
-  const matches = candidates
+  const ranked = candidates
     .map((item) => {
       const text = normalize(
         [
@@ -174,12 +174,24 @@ export function searchOperations(
           .filter(Boolean)
           .join(" "),
       );
+      const phrase = terms.join(" ");
+      const matched = terms.filter((term) => text.includes(term)).length;
       return {
         item,
-        score: terms.filter((term) => text.includes(term)).length,
+        matched,
+        // The whole query as written ("non-roster") outranks scattered
+        // terms, and a match in the path outranks one in the prose.
+        score:
+          matched +
+          (terms.length > 1 && text.includes(phrase) ? terms.length : 0) +
+          (phrase && normalize(item.path).includes(phrase) ? 1 : 0),
       };
     })
-    .filter(({ score }) => !terms.length || score > 0)
+    .filter(({ matched }) => !terms.length || matched > 0);
+  // When some operations match every term, partial matches are noise.
+  const complete = ranked.some(({ matched }) => matched === terms.length);
+  const matches = ranked
+    .filter(({ matched }) => !complete || matched === terms.length)
     .sort((a, b) => b.score - a.score);
   const offset = input.offset ?? 0,
     limit = input.limit ?? 30;

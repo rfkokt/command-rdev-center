@@ -84,8 +84,17 @@ export function taskMarkdown(task, allTasks) {
     .join("\n");
 }
 
-export function kanbanMarkdown(items) {
+/** Kanban Markdown; a task number used by several rows also shows its sheet
+ * row, so the agent can pass sheet and row to the other task tools. */
+export function kanbanMarkdown(items, allTasks = items) {
   if (!items.length) return "_Tidak ada task yang cocok._";
+  const uses = new Map();
+  for (const task of allTasks)
+    uses.set(String(task.no), (uses.get(String(task.no)) ?? 0) + 1);
+  const number = (task) =>
+    uses.get(String(task.no)) > 1 && task._row
+      ? `${oneLine(task.no, 20)} (${oneLine(task._sheet || "sheet", 30)} row ${task._row})`
+      : oneLine(task.no, 20) || "—";
   const groups = new Map();
   for (const task of items) {
     const status = oneLine(task.status || "Tanpa status", 40);
@@ -99,7 +108,7 @@ export function kanbanMarkdown(items) {
       "|---:|---|---|---|",
       ...group.map(
         (task) =>
-          `| ${oneLine(task.no, 20) || "—"} | ${oneLine(task.deskripsi) || "Untitled task"} | ${oneLine(task.priority, 20) || "—"} | ${oneLine(task.pic, 30) || "—"} |`,
+          `| ${number(task)} | ${oneLine(task.deskripsi) || "Untitled task"} | ${oneLine(task.priority, 20) || "—"} | ${oneLine(task.pic, 30) || "—"} |`,
       ),
     ].join("\n"),
   );
@@ -302,8 +311,13 @@ async function operationDetailText(input, env) {
     await catalog();
   const items = await contracts(env);
   const selection = selectOperation(items, input);
+  // Kern's request tools are pi-only; ACP agents test with their own shell.
   if (selection.selected)
-    return JSON.stringify(operationDetail(selection.selected));
+    return JSON.stringify({
+      ...operationDetail(selection.selected),
+      guidance:
+        "Implement against this exact contractId and method/path. To test it, send the request with your own shell tools (curl) using the base URL above; take tokens from an environment variable the user exported (for example $API_TOKEN), never from chat. An HTTP status check alone does not verify business behavior.",
+    });
   throw new Error(
     JSON.stringify({
       status: "error",
@@ -568,7 +582,7 @@ export const TOOLS = [
           (requested ? status === requested : ready.has(status))
         );
       });
-      return `${kanbanMarkdown(result)}${taskSourceNote(data.metadata, data.items.length)}`;
+      return `${kanbanMarkdown(result, data.items)}${taskSourceNote(data.metadata, data.items.length)}`;
     },
   },
   {

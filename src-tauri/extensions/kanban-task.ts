@@ -6,6 +6,7 @@ import { join } from "node:path";
 // @ts-expect-error plain ESM module without type declarations
 import {
   apiListCheckText,
+  kanbanMarkdown,
   linkTaskApiText,
   requestStatusChange,
   taskSourceNote,
@@ -22,14 +23,6 @@ type Task = {
   notes?: string;
   [key: string]: unknown;
 };
-
-function oneLine(value: unknown, max = 90) {
-  const text = String(value ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\|/g, "\\|");
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
 
 function taskMarkdown(task: Task, allTasks: Task[]) {
   const known = new Set([
@@ -86,28 +79,6 @@ function taskMarkdown(task: Task, allTasks: Task[]) {
   ]
     .filter(Boolean)
     .join("\n");
-}
-
-function kanbanMarkdown(items: Task[]) {
-  if (!items.length) return "_Tidak ada task yang cocok._";
-  const groups = new Map<string, Task[]>();
-  for (const task of items) {
-    const status = oneLine(task.status || "Tanpa status", 40);
-    groups.set(status, [...(groups.get(status) || []), task]);
-  }
-  const sections = [...groups.entries()].map(([status, group]) =>
-    [
-      `## ${status} · ${group.length}`,
-      "",
-      "| No | Task | Priority | PIC |",
-      "|---:|---|---|---|",
-      ...group.map(
-        (task) =>
-          `| ${oneLine(task.no, 20) || "—"} | ${oneLine(task.deskripsi) || "Untitled task"} | ${oneLine(task.priority, 20) || "—"} | ${oneLine(task.pic, 30) || "—"} |`,
-      ),
-    ].join("\n"),
-  );
-  return [`# Task project · ${items.length}`, "", ...sections].join("\n\n");
 }
 
 async function tasks() {
@@ -248,7 +219,7 @@ export default function (pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: `${kanbanMarkdown(result)}${taskSourceNote(data.metadata, data.items.length)}`,
+            text: `${kanbanMarkdown(result, data.items)}${taskSourceNote(data.metadata, data.items.length)}`,
           },
         ],
         details: {
