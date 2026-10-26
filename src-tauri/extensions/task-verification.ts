@@ -146,6 +146,31 @@ export default function (pi: ExtensionAPI) {
   } catch (error) {
     console.error("Kern verification repository metadata unavailable:", error);
   }
+  // Bookkeeping tools are only offered to the model while verification is on:
+  // a declared tool invites calls, and each call is one more full-context request.
+  const VERIFY_TOOLS = ["set_task_contract", "run_check", "report_task"];
+  let offered: string[] | null = null;
+  const applyTools = () => {
+    try {
+      const active = new Set(pi.getActiveTools());
+      // Respect an explicit --tools allowlist: only manage tools it allowed.
+      offered ??= VERIFY_TOOLS.filter((name) => active.has(name));
+      const before = active.size;
+      let changed = false;
+      for (const name of offered) {
+        if (enabled && !active.has(name)) {
+          active.add(name);
+          changed = true;
+        } else if (!enabled && active.has(name)) {
+          active.delete(name);
+          changed = true;
+        }
+      }
+      if (changed || active.size !== before) pi.setActiveTools([...active]);
+    } catch (error) {
+      console.error("Kern verification tool loadout unchanged:", error);
+    }
+  };
   let mode: "on" | "off" | "auto" = "auto";
   let enabled = process.env.CRC_TASK_VERIFICATION === "true";
   let guidanceSent = false;
@@ -193,6 +218,7 @@ export default function (pi: ExtensionAPI) {
     baseline = null;
     recoveryRequested = false;
     guidanceSent = ledger?.guided === true;
+    applyTools();
   };
   pi.on("session_start", restore);
   pi.on("session_tree", restore);
@@ -222,6 +248,7 @@ export default function (pi: ExtensionAPI) {
         mode === "on" ||
         (mode === "auto" && process.env.CRC_TASK_VERIFICATION === "true");
       guidanceSent = false;
+      applyTools();
       pi.appendEntry("kern-verification-mode", mode);
       ctx.ui.notify(`Task verification: ${mode}`, "info");
     },
@@ -240,6 +267,7 @@ export default function (pi: ExtensionAPI) {
         (mode === "auto" && process.env.CRC_TASK_VERIFICATION === "true");
     }
     if (mode === "auto" && requestsVerification(event.prompt)) enabled = true;
+    applyTools();
     if (!enabled) return;
     if (newTask) ledger = fresh(event.prompt);
     if (!ledger) return;
@@ -261,6 +289,7 @@ export default function (pi: ExtensionAPI) {
       enabled = true;
       ledger ??= fresh("Verify the active Pipeline task");
       guidanceSent = false;
+      applyTools();
     }
     if (
       enabled &&

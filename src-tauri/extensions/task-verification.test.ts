@@ -27,9 +27,18 @@ function harness(cwd: string, entries: any[] = [], enabled = true) {
   vi.stubEnv("CRC_WORKSPACE_REPOSITORIES", "[]");
   const hooks = new Map<string, any>(),
     tools = new Map<string, any>();
+  let active = new Set<string>(["read", "edit"]);
   const pi = {
     on: (name: string, fn: any) => hooks.set(name, fn),
-    registerTool: (tool: any) => tools.set(tool.name, tool),
+    registerTool: (tool: any) => {
+      tools.set(tool.name, tool);
+      active.add(tool.name);
+    },
+    getActiveTools: () => [...active],
+    setActiveTools: vi.fn((names: string[]) => {
+      active = new Set(names);
+    }),
+    activeTools: () => active,
     registerCommand: vi.fn(),
     appendEntry: vi.fn((customType: string, data: unknown) =>
       entries.push({ type: "custom", customType, data }),
@@ -67,6 +76,23 @@ afterEach(() => {
 });
 
 describe("task verification evidence", () => {
+  it("offers the bookkeeping tools to the model only while verification is on", async () => {
+    const cwd = repo(),
+      h = harness(cwd, [], false);
+    h.hooks.get("session_start")({}, h.ctx);
+    expect([...h.pi.activeTools()]).not.toContain("run_check");
+    expect([...h.pi.activeTools()]).toContain("read");
+    await h.hooks.get("before_agent_start")({ prompt: "Fix version" }, h.ctx);
+    expect([...h.pi.activeTools()]).not.toContain("report_task");
+    await h.hooks.get("before_agent_start")(
+      { prompt: "Fix it and verify with the tests" },
+      h.ctx,
+    );
+    expect([...h.pi.activeTools()]).toEqual(
+      expect.arrayContaining(["set_task_contract", "run_check", "report_task"]),
+    );
+  });
+
   it("default-off coding prompts do not inject guidance or force continuation after edits", async () => {
     const cwd = repo(),
       h = harness(cwd, [], false);
