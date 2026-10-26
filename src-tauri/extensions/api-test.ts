@@ -22,16 +22,61 @@ const API_AUTH_WORKFLOW = `## Direct API testing and authentication
 For Swagger/backend API tests, start with api_find_operations(refresh:true), then call api_operation_detail and api_contract_test directly. To inspect or update the latest Swagger, always refresh the saved sources; report fetchedAt, contentHash, operation counts, refreshStatus, and persistence results. Never claim latest or saved data when a fetch or write failed. An unchanged hash is a successful live verification, not a failure to refresh. Browser login, a working browser host, workspace credentials, and access to the application's frontend are not prerequisites.
 Never search .env files, browser cookies, or workspace files for a user's access token. Never ask the user to log in through the browser or generate a JWT. Call the API tool: it owns a private token dialog and retries authentication when needed. Set authenticated:true when the task explicitly requires a bearer token even if Swagger omits its security declaration. Set authenticated:false only for an intentional anonymous/unauthorized test; expectedStatus:401 prevents token prompting for that negative test.
 When the user asks to enter, change, switch, or remove a token, call api_authenticate directly with action:set or action:clear. This tool works independently of operation resolution and does not send an API request. A saved token is reused by authenticated:true; use refreshAuthentication:true on a request to replace it before execution. Never claim there is no tool to reopen the dialog. If contract_required occurs, inspect its inventory and select contractId or origin; use api_find_operations with refresh:true to retry loading saved sources before asking the user to change project settings.
+Cookie sessions: when the backend authenticates with a cookie (for example AUTH_TOKEN), call api_authenticate with mode:"cookie" and cookieName; the user enters the value in the private dialog. Requests on that origin then send only that cookie. Choose credentials explicitly with auth:"bearer", auth:"cookie" (optionally cookieName) or auth:"none"; Kern never sends a bearer token and a cookie together. Never put cookie or token values in tool arguments, headers or chat.
 If the user cancels the token dialog, report authentication_required. If an authenticated request still fails, report the actual HTTP response. A browser_host_closing error does not block direct API testing. Use browser tools when the user explicitly requests UI/browser verification.`;
 const tokens = new Map<string, string>();
 const mutationOrigins = new Set<string>();
+/** Credential the user last set per origin, used when a request does not pick one. */
+const preferred = new Map<
+  string,
+  { mode: "bearer" | "cookie"; cookieName?: string }
+>();
+/** Values typed into the dialog but not stored yet (e.g. a failed attempt). */
+const pendingSecrets = new Set<string>();
 const authenticationKey = (origin: string, header: string, prefix: string) =>
   JSON.stringify([origin, header, prefix]);
-const result = (data: unknown, isError = false) => ({
-  content: [{ type: "text" as const, text: JSON.stringify(data) }],
-  details: data,
-  isError,
-});
+const cookieKey = (origin: string, name: string) =>
+  authenticationKey(origin, `cookie:${name}`, "");
+export type AuthMode = "bearer" | "cookie" | "none";
+/** How one request authenticates: exactly one credential, never two. */
+export type AuthScheme = {
+  kind: "bearer" | "header" | "cookie";
+  authHeader: string;
+  authPrefix: string;
+  cookieName?: string;
+};
+const BEARER: AuthScheme = {
+  kind: "bearer",
+  authHeader: "authorization",
+  authPrefix: "Bearer ",
+};
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]{1,200}$/;
+// RFC 6265 cookie-octet: no whitespace, DQUOTE, comma, semicolon or backslash.
+const COOKIE_VALUE = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]{1,8192}$/;
+
+/** Remove every credential value and credential header from tool output. */
+export function redact(text: string, secrets: Iterable<string>) {
+  let out = text;
+  for (const secret of [...secrets]
+    .filter((value) => value.length >= 4)
+    .sort((a, b) => b.length - a.length))
+    out = out.split(secret).join("[REDACTED]");
+  return out
+    .replace(
+      /(\b(?:authorization|cookie|set-cookie)\b\\?["']?\s*[:=]\s*\\?["']?)[^"'\\\r\n]+/gi,
+      "$1[REDACTED]",
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9\-._~+/]{8,}=*/g, "Bearer [REDACTED]");
+}
+const knownSecrets = () => [...tokens.values(), ...pendingSecrets];
+const result = (data: unknown, isError = false) => {
+  const text = redact(JSON.stringify(data) ?? "null", knownSecrets());
+  return {
+    content: [{ type: "text" as const, text }],
+    details: JSON.parse(text),
+    isError,
+  };
+};
 
 function privateAddress(address: string) {
   return /^10\.|^192\.168\.|^172\.(1[6-9]|2\d|3[01])\.|^(fc|fd)/i.test(address);
@@ -59,38 +104,115 @@ function operationAuthentication(selected: Operation) {
         (scheme?.type === "http" &&
           String(scheme.scheme).toLowerCase() === "bearer")
       )
-        return { authHeader: "authorization", authPrefix: "Bearer " };
+        return BEARER;
       if (
         scheme?.type === "apiKey" &&
         scheme.in === "header" &&
         typeof scheme.name === "string"
       )
-        return { authHeader: scheme.name.toLowerCase(), authPrefix: "" };
+        return {
+          kind: "header",
+          authHeader: scheme.name.toLowerCase(),
+          authPrefix: "",
+        } as AuthScheme;
+      if (
+        scheme?.type === "apiKey" &&
+        scheme.in === "cookie" &&
+        typeof scheme.name === "string" &&
+        COOKIE_NAME.test(scheme.name)
+      )
+        return {
+          kind: "cookie",
+          authHeader: "cookie",
+          authPrefix: "",
+          cookieName: scheme.name,
+        } as AuthScheme;
       return undefined;
     })
-    .find(Boolean);
+    .find(Boolean) as AuthScheme | undefined;
   return { security, anonymous, authentication };
 }
 
 async function promptToken(
   ctx: any,
   origin: string,
-  authHeader: string,
-  authPrefix: string,
+  scheme: AuthScheme,
   replacing = false,
 ) {
+  if (scheme.kind === "cookie") {
+    const name = scheme.cookieName!;
+    let value =
+      (
+        await ctx.ui.input(
+          `${replacing ? "Replace API cookie" : "Backend API cookie"} · ${origin} · ${name}`,
+          `Paste the ${name} cookie value only (kept in memory for this chat only)`,
+        )
+      )?.trim() || "";
+    // Accept "Cookie: NAME=value" or "NAME=value" pastes; keep only the value.
+    value = value.replace(/^cookie:\s*/i, "");
+    if (value.startsWith(`${name}=`)) value = value.slice(name.length + 1);
+    value = value.replace(/^"(.*)"$/, "$1");
+    if (value) pendingSecrets.add(value);
+    if (value && !COOKIE_VALUE.test(value)) return { token: "", invalid: true };
+    return { token: value, invalid: false };
+  }
   let token =
     (
       await ctx.ui.input(
-        `${replacing ? "Replace API token" : "Backend API authentication"} · ${origin} · ${authHeader}`,
-        authPrefix
+        `${replacing ? "Replace API token" : "Backend API authentication"} · ${origin} · ${scheme.authHeader}`,
+        scheme.authPrefix
           ? "Paste the token only (kept in memory for this chat only)"
-          : `Paste the exact ${authHeader} header value, including its required prefix (kept in memory for this chat only)`,
+          : `Paste the exact ${scheme.authHeader} header value, including its required prefix (kept in memory for this chat only)`,
       )
     )?.trim() || "";
-  if (authPrefix === "Bearer ") token = token.replace(/^Bearer\s+/i, "").trim();
-  return token;
+  if (scheme.authPrefix === "Bearer ")
+    token = token.replace(/^Bearer\s+/i, "").trim();
+  if (token) pendingSecrets.add(token);
+  return { token, invalid: false };
 }
+
+/**
+ * The single credential a request uses: an explicit `auth` choice wins, then
+ * the operation's documented scheme, then what the user last set for this
+ * origin, then bearer. `none` (or authenticated:false) means anonymous.
+ */
+export function resolveScheme(
+  origin: string,
+  choice: { auth?: AuthMode; cookieName?: string },
+  documented?: AuthScheme,
+): AuthScheme | null | { error: string } {
+  if (choice.auth === "none") return null;
+  const remembered = preferred.get(origin);
+  if (choice.auth === "cookie") {
+    const name =
+      choice.cookieName ||
+      (documented?.kind === "cookie" ? documented.cookieName : undefined) ||
+      remembered?.cookieName;
+    if (!name) return { error: "cookie_name_required" };
+    if (!COOKIE_NAME.test(name)) return { error: "cookie_name_invalid" };
+    return {
+      kind: "cookie",
+      authHeader: "cookie",
+      authPrefix: "",
+      cookieName: name,
+    };
+  }
+  if (choice.auth === "bearer") return BEARER;
+  if (documented) return documented;
+  if (remembered?.mode === "cookie" && remembered.cookieName)
+    return {
+      kind: "cookie",
+      authHeader: "cookie",
+      authPrefix: "",
+      cookieName: remembered.cookieName,
+    };
+  return BEARER;
+}
+const schemeKey = (origin: string, scheme: AuthScheme) =>
+  scheme.kind === "cookie"
+    ? cookieKey(origin, scheme.cookieName!)
+    : authenticationKey(origin, scheme.authHeader, scheme.authPrefix);
+
 async function validateUrl(raw: string, allowedOrigin: string) {
   if (!allowedOrigin) throw new Error("api_origin_not_allowed");
   const url = apiUrl(raw, allowedOrigin);
@@ -140,8 +262,8 @@ async function request(
     origin?: string;
     headers?: Record<string, string>;
     expectedStatus?: number;
-    authHeader?: string;
-    authPrefix?: string;
+    /** Credential to use; null = anonymous. Defaults to bearer. */
+    scheme?: AuthScheme | null;
     contentType?: string;
   },
   signal: AbortSignal | undefined,
@@ -182,23 +304,24 @@ async function request(
   )
     return result({ status: "blocked", code: "user_rejected" }, true);
   if (!readOnly) mutationOrigins.add(url.origin);
-  const authHeader = input.authHeader || "authorization";
-  const authPrefix = input.authPrefix ?? "Bearer ";
-  const tokenKey = authenticationKey(url.origin, authHeader, authPrefix);
+  const scheme = input.scheme === undefined ? BEARER : input.scheme;
+  const tokenKey = scheme ? schemeKey(url.origin, scheme) : "";
   const shouldAuthenticate =
-    input.refreshAuthentication ||
-    (input.authenticated ?? input.expectedStatus !== 401);
-  if (input.refreshAuthentication) tokens.delete(tokenKey);
+    !!scheme &&
+    (input.refreshAuthentication ||
+      (input.authenticated ?? input.expectedStatus !== 401));
+  if (input.refreshAuthentication && tokenKey) tokens.delete(tokenKey);
   let authToken = shouldAuthenticate ? tokens.get(tokenKey) || "" : "";
+  const ask = async (replacing: boolean) => {
+    const answer = await promptToken(ctx, url.origin, scheme!, replacing);
+    return answer;
+  };
   if (shouldAuthenticate && !authToken) {
     update("authentication", "Waiting for private authentication");
-    authToken = await promptToken(
-      ctx,
-      url.origin,
-      authHeader,
-      authPrefix,
-      input.refreshAuthentication,
-    );
+    const answer = await ask(!!input.refreshAuthentication);
+    if (answer.invalid)
+      return result({ status: "blocked", code: "cookie_value_invalid" }, true);
+    authToken = answer.token;
     if (!authToken)
       return result(
         { status: "blocked", code: "authentication_required" },
@@ -206,6 +329,12 @@ async function request(
       );
   }
   if (authToken) tokens.set(tokenKey, authToken);
+  const credentialHeader = (): Record<string, string> =>
+    !authToken || !scheme
+      ? {}
+      : scheme.kind === "cookie"
+        ? { cookie: `${scheme.cookieName}=${authToken}` }
+        : { [scheme.authHeader]: `${scheme.authPrefix}${authToken}` };
   const requestSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
     : AbortSignal.timeout(30_000);
@@ -213,7 +342,8 @@ async function request(
     fetch(url, {
       method: input.method,
       signal: requestSignal,
-      redirect: "error",
+      // Never follow: a redirect could carry the credential to another origin.
+      redirect: "manual",
       headers: {
         accept: "application/json, application/problem+json",
         "accept-language": "id",
@@ -222,7 +352,8 @@ async function request(
         ...(input.body !== undefined && {
           "content-type": input.contentType || "application/json",
         }),
-        ...(authToken && { [authHeader]: `${authPrefix}${authToken}` }),
+        // Exactly one credential: a bearer token or a cookie, never both.
+        ...credentialHeader(),
       },
       ...(input.body !== undefined && { body: JSON.stringify(input.body) }),
     });
@@ -231,6 +362,7 @@ async function request(
   update("response", "Reading response body", response.status);
   let raw = await response.text();
   if (
+    scheme &&
     (shouldAuthenticate || input.authenticateOnChallenge) &&
     input.expectedStatus !== response.status &&
     (response.status === 401 ||
@@ -247,16 +379,14 @@ async function request(
         "authentication",
         "API requires authentication · Waiting for a token",
       );
-      authToken = await promptToken(
-        ctx,
-        url.origin,
-        authHeader,
-        authPrefix,
-        tokenWasSent,
-      );
+      const answer = await ask(tokenWasSent);
+      if (answer.invalid)
+        return result(
+          { status: "blocked", code: "cookie_value_invalid" },
+          true,
+        );
+      authToken = answer.token;
     }
-    if (authPrefix === "Bearer ")
-      authToken = authToken.replace(/^Bearer\s+/i, "");
     if (!authToken)
       return result(
         { status: "blocked", code: "authentication_required" },
@@ -272,6 +402,17 @@ async function request(
     );
     raw = await response.text();
     if (response.status === 401) tokens.delete(tokenKey);
+  }
+  const location = response.headers.get("location");
+  let redirect: string | undefined;
+  if (response.status >= 300 && response.status < 400 && location) {
+    try {
+      const target = new URL(location, url);
+      // Origin + path only: a query string may carry tokens.
+      redirect = `${target.origin}${target.pathname}`;
+    } catch {
+      redirect = "[unparseable location]";
+    }
   }
   update("validation", "Validating response against contract", response.status);
   const text = raw.slice(0, MAX_BODY);
@@ -296,6 +437,18 @@ async function request(
         response.headers.get("x-request-id"),
       body,
       truncated: raw.length > MAX_BODY,
+      auth: scheme
+        ? scheme.kind === "cookie"
+          ? "cookie"
+          : scheme.kind
+        : "none",
+      ...(scheme?.kind === "cookie" && { cookieName: scheme.cookieName }),
+      ...(redirect && {
+        redirect,
+        redirectFollowed: false,
+        guidance:
+          "Redirects are not followed, so credentials never reach another URL. Request the target path directly if it is on this API origin.",
+      }),
       ...(response.status === 401 &&
         input.expectedStatus !== 401 && {
           code: "authentication_failed",
@@ -315,6 +468,8 @@ export default async function (pi: ExtensionAPI) {
   let apiOnlyTask = false;
   const reset = () => {
     tokens.clear();
+    preferred.clear();
+    pendingSecrets.clear();
     mutationOrigins.clear();
     apiOnlyTask = false;
   };
@@ -384,10 +539,14 @@ export default async function (pi: ExtensionAPI) {
     name: "api_authenticate",
     label: "Set, replace, or clear API token",
     description:
-      "Open the private token dialog to set or replace a token, or clear saved tokens for an API origin. Works even when a saved Swagger source cannot load; does not execute an HTTP request or require an operation. Select contractId or origin if multiple API origins exist. Supply an exact operation selector for its documented header API key scheme; otherwise uses bearer authentication. Never pass the token in tool arguments or chat.",
+      'Open the private dialog to set or replace a credential, or clear saved credentials for an API origin. mode:"bearer" (default) stores an Authorization bearer token; mode:"cookie" with cookieName (e.g. AUTH_TOKEN, or taken from a Swagger apiKey-in-cookie scheme) stores a session cookie that later requests on this origin send instead of a bearer token. action:"clear" removes all credentials for the origin, or only one mode. Works even when a saved Swagger source cannot load; does not execute an HTTP request. Select contractId or origin if multiple API origins exist. Never pass credential values in tool arguments or chat.',
     parameters: Type.Object({
       ...selector,
       action: Type.Union([Type.Literal("set"), Type.Literal("clear")]),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("bearer"), Type.Literal("cookie")]),
+      ),
+      cookieName: Type.Optional(Type.String({ maxLength: 200 })),
     }),
     async execute(_id, input, _signal, _onUpdate, ctx) {
       try {
@@ -442,9 +601,28 @@ export default async function (pi: ExtensionAPI) {
         )
           return result({ status: "blocked", code: "api_url_blocked" }, true);
         if (input.action === "clear") {
-          for (const key of tokens.keys())
-            if (JSON.parse(key)[0] === origin) tokens.delete(key);
-          return result({ status: "ok", action: "clear", origin });
+          let cleared = 0;
+          for (const key of [...tokens.keys()]) {
+            const [keyOrigin, header] = JSON.parse(key);
+            if (keyOrigin !== origin) continue;
+            const isCookie = String(header).startsWith("cookie:");
+            if (
+              (input.mode === "cookie" && !isCookie) ||
+              (input.mode === "bearer" && isCookie)
+            )
+              continue;
+            tokens.delete(key);
+            cleared++;
+          }
+          if (!input.mode || preferred.get(origin)?.mode === input.mode)
+            preferred.delete(origin);
+          return result({
+            status: "ok",
+            action: "clear",
+            origin,
+            mode: input.mode ?? "all",
+            cleared,
+          });
         }
         const auth = selected ? operationAuthentication(selected) : undefined;
         if (auth && !auth.anonymous && !auth.authentication)
@@ -456,32 +634,58 @@ export default async function (pi: ExtensionAPI) {
             },
             true,
           );
-        const { authHeader, authPrefix } = auth?.authentication || {
-          authHeader: "authorization",
-          authPrefix: "Bearer ",
-        };
-        const key = authenticationKey(origin, authHeader, authPrefix);
+        const scheme = resolveScheme(
+          origin,
+          { auth: input.mode, cookieName: input.cookieName },
+          auth?.authentication,
+        );
+        if (!scheme)
+          return result({ status: "blocked", code: "mode_required" }, true);
+        if ("error" in scheme)
+          return result(
+            {
+              status: "blocked",
+              code: scheme.error,
+              guidance:
+                "Pass cookieName (for example AUTH_TOKEN). Swagger did not declare an apiKey cookie scheme for this origin.",
+            },
+            true,
+          );
+        const key = schemeKey(origin, scheme);
         const replacing = tokens.has(key);
         // Canceling replacement must not silently retain the previous identity.
         tokens.delete(key);
-        const token = await promptToken(
-          ctx,
-          origin,
-          authHeader,
-          authPrefix,
-          replacing,
-        );
-        if (!token)
+        const answer = await promptToken(ctx, origin, scheme, replacing);
+        if (answer.invalid)
+          return result(
+            {
+              status: "blocked",
+              code: "cookie_value_invalid",
+              guidance:
+                "A cookie value cannot contain spaces, quotes, commas, semicolons or backslashes. Paste only the value.",
+            },
+            true,
+          );
+        if (!answer.token)
           return result(
             { status: "blocked", code: "authentication_required", origin },
             true,
           );
-        tokens.set(key, token);
+        tokens.set(key, answer.token);
+        preferred.set(
+          origin,
+          scheme.kind === "cookie"
+            ? { mode: "cookie", cookieName: scheme.cookieName }
+            : { mode: "bearer" },
+        );
         return result({
           status: "ok",
           action: "set",
           origin,
-          authHeader,
+          mode: scheme.kind === "cookie" ? "cookie" : "bearer",
+          ...(scheme.kind === "cookie"
+            ? { cookieName: scheme.cookieName }
+            : { authHeader: scheme.authHeader }),
           replaced: replacing,
         });
       } catch (error) {
@@ -592,7 +796,7 @@ export default async function (pi: ExtensionAPI) {
     name: "api_request",
     label: "Test backend API",
     description:
-      "Send one HTTP request to a configured API origin. Prefer api_contract_test for documented operations; raw api_request can exercise deliberate invalid-input cases that contract preflight blocks. Select contractId when multiple API base URLs exist. Tokens are collected privately per origin; use refreshAuthentication:true to replace a cached token before execution, or api_authenticate to manage tokens without a request. Mutations require confirmation. A successful response alone does not prove business behavior.",
+      "Send one HTTP request to a configured API origin. Prefer api_contract_test for documented operations; raw api_request can exercise deliberate invalid-input cases that contract preflight blocks. Select contractId when multiple API base URLs exist. Credentials are collected privately per origin; auth (bearer, cookie or none) picks exactly one (default: what the user last set for the origin, else bearer). Use refreshAuthentication:true to replace a cached credential before execution, or api_authenticate to manage credentials without a request. Redirects are reported, never followed. Mutations require confirmation. A successful response alone does not prove business behavior.",
     parameters: Type.Object({
       method: Type.Union(
         ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"].map(
@@ -603,6 +807,14 @@ export default async function (pi: ExtensionAPI) {
       body: Type.Optional(Type.Unknown()),
       authenticated: Type.Optional(Type.Boolean()),
       refreshAuthentication: Type.Optional(Type.Boolean()),
+      auth: Type.Optional(
+        Type.Union([
+          Type.Literal("bearer"),
+          Type.Literal("cookie"),
+          Type.Literal("none"),
+        ]),
+      ),
+      cookieName: Type.Optional(Type.String({ maxLength: 200 })),
       expectedStatus: Type.Optional(
         Type.Integer({ minimum: 100, maximum: 599 }),
       ),
@@ -641,7 +853,18 @@ export default async function (pi: ExtensionAPI) {
             },
             true,
           );
-        return await request({ ...input, origin }, signal, ctx, onUpdate);
+        const scheme =
+          input.authenticated === false
+            ? null
+            : resolveScheme(new URL(origin).origin, input);
+        if (scheme && "error" in scheme)
+          return result({ status: "blocked", code: scheme.error }, true);
+        return await request(
+          { ...input, origin, scheme },
+          signal,
+          ctx,
+          onUpdate,
+        );
       } catch (error) {
         return result({ status: "error", code: String(error) }, true);
       }
@@ -651,7 +874,7 @@ export default async function (pi: ExtensionAPI) {
     name: "api_contract_test",
     label: "Test Swagger operation",
     description:
-      "Execute one exact saved Swagger/OpenAPI operation after api_operation_detail. Call directly; no browser login or workspace token search is needed. Credentials are collected in a private token dialog. If Swagger omits security, an unexpected 401 opens the dialog and retries once. Use authenticated:true to request a bearer token up front, refreshAuthentication:true to replace a cached token, authenticated:false for an intentional anonymous test. Use api_authenticate to manage tokens without executing an operation. Checks required parameters, top-level body fields, and documented HTTP status; full response schemas and business rules need separate assertions. Supply explicit expectedStatus for a negative test.",
+      "Execute one exact saved Swagger/OpenAPI operation after api_operation_detail. Call directly; no browser login or workspace token search is needed. Credentials are collected in a private token dialog. If Swagger omits security, an unexpected 401 opens the dialog and retries once. Use authenticated:true to request a credential up front, auth cookie (with cookieName unless Swagger declares an apiKey cookie) or auth bearer to choose exactly one credential, auth none or authenticated:false for an intentional anonymous test, refreshAuthentication:true to replace a cached credential. Use api_authenticate to manage tokens without executing an operation. Checks required parameters, top-level body fields, and documented HTTP status; full response schemas and business rules need separate assertions. Supply explicit expectedStatus for a negative test.",
     parameters: Type.Object({
       ...selector,
       pathParams: Type.Optional(Type.Record(Type.String(), Type.String())),
@@ -660,6 +883,14 @@ export default async function (pi: ExtensionAPI) {
       body: Type.Optional(Type.Unknown()),
       authenticated: Type.Optional(Type.Boolean()),
       refreshAuthentication: Type.Optional(Type.Boolean()),
+      auth: Type.Optional(
+        Type.Union([
+          Type.Literal("bearer"),
+          Type.Literal("cookie"),
+          Type.Literal("none"),
+        ]),
+      ),
+      cookieName: Type.Optional(Type.String({ maxLength: 200 })),
       expectedStatus: Type.Optional(
         Type.Integer({ minimum: 100, maximum: 599 }),
       ),
@@ -795,6 +1026,7 @@ export default async function (pi: ExtensionAPI) {
         if (
           !anonymous &&
           !authentication &&
+          !input.auth &&
           (input.authenticated ?? input.expectedStatus !== 401)
         )
           return result(
@@ -851,6 +1083,12 @@ export default async function (pi: ExtensionAPI) {
             encodeURIComponent(input.pathParams![name]),
         );
         const origin = operationBaseUrl(selected, input.serverIndex);
+        const scheme =
+          input.authenticated === false
+            ? null
+            : resolveScheme(new URL(origin).origin, input, authentication);
+        if (scheme && "error" in scheme)
+          return result({ status: "blocked", code: scheme.error }, true);
         const execution = await request(
           {
             method: selected.method,
@@ -862,7 +1100,7 @@ export default async function (pi: ExtensionAPI) {
                 (type: string) =>
                   type === "application/json" || type.endsWith("+json"),
               ),
-            ...authentication,
+            scheme,
             refreshAuthentication: input.refreshAuthentication,
             authenticated:
               input.authenticated ??
