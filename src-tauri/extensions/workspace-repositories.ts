@@ -111,8 +111,23 @@ function inputPaths(input: Record<string, unknown>) {
   ].filter((value): value is string => typeof value === "string");
 }
 
+/**
+ * Multi-repository mode only. A single-repository chat runs inside that
+ * repository's own worktree: there is no `<session>/<repository>` overlay, so
+ * the overlay rules (and the Git guard below) would block every commit.
+ */
+export function overlayRepositories(
+  sessionDir: string,
+  repos: Repository[],
+  exists: (path: string) => boolean = (path) => !!lstatSafe(path),
+) {
+  return repos.filter((repo) => exists(join(sessionDir, repo.name)));
+}
+
 export default function (pi: ExtensionAPI) {
   if (!workspace || repositories.length === 0) return;
+  if (!session || overlayRepositories(session, repositories).length === 0)
+    return;
   pi.on("tool_call", (event) => {
     const input = event.input as Record<string, unknown>;
     if (["write", "edit"].includes(event.toolName)) {
