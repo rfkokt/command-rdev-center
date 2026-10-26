@@ -262,6 +262,18 @@ describe("projectTaskIntent", () => {
     expect(projectTaskIntent("test")).toBeNull();
     expect(projectTaskIntent("jalankan task runner npm")).toBeNull();
   });
+
+  test("lists only for task questions, not messages that mention tasks", () => {
+    expect(projectTaskIntent("task apa aja yang ready?")).toEqual({
+      kind: "list",
+    });
+    expect(projectTaskIntent("what tasks are left")).toEqual({ kind: "list" });
+    expect(
+      projectTaskIntent(
+        "1. A. iya gua ada akses edit\n4. tergantung tabs, kadang ga pake sprint langsung backlog task aja",
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("researchQuery", () => {

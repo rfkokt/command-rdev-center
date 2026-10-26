@@ -158,7 +158,7 @@ export function projectTaskIntent(input: string): TaskIntent | null {
     .replace(/[#?.,!]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (!/\b(task|tugas|point|poin)\b/.test(text)) return null;
+  if (!/\b(tasks?|tugas|point|poin)\b/.test(text)) return null;
   const number = text.match(
     /\b(?:task|tugas|point|poin)(?:\s+(?:nomor|no))?\s+(\d+)\b/,
   )?.[1];
@@ -167,7 +167,15 @@ export function projectTaskIntent(input: string): TaskIntent | null {
     /\b(lihat|detail|cek|check|show|buka|apa|what|isi)\b/.test(text)
   )
     return { kind: "detail", taskNo: number };
-  if (/\b(ada|list|daftar|available|tersedia|punya|what|apa)\b/.test(text))
+  // A list question names tasks next to its question word ("ada task apa",
+  // "list tugas", "what tasks"); a long message that merely mentions a task
+  // is a different request.
+  if (
+    text.length <= 160 &&
+    /\b(?:ada|list|daftar|punya|lihat|cek)\s+(?:\w+\s+)?(?:task|tugas)s?\b|\b(?:task|tugas)s?\s+(?:\w+\s+)?(?:apa|apaan|available|tersedia)\b|\bwhat\s+(?:\w+\s+)?tasks?\b/.test(
+      text,
+    )
+  )
     return { kind: "list" };
   return null;
 }

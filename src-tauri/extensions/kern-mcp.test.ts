@@ -121,6 +121,30 @@ describe("kern MCP server", () => {
     expect(result.result.content[0].text).toContain("Do not infer");
   });
 
+  test("an empty task list says why", async () => {
+    const env = taskEnv([], "google_sheets");
+    const unsynced = await call("list_project_tasks", {}, env);
+    expect(unsynced.result.content[0].text).toContain("project_not_found");
+    mkdirSync(join(env.CRC_TASK_DIR, ".cache"));
+    writeFileSync(join(env.CRC_TASK_DIR, ".cache", "demo.json"), "[]");
+    writeFileSync(
+      join(env.CRC_TASK_DIR, ".cache", "demo.meta.json"),
+      JSON.stringify({
+        state: "no_tasks_for_pic",
+        sheets: ["Backlogs"],
+        pics: ["Rifky"],
+        total: 133,
+        count: 0,
+        syncedAt: 0,
+      }),
+    );
+    const text = (await call("list_project_tasks", {}, env)).result.content[0]
+      .text;
+    expect(text).toContain("Why empty (no_tasks_for_pic)");
+    expect(text).toContain("Read 133 rows");
+    expect(text).toContain("worksheets Backlogs · PIC Rifky");
+  });
+
   test("speaks newline-delimited JSON-RPC over stdio", async () => {
     // Installed under "Application Support": the path contains a space.
     const installed = join(

@@ -3,6 +3,8 @@ import { Type } from "typebox";
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+// @ts-expect-error plain ESM module without type declarations
+import { taskSourceNote } from "./kern-mcp.mjs";
 
 type Task = {
   no?: string | number;
@@ -110,15 +112,21 @@ async function tasks() {
     dir,
     ...(cached ? [".cache", `${project}.json`] : [`${project}.json`]),
   );
+  const notSynced = (error: unknown): never => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    throw new Error(
+      `No task data for project "${project}" yet (project_not_found): Kern has not synced its task source. Ask the user to open the project's Tasks view or check Project Settings → Tasks. Do not infer that no tasks exist.`,
+    );
+  };
   let raw: string,
     source = path;
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" || cached)
-      throw error;
+    if (cached) notSynced(error);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     source = join(dir, ".cache", `${project}.json`);
-    raw = await readFile(source, "utf8");
+    raw = await readFile(source, "utf8").catch(notSynced);
   }
   let metadata: any;
   if (source.includes(`${join(dir, ".cache")}/`)) {
@@ -143,6 +151,7 @@ async function tasks() {
     source,
     updatedAt,
     cached: source !== join(dir, `${project}.json`),
+    metadata,
   };
 }
 
@@ -229,13 +238,19 @@ export default function (pi: ExtensionAPI) {
         );
       });
       return {
-        content: [{ type: "text", text: kanbanMarkdown(result) }],
+        content: [
+          {
+            type: "text",
+            text: `${kanbanMarkdown(result)}${taskSourceNote(data.metadata, data.items.length)}`,
+          },
+        ],
         details: {
           count: result.length,
           taskIds: result.map((task) => String(task.no)),
           source: data.source,
           updatedAt: data.updatedAt,
           cached: data.cached,
+          state: data.metadata?.state,
         },
       };
     },

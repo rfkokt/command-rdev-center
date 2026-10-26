@@ -114,17 +114,24 @@ async function tasks(env = process.env) {
     dir,
     ...(cached ? [".cache", `${project}.json`] : [`${project}.json`]),
   );
+  const notSynced = (error) => {
+    if (error?.code !== "ENOENT") throw error;
+    throw new Error(
+      `No task data for project "${project}" yet (project_not_found): Kern has not synced its task source. Ask the user to open the project's Tasks view or check Project Settings → Tasks. Do not infer that no tasks exist.`,
+    );
+  };
   let raw;
   let source = path;
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (error?.code !== "ENOENT" || cached) throw error;
+    if (cached) notSynced(error);
+    if (error?.code !== "ENOENT") throw error;
     source = join(dir, ".cache", `${project}.json`);
-    raw = await readFile(source, "utf8");
+    raw = await readFile(source, "utf8").catch(notSynced);
   }
+  let metadata;
   if (source.includes(`${join(dir, ".cache")}/`)) {
-    let metadata;
     try {
       metadata = JSON.parse(
         await readFile(join(dir, ".cache", `${project}.meta.json`), "utf8"),
@@ -145,7 +152,32 @@ async function tasks(env = process.env) {
     source,
     updatedAt: (await stat(source)).mtime.toISOString(),
     cached: source !== join(dir, `${project}.json`),
+    metadata,
   };
+}
+
+/** Explains where a task list came from and, when empty, why. */
+export function taskSourceNote(metadata, count) {
+  if (!metadata?.state) return "";
+  const sheets = (metadata.sheets ?? []).filter(Boolean).join(", ") || "—";
+  const pics = (metadata.pics ?? []).join(", ") || "—";
+  const synced = metadata.syncedAt
+    ? new Date(metadata.syncedAt).toISOString()
+    : "unknown";
+  const why = count
+    ? ""
+    : {
+        no_pic_selected:
+          "No PIC is selected in Project Settings → Tasks, so every row is filtered out. Ask the user to select their PIC.",
+        no_tasks_for_pic: `Read ${metadata.total} rows, but none belong to the selected PIC. The tasks may be on a worksheet that is not selected in Project Settings → Tasks.`,
+        empty: "The selected worksheets contain no task rows.",
+      }[metadata.state] || "";
+  return [
+    why && `\n\n**Why empty (${metadata.state}):** ${why}`,
+    `\n\n<!-- state ${metadata.state} · worksheets ${sheets} · PIC ${pics} · ${metadata.count ?? "?"} of ${metadata.total ?? "?"} rows · synced ${synced} -->`,
+  ]
+    .filter(Boolean)
+    .join("");
 }
 
 // ---------------------------------------------------------------- tools
@@ -192,7 +224,7 @@ export const TOOLS = [
           (requested ? status === requested : ready.has(status))
         );
       });
-      return kanbanMarkdown(result);
+      return `${kanbanMarkdown(result)}${taskSourceNote(data.metadata, data.items.length)}`;
     },
   },
   {

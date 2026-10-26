@@ -1656,6 +1656,13 @@ fn kern_mcp_server(
         crate::projects::get_project_task_source(owning_project.to_string_lossy().into_owned())
             .map(|source| source.kind)
             .unwrap_or_else(|_| "local".into());
+    if task_source == "google_sheets" {
+        // The MCP server reads the task cache; refresh it without delaying
+        // the chat so agents do not work from a stale or missing snapshot.
+        std::thread::spawn(|| {
+            let _ = crate::kanban::list_kanban_tasks();
+        });
+    }
     let env = [
         ("CRC_PROJECT_NAME", project_name),
         (

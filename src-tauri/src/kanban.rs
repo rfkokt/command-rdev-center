@@ -51,6 +51,33 @@ pub struct KanbanProject {
     read_only: bool,
     #[serde(default)]
     error: Option<String>,
+    #[serde(skip)]
+    origin: SheetOrigin,
+}
+
+/// What a Sheets-backed project read, so an empty list can say why.
+#[derive(Debug, Default)]
+struct SheetOrigin {
+    sheets: Vec<String>,
+    pics: Vec<String>,
+    /// Rows read across the worksheets, before the PIC filter.
+    total: usize,
+}
+
+impl KanbanProject {
+    fn state(&self) -> &'static str {
+        if self.error.is_some() {
+            "sheet_unreachable"
+        } else if self.read_only && self.origin.pics.is_empty() {
+            "no_pic_selected"
+        } else if self.read_only && self.origin.total > 0 && self.tasks.is_empty() {
+            "no_tasks_for_pic"
+        } else if self.tasks.is_empty() {
+            "empty"
+        } else {
+            "ok"
+        }
+    }
 }
 
 pub(crate) fn task_dir() -> Result<PathBuf, String> {
@@ -689,6 +716,25 @@ pub fn get_project_task(project: String, task_no: String) -> Result<KanbanTask, 
     Ok(selected)
 }
 
+/// Last task-source sync for a project (state, worksheets, PICs, syncedAt),
+/// so callers can explain an empty list instead of passing on `[]`.
+#[tauri::command(async)]
+pub fn get_project_task_source_state(project: String) -> Result<Value, String> {
+    if !valid_project(&project) {
+        return Err("invalid project".into());
+    }
+    let path = task_dir()?
+        .join(".cache")
+        .join(format!("{project}.meta.json"));
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| e.to_string()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(json!({ "state": "project_not_found" }))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), String> {
     // A failed Sheets refresh must not replace a good snapshot with an empty list.
     if project.error.is_none() {
@@ -706,7 +752,25 @@ fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), Stri
             .map_err(|e| e.to_string())?
             .as_nanos()
     ));
-    std::fs::write(&temp, serde_json::to_vec(&json!({ "sourceKind": if project.read_only { "google_sheets" } else { "local" }, "error": project.error })).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let synced_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
+    let metadata_json = json!({
+        "sourceKind": if project.read_only { "google_sheets" } else { "local" },
+        "error": project.error,
+        "state": project.state(),
+        "sheets": project.origin.sheets,
+        "pics": project.origin.pics,
+        "total": project.origin.total,
+        "count": project.tasks.len(),
+        "syncedAt": synced_at,
+    });
+    std::fs::write(
+        &temp,
+        serde_json::to_vec(&metadata_json).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::rename(temp, metadata).map_err(|e| e.to_string())
 }
 
@@ -738,6 +802,7 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
                 tasks,
                 read_only: false,
                 error: None,
+                origin: SheetOrigin::default(),
             });
         }
     }
@@ -755,12 +820,18 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
         } else {
             source.sheets.iter().map(String::as_str).collect()
         };
+        let mut origin = SheetOrigin {
+            sheets: sheets.iter().map(|sheet| sheet.to_string()).collect(),
+            pics: source.pics.clone(),
+            total: 0,
+        };
         let result = sheets
             .into_iter()
             .map(|sheet| fetch_sheet_tasks(&source.url, sheet))
             .collect::<Result<Vec<_>, _>>()
             .map(|groups| {
                 let all_tasks = groups.into_iter().flatten().collect::<Vec<_>>();
+                origin.total = all_tasks.len();
                 let mut tasks = all_tasks
                     .iter()
                     .filter(|task| {
@@ -782,12 +853,14 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
             existing.tasks = tasks;
             existing.read_only = true;
             existing.error = error;
+            existing.origin = origin;
         } else {
             projects.push(KanbanProject {
                 project,
                 tasks,
                 read_only: true,
                 error,
+                origin,
             });
         }
     }
@@ -820,21 +893,52 @@ mod tests {
             .unwrap(),
             read_only: true,
             error: None,
+            origin: SheetOrigin {
+                sheets: vec!["Backlogs".into()],
+                pics: vec!["Rifky".into()],
+                total: 3,
+            },
         };
         cache_project_tasks(&cache, &good).unwrap();
         let before = std::fs::read(cache.join("demo.json")).unwrap();
+        let metadata: Value =
+            serde_json::from_slice(&std::fs::read(cache.join("demo.meta.json")).unwrap()).unwrap();
+        assert_eq!(metadata["state"], "ok");
+        assert_eq!(metadata["sheets"], json!(["Backlogs"]));
+        assert_eq!(metadata["total"], 3);
+        assert!(metadata["syncedAt"].as_u64().is_some());
         let failed = KanbanProject {
             project: "demo".into(),
             tasks: Vec::new(),
             read_only: true,
             error: Some("Sheets unavailable".into()),
+            origin: SheetOrigin::default(),
         };
         cache_project_tasks(&cache, &failed).unwrap();
         assert_eq!(std::fs::read(cache.join("demo.json")).unwrap(), before);
         let metadata: Value =
             serde_json::from_slice(&std::fs::read(cache.join("demo.meta.json")).unwrap()).unwrap();
         assert_eq!(metadata["error"], "Sheets unavailable");
+        assert_eq!(metadata["state"], "sheet_unreachable");
         std::fs::remove_dir_all(cache).unwrap();
+    }
+
+    #[test]
+    fn empty_sheet_projects_explain_why() {
+        let project = |pics: Vec<String>, total| KanbanProject {
+            project: "demo".into(),
+            tasks: Vec::new(),
+            read_only: true,
+            error: None,
+            origin: SheetOrigin {
+                sheets: vec!["Backlogs".into()],
+                pics,
+                total,
+            },
+        };
+        assert_eq!(project(Vec::new(), 9).state(), "no_pic_selected");
+        assert_eq!(project(vec!["Rifky".into()], 9).state(), "no_tasks_for_pic");
+        assert_eq!(project(vec!["Rifky".into()], 0).state(), "empty");
     }
 
     #[test]

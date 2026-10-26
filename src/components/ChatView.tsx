@@ -3298,7 +3298,18 @@ export default function ChatView({
               pic: null,
               status: null,
             });
-      return `\n\n<authoritative_project_tasks>\n${JSON.stringify(tasks)}\n</authoritative_project_tasks>\nAnswer the user's task question only from this authoritative data. Do not infer tasks from Graphify, repository files, tests, or SonarQube. Do not discuss your reasoning.\n`;
+      // An empty list must carry its cause (no PIC selected, wrong worksheet,
+      // unsynced source) so the agent reports it instead of "no tasks".
+      const sourceState = tasks.length
+        ? null
+        : await invoke<Record<string, unknown>>(
+            "get_project_task_source_state",
+            { project: projectName },
+          ).catch(() => null);
+      const emptyNote = sourceState
+        ? `\n<task_source_state>\n${JSON.stringify(sourceState)}\n</task_source_state>\nThe list is empty. Explain the cause from task_source_state (state, sheets, pics, total) and the setting to change; do not claim the project has no tasks.`
+        : "";
+      return `\n\n<authoritative_project_tasks>\n${JSON.stringify(tasks)}\n</authoritative_project_tasks>${emptyNote}\nAnswer the user's task question only from this authoritative data. Do not infer tasks from Graphify, repository files, tests, or SonarQube. Do not discuss your reasoning.\n`;
     } catch (error) {
       onToast(`Task context: ${String(error)}`);
       return "";

@@ -113,6 +113,7 @@ pub fn run() {
             kanban::list_google_sheet_pics,
             kanban::list_project_tasks,
             kanban::get_project_task,
+            kanban::get_project_task_source_state,
             kanban::update_kanban_task_status,
             kanban::sync_chat_task,
             kanban::create_error_report_task,
