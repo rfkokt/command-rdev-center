@@ -107,6 +107,13 @@ pub struct TaskSource {
     pub sheets: Vec<String>,
     #[serde(default)]
     pub pics: Vec<String>,
+    /// Apps Script web app that writes approved status changes (see
+    /// src/lib/kern-sheet-writer.gs); empty keeps the source read-only.
+    #[serde(default)]
+    pub writer_url: String,
+    /// Shared secret the script checks (its KERN_SECRET property).
+    #[serde(default)]
+    pub writer_secret: String,
 }
 
 fn sanitize_repo_name(name: &str) -> String {
@@ -811,6 +818,8 @@ pub fn get_project_task_source(path: String) -> Result<TaskSource, String> {
             sheet: String::new(),
             sheets: Vec::new(),
             pics: Vec::new(),
+            writer_url: String::new(),
+            writer_secret: String::new(),
         }))
 }
 
@@ -831,7 +840,23 @@ pub fn save_project_task_source(path: String, source: TaskSource) -> Result<Task
     if source.kind != "local" && source.kind != "google_sheets" {
         return Err("task source must be local or google_sheets".into());
     }
+    let writer_url = source.writer_url.trim().to_string();
+    if !writer_url.is_empty()
+        && !(writer_url.starts_with("https://script.google.com/") && writer_url.ends_with("/exec"))
+    {
+        return Err("Sheet writer URL must be an Apps Script web app URL ending in /exec".into());
+    }
+    let writer_secret = match source.writer_secret.trim() {
+        "" => {
+            let mut bytes = [0u8; 24];
+            getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+        }
+        secret => secret.to_string(),
+    };
     let source = TaskSource {
+        writer_url,
+        writer_secret,
         kind: source.kind,
         url: source.url.trim().to_string(),
         sheet: String::new(),

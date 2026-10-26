@@ -54,7 +54,9 @@ describe("kern MCP server", () => {
     expect(names).toEqual(
       TOOL_NAMES.filter(
         (name: string) =>
-          name !== "complete_pr_review" && !name.startsWith("api_"),
+          name !== "complete_pr_review" &&
+          name !== "update_task_status" &&
+          !name.startsWith("api_"),
       ),
     );
     expect(names).toContain("track_kanban_task");
@@ -206,6 +208,78 @@ describe("kern MCP server", () => {
     );
   }, 30_000);
 
+  test("status changes are checked against the synced tasks", async () => {
+    const env = {
+      ...taskEnv([], "google_sheets"),
+      CRC_TASK_WRITABLE: "1",
+    };
+    mkdirSync(join(env.CRC_TASK_DIR, ".cache"));
+    writeFileSync(
+      join(env.CRC_TASK_DIR, ".cache", "demo.json"),
+      JSON.stringify([
+        {
+          no: "352",
+          status: "Testing",
+          pic: "Rifky",
+          _sheet: "Backlogs",
+          _row: 214,
+        },
+        {
+          no: "329",
+          status: "Done",
+          pic: "Rifky",
+          _sheet: "Backlogs",
+          _row: 190,
+        },
+        {
+          no: "329",
+          status: "Testing",
+          pic: "Rifky",
+          _sheet: "Backlogs",
+          _row: 201,
+        },
+      ]),
+    );
+    writeFileSync(
+      join(env.CRC_TASK_DIR, ".cache", "demo.meta.json"),
+      JSON.stringify({
+        state: "ok",
+        sheets: ["Backlogs"],
+        pics: ["Rifky"],
+        statuses: ["Testing", "Done"],
+        writable: true,
+      }),
+    );
+    const text = async (name: string, args: object) =>
+      (await call(name, args, env)).result.content[0].text;
+    expect(await text("list_task_statuses", {})).toContain(
+      "Statuses used in Backlogs: Testing, Done",
+    );
+    expect(
+      await text("update_task_status", { taskNo: "#352", status: "Done" }),
+    ).toContain("Requested #352 (Backlogs row 214): Testing → Done.");
+    expect(
+      await text("update_task_status", { taskNo: "329", status: "Done" }),
+    ).toContain("ambiguous: Backlogs row 190, Backlogs row 201");
+    expect(
+      await text("update_task_status", {
+        taskNo: "329",
+        status: "Ready to QA",
+        row: 201,
+      }),
+    ).toContain('"Ready to QA" is not used');
+    expect(
+      await text("update_task_status", { taskNo: "400", status: "Done" }),
+    ).toContain("not among this project's tasks for the selected PIC (Rifky)");
+    const hidden = await handle(
+      { jsonrpc: "2.0", id: 3, method: "tools/list" },
+      { ...env, CRC_TASK_WRITABLE: "0" },
+    );
+    expect(
+      hidden.result.tools.map((tool: { name: string }) => tool.name),
+    ).not.toContain("update_task_status");
+  });
+
   test("an empty task list says why", async () => {
     const env = taskEnv([], "google_sheets");
     const unsynced = await call("list_project_tasks", {}, env);
@@ -271,7 +345,7 @@ describe("kern MCP server", () => {
     expect(parsed.find((m) => m.id === 1).result.serverInfo.name).toBe("kern");
     expect(parsed.some((m) => m.error?.code === -32700)).toBe(true);
     expect(parsed.find((m) => m.id === 2).result.tools.length).toBe(
-      TOOL_NAMES.length - 3,
+      TOOL_NAMES.length - 4,
     );
   });
 });

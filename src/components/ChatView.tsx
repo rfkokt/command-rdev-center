@@ -2696,6 +2696,8 @@ export default function ChatView({
               }
             }
           }
+          if (!ev.isError && name === "update_task_status")
+            void approveTaskStatus(args);
           if (!ev.isError && name === "execute_terminal_command") {
             const command =
               typeof args.command === "string" ? args.command : "";
@@ -3277,6 +3279,69 @@ export default function ChatView({
       );
       onToast("Poppler installed.");
       return attachmentContext(attachments);
+    }
+  }
+
+  /** The agent requested a task status change: show the current value
+   * from the sheet, write only after approval, and report back. */
+  async function approveTaskStatus(args: Record<string, unknown>) {
+    const status = typeof args.status === "string" ? args.status.trim() : "";
+    const taskNo = String(args.taskNo ?? "")
+      .trim()
+      .replace(/^#/, "");
+    if (!status || !taskNo) return;
+    const report = (message: string) =>
+      void sendRaw({ type: "follow_up", message });
+    try {
+      const task = await invoke<{
+        sheet: string;
+        row: number;
+        no: string;
+        pic: string;
+        deskripsi: string;
+        before: string;
+      }>("preview_task_status", {
+        projectPath,
+        taskNo,
+        sheet: typeof args.sheet === "string" ? args.sheet : null,
+        row: typeof args.row === "number" ? args.row : null,
+      });
+      const where = `${task.sheet || "sheet"} row ${task.row}`;
+      if (
+        !(await confirm({
+          title: "Update task status",
+          message: `#${task.no} · ${where} · PIC ${task.pic}\n${task.deskripsi.slice(0, 240)}\n\n${task.before || "—"} → ${status}`,
+          confirmLabel: "Update sheet",
+          cancelLabel: "Cancel",
+        }))
+      ) {
+        report(
+          `Kern: the user declined changing task #${task.no} from "${task.before}" to "${status}". The sheet was not changed.`,
+        );
+        return;
+      }
+      const result = await invoke<{
+        sheet: string;
+        row: number;
+        before: string;
+        after: string;
+      }>("write_task_status", {
+        projectPath,
+        sheet: task.sheet,
+        row: task.row,
+        taskNo: task.no,
+        expected: task.before,
+        status,
+      });
+      onToast(`#${task.no}: ${result.before} → ${result.after}`);
+      report(
+        `Kern updated task #${task.no} (${result.sheet} row ${result.row}): before "${result.before}", after "${result.after}". To undo, request the previous status.`,
+      );
+    } catch (error) {
+      onToast(`Task status: ${String(error)}`);
+      report(
+        `Kern could not update task #${taskNo}: ${String(error)}. The sheet was not changed; tell the user.`,
+      );
     }
   }
 

@@ -4,7 +4,11 @@ import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 // @ts-expect-error plain ESM module without type declarations
-import { taskSourceNote } from "./kern-mcp.mjs";
+import {
+  requestStatusChange,
+  taskSourceNote,
+  taskStatusesText,
+} from "./kern-mcp.mjs";
 
 type Task = {
   no?: string | number;
@@ -255,6 +259,42 @@ export default function (pi: ExtensionAPI) {
       };
     },
   });
+  pi.registerTool({
+    name: "list_task_statuses",
+    label: "List task statuses",
+    description:
+      "List the status values used in this project's selected task worksheets, so status changes use the sheet's own wording (e.g. Testing, not Ready to QA) instead of a guess. Also reports whether status writes are enabled.",
+    parameters: Type.Object({}),
+    async execute() {
+      const text = await taskStatusesText(process.env);
+      return { content: [{ type: "text", text }], details: {} };
+    },
+  });
+  if (process.env.CRC_TASK_WRITABLE === "1")
+    pi.registerTool({
+      name: "update_task_status",
+      label: "Request task status change",
+      description:
+        "Request a status change for one project task after its work is verified (for example merged and deployed). Use a value from list_task_statuses. Kern shows the user the current and new status for approval, writes only the Status cell, and reports before/after as a follow-up message. Only tasks of the selected PIC can change. Pass sheet and row when a task number repeats.",
+      parameters: Type.Object({
+        taskNo: Type.String({ description: "Task number or ID" }),
+        status: Type.String({
+          description: "New status, exactly as used in the sheet",
+        }),
+        sheet: Type.Optional(
+          Type.String({
+            description: "Worksheet name, when the task number repeats",
+          }),
+        ),
+        row: Type.Optional(
+          Type.Integer({ minimum: 2, description: "Sheet row" }),
+        ),
+      }),
+      async execute(_id, input) {
+        const text = await requestStatusChange(input, process.env);
+        return { content: [{ type: "text", text }], details: input };
+      },
+    });
   pi.registerTool({
     name: "get_project_task",
     label: "Get project task",

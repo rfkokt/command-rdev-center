@@ -1212,6 +1212,17 @@ pub fn spawn_pi_rpc(
     } else {
         crate::kanban::task_dir()?
     };
+    let (task_source_kind, task_writable) =
+        crate::projects::get_project_task_source(owning_project.to_string_lossy().into_owned())
+            .map(|source| {
+                let writable = if source.writer_url.is_empty() {
+                    "0"
+                } else {
+                    "1"
+                };
+                (source.kind, writable)
+            })
+            .unwrap_or_else(|_| ("local".into(), "0"));
     // Browser tools are optional — missing runtime/socket must not block chat.
     let browser = match crate::browser_spike::ensure_bridge(
         &app,
@@ -1351,14 +1362,8 @@ pub fn spawn_pi_rpc(
             .env("CRC_PROJECT_NAME", project_name.clone())
             .env("CRC_SESSION_ID", &session_id)
             .env("CRC_TASK_DIR", task_dir.clone())
-            .env(
-                "CRC_TASK_SOURCE_KIND",
-                crate::projects::get_project_task_source(
-                    owning_project.to_string_lossy().into_owned(),
-                )
-                .map(|source| source.kind)
-                .unwrap_or_else(|_| "local".into()),
-            )
+            .env("CRC_TASK_SOURCE_KIND", &task_source_kind)
+            .env("CRC_TASK_WRITABLE", task_writable)
             .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
     let mut spawn_attempts = 0;
@@ -1418,6 +1423,8 @@ pub fn spawn_pi_rpc(
                                 .env("CRC_PROJECT_NAME", project_name.clone())
                                 .env("CRC_SESSION_ID", &session_id)
                                 .env("CRC_TASK_DIR", task_dir.clone())
+                                .env("CRC_TASK_SOURCE_KIND", &task_source_kind)
+                                .env("CRC_TASK_WRITABLE", task_writable)
                                 .env("CRC_GRAPH_JSONS", &graph_json_paths);
                         }
                         spawn_attempts += 1;
@@ -1700,10 +1707,10 @@ fn kern_mcp_server(
                 .into_owned()
         });
     let task_dir = crate::kanban::task_dir().ok()?;
-    let task_source =
+    let (task_source, task_writable) =
         crate::projects::get_project_task_source(owning_project.to_string_lossy().into_owned())
-            .map(|source| source.kind)
-            .unwrap_or_else(|_| "local".into());
+            .map(|source| (source.kind, !source.writer_url.is_empty()))
+            .unwrap_or_else(|_| ("local".into(), false));
     if task_source == "google_sheets" {
         // The MCP server reads the task cache; refresh it without delaying
         // the chat so agents do not work from a stale or missing snapshot.
@@ -1719,6 +1726,11 @@ fn kern_mcp_server(
         ),
         ("CRC_TASK_DIR", task_dir.to_string_lossy().into_owned()),
         ("CRC_TASK_SOURCE_KIND", task_source),
+        // update_task_status is offered only with a configured sheet writer.
+        (
+            "CRC_TASK_WRITABLE",
+            if task_writable { "1" } else { "0" }.to_string(),
+        ),
         ("CRC_SESSION_ID", session_id.to_string()),
         // complete_pr_review is offered only in PR review chats.
         (

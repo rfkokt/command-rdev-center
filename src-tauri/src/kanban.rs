@@ -62,6 +62,10 @@ struct SheetOrigin {
     pics: Vec<String>,
     /// Rows read across the worksheets, before the PIC filter.
     total: usize,
+    /// Status values used across those rows.
+    statuses: Vec<String>,
+    /// An Apps Script writer is configured for approved status changes.
+    writable: bool,
 }
 
 impl KanbanProject {
@@ -164,13 +168,16 @@ fn google_sheet_id(url: &str) -> Result<&str, String> {
         .ok_or_else(|| "invalid Google Sheets URL".into())
 }
 
-pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
-    let id = google_sheet_id(url)?;
-    let gid = url
-        .split("gid=")
+fn url_gid(url: &str) -> Option<&str> {
+    url.split("gid=")
         .nth(1)
         .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-        .filter(|gid| !gid.is_empty());
+        .filter(|gid| !gid.is_empty())
+}
+
+pub(crate) fn google_sheet_csv_url(url: &str, sheet: &str) -> Result<String, String> {
+    let id = google_sheet_id(url)?;
+    let gid = url_gid(url);
     if !sheet.trim().is_empty() {
         return Ok(format!(
             "https://docs.google.com/spreadsheets/d/{id}/gviz/tq?tqx=out:csv&sheet={}",
@@ -284,7 +291,7 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
-        let extra = headers
+        let mut extra: serde_json::Map<String, Value> = headers
             .iter()
             .enumerate()
             .filter_map(|(column, header)| {
@@ -294,6 +301,9 @@ fn parse_sheet_tasks(csv_bytes: &[u8]) -> Result<Vec<KanbanTask>, String> {
                     .then(|| (key.to_string(), json!(value)))
             })
             .collect();
+        // Sheet row (the header is row 1) so a status write targets exactly
+        // this record even when task numbers repeat.
+        extra.insert("_row".into(), json!(index + 2));
         tasks.push(KanbanTask {
             no: no
                 .and_then(|column| record.get(column))
@@ -424,7 +434,13 @@ pub fn fetch_google_sheet_csv(url: &str, sheet: &str) -> Result<String, String> 
 }
 
 fn fetch_sheet_tasks(url: &str, sheet: &str) -> Result<Vec<KanbanTask>, String> {
-    parse_sheet_tasks(fetch_google_sheet_csv(url, sheet)?.as_bytes())
+    let mut tasks = parse_sheet_tasks(fetch_google_sheet_csv(url, sheet)?.as_bytes())?;
+    if !sheet.trim().is_empty() {
+        for task in &mut tasks {
+            task.extra.insert("_sheet".into(), json!(sheet.trim()));
+        }
+    }
+    Ok(tasks)
 }
 
 fn parse_google_sheet_names(html: &str) -> Vec<String> {
@@ -735,6 +751,183 @@ pub fn get_project_task_source_state(project: String) -> Result<Value, String> {
     }
 }
 
+fn sheets_of(source: &crate::projects::TaskSource) -> Vec<&str> {
+    if source.sheets.is_empty() {
+        vec![source.sheet.as_str()]
+    } else {
+        source.sheets.iter().map(String::as_str).collect()
+    }
+}
+
+fn writable_source(project_path: String) -> Result<crate::projects::TaskSource, String> {
+    let source = crate::projects::get_project_task_source(project_path)?;
+    if source.kind != "google_sheets" || source.writer_url.is_empty() {
+        return Err("This project's task source is read-only. Add the Apps Script sheet writer in Project Settings → Tasks.".into());
+    }
+    Ok(source)
+}
+
+/// Fresh read of one Sheets task before a status write: the approval card
+/// shows the current value, and the write verifies it has not changed since.
+#[tauri::command(async)]
+pub fn preview_task_status(
+    project_path: String,
+    task_no: String,
+    sheet: Option<String>,
+    row: Option<u64>,
+) -> Result<Value, String> {
+    let source = writable_source(project_path)?;
+    let task_no = task_no.trim().trim_start_matches('#');
+    let mut matches = Vec::new();
+    for name in sheets_of(&source) {
+        if sheet
+            .as_deref()
+            .is_some_and(|wanted| wanted.trim() != name.trim())
+        {
+            continue;
+        }
+        for task in fetch_sheet_tasks(&source.url, name)? {
+            let same_no = task.no.as_str().map(str::trim) == Some(task_no)
+                || task.no.as_i64().is_some_and(|no| no.to_string() == task_no);
+            let task_row = task.extra.get("_row").and_then(Value::as_u64);
+            if same_no && row.is_none_or(|row| task_row == Some(row)) {
+                matches.push(task);
+            }
+        }
+    }
+    let task = match matches.len() {
+        0 => {
+            return Err(format!(
+                "task {task_no} not found in the selected worksheets"
+            ))
+        }
+        1 => matches.remove(0),
+        _ => {
+            let rows = matches
+                .iter()
+                .map(|task| {
+                    format!(
+                        "{} row {}",
+                        task.extra
+                            .get("_sheet")
+                            .and_then(Value::as_str)
+                            .unwrap_or("sheet"),
+                        task.extra.get("_row").cloned().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "task {task_no} is ambiguous ({rows}); pass sheet and row"
+            ));
+        }
+    };
+    if !source
+        .pics
+        .iter()
+        .any(|pic| pic.eq_ignore_ascii_case(task.pic.trim()))
+    {
+        return Err(format!(
+            "task {task_no} belongs to PIC \"{}\", not a PIC selected in Project Settings → Tasks",
+            task.pic
+        ));
+    }
+    Ok(json!({
+        "sheet": task.extra.get("_sheet").cloned().unwrap_or(json!("")),
+        "row": task.extra.get("_row").cloned().unwrap_or(Value::Null),
+        "no": task_no,
+        "pic": task.pic,
+        "deskripsi": task.deskripsi,
+        "before": task.status,
+    }))
+}
+
+/// POSTs one JSON request to the Apps Script writer. The body goes through
+/// stdin so the secret never appears in a process listing; curl follows the
+/// script's redirect to its response with GET, as Apps Script expects.
+fn post_sheet_writer(url: &str, body: &Value) -> Result<Value, String> {
+    use std::io::Write as _;
+    let mut child = std::process::Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--location",
+            "--max-time",
+            "30",
+            "--header",
+            "Content-Type: application/json",
+            "--data-binary",
+            "@-",
+            url,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or("curl stdin unavailable")?
+        .write_all(body.to_string().as_bytes())
+        .map_err(|error| error.to_string())?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|_| {
+        "Sheet writer did not return JSON; check that the web app is deployed with access for Anyone".into()
+    })
+}
+
+/// Writes one approved status change through the Apps Script writer and
+/// returns its before/after report.
+#[tauri::command(async)]
+pub fn write_task_status(
+    project_path: String,
+    sheet: String,
+    row: u64,
+    task_no: String,
+    expected: String,
+    status: String,
+) -> Result<Value, String> {
+    let source = writable_source(project_path)?;
+    let status = status.trim();
+    if status.is_empty() || status.len() > 200 {
+        return Err("invalid status".into());
+    }
+    let mut body = json!({
+        "secret": source.writer_secret,
+        "action": "update",
+        "no": task_no.trim().trim_start_matches('#'),
+        "row": row,
+        "expected": expected,
+        "status": status,
+        "pics": source.pics,
+    });
+    if sheet.trim().is_empty() {
+        body["gid"] = url_gid(&source.url)
+            .map(|gid| json!(gid))
+            .unwrap_or(Value::Null);
+    } else {
+        body["sheet"] = json!(sheet.trim());
+    }
+    let response = post_sheet_writer(&source.writer_url, &body)?;
+    if response.get("ok").and_then(Value::as_bool) != Some(true) {
+        let mut detail = response.clone();
+        if let Some(fields) = detail.as_object_mut() {
+            fields.remove("ok");
+        }
+        return Err(format!("Sheet writer refused the change: {detail}"));
+    }
+    std::thread::spawn(|| {
+        let _ = list_kanban_tasks();
+    });
+    Ok(response)
+}
+
 fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), String> {
     // A failed Sheets refresh must not replace a good snapshot with an empty list.
     if project.error.is_none() {
@@ -764,6 +957,8 @@ fn cache_project_tasks(cache: &Path, project: &KanbanProject) -> Result<(), Stri
         "pics": project.origin.pics,
         "total": project.origin.total,
         "count": project.tasks.len(),
+        "statuses": project.origin.statuses,
+        "writable": project.origin.writable,
         "syncedAt": synced_at,
     });
     std::fs::write(
@@ -815,15 +1010,13 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
             .and_then(|name| name.to_str())
             .unwrap_or(&path)
             .to_string();
-        let sheets = if source.sheets.is_empty() {
-            vec![source.sheet.as_str()]
-        } else {
-            source.sheets.iter().map(String::as_str).collect()
-        };
+        let sheets = sheets_of(&source);
         let mut origin = SheetOrigin {
             sheets: sheets.iter().map(|sheet| sheet.to_string()).collect(),
             pics: source.pics.clone(),
             total: 0,
+            statuses: Vec::new(),
+            writable: !source.writer_url.is_empty(),
         };
         let result = sheets
             .into_iter()
@@ -832,6 +1025,12 @@ pub fn list_kanban_tasks() -> Result<Vec<KanbanProject>, String> {
             .map(|groups| {
                 let all_tasks = groups.into_iter().flatten().collect::<Vec<_>>();
                 origin.total = all_tasks.len();
+                for task in &all_tasks {
+                    let status = task.status.trim();
+                    if !origin.statuses.iter().any(|known| known == status) {
+                        origin.statuses.push(status.to_string());
+                    }
+                }
                 let mut tasks = all_tasks
                     .iter()
                     .filter(|task| {
@@ -897,6 +1096,7 @@ mod tests {
                 sheets: vec!["Backlogs".into()],
                 pics: vec!["Rifky".into()],
                 total: 3,
+                ..Default::default()
             },
         };
         cache_project_tasks(&cache, &good).unwrap();
@@ -924,6 +1124,61 @@ mod tests {
     }
 
     #[test]
+    fn sheet_writer_posts_json_and_follows_the_apps_script_redirect() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for response in [
+                "HTTP/1.1 302 Found\r\nLocation: /echo\r\nContent-Length: 0\r\n\r\n".to_string(),
+                {
+                    let body = r#"{"ok":true,"before":"Testing","after":"Done"}"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                },
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).unwrap();
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request);
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|v| v.trim().parse::<usize>().unwrap())
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length {
+                            break;
+                        }
+                    }
+                }
+                seen.push(String::from_utf8_lossy(&request).into_owned());
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            seen
+        });
+        let result = post_sheet_writer(
+            &format!("{base}/exec"),
+            &json!({ "secret": "s3cret", "status": "Done" }),
+        )
+        .unwrap();
+        assert_eq!(result["after"], "Done");
+        let seen = server.join().unwrap();
+        assert!(seen[0].starts_with("POST /exec"));
+        assert!(seen[0].ends_with(r#"{"secret":"s3cret","status":"Done"}"#));
+        assert!(seen[1].starts_with("GET /echo"));
+    }
+
+    #[test]
     fn empty_sheet_projects_explain_why() {
         let project = |pics: Vec<String>, total| KanbanProject {
             project: "demo".into(),
@@ -934,6 +1189,7 @@ mod tests {
                 sheets: vec!["Backlogs".into()],
                 pics,
                 total,
+                ..Default::default()
             },
         };
         assert_eq!(project(Vec::new(), 9).state(), "no_pic_selected");

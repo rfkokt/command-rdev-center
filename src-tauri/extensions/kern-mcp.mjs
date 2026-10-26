@@ -180,6 +180,56 @@ export function taskSourceNote(metadata, count) {
     .join("");
 }
 
+/** Mirrors list_task_statuses in pi's kanban-task extension. */
+export async function taskStatusesText(env) {
+  const { metadata } = await tasks(env);
+  const statuses = metadata?.statuses ?? [];
+  return [
+    statuses.length
+      ? `Statuses used in ${(metadata.sheets ?? []).join(", ") || "the task source"}: ${statuses.join(", ")}`
+      : "No status values found in the synced tasks.",
+    metadata?.writable
+      ? "Status writes are enabled; the sheet's Status dropdown is enforced on write."
+      : "Status writes are disabled: the task source is read-only until the Apps Script sheet writer is configured in Project Settings → Tasks.",
+  ].join("\n");
+}
+
+/** Mirrors update_task_status in pi's kanban-task extension: checks the
+ * request against the synced tasks; Kern asks the user and does the write. */
+export async function requestStatusChange(input, env) {
+  const data = await tasks(env);
+  const taskNo = String(input.taskNo ?? "")
+    .trim()
+    .replace(/^#/, "");
+  const where = (task) => `${task._sheet || "sheet"} row ${task._row ?? "?"}`;
+  const matching = data.items.filter(
+    (task) =>
+      String(task.no).trim() === taskNo &&
+      (input.row == null || Number(task._row) === Number(input.row)) &&
+      (!input.sheet || task._sheet === input.sheet),
+  );
+  if (!matching.length)
+    throw new Error(
+      `Task ${taskNo} is not among this project's tasks for the selected PIC (${(data.metadata?.pics ?? []).join(", ") || "none"}). Only those tasks can be updated.`,
+    );
+  if (matching.length > 1)
+    throw new Error(
+      `Task ${taskNo} is ambiguous: ${matching.map(where).join(", ")}. Call again with sheet and row.`,
+    );
+  const task = matching[0];
+  const known = data.metadata?.statuses ?? [];
+  const status = String(input.status).trim();
+  return [
+    `Requested #${taskNo} (${where(task)}): ${task.status || "—"} → ${status}.`,
+    "Kern now asks the user to approve and writes the sheet; the result (before/after) arrives as a follow-up message. Do not claim the status changed before then.",
+    known.length && !known.includes(status)
+      ? `Note: "${status}" is not used in the selected worksheets yet (${known.join(", ")}); the sheet's Status dropdown decides on write.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 // ---------------------------------------------------------------- api
 
 // Contracts are written by Kern per session (CRC_API_CONTRACTS_PATH); the
@@ -343,6 +393,29 @@ export const TOOLS = [
     },
   },
   {
+    name: "list_task_statuses",
+    description:
+      "List the status values used in this project's selected task worksheets, so status changes use the sheet's own wording (e.g. Testing, not Ready to QA) instead of a guess. Also reports whether status writes are enabled.",
+    inputSchema: { type: "object", properties: {} },
+    run: (_input, env) => taskStatusesText(env),
+  },
+  {
+    name: "update_task_status",
+    description:
+      "Request a status change for one project task after its work is verified (for example merged and deployed). Use a value from list_task_statuses. Kern shows the user the current and new status for approval, writes only the Status cell, and reports before/after as a follow-up message. Only tasks of the selected PIC can change. Pass sheet and row when a task number repeats.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskNo: str("Task number or ID"),
+        status: str("New status, exactly as used in the sheet"),
+        sheet: str("Worksheet name, when the task number repeats"),
+        row: { type: "integer", minimum: 2, description: "Sheet row" },
+      },
+      required: ["taskNo", "status"],
+    },
+    run: requestStatusChange,
+  },
+  {
     name: "api_find_operations",
     description:
       "Search the complete saved Swagger/OpenAPI inventory by operation ID, path, summary, description, tags, or parameter names. Empty query lists all operations. Results are paginated; load failures and stale contracts are disclosed. Set refresh:true to fetch saved JSON/Swagger UI sources from the network with cache revalidation, update the full inventory, and persist it for this session and app restarts. Reports fetchedAt, checkedAt, contentHash, refreshStatus, and persistence results; unchanged means verified with identical content, failed retains stale data. Cached data alone does not prove it is latest. Refresh before concluding an endpoint is absent.",
@@ -464,12 +537,13 @@ export const TOOLS = [
 
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
-/** complete_pr_review exists only in Kern PR review chats; API tools only
- * when the project has saved Swagger contracts. */
+/** complete_pr_review exists only in Kern PR review chats, update_task_status
+ * only with a configured sheet writer, API tools only with saved contracts. */
 export function toolsFor(env = process.env) {
   return TOOLS.filter(
     (tool) =>
       (tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1") &&
+      (tool.name !== "update_task_status" || env.CRC_TASK_WRITABLE === "1") &&
       (!tool.name.startsWith("api_") || Boolean(env.CRC_API_CONTRACTS_PATH)),
   );
 }

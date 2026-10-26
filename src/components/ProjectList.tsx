@@ -6,6 +6,7 @@ import ListPicker from "./ListPicker";
 import ChatSessionActions, { type ChatMetadata } from "./ChatSessionActions";
 import { confirm } from "./ConfirmDialog";
 import { useModalFocus } from "./useModalFocus";
+import sheetWriterScript from "../lib/kern-sheet-writer.gs?raw";
 import {
   ChevronRightIcon,
   MenuDotsIcon,
@@ -46,6 +47,9 @@ type TaskSource = {
   sheet?: string;
   sheets: string[];
   pics: string[];
+  /** Apps Script web app for approved status writes; empty = read-only. */
+  writer_url?: string;
+  writer_secret?: string;
 };
 type ApiListSheet = { url: string; sheet: string };
 
@@ -779,7 +783,9 @@ export default function ProjectList({
                     formatOption={(value) =>
                       value === "local"
                         ? "Local JSON"
-                        : "Google Sheets · read-only"
+                        : taskSource.writer_url
+                          ? "Google Sheets · status writes"
+                          : "Google Sheets · read-only"
                     }
                     onChange={(type) =>
                       setTaskSource({
@@ -873,6 +879,52 @@ export default function ProjectList({
                           ))}
                         </fieldset>
                       )}
+                      <label>
+                        <span>SHEET WRITER URL · OPTIONAL</span>
+                        <input
+                          type="url"
+                          value={taskSource.writer_url ?? ""}
+                          onChange={(event) =>
+                            setTaskSource({
+                              ...taskSource,
+                              writer_url: event.target.value,
+                            })
+                          }
+                          placeholder="https://script.google.com/macros/s/…/exec"
+                        />
+                      </label>
+                      {taskSource.writer_secret && (
+                        <label>
+                          <span>WRITER SECRET · KERN_SECRET</span>
+                          <input
+                            readOnly
+                            value={taskSource.writer_secret}
+                            onFocus={(event) => event.target.select()}
+                          />
+                        </label>
+                      )}
+                      <button
+                        type="button"
+                        className="project-load-pics"
+                        onClick={() =>
+                          void navigator.clipboard
+                            .writeText(sheetWriterScript)
+                            .then(() => onToast("Apps Script copied."))
+                            .catch((error) =>
+                              onToast(`Could not copy: ${String(error)}`),
+                            )
+                        }
+                      >
+                        COPY APPS SCRIPT
+                      </button>
+                      <p>
+                        Let agents change a task&apos;s Status after you approve
+                        it: save once to get the secret, then in the sheet open
+                        Extensions → Apps Script, paste the script, add Script
+                        property KERN_SECRET with the secret, deploy it as a Web
+                        app (execute as you, access Anyone), and paste its URL
+                        here.
+                      </p>
                     </>
                   )}
                   <p>
