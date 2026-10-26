@@ -33,6 +33,15 @@ test("renders structured CI and inserts evidence only on explicit request", asyn
   fireEvent.click(screen.getByText("Send CI status to agent draft"));
   expect(send).toHaveBeenCalledWith(expect.stringContaining(result));
   expect(send).toHaveBeenCalledWith(expect.stringContaining("failing: Tests"));
+  const requested = vi.fn();
+  window.addEventListener("kern:review-pr", requested);
+  fireEvent.click(screen.getByText("Review with…"));
+  expect(requested.mock.calls[0][0].detail).toEqual({
+    path: "/repo",
+    repositoryPath: "/repo",
+    account: "rfkokt",
+  });
+  window.removeEventListener("kern:review-pr", requested);
 });
 afterEach(() => {
   cleanup();

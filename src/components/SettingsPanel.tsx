@@ -16,6 +16,7 @@ import CustomSelect from "./CustomSelect";
 // opened, so opening Settings does not mount eight panels' worth of work.
 const ConnectionsSettings = lazy(() => import("./ConnectionsSettings"));
 const GraphifySettings = lazy(() => import("./GraphifySettings"));
+const PrReviewSettings = lazy(() => import("./PrReviewSettings"));
 const HarnessSettings = lazy(() => import("./HarnessSettings"));
 const JevSettings = lazy(() => import("./JevSettings"));
 const McpSettings = lazy(() => import("./McpSettings"));
@@ -606,7 +607,12 @@ export default function SettingsPanel({
   function renderSection() {
     switch (section) {
       case "agent":
-        return <HarnessSettings onToast={onToast} />;
+        return (
+          <>
+            <HarnessSettings onToast={onToast} />
+            <PrReviewSettings />
+          </>
+        );
       case "connections":
         return <ConnectionsSettings onToast={onToast} />;
       case "mcp":

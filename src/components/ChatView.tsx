@@ -459,6 +459,7 @@ export default function ChatView({
   inputPlaceholder,
   initialPrompt,
   initialDraft,
+  prReview,
   onInitialPromptConsumed,
   onInitialDraftConsumed,
 }: {
@@ -493,6 +494,7 @@ export default function ChatView({
   inputPlaceholder?: string;
   initialPrompt?: string;
   initialDraft?: string;
+  prReview?: import("../lib/pr-review").ReviewSession;
   onInitialPromptConsumed?: () => void;
   onInitialDraftConsumed?: () => void;
 }) {
@@ -574,6 +576,45 @@ export default function ChatView({
   const isWorkspace = repositoryStatuses.length > 0;
   const [cwd, setCwd] = useState(projectPath);
   const cwdRef = useRef(projectPath);
+  const [prBadge, setPrBadge] = useState("");
+  useEffect(() => {
+    const open = (event: Event) => {
+      if ((event as CustomEvent).detail.chatId !== chatId) return;
+      const repo = repositories[0];
+      const owner = repo?.path || projectPath;
+      const account =
+        localStorage.getItem(`kern:github-account:${owner}`) || "";
+      window.dispatchEvent(
+        new CustomEvent("kern:review-pr", {
+          detail: {
+            path:
+              isWorkspace && repo
+                ? `${cwdRef.current}/${repo.name}`
+                : cwdRef.current,
+            repositoryPath: owner,
+            account,
+          },
+        }),
+      );
+    };
+    const reviewed = (event: Event) => {
+      const r = (event as CustomEvent<import("../lib/pr-review").ReviewResult>)
+        .detail;
+      if (
+        r.repositoryPath === projectPath ||
+        repositories.some((repo) => repo.path === r.repositoryPath)
+      )
+        setPrBadge(
+          `Reviewed by ${r.model} · ${r.issues} issues · fixed ${r.fixed}`,
+        );
+    };
+    window.addEventListener("kern:review-active-pr", open);
+    window.addEventListener("kern:pr-reviewed", reviewed);
+    return () => {
+      window.removeEventListener("kern:review-active-pr", open);
+      window.removeEventListener("kern:pr-reviewed", reviewed);
+    };
+  }, [chatId, projectPath, repositories, isWorkspace]);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
   const [terminalApproval, setTerminalApproval] = useState<{
     pane?: string;
@@ -2676,6 +2717,62 @@ export default function ChatView({
               }).catch((error) => onToast(`Terminal: ${String(error)}`));
             }
           }
+          if (!ev.isError && name === "complete_pr_review" && prReview) {
+            try {
+              const result = await invoke<
+                import("../lib/pr-review").ReviewResult
+              >("complete_pr_review", {
+                worktreePath: prReview.worktreePath,
+                summary: args.summary,
+                issues: args.issues,
+                fixed: args.fixed,
+                message: args.message || "",
+                paths: args.paths || [],
+              });
+              const review = {
+                ...result,
+                model: modelRef.current || harnessRef.current,
+              };
+              try {
+                localStorage.setItem(
+                  `kern:pr-review-result:${result.repositoryPath}:${result.number}`,
+                  JSON.stringify(review),
+                );
+              } catch {
+                onToast("Review completed; badge could not be persisted.");
+              }
+              window.dispatchEvent(
+                new CustomEvent("kern:pr-reviewed", { detail: review }),
+              );
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: uid(),
+                  role: "assistant",
+                  text: result.summary,
+                  toolCalls: [],
+                },
+              ]);
+              onToast(
+                `Reviewed by ${review.model} · ${result.issues} issues · fixed ${result.fixed}`,
+              );
+              void sendRaw({
+                type: "follow_up",
+                message: `Kern review host completed: ${result.summary}`,
+              });
+            } catch (e) {
+              const error = `Review completion stopped: ${String(e)}`;
+              setMessages((prev) => [
+                ...prev,
+                { id: uid(), role: "assistant", text: error, toolCalls: [] },
+              ]);
+              onToast(error);
+              void sendRaw({
+                type: "follow_up",
+                message: `${error}. Do not claim push success or create an alternate branch. Report this limitation.`,
+              });
+            }
+          }
           if (!ev.isError && name === "provide_pipeline_input") {
             const message =
               typeof args.message === "string" ? args.message : "";
@@ -2841,6 +2938,8 @@ export default function ChatView({
           setStartupStage("starting the agent", "STARTING AGENT");
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
+            // Only review chats get the complete_pr_review tool.
+            prReview: Boolean(prReview),
             harness: harnessRef.current,
             sessionId,
             cwd: globalCwd,
@@ -2897,6 +2996,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: workspaceCwd,
@@ -2914,6 +3015,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: projectPath,
@@ -2928,11 +3031,19 @@ export default function ChatView({
             });
           } else {
             setStartupStage("preparing the worktree", "PREPARING WORKTREE");
-            const wt = await invoke<WorktreeInfo>("ensure_worktree", {
-              repoPath: projectPath,
-              repoName: projectName,
-              slug,
-            });
+            const wt = prReview
+              ? ({
+                  worktree_path: prReview.worktreePath,
+                  branch: prReview.branch,
+                  repo_name: projectName,
+                  slug,
+                  parent_ref: "origin/main",
+                } as WorktreeInfo)
+              : await invoke<WorktreeInfo>("ensure_worktree", {
+                  repoPath: projectPath,
+                  repoName: projectName,
+                  slug,
+                });
             if (!mounted || startupExpired) return;
             if (!wt?.worktree_path)
               throw new Error(
@@ -2954,6 +3065,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: wt.worktree_path,
@@ -3823,6 +3936,8 @@ export default function ChatView({
         }
         const [provider, ...modelParts] = modelRef.current.split("/");
         await invoke("spawn_pi_rpc", {
+          // Only review chats get the complete_pr_review tool.
+          prReview: Boolean(prReview),
           harness: harnessRef.current,
           sessionId,
           cwd,
@@ -5989,6 +6104,7 @@ export default function ChatView({
         touchAction: "pan-y",
       }}
     >
+      {prBadge && <small role="status">{prBadge}</small>}
       {officeView !== "panel" && (
         <div
           className={`chat-office-layer is-${officeView}${officePip && pipCollapsed ? " is-collapsed" : ""}`}

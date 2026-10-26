@@ -854,7 +854,7 @@
         "id": "O5-19",
         "phase": "O5",
         "name": "Review PR oleh model/agent lain langsung dari Kern (default Fix & push)",
-        "status": "To Do",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [],
         "scope": [
@@ -889,7 +889,8 @@
           "Alur review manual 2026-10-26 untuk PR #14 dan #15 (contoh temuan yang harus tertangkap)",
           "renderer/src/components/pull-request-page (Orca, tampilan PR)",
           "renderer/src/components/pr-comments-resolution-prompt.ts (Orca)"
-        ]
+        ],
+        "notes": "Implemented (Codex): pr_review.rs prepare_pr_review/complete_pr_review, PrReviewDialog (Review with…, agent/model, Fix & push default, PR comment toggle), reviewer chat in an isolated detached worktree at the PR head, complete_pr_review tool (pi + ACP) — host re-checks the PR head, commits explicit paths with fix(...), pushes HEAD to the original branch with the repo's gh account, writes notes, optional PR comment, badge. Review Claude 2026-10-26: fixed (1) dialog read list_harnesses as {name, installed} instead of {label, available}, so every agent option was blank and disabled and the Review button never enabled; (2) host checks were hard-coded to this repo (tsc/vitest/cargo/format) with no install step and no timeout, so a fresh review worktree could never pass and other projects always failed; now one command per line in the dialog, remembered per repository, defaults include pnpm install + prepare-browser-host, 20 min timeout per check with process-group kill; (3) base branch came from hard-coded main; now the PR's baseRefName; (4) task.json reformatting churn reverted. Not verified in the app: a real review run end to end (Claude via ACP), push with a second gh account, PR comment. complete_pr_review is offered only in review chats (CRC_PR_REVIEW for pi and Kern's MCP server)."
       }
     ]
   }

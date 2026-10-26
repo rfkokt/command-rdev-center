@@ -838,7 +838,9 @@ pub fn spawn_pi_rpc(
     project_name: Option<String>,
     harness: Option<String>,
     handoff: Option<String>,
+    pr_review: Option<bool>,
 ) -> Result<String, String> {
+    let pr_review = pr_review.unwrap_or(false);
     let _spawn = SPAWN_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -904,7 +906,8 @@ pub fn spawn_pi_rpc(
             serde_json::json!(kern_mcp_server(
                 &owning_project,
                 project_name.as_deref(),
-                &session_id
+                &session_id,
+                pr_review,
             )
             .into_iter()
             .collect::<Vec<_>>())
@@ -1283,6 +1286,7 @@ pub fn spawn_pi_rpc(
         })
         .unwrap_or(false);
     command.env("CRC_TASK_VERIFICATION", task_verification.to_string());
+    command.env("CRC_PR_REVIEW", if pr_review { "1" } else { "0" });
     command
         .args(&args)
         .current_dir(&cwd)
@@ -1363,6 +1367,7 @@ pub fn spawn_pi_rpc(
                     Ok(new_pi) => {
                         command = Command::new(&new_pi);
                         command.env("CRC_TASK_VERIFICATION", task_verification.to_string());
+                        command.env("CRC_PR_REVIEW", if pr_review { "1" } else { "0" });
                         apply_user_token_env(&mut command);
                         crate::connections::apply_env(&mut command, crate::harness::PI);
                         if !global_chat {
@@ -1626,6 +1631,7 @@ fn kern_mcp_server(
     owning_project: &Path,
     project_name: Option<&str>,
     session_id: &str,
+    pr_review: bool,
 ) -> Option<serde_json::Value> {
     let node = crate::harness::resolve_binary("node").or_else(|| {
         eprintln!("crc: node not found; Kern MCP tools unavailable for {session_id}");
@@ -1659,6 +1665,11 @@ fn kern_mcp_server(
         ("CRC_TASK_DIR", task_dir.to_string_lossy().into_owned()),
         ("CRC_TASK_SOURCE_KIND", task_source),
         ("CRC_SESSION_ID", session_id.to_string()),
+        // complete_pr_review is offered only in PR review chats.
+        (
+            "CRC_PR_REVIEW",
+            if pr_review { "1" } else { "0" }.to_string(),
+        ),
     ];
     Some(serde_json::json!({
         "name": "kern",

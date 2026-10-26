@@ -259,6 +259,23 @@ export const TOOLS = [
     run: signal("Skill recommendations shown to the user."),
   },
   {
+    name: "complete_pr_review",
+    description:
+      "Submit PR review completion to Kern. Host runs checks and safely commits/pushes explicit paths in Fix & push mode. Never push yourself. Summary must include severity, file:line, fixed versus reported findings. Submission is not success; wait for host result in chat.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        issues: { type: "integer", minimum: 0 },
+        fixed: { type: "integer", minimum: 0 },
+        message: { type: "string" },
+        paths: { type: "array", items: { type: "string" } },
+      },
+      required: ["summary", "issues", "fixed", "message", "paths"],
+    },
+    run: signal("Review completion requested; wait for host result in chat."),
+  },
+  {
     name: "run_pipeline",
     description:
       "Request the app-owned saved pipeline for this project. Use only when the user explicitly asks to run the pipeline. The host app executes saved commands; this tool never accepts commands.",
@@ -305,6 +322,13 @@ export const TOOLS = [
 
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
+/** complete_pr_review exists only in Kern PR review chats. */
+export function toolsFor(env = process.env) {
+  return TOOLS.filter(
+    (tool) => tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1",
+  );
+}
+
 /** Validate the few constraints the host relies on; full JSON Schema is the client's job. */
 function checkInput(tool, input) {
   for (const key of tool.inputSchema.required ?? []) {
@@ -347,14 +371,16 @@ export async function handle(message, env = process.env) {
       return reply({});
     case "tools/list":
       return reply({
-        tools: TOOLS.map(({ name, description, inputSchema }) => ({
+        tools: toolsFor(env).map(({ name, description, inputSchema }) => ({
           name,
           description,
           inputSchema,
         })),
       });
     case "tools/call": {
-      const tool = TOOLS.find((candidate) => candidate.name === params?.name);
+      const tool = toolsFor(env).find(
+        (candidate) => candidate.name === params?.name,
+      );
       if (!tool) return fail(-32602, `Unknown tool: ${params?.name}`);
       const input = params?.arguments ?? {};
       const invalid = checkInput(tool, input);

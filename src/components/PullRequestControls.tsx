@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import {
+  requestPrReview,
+  reviewResultKey,
+  type ReviewResult,
+} from "../lib/pr-review";
 
 /**
  * Create a PR and read its CI through `gh` (docs/tasks/orca-essentials O3-02).
@@ -10,6 +15,7 @@ type PrStatus = {
   title: string;
   url: string;
   state: string;
+  number?: number;
   checks: Array<{ name: string; state: string }>;
 };
 
@@ -24,6 +30,14 @@ export function parsePrStatus(result: string): PrStatus | null {
       return null;
     return {
       title: value.title,
+      number:
+        typeof value.number === "number"
+          ? value.number
+          : Number(
+              String(value.url ?? "")
+                .split("/")
+                .pop(),
+            ) || undefined,
       url: typeof value.url === "string" ? value.url : "",
       state: String(value.state ?? ""),
       checks: value.statusCheckRollup.map((check: Record<string, unknown>) => ({
@@ -75,6 +89,15 @@ export default function PullRequestControls({
   const [body, setBody] = useState("");
   const [result, setResult] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reviewed, setReviewed] = useState<ReviewResult | null>(null);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const review = (event as CustomEvent<ReviewResult>).detail;
+      if (review.repositoryPath === accountKey) setReviewed(review);
+    };
+    window.addEventListener("kern:pr-reviewed", receive);
+    return () => window.removeEventListener("kern:pr-reviewed", receive);
+  }, [accountKey]);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +141,19 @@ export default function PullRequestControls({
     }
   };
   const status = parsePrStatus(result);
+  useEffect(() => {
+    if (!status?.number) return;
+    try {
+      setReviewed(
+        JSON.parse(
+          localStorage.getItem(reviewResultKey(accountKey, status.number)) ||
+            "null",
+        ),
+      );
+    } catch {
+      setReviewed(null);
+    }
+  }, [status?.number, accountKey]);
   const failing =
     status?.checks.filter((check) => checkTone(check.state) === "failed") ?? [];
 
@@ -184,6 +220,20 @@ export default function PullRequestControls({
           {busy ? "Loading…" : "Refresh PR / CI"}
         </button>
       </div>
+      {result && (
+        <button
+          disabled={busy || !account.trim()}
+          onClick={() => requestPrReview(path, accountKey, account.trim())}
+        >
+          Review with…
+        </button>
+      )}
+      {reviewed && (!status?.number || reviewed.number === status.number) && (
+        <small role="status">
+          Reviewed by {reviewed.model} · {reviewed.issues} issues · fixed{" "}
+          {reviewed.fixed}
+        </small>
+      )}
       {status ? (
         <section className="kscm-pr-status" aria-label="PR status">
           <strong>{status.title}</strong>

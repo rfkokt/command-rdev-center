@@ -40,10 +40,32 @@ describe("kern MCP server", () => {
     });
     expect(init.result.protocolVersion).toBe("2025-03-26");
     expect(init.result.capabilities.tools).toBeDefined();
-    const list = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const list = await handle(
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { CRC_PR_REVIEW: "0" },
+    );
     const names = list.result.tools.map((tool: { name: string }) => tool.name);
-    expect(names).toEqual(TOOL_NAMES);
+    expect(names).toEqual(
+      TOOL_NAMES.filter((name) => name !== "complete_pr_review"),
+    );
     expect(names).toContain("track_kanban_task");
+    const review = await handle(
+      { jsonrpc: "2.0", id: 9, method: "tools/list" },
+      { CRC_PR_REVIEW: "1" },
+    );
+    expect(
+      review.result.tools.map((tool: { name: string }) => tool.name),
+    ).toContain("complete_pr_review");
+    const blocked = await handle(
+      {
+        jsonrpc: "2.0",
+        id: 10,
+        method: "tools/call",
+        params: { name: "complete_pr_review", arguments: {} },
+      },
+      { CRC_PR_REVIEW: "0" },
+    );
+    expect(blocked.error.message).toContain("Unknown tool");
     for (const tool of list.result.tools)
       expect(tool.inputSchema.type).toBe("object");
     expect(
@@ -100,7 +122,9 @@ describe("kern MCP server", () => {
   });
 
   test("speaks newline-delimited JSON-RPC over stdio", async () => {
-    const child = spawn(process.execPath, [join(here, "kern-mcp.mjs")]);
+    const child = spawn(process.execPath, [join(here, "kern-mcp.mjs")], {
+      env: { ...process.env, CRC_PR_REVIEW: "0" },
+    });
     const lines: string[] = [];
     let buffer = "";
     child.stdout.on("data", (chunk) => {
@@ -131,7 +155,7 @@ describe("kern MCP server", () => {
     expect(parsed.find((m) => m.id === 1).result.serverInfo.name).toBe("kern");
     expect(parsed.some((m) => m.error?.code === -32700)).toBe(true);
     expect(parsed.find((m) => m.id === 2).result.tools.length).toBe(
-      TOOL_NAMES.length,
+      TOOL_NAMES.length - 1,
     );
   });
 });

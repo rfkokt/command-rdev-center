@@ -13,6 +13,32 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", (event) => ({
     systemPrompt: `${event.systemPrompt}\n\n${USER_WORKFLOW_POLICY}`,
   }));
+  // Only Kern PR review chats get this tool; elsewhere it would only cost tokens.
+  if (process.env.CRC_PR_REVIEW === "1")
+    pi.registerTool({
+      name: "complete_pr_review",
+      label: "Complete PR review",
+      description:
+        "Finish the active Kern PR review. Host runs checks, commits explicit paths and safely pushes the original PR branch in Fix & push mode; never push yourself. Include severity, file:line and fixed versus reported findings in summary. Host completion appears in chat; this tool only submits a request.",
+      parameters: Type.Object({
+        summary: Type.String(),
+        issues: Type.Integer({ minimum: 0 }),
+        fixed: Type.Integer({ minimum: 0 }),
+        message: Type.String(),
+        paths: Type.Array(Type.String()),
+      }),
+      async execute(_id, input) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Review completion requested; wait for host result in chat before claiming success.",
+            },
+          ],
+          details: input,
+        };
+      },
+    });
   pi.registerTool({
     name: "run_pipeline",
     label: "Run configured pipeline",

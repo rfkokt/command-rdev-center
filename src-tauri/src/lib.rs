@@ -15,6 +15,7 @@ mod harness;
 mod kanban;
 mod pi_rpc;
 mod pipeline;
+mod pr_review;
 mod projects;
 mod prompt_engines;
 mod quota;
@@ -135,6 +136,8 @@ pub fn run() {
             session_search::search_saved_sessions,
             session_search::session_tool_calls,
             session_search::write_chat_handoff,
+            pr_review::prepare_pr_review,
+            pr_review::complete_pr_review,
             scm::scm_status,
             scm::scm_pull_request,
             scm::scm_github_accounts,
