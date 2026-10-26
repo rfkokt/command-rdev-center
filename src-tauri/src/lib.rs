@@ -133,6 +133,8 @@ pub fn run() {
             worktree_setup::inspect_worktree_setup,
             worktree_setup::prepare_worktree_setup,
             session_search::search_saved_sessions,
+            session_search::session_tool_calls,
+            session_search::write_chat_handoff,
             scm::scm_status,
             scm::scm_pull_request,
             scm::scm_github_accounts,
