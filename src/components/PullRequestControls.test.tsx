@@ -110,3 +110,25 @@ test("offers signed-in gh accounts and remembers the choice per owning repositor
   );
   expect(localStorage.getItem("kern:github-account:/repo")).toBe("rdev-nashta");
 });
+
+test("defaults to the account pinned in project settings", async () => {
+  localStorage.setItem("kern:github-account:/repo", "rdev-nashta");
+  vi.mocked(invoke).mockImplementation(async (command: string) =>
+    command === "scm_github_accounts"
+      ? ["rfkokt", "rdev-nashta"]
+      : command === "scm_pinned_github_account"
+        ? "rfkokt"
+        : "{}",
+  );
+  render(
+    <PullRequestControls
+      path="/repo/.worktrees/chat"
+      accountKey="/repo"
+      onToast={vi.fn()}
+    />,
+  );
+  const picker = await screen.findByRole("combobox", {
+    name: "GitHub account",
+  });
+  await waitFor(() => expect(picker).toHaveProperty("value", "rfkokt"));
+});

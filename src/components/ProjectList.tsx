@@ -24,6 +24,7 @@ export type ProjectInfo = {
   branch?: string;
   tracking_branch?: string;
   remote_url?: string;
+  github_account?: string;
   ahead?: number;
   behind?: number;
   dirty_files?: string[];
@@ -97,6 +98,11 @@ export default function ProjectList({
     Record<string, string[]>
   >({});
   const [repositoryBases, setRepositoryBases] = useState<
+    Record<string, string>
+  >({});
+  const [githubAccounts, setGithubAccounts] = useState<string[]>([]);
+  /** Selected gh account per repository path; "" means the system default. */
+  const [repositoryAccounts, setRepositoryAccounts] = useState<
     Record<string, string>
   >({});
   const [projectToDelete, setProjectToDelete] = useState<ProjectInfo | null>(
@@ -269,6 +275,17 @@ export default function ProjectList({
           repositoryEntries.map(([path, , selected]) => [path, selected]),
         ),
       );
+      setRepositoryAccounts(
+        Object.fromEntries(
+          [project, ...(project.repositories ?? [])].map((repository) => [
+            repository.path,
+            repository.github_account ?? "",
+          ]),
+        ),
+      );
+      void invoke<string[]>("scm_github_accounts")
+        .then(setGithubAccounts)
+        .catch(() => setGithubAccounts([]));
       const [
         source,
         savedSwaggerUrls,
@@ -389,6 +406,67 @@ export default function ProjectList({
     } catch (e) {
       setErr(String(e));
     }
+  }
+
+  async function saveGithubAccount(repository: ProjectInfo) {
+    const account = repositoryAccounts[repository.path] ?? "";
+    try {
+      const updated = await invoke<ProjectInfo>(
+        "update_project_github_account",
+        { path: repository.path, account: account || null },
+      );
+      const merge = (item: ProjectInfo) =>
+        item.path === updated.path
+          ? { ...item, github_account: updated.github_account }
+          : {
+              ...item,
+              repositories: item.repositories?.map((child) =>
+                child.path === updated.path
+                  ? { ...child, github_account: updated.github_account }
+                  : child,
+              ),
+            };
+      setProjects((prev) => prev.map(merge));
+      setProjectToEdit((project) => (project ? merge(project) : project));
+      onToast(
+        account
+          ? `${repository.name} now uses GitHub account ${account}.`
+          : `${repository.name} uses the system GitHub credentials again.`,
+      );
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  function githubAccountPicker(repository: ProjectInfo) {
+    const value = repositoryAccounts[repository.path] ?? "";
+    return (
+      <>
+        <ListPicker
+          label="GITHUB ACCOUNT"
+          value={value}
+          options={
+            value && !githubAccounts.includes(value)
+              ? [...githubAccounts, value]
+              : githubAccounts
+          }
+          allLabel="System default"
+          onChange={(next) =>
+            setRepositoryAccounts((current) => ({
+              ...current,
+              [repository.path]: next,
+            }))
+          }
+        />
+        <button
+          className="project-save-branch"
+          onClick={() => void saveGithubAccount(repository)}
+        >
+          SAVE ACCOUNT
+        </button>
+      </>
+    );
   }
 
   async function loadSheets() {
@@ -632,6 +710,12 @@ export default function ProjectList({
                   >
                     SAVE BRANCH
                   </button>
+                  {githubAccountPicker(projectToEdit)}
+                  <p>
+                    Fetch, pull, push, new chats, agents and PRs in this
+                    repository use this gh account. System default keeps the
+                    keychain credentials.
+                  </p>
                 </section>
               )}
               {settingsTab === "repositories" &&
@@ -679,6 +763,7 @@ export default function ProjectList({
                         >
                           SAVE BRANCH
                         </button>
+                        {githubAccountPicker(repository)}
                       </div>
                     ))}
                   </section>

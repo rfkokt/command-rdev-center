@@ -26,24 +26,127 @@ pub fn parse_gh_accounts(status: &str) -> Vec<String> {
     accounts
 }
 
+pub fn github_accounts() -> Result<Vec<String>, String> {
+    let out = Command::new("gh")
+        .args(["auth", "status", "--hostname", "github.com"])
+        .env("GH_PROMPT_DISABLED", "1")
+        .output()
+        .map_err(|_| "GitHub CLI (gh) is not installed".to_string())?;
+    // gh prints status on stdout (new) or stderr (old).
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Ok(parse_gh_accounts(&text))
+}
+
 #[tauri::command]
 pub async fn scm_github_accounts() -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let out = Command::new("gh")
-            .args(["auth", "status", "--hostname", "github.com"])
-            .env("GH_PROMPT_DISABLED", "1")
-            .output()
-            .map_err(|_| "GitHub CLI (gh) is not installed".to_string())?;
-        // gh prints status on stdout (new) or stderr (old).
-        let text = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        Ok(parse_gh_accounts(&text))
+    tauri::async_runtime::spawn_blocking(github_accounts)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub fn valid_github_account(account: &str) -> bool {
+    !account.is_empty()
+        && account.len() <= 39
+        && account
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// Repository-local helper key. Its first, empty value drops inherited helpers
+/// (osxkeychain, a global gh) so only the pinned account answers for github.com.
+const GITHUB_CREDENTIAL_HELPER: &str = "credential.https://github.com.helper";
+
+/// Shell helper git runs for github.com: hands out `account`'s gh token. gh is
+/// referenced by absolute path so GUI git clients without Homebrew's PATH work.
+fn github_credential_helper(gh: &str, account: &str) -> String {
+    format!(
+        "!f() {{ test \"$1\" = get || exit 0; echo username={account}; \
+         echo \"password=$('{gh}' auth token --hostname github.com --user {account})\"; }}; f"
+    )
+}
+
+fn gh_executable() -> String {
+    Command::new("/bin/sh")
+        .args(["-c", "command -v gh"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .filter(|path| path.starts_with('/') && !path.contains('\''))
+        .unwrap_or_else(|| "gh".into())
+}
+
+/// The gh account the repository's git credentials are pinned to, if any.
+/// Also recognizes hand-written helpers of the same `gh auth token --user` shape.
+pub fn pinned_github_account(repo: &Path) -> Option<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["config", "--get-all", GITHUB_CREDENTIAL_HELPER])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    let helper = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .last()?
+        .to_string();
+    let account: String = helper
+        .split("--user ")
+        .nth(1)?
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    valid_github_account(&account).then_some(account)
+}
+
+/// Pinned account for a registered repository or chat worktree.
+#[tauri::command]
+pub async fn scm_pinned_github_account(path: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let requested = Path::new(&path).canonicalize().map_err(|e| e.to_string())?;
+        crate::projects::ensure_path_allowed(&requested)?;
+        Ok(pinned_github_account(&requested))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Pin (or with `None`, unpin) the repository's github.com git credentials to
+/// a gh account. Lives in the shared `.git/config`, so every chat worktree,
+/// agent and terminal git command in this repository uses it.
+pub fn pin_github_account(repo: &Path, account: Option<&str>) -> Result<(), String> {
+    let config = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "--local"])
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let cleared = config(&["--unset-all", GITHUB_CREDENTIAL_HELPER])?;
+    // Exit 5: nothing was set.
+    if !cleared.status.success() && cleared.status.code() != Some(5) {
+        return Err(String::from_utf8_lossy(&cleared.stderr).trim().to_string());
+    }
+    let Some(account) = account else {
+        return Ok(());
+    };
+    if !valid_github_account(account) {
+        return Err("Choose a valid GitHub account".into());
+    }
+    let helper = github_credential_helper(&gh_executable(), account);
+    for value in ["", helper.as_str()] {
+        let out = config(&["--add", GITHUB_CREDENTIAL_HELPER, value])?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -517,6 +620,104 @@ pub async fn scm_commit_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_repo(tag: &str) -> PathBuf {
+        let repo = std::env::temp_dir().join(format!("crc-scm-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo);
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(Command::new("git")
+            .arg("init")
+            .arg(&repo)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        repo
+    }
+
+    fn helpers(repo: &Path) -> Vec<String> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", "--get-all", GITHUB_CREDENTIAL_HELPER])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn pinning_replaces_and_clears_the_github_helper() {
+        let repo = temp_repo("pin");
+        assert_eq!(pinned_github_account(&repo), None);
+        pin_github_account(&repo, Some("rdev-nashta")).unwrap();
+        pin_github_account(&repo, Some("rfkokt")).unwrap();
+        let values = helpers(&repo);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0], "");
+        assert_eq!(pinned_github_account(&repo).as_deref(), Some("rfkokt"));
+        assert!(pin_github_account(&repo, Some("bad name")).is_err());
+        pin_github_account(&repo, None).unwrap();
+        assert!(helpers(&repo).is_empty());
+        pin_github_account(&repo, None).unwrap();
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn recognizes_hand_written_gh_helper() {
+        let repo = temp_repo("manual");
+        let manual =
+            r#"!f() { echo username=rfkokt; echo "password=$(gh auth token --user rfkokt)"; }; f"#;
+        for value in ["", manual] {
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "--add", GITHUB_CREDENTIAL_HELPER, value])
+                .output()
+                .unwrap();
+        }
+        assert_eq!(pinned_github_account(&repo).as_deref(), Some("rfkokt"));
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn pinned_helper_hands_git_the_accounts_token() {
+        let repo = temp_repo("fill");
+        let fake_gh = repo.join("fake gh");
+        std::fs::write(&fake_gh, "#!/bin/sh\necho \"token-for-$6\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let helper = github_credential_helper(fake_gh.to_str().unwrap(), "rfkokt");
+        for value in ["", helper.as_str()] {
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "--add", GITHUB_CREDENTIAL_HELPER, value])
+                .output()
+                .unwrap();
+        }
+        let mut fill = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["credential", "fill"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        fill.stdin
+            .take()
+            .unwrap()
+            .write_all(b"protocol=https\nhost=github.com\n\n")
+            .unwrap();
+        let out = String::from_utf8(fill.wait_with_output().unwrap().stdout).unwrap();
+        assert!(out.contains("username=rfkokt\n"), "{out}");
+        assert!(out.contains("password=token-for-rfkokt\n"), "{out}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 
     #[test]
     fn parses_gh_auth_status_accounts() {

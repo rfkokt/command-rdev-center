@@ -43,6 +43,9 @@ pub struct ProjectInfo {
     pub tracking_branch: Option<String>,
     #[serde(default)]
     pub remote_url: Option<String>,
+    /// gh account this repository's github.com git credentials are pinned to.
+    #[serde(default)]
+    pub github_account: Option<String>,
     #[serde(default)]
     pub ahead: u32,
     #[serde(default)]
@@ -674,6 +677,11 @@ fn project_info(
         branch,
         tracking_branch,
         remote_url,
+        github_account: if is_git {
+            crate::scm::pinned_github_account(&path)
+        } else {
+            None
+        },
         ahead,
         behind,
         dirty_files,
@@ -1855,6 +1863,45 @@ pub fn update_project_base_branch(
     let json = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
     std::fs::write(config_path(), format!("{json}\n")).map_err(|error| error.to_string())?;
     project.base_branch = Some(base_branch);
+    project.pipeline_type = config.pipeline_types.get(&project.path).cloned();
+    Ok(project)
+}
+
+#[tauri::command(async)]
+pub fn update_project_github_account(
+    path: String,
+    account: Option<String>,
+) -> Result<ProjectInfo, String> {
+    let _state = crate::state_lock::state_write_lock();
+    let repository = canonicalize_or_original(Path::new(&path));
+    let config = read_config()?;
+    let registered = config.projects.iter().any(|saved| {
+        let root = canonicalize_or_original(Path::new(saved));
+        root == repository || discover_git_repositories(&root).contains(&repository)
+    });
+    if !registered {
+        return Err(format!(
+            "project is not registered: {}",
+            repository.display()
+        ));
+    }
+    let account = account
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(account) = &account {
+        if !crate::scm::github_accounts()?.contains(account) {
+            return Err(format!(
+                "gh is not signed in to {account}; run `gh auth login` first"
+            ));
+        }
+    }
+    let mut project = project_info(&repository, None, None)?;
+    if !project.is_git {
+        return Err("GitHub account is only available for Git repositories".into());
+    }
+    crate::scm::pin_github_account(&repository, account.as_deref())?;
+    project.github_account = crate::scm::pinned_github_account(&repository);
+    project.base_branch = config.base_branches.get(&project.path).cloned();
     project.pipeline_type = config.pipeline_types.get(&project.path).cloned();
     Ok(project)
 }

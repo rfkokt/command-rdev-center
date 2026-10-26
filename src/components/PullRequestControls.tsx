@@ -101,6 +101,26 @@ export default function PullRequestControls({
 
   useEffect(() => {
     let active = true;
+    // The project's pinned account (Project settings) beats a remembered one.
+    void invoke<string | null>("scm_pinned_github_account", { path })
+      .then((pinned) => {
+        if (
+          active &&
+          typeof pinned === "string" &&
+          /^[A-Za-z0-9-]{1,39}$/.test(pinned)
+        )
+          setAccount(pinned);
+      })
+      .catch(() => {
+        /* Not pinned or unreadable: keep the remembered account. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [path]);
+
+  useEffect(() => {
+    let active = true;
     void invoke<string[]>("scm_github_accounts")
       .then((found) => {
         if (!active || !Array.isArray(found)) return;
