@@ -8,9 +8,11 @@
 // Context comes from env set by Kern: CRC_PROJECT_NAME, CRC_TASK_DIR,
 // CRC_TASK_SOURCE_KIND.
 
+import { realpathSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
 
 const SERVER_INFO = { name: "kern", version: "1.0.0" };
@@ -422,4 +424,16 @@ function serve() {
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) serve();
+// Compare as URLs: the installed path ("Application Support") contains spaces,
+// which import.meta.url percent-encodes, and node resolves symlinks for it.
+function isMain() {
+  try {
+    return (
+      import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+    );
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) serve();

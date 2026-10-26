@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,7 +122,14 @@ describe("kern MCP server", () => {
   });
 
   test("speaks newline-delimited JSON-RPC over stdio", async () => {
-    const child = spawn(process.execPath, [join(here, "kern-mcp.mjs")], {
+    // Installed under "Application Support": the path contains a space.
+    const installed = join(
+      mkdtempSync(join(tmpdir(), "kern-mcp-")),
+      "Application Support",
+    );
+    mkdirSync(installed);
+    copyFileSync(join(here, "kern-mcp.mjs"), join(installed, "kern-mcp.mjs"));
+    const child = spawn(process.execPath, [join(installed, "kern-mcp.mjs")], {
       env: { ...process.env, CRC_PR_REVIEW: "0" },
     });
     const lines: string[] = [];
