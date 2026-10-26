@@ -194,10 +194,15 @@ pub fn store_bytes(
     if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
         return Err(too_large(bytes.len() as u64));
     }
-    commit(root, chat, name, mime, |temp| {
+    let mut stored = commit(root, chat, name, mime, |temp| {
         std::fs::write(temp, bytes)?;
         Ok(bytes.len() as u64)
-    })
+    })?;
+    // Like store_attachment_file: the composer needs inline bytes for images.
+    if is_inline_image(&stored.mime) {
+        stored.data = Some(base64(bytes));
+    }
+    Ok(stored)
 }
 
 pub fn store_file(root: &Path, chat: &str, source: &Path) -> Result<StoredAttachment, String> {
@@ -364,6 +369,16 @@ pub fn read_stored_attachment(app: AppHandle, path: String) -> Result<StoredAtta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pasted_images_come_back_with_inline_data() {
+        let root = temp_root("pasted-data");
+        let image = store_bytes(&root, "c", "shot.png", Some("image/png"), b"png").unwrap();
+        assert_eq!(image.data.as_deref(), Some(base64(b"png").as_str()));
+        let other = store_bytes(&root, "c", "notes.bin", None, b"bin").unwrap();
+        assert_eq!(other.data, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn body_bytes_accepts_raw_and_postmessage_json() {
