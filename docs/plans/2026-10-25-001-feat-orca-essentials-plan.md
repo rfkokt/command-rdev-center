@@ -54,11 +54,14 @@ estimated token cost (Claude: ≈ width × height / 750).
 6. **O5 Daily basics** (added 2026-10-26) — images from the agent shown in chat
    (tool results, ACP chunks, local Markdown images), clickable file paths and
    file pills, open in VS Code/Zed, no sleep while an agent runs, per-chat status
-   dots, image before/after in diffs, quick open, terminal search. Image
+   dots, image before/after in diffs, quick open, terminal search, context-size
+   compaction, fewer Kern bookkeeping calls, PR fix-CI / review-comment prompts,
+   resume after restart, worktree cleanup, PDF + local-image previews, and merge
+   conflict resolution. Image
    generation is left to the model: Kern adds no generator of its own; with pi's
    `codemode` enabled the model can use an image model when the session has one
    (e.g. OpenRouter), otherwise it says it can't. Large Orca features (fan-out,
-   conflict resolution, issue trackers) are not planned.
+   issue trackers) are not planned.
 
 ## Working rules for any agent picking this up
 

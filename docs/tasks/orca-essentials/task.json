@@ -42,7 +42,12 @@
       "O5-07",
       "O5-08",
       "O5-09",
-      "O5-10"
+      "O5-10",
+      "O5-13",
+      "O5-17",
+      "O5-15",
+      "O5-14",
+      "O5-16"
     ],
     "principles": [
       "Port per fitur, bukan fork atau salin mentah: logika UI diadaptasi, logika backend ditulis ulang di Rust.",
@@ -819,6 +824,147 @@
           "scripts/token-audit.mjs"
         ],
         "notes": "Baseline 2026-10-26 (pi, 7 hari): 1305 dari 3782 tool call adalah tool Kern (run_check 368, report_task 134, set_task_contract 99, format_changed_files 53, track_kanban_task 49; execute_terminal_command 498 termasuk kerja nyata global chat), 412 forced continuations, hidden messages: kern-jev-status 426, kern-task-guidance 214, kern-verification 125, kern-jev-routing 111."
+      },
+      {
+        "id": "O5-13",
+        "phase": "O5",
+        "name": "Prompt 'fix CI gagal' dan 'resolve review comments' dari PR",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Di PR & CI (PullRequestControls): tombol 'Fix failing checks' mengambil log check yang gagal (gh run view <id> --log-failed, dipotong ke bagian error, batas ukuran) dan menyusun draft prompt berisi nama check, job, potongan log, branch.",
+          "Tombol 'Resolve review comments' mengambil komentar review yang belum resolved (gh api REST: pulls/{n}/comments + reviews; file, baris, isi, author) dan menyusun draft prompt per file.",
+          "Draft masuk ke composer (tidak dikirim otomatis); konten eksternal ditandai sebagai evidence, bukan instruksi.",
+          "Memakai akun gh per repo yang sama (GH_TOKEN untuk satu panggilan, tanpa ganti akun global)."
+        ],
+        "acceptance_criteria": [
+          "PR dengan check gagal: klik menghasilkan draft berisi potongan log yang relevan.",
+          "PR dengan komentar review terbuka: draft berisi path:line dan isi komentar; yang sudah resolved tidak ikut.",
+          "Log besar dipotong dengan penanda, tidak membekukan UI.",
+          "Test parser log/komentar dengan fixture JSON gh."
+        ],
+        "files": [
+          "src/components/PullRequestControls.tsx",
+          "src-tauri/src/scm.rs"
+        ],
+        "references": [
+          "renderer/src/components/pr-checks-fix-prompt.ts",
+          "renderer/src/components/pr-comments-resolution-prompt.ts",
+          "renderer/src/components/pr-check-counts.ts"
+        ]
+      },
+      {
+        "id": "O5-14",
+        "phase": "O5",
+        "name": "Resume run yang terputus setelah restart",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Saat app dibuka, kumpulkan chat yang punya flag interrupted (sudah tersimpan di crc-chat-tabs) dan tampilkan satu dialog: daftar chat (project, judul, kapan terputus, prompt terakhir), centang mana yang dilanjutkan.",
+          "'Resume selected' menjalankan retry yang sudah ada (handleRestart) per chat secara berurutan dengan batas paralel kecil; sisanya ditandai tidak dilanjutkan.",
+          "Tidak ada resume otomatis tanpa konfirmasi; dialog bisa ditutup dan dibuka lagi dari palet."
+        ],
+        "acceptance_criteria": [
+          "Tutup paksa app saat 2 chat jalan, buka lagi: dialog menampilkan 2 chat; resume satu, yang lain tetap idle dengan tanda terputus.",
+          "Chat yang di-archive tidak ikut ditawarkan.",
+          "Test komponen untuk pilih/resume/abaikan."
+        ],
+        "files": [
+          "src/App.tsx",
+          "src/components/ChatView.tsx"
+        ],
+        "references": [
+          "renderer/src/components/NativeChatResumeOnRestartModal.tsx",
+          "renderer/src/components/native-chat-resume-on-restart-grouping.ts"
+        ]
+      },
+      {
+        "id": "O5-15",
+        "phase": "O5",
+        "name": "Bersihkan worktree (yatim + saat archive)",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Settings > Worktrees: daftar worktree di .crc-worktrees yang tidak dirujuk chat mana pun (yatim), dengan ukuran, branch, perubahan belum di-commit/di-push.",
+          "Hapus terpilih memakai git worktree remove (bukan rm -rf); worktree dengan perubahan belum di-commit atau commit belum di-push butuh konfirmasi eksplisit dan menampilkan apa yang akan hilang.",
+          "Archive chat: opsi 'juga hapus worktree' (default tidak), dengan pemeriksaan yang sama.",
+          "git worktree prune setelah penghapusan; branch lokal tidak dihapus kecuali diminta."
+        ],
+        "acceptance_criteria": [
+          "Worktree yatim muncul dan bisa dihapus; chat aktif tidak pernah terdaftar sebagai yatim.",
+          "Worktree dengan perubahan belum di-commit tidak terhapus tanpa konfirmasi kedua.",
+          "Unit test Rust untuk klasifikasi yatim/dirty/unpushed."
+        ],
+        "files": [
+          "src-tauri/src/worktree.rs",
+          "src/components/SettingsPanel.tsx",
+          "src/components/ChatSessionActions.tsx"
+        ],
+        "references": [
+          "main/local-orphaned-worktree-cleanup.ts",
+          "main/local-worktree-removal-recovery.ts",
+          "main/nested-worktree-removal-plan.ts"
+        ]
+      },
+      {
+        "id": "O5-16",
+        "phase": "O5",
+        "name": "Preview file sidebar: PDF, gambar lokal di Markdown, rendered/source",
+        "status": "To Do",
+        "priority": "P2",
+        "depends_on": [],
+        "scope": [
+          "File viewer (ProjectFilesSidebar) sudah menampilkan gambar dan Markdown; tambahkan PDF (viewer di app, halaman + zoom, tanpa plugin eksternal; atau WebView native bila tersedia).",
+          "Markdown preview: gambar relatif (![](./img.png)) dimuat dari worktree lewat jalur baca gambar yang sama dengan O5-02.",
+          "Toggle rendered/source untuk Markdown; SVG tampil sebagai gambar (disanitasi) dengan opsi lihat source."
+        ],
+        "acceptance_criteria": [
+          "Buka README.md yang memuat gambar relatif: gambar tampil.",
+          "Buka file .pdf: halaman tampil dan bisa di-scroll.",
+          "Toggle source menampilkan teks Markdown mentah."
+        ],
+        "files": [
+          "src/components/ProjectFilesSidebar.tsx",
+          "src-tauri/src/files.rs"
+        ],
+        "references": [
+          "renderer/src/components/editor/MarkdownPreview.tsx",
+          "renderer/src/components/editor/markdown-preview-local-images.ts",
+          "renderer/src/components/editor/PdfViewer.tsx"
+        ]
+      },
+      {
+        "id": "O5-17",
+        "phase": "O5",
+        "name": "Resolve merge conflict di app",
+        "status": "To Do",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "Source Control mendeteksi status conflict (merge/rebase/cherry-pick sedang berjalan; git status unmerged) dan menampilkan daftar file conflict dengan jumlah hunk.",
+          "Per file: lihat ours/theirs/base, pilih 'keep ours/theirs' per file, atau buka di editor (O5-05).",
+          "'Resolve with agent' menyusun draft prompt berisi file conflict + konteks operasi (branch, commit) ke composer.",
+          "'Mark resolved' (git add) hanya bila file tidak lagi berisi marker conflict; 'Continue' / 'Abort' untuk operasi yang berjalan, dengan konfirmasi untuk abort.",
+          "Pull dari Source Control yang berujung conflict langsung membuka tampilan ini."
+        ],
+        "acceptance_criteria": [
+          "Buat conflict (merge branch yang mengubah baris sama): daftar file muncul, keep ours menyelesaikan file itu.",
+          "File yang masih ber-marker tidak bisa ditandai resolved.",
+          "Abort mengembalikan repo ke sebelum merge.",
+          "Test Rust untuk deteksi state conflict dan validasi marker."
+        ],
+        "files": [
+          "src-tauri/src/scm.rs",
+          "src/components/SourceControlPanel.tsx"
+        ],
+        "references": [
+          "main/git/source-control/git-conflict-operation.ts",
+          "main/git/repo-branch-conflict.ts",
+          "main/git/source-control/status-read.ts"
+        ]
       }
     ]
   }
