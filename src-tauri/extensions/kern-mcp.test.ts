@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +52,10 @@ describe("kern MCP server", () => {
     );
     const names = list.result.tools.map((tool: { name: string }) => tool.name);
     expect(names).toEqual(
-      TOOL_NAMES.filter((name) => name !== "complete_pr_review"),
+      TOOL_NAMES.filter(
+        (name: string) =>
+          name !== "complete_pr_review" && !name.startsWith("api_"),
+      ),
     );
     expect(names).toContain("track_kanban_task");
     const review = await handle(
@@ -121,6 +130,82 @@ describe("kern MCP server", () => {
     expect(result.result.content[0].text).toContain("Do not infer");
   });
 
+  test("serves the saved Swagger catalog when contracts exist", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kern-mcp-api-"));
+    const path = join(dir, "contracts.json");
+    writeFileSync(
+      path,
+      JSON.stringify([
+        {
+          id: "transaction-crew-service",
+          origin: "https://api.example.com",
+          base_url: "https://api.example.com/gateway",
+          source_url: "https://api.example.com/v3/api-docs",
+          document: {
+            paths: {
+              "/presensi/roster/non-roster": {
+                post: {
+                  operationId: "presensiNonRoster",
+                  requestBody: {
+                    content: {
+                      "application/json": {
+                        schema: { $ref: "#/components/schemas/Filter" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            components: {
+              schemas: {
+                Filter: {
+                  type: "object",
+                  properties: { sort: { type: "string" } },
+                },
+              },
+            },
+          },
+        },
+      ]),
+    );
+    const names = async (env: object) =>
+      (
+        await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" }, env)
+      ).result.tools.map((tool: { name: string }) => tool.name);
+    expect(await names({})).not.toContain("api_find_operations");
+    const env = { CRC_API_CONTRACTS_PATH: path };
+    expect(await names(env)).toEqual(
+      expect.arrayContaining(["api_find_operations", "api_operation_detail"]),
+    );
+    const found = JSON.parse(
+      (await call("api_find_operations", { query: "non-roster" }, env)).result
+        .content[0].text,
+    );
+    expect(found.operations[0].operationId).toBe("presensiNonRoster");
+    const detail = await call(
+      "api_operation_detail",
+      { method: "POST", path: "/presensi/roster/non-roster" },
+      env,
+    );
+    expect(detail.result.isError).toBeUndefined();
+    expect(detail.result.content[0].text).toContain('"sort"');
+    const missing = await call(
+      "api_operation_detail",
+      { method: "GET", path: "/nope" },
+      env,
+    );
+    expect(missing.result.isError).toBe(true);
+    expect(missing.result.content[0].text).toContain("api_find_operations");
+  });
+
+  test("kern-openapi.mjs matches its TypeScript sources", async () => {
+    // @ts-expect-error plain ESM script without type declarations
+    const { bundle } = await import("../../scripts/build-kern-openapi.mjs");
+    expect(readFileSync(join(here, "kern-openapi.mjs"), "utf8")).toBe(
+      await bundle(),
+    );
+  }, 30_000);
+
   test("an empty task list says why", async () => {
     const env = taskEnv([], "google_sheets");
     const unsynced = await call("list_project_tasks", {}, env);
@@ -186,7 +271,7 @@ describe("kern MCP server", () => {
     expect(parsed.find((m) => m.id === 1).result.serverInfo.name).toBe("kern");
     expect(parsed.some((m) => m.error?.code === -32700)).toBe(true);
     expect(parsed.find((m) => m.id === 2).result.tools.length).toBe(
-      TOOL_NAMES.length - 1,
+      TOOL_NAMES.length - 3,
     );
   });
 });

@@ -657,20 +657,40 @@ fn approve_pi_install_blocking(app: tauri::AppHandle) -> Result<PiRuntimeStatus,
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing response, including progress updates and the final answer, in clean Markdown. Lead with the result or current finding. Keep progress updates to one or two concise sentences; do not narrate every investigation step. Keep paragraphs short (two to four sentences), separated by a blank line. Use `##` headings only for distinct sections of a longer answer, and `-` lists for grouped findings or next steps, with a blank line before each list. Summarize the evidence and relevant limitations in the final answer instead of repeating the running investigation. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known; include only the relevant excerpt. Never expose scratchpad, internal planning, or raw provider errors.\n";
 const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. When the user asks to enter, replace, or remove an API token, call api_authenticate directly; it does not require a resolved operation or send an API request. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions.";
 
-fn api_documentation_system_prompt(project: &Path) -> String {
+/// Harnesses other than pi get the read-only contract tools through the kern
+/// MCP server; request execution and the private credential dialog are pi's.
+const ACP_API_DOCUMENTATION_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly with the kern tools `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory, and do not open a Swagger UI page or guess raw spec URLs to discover endpoints. If a selector returns operation_not_found, search for candidates; before concluding absence, refresh with api_find_operations(refresh=true). A contract load failure, stale data, or unresolved reference does not mean the endpoint is absent; report the actual issue. Kern's request/test tools and private credential dialog are not available in this harness: run requests with your own shell tools, and never ask for tokens in chat; ask the user to export one in the terminal (for example `export API_TOKEN=...`) and reference the variable. A passing HTTP status does not prove response-schema or business correctness.";
+
+/// `contract_status` lists the contracts loaded for this chat (or `None`
+/// when none could be loaded); `acp` selects the non-pi tool guidance.
+fn api_documentation_system_prompt(
+    project: &Path,
+    contract_status: Option<&str>,
+    acp: bool,
+) -> String {
     let context = crate::projects::api_documentation_context_for_project(project)
         .ok()
         .flatten()
         .or_else(|| crate::projects::swagger_urls_for_project(project).ok()
             .filter(|urls| !urls.is_empty())
             .map(|_| "Swagger sources are configured. Inspect api_find_operations for the loaded inventory and any document load issues.".to_owned()));
+    let status = match contract_status {
+        Some(status) => format!("\n\n## Loaded API contracts for this chat\n{status}"),
+        None => "\n\n## Loaded API contracts for this chat\nNone could be loaded when this chat started (network or source failure); the API tools are unavailable. Tell the user, and do not conclude that endpoints are absent.".into(),
+    };
 
     context
         .map(|context| {
             let context = crate::projects::compact_swagger_context(&context);
-            format!(
+            if acp {
+                return format!(
+                    "## Project API documentation\n{ACP_API_DOCUMENTATION_PROMPT}{status}\n{context}"
+                );
+            }
+            let prompt = format!(
                 "## Project API documentation\n{API_DOCUMENTATION_WORKFLOW_PROMPT}\n\n## Default backend-testing workflow\nWhen the user asks to test backend bugs or an API, read the referenced bug/task detail, search api_find_operations across all contracts, inspect api_operation_detail, map each requirement to an exact method/path/contractId, then call `api_contract_test`; use `api_request` when no matching operation exists or for deliberate invalid-input cases rejected by contract preflight, while retaining the documented operation as the test reference. An explicit request to test CRUD authorizes executing the available create/get/update/delete sequence; do not stop after read-only prerequisite calls, refuse because a token may expire, or redirect the user to browser login. The tools own authentication: call the next authenticated API tool so it opens the private token dialog; never request tokens in chat or tell the user to refresh host authentication. Derive required reference values from documented schemas and safe read-only API responses. Do not pause and ask the user for identifiers such as employee, personnel, organization, or status values while contract-backed lookup operations remain untried; invoke those authenticated lookups and let the private token dialog collect or refresh authentication. Ask the user only after every relevant documented lookup operation has been attempted and returned no usable value, and report those attempts. For safe CRUD verification, use unique `AI_TEST_` data, never modify existing records, run available create/get/update/delete operations, verify deletion, and clean up every record created even after partial failure. Report PASS/FAIL/BLOCKED per bug with method, path, HTTP status, compact body, contract status, trace ID, and cleanup evidence.\n{context}"
-            )
+            );
+            format!("{prompt}{status}")
         })
         .unwrap_or_default()
 }
@@ -888,7 +908,20 @@ pub fn spawn_pi_rpc(
             Some(provider) if !provider.is_empty() => format!("{provider}/{model}"),
             _ => model.clone(),
         });
+        let api_contracts = if global_chat {
+            None
+        } else {
+            write_api_contracts(&owning_project, &session_id)?
+        };
+        let api_prompt = (!global_chat).then(|| {
+            api_documentation_system_prompt(
+                &owning_project,
+                api_contracts.as_ref().map(|(_, status)| status.as_str()),
+                true,
+            )
+        });
         let preamble = [
+            api_prompt.filter(|prompt| !prompt.is_empty()),
             (!global_chat)
                 .then(|| worktree_system_prompt(Path::new(&cwd), &owning_project))
                 .flatten(),
@@ -908,6 +941,7 @@ pub fn spawn_pi_rpc(
                 project_name.as_deref(),
                 &session_id,
                 pr_review,
+                api_contracts.as_ref().map(|(path, _)| path.as_path()),
             )
             .into_iter()
             .collect::<Vec<_>>())
@@ -951,30 +985,12 @@ pub fn spawn_pi_rpc(
         }
     }
 
-    let api_contracts_path = if global_chat {
+    let (api_contracts_path, api_contract_status) = if global_chat {
         None
     } else {
-        match crate::projects::swagger_documents_for_project(&owning_project) {
-            Ok(contracts) => (!contracts.is_empty())
-                .then(|| {
-                    let path =
-                        std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
-                    std::fs::write(
-                        &path,
-                        serde_json::to_string(&contracts).map_err(|error| error.to_string())?,
-                    )
-                    .map_err(|error| error.to_string())?;
-                    Ok::<_, String>(path)
-                })
-                .transpose()?,
-            // API contracts are optional context. A temporary DNS or network outage must not
-            // prevent an existing chat session from starting or resuming.
-            Err(error) => {
-                eprintln!("Skipping live API contracts for {session_id}: {error}");
-                None
-            }
-        }
-    };
+        write_api_contracts(&owning_project, &session_id)?
+    }
+    .unzip();
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -1143,9 +1159,11 @@ pub fn spawn_pi_rpc(
     let runtime_prompt = if global_chat {
         format!("{MARKDOWN_RESPONSE_PROMPT}\n## Global terminal access\nYou can inspect and operate the user's machine only through the chat terminal tools. A terminal pane is already provisioned for this chat. For shell, SSH, or device work, call `execute_terminal_command`; it returns cleaned output, exit code, and action URLs directly in the same tool result. Never use write/read terminal polling for agent work, merely ask permission in prose, or tell the user to open a terminal. Non-destructive commands run automatically. Destructive commands return approval_required and the app renders Approve/Reject. Answer the user's complete request from the structured output in the same turn. If the result contains an action URL, return it as a clickable Markdown link. If terminal output contains an authentication, device verification, approval, OAuth, or other action URL, immediately return it to the user as a clickable Markdown link with a short explanation. Keep the terminal alive, then after the user completes the action read the pane again and continue automatically.\n")
     } else {
+        let api_prompt =
+            api_documentation_system_prompt(&owning_project, api_contract_status.as_deref(), false);
         format!(
             "{MARKDOWN_RESPONSE_PROMPT}{}{}{}",
-            api_documentation_system_prompt(&owning_project),
+            api_prompt,
             worktree_system_prompt(Path::new(&cwd), &owning_project).unwrap_or_default(),
             // Legacy checkouts may still carry app-written blocking Graphify gates
             // in AGENTS.md; integration is opt-in now, so neutralize them for Pi.
@@ -1625,6 +1643,35 @@ fn acp_stderr_is_error(line: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+/// Writes the project's Swagger contracts for this session's API tools (pi's
+/// api-test extension or the kern MCP server). `None` when none are saved.
+/// Also returns a per-contract status summary for the system prompt.
+fn write_api_contracts(
+    owning_project: &Path,
+    session_id: &str,
+) -> Result<Option<(PathBuf, String)>, String> {
+    match crate::projects::swagger_documents_for_project(owning_project) {
+        Ok(contracts) => (!contracts.is_empty())
+            .then(|| {
+                let path =
+                    std::env::temp_dir().join(format!("crc-api-contracts-{session_id}.json"));
+                std::fs::write(
+                    &path,
+                    serde_json::to_string(&contracts).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok::<_, String>((path, crate::projects::contract_status_summary(&contracts)))
+            })
+            .transpose(),
+        // API contracts are optional context. A temporary DNS or network outage must not
+        // prevent an existing chat session from starting or resuming.
+        Err(error) => {
+            eprintln!("Skipping live API contracts for {session_id}: {error}");
+            Ok(None)
+        }
+    }
+}
+
 /// ACP `McpServerStdio` entry for Kern's own tools (`extensions/kern-mcp.mjs`).
 /// `None` when node is unavailable: the chat still works, without Kern tools.
 fn kern_mcp_server(
@@ -1632,6 +1679,7 @@ fn kern_mcp_server(
     project_name: Option<&str>,
     session_id: &str,
     pr_review: bool,
+    api_contracts: Option<&Path>,
 ) -> Option<serde_json::Value> {
     let node = crate::harness::resolve_binary("node").or_else(|| {
         eprintln!("crc: node not found; Kern MCP tools unavailable for {session_id}");
@@ -1678,12 +1726,28 @@ fn kern_mcp_server(
             if pr_review { "1" } else { "0" }.to_string(),
         ),
     ];
+    // API tools are offered only when the project has saved contracts.
+    let api_env = api_contracts.map(|path| {
+        [
+            (
+                "CRC_API_CONTRACTS_PATH",
+                path.to_string_lossy().into_owned(),
+            ),
+            (
+                "CRC_API_CONTRACT_CACHE_PATH",
+                crate::projects::api_contract_cache_path(owning_project)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        ]
+    });
     Some(serde_json::json!({
         "name": "kern",
         "command": node.to_string_lossy(),
         "args": [script.to_string_lossy()],
         "env": env
             .iter()
+            .chain(api_env.iter().flatten())
             .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
             .collect::<Vec<_>>(),
     }))

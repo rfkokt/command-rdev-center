@@ -180,9 +180,93 @@ export function taskSourceNote(metadata, count) {
     .join("");
 }
 
+// ---------------------------------------------------------------- api
+
+// Contracts are written by Kern per session (CRC_API_CONTRACTS_PATH); the
+// catalog is pi's own, bundled into kern-openapi.mjs.
+async function contracts(env) {
+  const raw = await readFile(env.CRC_API_CONTRACTS_PATH, "utf8");
+  return JSON.parse(raw);
+}
+
+const catalog = () => import("./kern-openapi.mjs");
+
+/** Mirrors api_find_operations in pi's api-test extension. */
+async function findOperations(input, env) {
+  const { refreshContracts, saveContracts, searchOperations } = await catalog();
+  let items = await contracts(env);
+  let refresh;
+  if (input.refresh) {
+    const sources = new Set(
+      items
+        .filter((item) => !input.contractId || item.id === input.contractId)
+        .map((item) => item.configured_source || item.source_url),
+    );
+    items = await refreshContracts(items, input);
+    const persisted = { session: false, sharedCache: false };
+    for (const [key, path] of [
+      ["sharedCache", env.CRC_API_CONTRACT_CACHE_PATH],
+      ["session", env.CRC_API_CONTRACTS_PATH],
+    ]) {
+      if (!path) continue;
+      try {
+        await saveContracts(path, items);
+        persisted[key] = true;
+      } catch {
+        // Reported through `persisted`; the refreshed inventory is still used.
+      }
+    }
+    const checked = items.filter((item) =>
+      sources.has(item.configured_source || item.source_url),
+    );
+    const count = (status) =>
+      checked.filter((item) => item.refresh_status === status).length;
+    refresh = {
+      checkedAt: Date.now(),
+      updated: count("updated"),
+      unchanged: count("unchanged"),
+      failed: count("failed"),
+      persisted,
+    };
+  }
+  return JSON.stringify({
+    ...searchOperations(items, input),
+    ...(refresh && { refresh }),
+  });
+}
+
+/** Mirrors api_operation_detail in pi's api-test extension. */
+async function operationDetailText(input, env) {
+  const { operationDetail, searchOperations, selectOperation } =
+    await catalog();
+  const items = await contracts(env);
+  const selection = selectOperation(items, input);
+  if (selection.selected)
+    return JSON.stringify(operationDetail(selection.selected));
+  throw new Error(
+    JSON.stringify({
+      status: "error",
+      ...selection,
+      inventory: searchOperations(items, {
+        query: input.operationId || input.path,
+        limit: 10,
+      }),
+      guidance:
+        "This exact selector was not resolved. Search api_find_operations across all contracts, inspect candidates with api_operation_detail, and refresh before claiming absence. An unavailable contract is not a missing endpoint.",
+    }),
+  );
+}
+
 // ---------------------------------------------------------------- tools
 
 const str = (description) => ({ type: "string", description });
+const selector = {
+  operationId: { type: "string", maxLength: 300 },
+  method: { type: "string", maxLength: 10 },
+  path: { type: "string", maxLength: 2000 },
+  contractId: { type: "string", maxLength: 300 },
+  origin: { type: "string", maxLength: 2000 },
+};
 const signal = (text) => async () => text;
 
 export const TOOLS = [
@@ -257,6 +341,30 @@ export const TOOLS = [
         .digest("hex");
       return `${taskMarkdown(matching[0], data.items)}\n\n<!-- source: ${data.source} · updated ${data.updatedAt}${data.cached ? " · cached" : ""} · revision ${revision.slice(0, 12)} -->`;
     },
+  },
+  {
+    name: "api_find_operations",
+    description:
+      "Search the complete saved Swagger/OpenAPI inventory by operation ID, path, summary, description, tags, or parameter names. Empty query lists all operations. Results are paginated; load failures and stale contracts are disclosed. Set refresh:true to fetch saved JSON/Swagger UI sources from the network with cache revalidation, update the full inventory, and persist it for this session and app restarts. Reports fetchedAt, checkedAt, contentHash, refreshStatus, and persistence results; unchanged means verified with identical content, failed retains stale data. Cached data alone does not prove it is latest. Refresh before concluding an endpoint is absent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", maxLength: 500 },
+        contractId: selector.contractId,
+        method: selector.method,
+        offset: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        refresh: { type: "boolean" },
+      },
+    },
+    run: findOperations,
+  },
+  {
+    name: "api_operation_detail",
+    description:
+      "Get the exact operation's inherited parameters, request body, response definitions, security, server overrides, and resolved local schema references. Resolve ambiguity with contractId and exact method/path before executing.",
+    inputSchema: { type: "object", properties: selector },
+    run: operationDetailText,
   },
   {
     name: "report_recurring_error",
@@ -356,10 +464,13 @@ export const TOOLS = [
 
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
-/** complete_pr_review exists only in Kern PR review chats. */
+/** complete_pr_review exists only in Kern PR review chats; API tools only
+ * when the project has saved Swagger contracts. */
 export function toolsFor(env = process.env) {
   return TOOLS.filter(
-    (tool) => tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1",
+    (tool) =>
+      (tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1") &&
+      (!tool.name.startsWith("api_") || Boolean(env.CRC_API_CONTRACTS_PATH)),
   );
 }
 

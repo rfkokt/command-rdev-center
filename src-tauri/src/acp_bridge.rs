@@ -162,6 +162,8 @@ pub const KERN_TOOLS: &[&str] = &[
     "track_kanban_task",
     "list_project_tasks",
     "get_project_task",
+    "api_find_operations",
+    "api_operation_detail",
     "report_recurring_error",
     "recommend_global_skills",
     "run_pipeline",

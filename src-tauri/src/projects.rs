@@ -27,6 +27,7 @@ const JEV_CLIENT: &str = include_str!("../extensions/jev-client.ts");
 const FOLLOW_UP: &str = include_str!("../extensions/follow-up.ts");
 const IMAGE_FALLBACK: &str = include_str!("../extensions/image-fallback.ts");
 const KERN_MCP_SERVER: &str = include_str!("../extensions/kern-mcp.mjs");
+const KERN_OPENAPI: &str = include_str!("../extensions/kern-openapi.mjs");
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
@@ -292,6 +293,7 @@ fn install_extensions(extensions: &Path) -> Result<(), String> {
         ("follow-up.ts", FOLLOW_UP),
         ("image-fallback.ts", IMAGE_FALLBACK),
         ("kern-mcp.mjs", KERN_MCP_SERVER),
+        ("kern-openapi.mjs", KERN_OPENAPI),
     ] {
         std::fs::write(extensions.join(name), content).map_err(|e| e.to_string())?;
     }
@@ -1281,6 +1283,52 @@ pub struct ApiContract {
     refresh_status: Option<String>,
 }
 
+/// One line per loaded contract so a chat knows what API documentation it
+/// has, from when, and which sources failed.
+pub fn contract_status_summary(contracts: &[ApiContract]) -> String {
+    const METHODS: [&str; 8] = [
+        "get", "put", "post", "delete", "options", "head", "patch", "trace",
+    ];
+    contracts
+        .iter()
+        .map(|contract| {
+            let operations = contract
+                .document
+                .get("paths")
+                .and_then(serde_json::Value::as_object)
+                .map(|paths| {
+                    paths
+                        .values()
+                        .filter_map(serde_json::Value::as_object)
+                        .map(|item| {
+                            item.keys()
+                                .filter(|key| METHODS.contains(&key.as_str()))
+                                .count()
+                        })
+                        .sum::<usize>()
+                })
+                .unwrap_or(0);
+            let source = if contract.source_url.is_empty() {
+                &contract.configured_source
+            } else {
+                &contract.source_url
+            };
+            let mut line = format!("- `{}`: {operations} operations from {source}", contract.id);
+            if let Some(fetched_at) = contract.fetched_at {
+                line.push_str(&format!(", fetched at unix ms {fetched_at}"));
+            }
+            if contract.stale {
+                line.push_str(", stale cached copy");
+            }
+            if let Some(error) = &contract.load_error {
+                line.push_str(&format!(", LOAD FAILED: {error}"));
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn swagger_server_url(document: &serde_json::Value, document_url: &str) -> Result<String, String> {
     let source = url::Url::parse(document_url).map_err(|e| e.to_string())?;
     let target = if document.get("swagger").and_then(serde_json::Value::as_str) == Some("2.0") {
@@ -2006,6 +2054,40 @@ pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_status_summary_counts_operations_and_reports_failures() {
+        let contracts: Vec<ApiContract> = serde_json::from_value(serde_json::json!([
+            {
+                "id": "transaction-crew-service",
+                "origin": "https://api.example.com",
+                "base_url": "https://api.example.com/gateway",
+                "source_url": "https://api.example.com/v3/api-docs",
+                "fetched_at": 1,
+                "document": { "paths": {
+                    "/a": { "get": {}, "post": {}, "parameters": [] },
+                    "/b": { "delete": {} }
+                } }
+            },
+            {
+                "id": "master-crew-service",
+                "origin": "https://api.example.com",
+                "base_url": "",
+                "configured_source": "https://api.example.com/swagger-ui/index.html",
+                "load_error": "HTTP 503",
+                "stale": true,
+                "document": {}
+            }
+        ]))
+        .unwrap();
+        let summary = contract_status_summary(&contracts);
+        assert!(summary.contains(
+            "- `transaction-crew-service`: 3 operations from https://api.example.com/v3/api-docs, fetched at unix ms 1"
+        ));
+        assert!(summary.contains(
+            "- `master-crew-service`: 0 operations from https://api.example.com/swagger-ui/index.html, stale cached copy, LOAD FAILED: HTTP 503"
+        ));
+    }
 
     fn serve_swagger(responses: Vec<String>) -> (String, std::thread::JoinHandle<()>) {
         use std::io::{Read, Write};
