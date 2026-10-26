@@ -45,6 +45,8 @@ pub struct HarnessSettings {
     pub auto_approve: bool,
     /// Install agent updates found by the startup check without asking.
     pub auto_update: bool,
+    /// Context ceiling per harness, independent of the model's context window.
+    pub compact_thresholds: std::collections::HashMap<String, u64>,
     /// Show Claude subscription quota (reads Claude Code's Keychain login).
     /// `None` = on.
     pub quota_claude: Option<bool>,
@@ -360,6 +362,37 @@ pub fn set_default_harness(id: String) -> Result<(), String> {
         return Err(format!("Unknown agent harness `{id}`"));
     }
     settings.default = (id != PI).then_some(id);
+    write_settings(&settings)
+}
+
+pub const DEFAULT_COMPACT_THRESHOLD: u64 = 200_000;
+
+pub fn compact_threshold(id: &str) -> u64 {
+    read_settings()
+        .compact_thresholds
+        .get(id)
+        .copied()
+        .filter(|tokens| (10_000..=10_000_000).contains(tokens))
+        .unwrap_or(DEFAULT_COMPACT_THRESHOLD)
+}
+
+#[tauri::command(async)]
+pub fn get_compact_thresholds() -> std::collections::HashMap<String, u64> {
+    read_settings().compact_thresholds
+}
+
+#[tauri::command(async)]
+pub fn set_compact_threshold(harness: String, tokens: u64) -> Result<(), String> {
+    let _state = crate::state_lock::state_write_lock();
+    let mut settings = read_settings();
+    if !(10_000..=10_000_000).contains(&tokens)
+        || (harness != PI && !all_acp(&settings).iter().any(|spec| spec.id == harness))
+    {
+        return Err(
+            "Choose a valid harness and a threshold between 10,000 and 10,000,000 tokens".into(),
+        );
+    }
+    settings.compact_thresholds.insert(harness, tokens);
     write_settings(&settings)
 }
 

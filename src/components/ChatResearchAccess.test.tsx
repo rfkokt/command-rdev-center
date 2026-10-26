@@ -786,7 +786,9 @@ describe("agent final settlement", () => {
         contextUsage: { tokens: 107000, contextWindow: 100000, percent: 107 },
       },
     });
-    expect(screen.getByTitle("Show token usage")).toHaveTextContent("107%");
+    expect(screen.getByTitle("Show token usage")).toHaveTextContent(
+      "107,000 / 200,000",
+    );
     await emit({ type: "agent_start" });
     await emit({ type: "agent_end", messages: [] });
     baseProps.onAgentRunning.mockClear();
@@ -803,7 +805,9 @@ describe("agent final settlement", () => {
       aborted: false,
       willRetry: true,
     });
-    expect(screen.getByTitle("Show token usage")).not.toHaveTextContent("107%");
+    expect(screen.getByTitle("Show token usage")).toHaveTextContent(
+      "Context — / 200,000",
+    );
     expect(baseProps.onAgentRunning).not.toHaveBeenCalledWith(
       "chat-one",
       false,

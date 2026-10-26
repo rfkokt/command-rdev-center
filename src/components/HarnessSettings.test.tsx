@@ -85,6 +85,41 @@ test("saves the default harness", async () => {
   );
 });
 
+test("saves independent context thresholds and rejects invalid input", async () => {
+  invoke.mockImplementation((command: string) =>
+    Promise.resolve(
+      command === "list_harnesses"
+        ? list
+        : command === "get_compact_thresholds"
+          ? { opencode: 150000 }
+          : undefined,
+    ),
+  );
+  render(<HarnessSettings onToast={vi.fn()} />);
+  await screen.findByLabelText(/OpenCode/);
+  expect(screen.getByLabelText(/Compact when context exceeds/)).toHaveValue(
+    200000,
+  );
+  fireEvent.click(screen.getByLabelText(/OpenCode/));
+  expect(screen.getByLabelText(/Compact when context exceeds/)).toHaveValue(
+    150000,
+  );
+  fireEvent.change(screen.getByLabelText(/Compact when context exceeds/), {
+    target: { value: "0" },
+  });
+  expect(screen.getByRole("button", { name: "Save threshold" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/Compact when context exceeds/), {
+    target: { value: "180000" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save threshold" }));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("set_compact_threshold", {
+      harness: "opencode",
+      tokens: 180000,
+    }),
+  );
+});
+
 test("adds a custom ACP agent", async () => {
   invoke.mockImplementation((command: string) =>
     Promise.resolve(command === "list_harnesses" ? list : undefined),

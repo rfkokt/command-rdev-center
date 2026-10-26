@@ -21,6 +21,7 @@ pub struct RpcResponse {
 }
 
 struct SessionHandle {
+    prompt_preflight: std::sync::atomic::AtomicBool,
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     /// Awaiting RPC round-trips keyed by request `id`; the stdout reader
@@ -1398,6 +1399,7 @@ pub fn spawn_pi_rpc(
 
     // Keep process control separate from stdin writes: a blocked pipe must not block Restart.
     let handle: SharedSessionHandle = Arc::new(SessionHandle {
+        prompt_preflight: std::sync::atomic::AtomicBool::new(false),
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(Some(stdin)),
         pending: Mutex::new(HashMap::new()),
@@ -1711,6 +1713,7 @@ fn spawn_acp_session(
     bridge.set_auto_approve(crate::harness::read_settings().auto_approve);
     let start = bridge.start();
     let handle: SharedSessionHandle = Arc::new(SessionHandle {
+        prompt_preflight: std::sync::atomic::AtomicBool::new(false),
         child: Mutex::new(Some(child)),
         stdin: Mutex::new(Some(stdin)),
         pending: Mutex::new(HashMap::new()),
@@ -1850,14 +1853,104 @@ fn write_session_line(session_id: &str, json_line: &str) -> Result<(), String> {
     Ok(())
 }
 
+// Async command: the context preflight awaits RPC round-trips. (A sync
+// command with `block_on` panics: Tauri runs `(async)` bodies on a runtime
+// worker thread.)
 #[tauri::command]
-pub fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
+pub async fn send_pi_command(session_id: String, json_line: String) -> Result<(), String> {
+    send_context_checked_command(session_id, json_line).await
+}
+
+/// For app-internal senders (Deep Research): validate and write, no context
+/// preflight. Sync, so blocking callers keep working.
+pub fn send_pi_command_unchecked(session_id: String, json_line: String) -> Result<(), String> {
+    if json_line.trim().is_empty() {
+        return Err("empty command".to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(&json_line)
+        .map_err(|e| format!("invalid JSON: {}", e))?;
+    write_session_line(&session_id, &json_line)
+}
+
+fn context_threshold_reached(
+    state: &serde_json::Value,
+    stats: &serde_json::Value,
+    threshold: u64,
+) -> bool {
+    state["isStreaming"].as_bool() == Some(false)
+        && state["isCompacting"].as_bool() != Some(true)
+        && stats
+            .pointer("/contextUsage/tokens")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|used| used >= threshold)
+}
+
+async fn send_context_checked_command(session_id: String, json_line: String) -> Result<(), String> {
     if json_line.trim().is_empty() {
         return Err("empty command".to_string());
     }
     // Validate it's JSON (quick)
-    serde_json::from_str::<serde_json::Value>(&json_line)
+    let command = serde_json::from_str::<serde_json::Value>(&json_line)
         .map_err(|e| format!("invalid JSON: {}", e))?;
+    if matches!(
+        command["type"].as_str(),
+        Some("prompt" | "steer" | "follow_up")
+    ) {
+        let handle = sessions_map()
+            .lock()
+            .map_err(|_| "poisoned sessions lock")?
+            .get(&session_id)
+            .cloned()
+            .ok_or("unknown session")?;
+        // ACP serializes prompts and compaction in its bridge, including queued turns.
+        if handle.bridge.is_none() {
+            if handle
+                .prompt_preflight
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err("Another prompt is checking context. Please wait.".into());
+            }
+            struct Preflight<'a>(&'a std::sync::atomic::AtomicBool);
+            impl Drop for Preflight<'_> {
+                fn drop(&mut self) {
+                    self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            let _guard = Preflight(&handle.prompt_preflight);
+            // Best effort: a failed check or compaction must never swallow the
+            // user's prompt — pi still has its own overflow compaction.
+            if let Ok(state) =
+                rpc_roundtrip(session_id.clone(), serde_json::json!({"type":"get_state"})).await
+            {
+                if state["isStreaming"].as_bool() != Some(true)
+                    && state["isCompacting"].as_bool() != Some(true)
+                {
+                    if let Ok(stats) = rpc_roundtrip(
+                        session_id.clone(),
+                        serde_json::json!({"type":"get_session_stats"}),
+                    )
+                    .await
+                    {
+                        if context_threshold_reached(
+                            &state,
+                            &stats,
+                            crate::harness::compact_threshold(crate::harness::PI),
+                        ) {
+                            if let Err(error) = rpc_roundtrip(
+                                session_id.clone(),
+                                serde_json::json!({"type":"compact"}),
+                            )
+                            .await
+                            {
+                                eprintln!("crc: threshold compaction failed: {error}");
+                            }
+                        }
+                    }
+                }
+            }
+            return write_session_line(&session_id, &json_line);
+        }
+    }
     write_session_line(&session_id, &json_line)
 }
 
@@ -1943,8 +2036,13 @@ async fn rpc_roundtrip(
             .map(|mut pending| pending.remove(&req_id));
         return Err(error);
     }
+    let timeout = if command["type"] == "compact" {
+        300
+    } else {
+        20
+    };
     let response = tauri::async_runtime::spawn_blocking(move || {
-        rx.recv_timeout(std::time::Duration::from_secs(20))
+        rx.recv_timeout(std::time::Duration::from_secs(timeout))
     })
     .await
     .map_err(|e| format!("RPC worker failed: {}", e))?
@@ -2033,6 +2131,42 @@ pub fn list_pi_sessions() -> Result<Vec<String>, String> {
 // This is the explicit PRD risk mitigation test hook: called via cargo test.
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn send_pi_command_runs_inside_the_tauri_runtime_without_panicking() {
+        // Tauri executes commands on runtime worker threads; a nested
+        // block_on there panics ("Cannot start a runtime from within a runtime").
+        let result =
+            tauri::async_runtime::block_on(tauri::async_runtime::spawn(super::send_pi_command(
+                "no-such-session".into(),
+                r#"{"type":"prompt","message":"x"}"#.into(),
+            )))
+            .expect("command task must not panic");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn context_threshold_requires_idle_and_current_usage() {
+        use serde_json::json;
+        let idle = json!({"isStreaming":false,"isCompacting":false});
+        let stats = json!({"contextUsage":{"tokens":200000,"contextWindow":1000000}});
+        assert!(super::context_threshold_reached(&idle, &stats, 200000));
+        assert!(!super::context_threshold_reached(&idle, &stats, 200001));
+        assert!(!super::context_threshold_reached(
+            &json!({"isStreaming":true}),
+            &stats,
+            200000
+        ));
+        assert!(!super::context_threshold_reached(
+            &json!({"isStreaming":false,"isCompacting":true}),
+            &stats,
+            200000
+        ));
+        assert!(!super::context_threshold_reached(
+            &idle,
+            &json!({"contextUsage":{"tokens":null}}),
+            200000
+        ));
+    }
     use super::*;
 
     #[test]
@@ -2334,6 +2468,7 @@ mod tests {
         sessions_map().lock().unwrap().insert(
             id.to_string(),
             Arc::new(SessionHandle {
+                prompt_preflight: std::sync::atomic::AtomicBool::new(false),
                 child: Mutex::new(None),
                 stdin: Mutex::new(None),
                 pending: Mutex::new(pending),
