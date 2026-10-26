@@ -313,6 +313,11 @@ fn worktree_info(
 
 fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
     let branch = crate::projects::project_base_branch(repo_path)?;
+    fresh_base_ref(repo_path, branch)
+}
+
+/// The base branch's upstream after fetching it, else the best ref still on disk.
+fn fresh_base_ref(repo_path: &Path, branch: String) -> Result<String, String> {
     let repo = repo_path.to_string_lossy().to_string();
     let upstream = Command::new("git")
         .args([
@@ -338,10 +343,17 @@ fn resolve_parent_ref(repo_path: &Path) -> Result<String, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if !fetch.status.success() {
-        return Err(format!(
+        // A dead or unauthorized remote must not block new chats: start from
+        // the last fetched upstream, or the local branch if there is none.
+        eprintln!(
             "failed to update {upstream}: {}",
             String::from_utf8_lossy(&fetch.stderr).trim()
-        ));
+        );
+        let cached = Command::new("git")
+            .args(["-C", &repo, "rev-parse", "--verify", "--quiet", &upstream])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        return Ok(if cached { upstream } else { branch });
     }
     Ok(upstream)
 }
@@ -1472,6 +1484,38 @@ mod tests {
             );
         }
         (root, repo)
+    }
+
+    #[test]
+    fn unreachable_upstream_falls_back_instead_of_failing() {
+        let (root, repo) = init_checkpoint_repo("deadremote");
+        let path = repo.to_str().unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(path)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let missing = root.join("gone.git");
+        git(&["branch", "-M", "main"]);
+        git(&["remote", "add", "origin", missing.to_str().unwrap()]);
+        git(&["config", "branch.main.remote", "origin"]);
+        git(&["config", "branch.main.merge", "refs/heads/main"]);
+
+        // Never fetched: only the local branch exists.
+        assert_eq!(fresh_base_ref(&repo, "main".into()).unwrap(), "main");
+
+        // Fetched once before the remote vanished: keep the cached upstream.
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        assert_eq!(fresh_base_ref(&repo, "main".into()).unwrap(), "origin/main");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
