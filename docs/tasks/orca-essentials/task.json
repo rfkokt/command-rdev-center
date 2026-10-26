@@ -34,6 +34,7 @@
       "O5-18",
       "O5-11",
       "O5-12",
+      "O5-19",
       "O5-01",
       "O5-04",
       "O5-02",
@@ -848,6 +849,47 @@
         ],
         "references": [],
         "notes": "Implemented 2026-10-26 (Claude). src/lib/handoff.ts menggantikan buildHandoff lama (yang hanya ekor teks 24k karakter, tanpa tool call/goal/worktree). Rust: session_tool_calls (jalur pi, path/command saja) dan write_chat_handoff (<app_data>/handoffs/<chat>.md). Banner 'hit a usage limit': Continue with <agent terakhir>, Other <agent> model…, Continue with <agent lain>, Dismiss. Ganti agent manual juga memakai handoff baru. Session search sekarang juga mengizinkan sessionDir dari settings pi (sebelumnya sesi di /Volumes/.../pi-sessions dilewati). Tests: handoff unit, ChatUsageLimit (limit → Continue with pi → spawn dengan handoff), Rust tool_calls. Belum dicoba di app: teks error limit Claude via ACP yang sebenarnya, dan agent ACP membaca file transkrip di app data (mungkin minta izin)."
+      },
+      {
+        "id": "O5-19",
+        "phase": "O5",
+        "name": "Review PR oleh model/agent lain langsung dari Kern (default Fix & push)",
+        "status": "To Do",
+        "priority": "P0",
+        "depends_on": [],
+        "scope": [
+          "Entry point: tombol 'Review with…' di PR & CI (PullRequestControls), aksi Cmd+K 'Review PR', dan di chat yang membuat branch setelah PR terbuat. Pilih agent + model reviewer; pilihan terakhir diingat per project.",
+          "Kern mengumpulkan bahan via gh dengan akun per repo (GH_TOKEN satu panggilan, tanpa ganti akun global): judul, body, base/head, daftar file + diff (gh pr diff, dipotong dengan penanda bila sangat besar; diff lengkap disimpan ke file yang bisa dibaca reviewer), status CI.",
+          "Task terkait dideteksi dari nama branch atau judul (mis. feat/o5-12-… atau 'O5-12') lalu entri task.json + bagian Working rules dari plan disertakan; bila tidak terdeteksi, reviewer diberi tahu dan memakai body PR.",
+          "Reviewer jalan di chat baru dengan worktree sendiri yang di-checkout ke head branch PR (bukan worktree chat pembuat), sehingga bisa menjalankan pnpm exec tsc --noEmit -p ., pnpm exec vitest run, cargo test --lib, pnpm format:check.",
+          "Template review default (bisa diedit di Settings): cek kesesuaian dengan scope + acceptance criteria dan perilaku referensi, bukan hanya test lolos; cari bug runtime nyata (mis. block_on di command Tauri, prompt user tertahan/tertelan, state yang terkunci), regresi UI, dan pelanggaran working rules; branch belum di main terbaru → merge main dulu.",
+          "Mode default 'Fix & push' (keputusan user 2026-10-26): reviewer memperbaiki temuan, commit dengan pesan fix(<area>): … di branch PR yang sama, push, dan menambah catatan review di notes task. Tidak pernah merge ke main dan tidak pernah force-push. Mode 'Report only' tersedia sebagai pilihan.",
+          "Push memakai akun gh per repo yang sama; bila branch PR berasal dari fork atau push ditolak, reviewer berhenti dan melaporkan, tanpa membuat branch lain diam-diam.",
+          "Hasil: ringkasan temuan (severity, file:line, apa yang diperbaiki vs hanya dilaporkan, hasil checks) tampil di chat reviewer; opsional diposting sebagai review comment di PR (toggle). Chat pembuat dan baris PR mendapat badge 'Reviewed by <model> · N issues · fixed M'.",
+          "Biaya: reviewer tidak menerima riwayat chat pembuat; hanya bahan PR di atas (handoff ringkas). Satu review = satu chat."
+        ],
+        "acceptance_criteria": [
+          "Dari PR & CI, satu klik 'Review with Claude' membuka chat reviewer yang langsung mulai tanpa user menempel link atau diff.",
+          "Reviewer mode Fix & push mendorong commit perbaikan ke branch PR yang sama; main tidak berubah; tidak ada force-push.",
+          "Task terkait dari nama branch terdeteksi dan acceptance criteria-nya muncul di bahan review.",
+          "PR dari fork / push ditolak: dilaporkan dengan jelas, tidak ada branch baru.",
+          "Diff besar tidak membekukan UI; diff lengkap tersedia di file.",
+          "Test untuk deteksi task id dari branch/judul, penyusunan bahan review, dan guard push (fork/ditolak)."
+        ],
+        "files": [
+          "src/components/PullRequestControls.tsx",
+          "src/App.tsx",
+          "src/components/ChatView.tsx",
+          "src-tauri/src/scm.rs",
+          "src-tauri/src/worktree.rs",
+          "src/components/SettingsPanel.tsx",
+          "src/lib/handoff.ts"
+        ],
+        "references": [
+          "Alur review manual 2026-10-26 untuk PR #14 dan #15 (contoh temuan yang harus tertangkap)",
+          "renderer/src/components/pull-request-page (Orca, tampilan PR)",
+          "renderer/src/components/pr-comments-resolution-prompt.ts (Orca)"
+        ]
       }
     ]
   }
