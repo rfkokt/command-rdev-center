@@ -310,17 +310,25 @@ fn header(request: &tauri::ipc::Request<'_>, name: &str) -> Option<String> {
         .map(|(_, value)| value.into_owned())
 }
 
-/// Store bytes the user pasted. Raw IPC body; `x-chat-id`, `x-file-name` and
+/// Once the `ipc://` custom protocol fails in a window, Tauri falls back to
+/// postMessage for the rest of its life and a `Uint8Array` arrives as a JSON
+/// array of numbers instead of a raw body.
+fn body_bytes(body: &tauri::ipc::InvokeBody) -> Result<Vec<u8>, String> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes.clone()),
+        tauri::ipc::InvokeBody::Json(value) => serde_json::from_value::<Vec<u8>>(value.clone())
+            .map_err(|_| "attachment upload needs a binary body".to_string()),
+    }
+}
+
+/// Store bytes the user pasted. Raw IPC body (or its postMessage JSON form); `x-chat-id`, `x-file-name` and
 /// `x-mime` headers (percent-encoded).
 #[tauri::command]
 pub async fn save_attachment_bytes(
     app: AppHandle,
     request: tauri::ipc::Request<'_>,
 ) -> Result<StoredAttachment, String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-        return Err("attachment upload needs a binary body".into());
-    };
-    let bytes = bytes.clone();
+    let bytes = body_bytes(request.body())?;
     let chat = header(&request, "x-chat-id").unwrap_or_default();
     let name = header(&request, "x-file-name").unwrap_or_else(|| "pasted".into());
     let mime = header(&request, "x-mime");
@@ -356,6 +364,20 @@ pub fn read_stored_attachment(app: AppHandle, path: String) -> Result<StoredAtta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn body_bytes_accepts_raw_and_postmessage_json() {
+        use tauri::ipc::InvokeBody;
+        assert_eq!(
+            body_bytes(&InvokeBody::Raw(vec![1, 2, 255])).unwrap(),
+            vec![1, 2, 255]
+        );
+        assert_eq!(
+            body_bytes(&InvokeBody::Json(serde_json::json!([1, 2, 255]))).unwrap(),
+            vec![1, 2, 255]
+        );
+        assert!(body_bytes(&InvokeBody::Json(serde_json::json!({ "a": 1 }))).is_err());
+    }
 
     #[test]
     fn read_stored_reopens_without_copying_and_refuses_outside_files() {
