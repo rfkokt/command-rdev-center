@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useModalFocus } from "./useModalFocus";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  DEFAULT_REVIEW_CHECKS,
   DEFAULT_REVIEW_TEMPLATE,
   REVIEW_TEMPLATE_KEY,
   type PreparedReview,
@@ -37,8 +38,9 @@ export default function PrReviewDialog({
       return null;
     }
   });
+  // Shape of `list_harnesses` (harness::HarnessInfo).
   const [harnesses, setHarnesses] = useState<
-    Array<{ id: string; name: string; installed: boolean }>
+    Array<{ id: string; label: string; available: boolean }>
   >([]);
   const [model, setModel] = useState(choice?.model ?? "");
   const [harness, setHarness] = useState(choice?.harness ?? "claude-code");
@@ -46,6 +48,16 @@ export default function PrReviewDialog({
   const [account, setAccount] = useState(request.account);
   const [fix, setFix] = useState(true);
   const [postComment, setPostComment] = useState(false);
+  const checksKey = `kern:pr-review-checks:${request.repositoryPath}`;
+  const [checks, setChecks] = useState(() => {
+    try {
+      return (
+        localStorage.getItem(checksKey) ?? DEFAULT_REVIEW_CHECKS.join("\n")
+      );
+    } catch {
+      return DEFAULT_REVIEW_CHECKS.join("\n");
+    }
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -67,6 +79,10 @@ export default function PrReviewDialog({
         /* Use the built-in template when storage is disabled. */
       }
       const id = `review-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const hostChecks = checks
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
       const review = await invoke<PreparedReview>("prepare_pr_review", {
         repositoryPath: request.path,
         account,
@@ -74,7 +90,13 @@ export default function PrReviewDialog({
         fix,
         postComment,
         template,
+        checks: hostChecks,
       });
+      try {
+        localStorage.setItem(checksKey, hostChecks.join("\n"));
+      } catch {
+        /* Defaults are used next time. */
+      }
       const next = { harness, model };
       try {
         localStorage.setItem(key, JSON.stringify(next));
@@ -107,8 +129,9 @@ export default function PrReviewDialog({
           Reviewer agent
           <select value={harness} onChange={(e) => setHarness(e.target.value)}>
             {harnesses.map((h) => (
-              <option key={h.id} value={h.id} disabled={!h.installed}>
-                {h.name}
+              <option key={h.id} value={h.id} disabled={!h.available}>
+                {h.label}
+                {h.available ? "" : " (not installed)"}
               </option>
             ))}
           </select>
@@ -138,6 +161,16 @@ export default function PrReviewDialog({
           </select>
         </label>
         <label>
+          Host checks (one command per line, run in the review worktree before
+          pushing; empty = reviewer-reported checks only)
+          <textarea
+            aria-label="Host checks"
+            rows={5}
+            value={checks}
+            onChange={(e) => setChecks(e.target.value)}
+          />
+        </label>
+        <label>
           <input
             type="checkbox"
             checked={postComment}
@@ -157,13 +190,13 @@ export default function PrReviewDialog({
           disabled={
             busy ||
             !account.trim() ||
-            !harnesses.some((h) => h.id === harness && h.installed)
+            !harnesses.some((h) => h.id === harness && h.available)
           }
           onClick={() => void start()}
         >
           {busy
             ? "Preparing…"
-            : `Review with ${harnesses.find((h) => h.id === harness)?.name ?? harness}`}
+            : `Review with ${harnesses.find((h) => h.id === harness)?.label ?? harness}`}
         </button>
       </section>
     </div>

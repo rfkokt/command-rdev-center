@@ -20,6 +20,15 @@ pub struct ReviewSession {
     pub post_comment: bool,
     pub task_path: Option<String>,
     pub task_id: Option<String>,
+    /// PR base branch (not always main).
+    #[serde(default = "default_base")]
+    pub base: String,
+    /// Host checks chosen by the user in the review dialog.
+    #[serde(default)]
+    pub checks: Vec<String>,
+}
+fn default_base() -> String {
+    "main".into()
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,6 +104,89 @@ pub fn task_id(text: &str) -> Option<String> {
     }
     None
 }
+const CHECK_TIMEOUT_SECS: u64 = 20 * 60;
+
+fn validate_checks(checks: &[String]) -> Result<(), String> {
+    if checks.len() > 12
+        || checks
+            .iter()
+            .any(|check| check.trim().is_empty() || check.len() > 2000 || check.contains('\n'))
+    {
+        return Err("Host checks: up to 12 single-line commands".into());
+    }
+    Ok(())
+}
+
+/// One user-configured host check in the review worktree: shell command,
+/// own process group, hard timeout, output tail for the error message.
+fn run_check(dir: &Path, command: &str) -> Result<(), String> {
+    use std::io::{Read, Seek};
+    let log_path = std::env::temp_dir().join(format!(
+        "kern-review-check-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos()
+    ));
+    let mut log = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&log_path)
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&log_path);
+    let mut process = Command::new("sh");
+    process
+        .args(["-lc", command])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(log.try_clone().map_err(|e| e.to_string())?)
+        .stderr(log.try_clone().map_err(|e| e.to_string())?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        process.process_group(0);
+    }
+    let mut child = process.spawn().map_err(|e| e.to_string())?;
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            break Some(status);
+        }
+        if started.elapsed().as_secs() > CHECK_TIMEOUT_SECS {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let mut output = Vec::new();
+    log.rewind().map_err(|e| e.to_string())?;
+    log.read_to_end(&mut output).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&output);
+    let tail: String = text
+        .chars()
+        .rev()
+        .take(6000)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    match status {
+        Some(status) if status.success() => Ok(()),
+        Some(_) => Err(tail),
+        None => Err(format!(
+            "timed out after {} minutes\n{tail}",
+            CHECK_TIMEOUT_SECS / 60
+        )),
+    }
+}
+
 fn push_result(result: Result<String, String>) -> Result<String, String> {
     result.map_err(|e| {
         format!("Push rejected; stopped on the original PR branch, no alternate branch: {e}")
@@ -184,6 +276,7 @@ pub async fn prepare_pr_review(
     fix: bool,
     post_comment: bool,
     template: String,
+    checks: Vec<String>,
 ) -> Result<PreparedReview, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let source = Path::new(&repository_path).canonicalize().map_err(|e| e.to_string())?;
@@ -193,6 +286,7 @@ pub async fn prepare_pr_review(
         let repo = crate::projects::ensure_verified_repository(&owner)?;
         if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return Err("Invalid review session ID".into()); }
         if template.len() > 32_000 { return Err("Review template too large".into()); }
+        validate_checks(&checks)?;
         let remote = git(&repo, &["remote", "get-url", "origin"])?;
         let valid_remote = if remote.trim().starts_with("git@github.com:") { true } else { url::Url::parse(remote.trim()).map(|u| u.scheme() == "https" && u.host_str() == Some("github.com") && u.username().is_empty() && u.password().is_none()).unwrap_or(false) };
         if !valid_remote { return Err("PR review requires a credential-free github.com origin".into()); }
@@ -201,6 +295,8 @@ pub async fn prepare_pr_review(
         guard(&pr)?;
         let branch = pr["headRefName"].as_str().ok_or("Missing head branch")?;
         git(&repo, &["check-ref-format", "--branch", branch])?;
+        let base = pr["baseRefName"].as_str().ok_or("Missing base branch")?.to_string();
+        git(&repo, &["check-ref-format", "--branch", &base])?;
         let sha = pr["headRefOid"].as_str().ok_or("Missing head SHA")?;
         if sha.len() != 40 || !sha.bytes().all(|c| c.is_ascii_hexdigit()) { return Err("Invalid PR SHA".into()); }
         let number = pr["number"].as_u64().ok_or("Missing PR number")?;
@@ -208,7 +304,7 @@ pub async fn prepare_pr_review(
         // Fetch through gh's credential helper with a token scoped to this process.
         let token = output(Command::new("gh").args(["auth", "token", "--hostname", "github.com", "--user", &account]))?;
         let auth_git = |args: &[&str]| output(Command::new("git").arg("-C").arg(&repo).args(["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]).env("GH_TOKEN", token.trim()).env("GH_HOST", "github.com").env("GIT_TERMINAL_PROMPT", "0").args(args));
-        auth_git(&["fetch", "origin", &format!("refs/heads/{branch}"), "refs/heads/main:refs/remotes/origin/main"])?;
+        auth_git(&["fetch", "origin", &format!("refs/heads/{branch}"), &format!("refs/heads/{base}:refs/remotes/origin/{base}")])?;
         git(&repo, &["cat-file", "-e", &format!("{sha}^{{commit}}")])?;
         let path = crate::projects::global_worktree_root()?.join(repo.file_name().ok_or("Invalid repository")?).join(&slug);
         if path.exists() { return Err("Review worktree already exists; refusing to reuse another chat".into()); }
@@ -220,9 +316,9 @@ pub async fn prepare_pr_review(
         let metadata = PathBuf::from(git(&path, &["rev-parse", "--absolute-git-dir"])?.trim());
         let diff_path = metadata.join("kern-review.diff");
         std::fs::write(&diff_path, &diff).map_err(|e| e.to_string())?;
-        let session = ReviewSession { worktree_path: path.to_string_lossy().into(), repository_path: repo.to_string_lossy().into(), branch: branch.into(), remote: remote.trim().into(), sha: sha.into(), number, account, fix, post_comment, task_path, task_id: id };
+        let session = ReviewSession { worktree_path: path.to_string_lossy().into(), repository_path: repo.to_string_lossy().into(), branch: branch.into(), remote: remote.trim().into(), sha: sha.into(), number, account, fix, post_comment, task_path, task_id: id, base: base.clone(), checks: checks.clone() };
         std::fs::write(metadata.join("kern-review.json"), serde_json::to_vec(&session).unwrap()).map_err(|e| e.to_string())?;
-        let prompt = format!("{template}\n\nMode: {}. Work only in this isolated detached worktree. Never use git push/commit yourself: call complete_pr_review with summary, issue/fixed counts, message and explicit paths. The host runs checks, commits and pushes HEAD to the original PR branch with the selected account, then records notes/comment. Never force push or merge into main. {}\n\n{}", if fix { "Fix & push" } else { "Report only" }, if fix { "Fetch origin/main is fresh: merge origin/main here first if it is not an ancestor; report conflicts and stop." } else { "Do not modify files or merge branches." }, evidence(&pr, &diff, &diff_path, &context));
+        let prompt = format!("{template}\n\nMode: {}. Work only in this isolated detached worktree. Never use git push/commit yourself: call complete_pr_review with summary, issue/fixed counts, message and explicit paths. The host runs checks, commits and pushes HEAD to the original PR branch with the selected account, then records notes/comment. Never force push or merge into main. {}\n\n{}", if fix { "Fix & push" } else { "Report only" }, if fix { format!("origin/{base} is freshly fetched: merge origin/{base} here first if it is not an ancestor; report conflicts and stop.") } else { "Do not modify files or merge branches.".to_string() }, format!("{}\n\n{}", if checks.is_empty() { "Host checks: none configured. Run the project's own checks and report the exact results.".to_string() } else { format!("Host checks (the host re-runs these before pushing; run them first yourself):\n{}", checks.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")) }, evidence(&pr, &diff, &diff_path, &context)));
         Ok(PreparedReview { session, prompt })
     }).await.map_err(|e| e.to_string())?
 }
@@ -257,13 +353,21 @@ pub async fn complete_pr_review(
         if pr["headRefName"] != s.branch || pr["headRefOid"] != s.sha { return Err("PR changed during review; stopped without pushing. Start a fresh review.".into()); }
         let mut paths = paths;
         let mut checks = Vec::new();
-        for (dir, bin, args) in [(&path, "pnpm", vec!["exec", "tsc", "--noEmit", "-p", "."]), (&path, "pnpm", vec!["exec", "vitest", "run"]), (&path.join("src-tauri"), "cargo", vec!["test", "--lib"]), (&path, "pnpm", vec!["format:check"])] {
-            let out = Command::new(bin).current_dir(dir).args(&args).output().map_err(|e| e.to_string())?;
-            checks.push(format!("{bin} {}: {}", args.join(" "), if out.status.success() { "passed" } else { "FAILED" }));
-            if !out.status.success() { return Err(format!("{}\n{}\n{}", checks.join("\n"), String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))); }
+        validate_checks(&s.checks)?;
+        if s.checks.is_empty() {
+            checks.push("host checks: none configured (reviewer-reported results only)".to_string());
+        }
+        for command in &s.checks {
+            match run_check(&path, command) {
+                Ok(()) => checks.push(format!("{command}: passed")),
+                Err(output) => {
+                    checks.push(format!("{command}: FAILED"));
+                    return Err(format!("{}\n{output}", checks.join("\n")));
+                }
+            }
         }
         if s.fix {
-            git(&path, &["merge-base", "--is-ancestor", "origin/main", "HEAD"])?;
+            git(&path, &["merge-base", "--is-ancestor", &format!("origin/{}", s.base), "HEAD"]).map_err(|_| format!("origin/{} is not merged into the review head; merge it first", s.base))?;
             if let (Some(task_path), Some(task_id)) = (&s.task_path, &s.task_id) {
                 let file = path.join(task_path).canonicalize().map_err(|e| e.to_string())?;
                 if !file.starts_with(&path) { return Err("Task ledger escapes repository".into()); }
@@ -304,6 +408,29 @@ pub async fn complete_pr_review(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn host_checks_report_failure_output_and_validate_input() {
+        let dir = std::env::temp_dir();
+        assert!(run_check(&dir, "true").is_ok());
+        let error = run_check(&dir, "echo broken-thing; exit 3").unwrap_err();
+        assert!(error.contains("broken-thing"));
+        assert!(validate_checks(&["pnpm test".into()]).is_ok());
+        assert!(validate_checks(&["".into()]).is_err());
+        assert!(validate_checks(&["a\nb".into()]).is_err());
+        assert!(validate_checks(&vec!["x".to_string(); 13]).is_err());
+    }
+
+    #[test]
+    fn old_review_sessions_default_to_main_and_no_checks() {
+        let session: ReviewSession = serde_json::from_value(json!({
+            "worktreePath": "/w", "repositoryPath": "/r", "branch": "feat/x", "remote": "r",
+            "sha": "a", "number": 1, "account": "a", "fix": true, "postComment": false
+        }))
+        .unwrap();
+        assert_eq!(session.base, "main");
+        assert!(session.checks.is_empty());
+    }
+
     #[test]
     fn rejected_push_stops_without_fallback() {
         let error = push_result(Err("non-fast-forward".into())).unwrap_err();

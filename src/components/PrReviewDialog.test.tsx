@@ -22,7 +22,7 @@ test("prepares a fresh reviewer chat with no creator transcript and default fix 
   };
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "list_harnesses"
-      ? [{ id: "claude-code", name: "Claude", installed: true }]
+      ? [{ id: "claude-code", label: "Claude", available: true }]
       : command === "list_available_models"
         ? ["anthropic/claude"]
         : prepared,
@@ -52,6 +52,7 @@ test("prepares a fresh reviewer chat with no creator transcript and default fix 
       fix: true,
       postComment: false,
       account: "octocat",
+      checks: expect.arrayContaining(["pnpm exec vitest run"]),
     }),
   );
   expect(start.mock.calls[0][0]).toEqual(prepared);
@@ -62,7 +63,7 @@ test("prepares a fresh reviewer chat with no creator transcript and default fix 
 test("fork rejection stays visible without starting a chat", async () => {
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "list_harnesses")
-      return [{ id: "claude-code", name: "Claude", installed: true }];
+      return [{ id: "claude-code", label: "Claude", available: true }];
     if (command === "list_available_models") return [];
     throw new Error("Fork PR: review stopped");
   });
@@ -80,4 +81,52 @@ test("fork rejection stays visible without starting a chat", async () => {
   );
   expect((await screen.findByRole("alert")).textContent).toContain("Fork PR");
   expect(start).not.toHaveBeenCalled();
+});
+
+test("uses the real list_harnesses shape: label + available", async () => {
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "list_harnesses"
+      ? [
+          {
+            id: "pi",
+            label: "pi",
+            protocol: "native",
+            available: true,
+            is_default: true,
+          },
+          {
+            id: "claude-code",
+            label: "Claude Code",
+            protocol: "acp",
+            available: false,
+            is_default: false,
+          },
+        ]
+      : [],
+  );
+  render(
+    <PrReviewDialog
+      request={{ path: "/repo", repositoryPath: "/repo", account: "octocat" }}
+      onStart={vi.fn()}
+      onClose={vi.fn()}
+      onToast={vi.fn()}
+    />,
+  );
+  expect(
+    await screen.findByRole("option", { name: "Claude Code (not installed)" }),
+  ).toBeTruthy();
+  const button = screen.getByRole("button", {
+    name: "Review with Claude Code",
+  }) as HTMLButtonElement;
+  expect(button.disabled).toBe(true);
+  fireEvent.change(screen.getByLabelText("Reviewer agent"), {
+    target: { value: "pi" },
+  });
+  expect(
+    (
+      screen.getByRole("button", {
+        name: "Review with pi",
+      }) as HTMLButtonElement
+    ).disabled,
+  ).toBe(false);
 });
