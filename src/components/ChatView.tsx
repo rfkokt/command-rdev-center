@@ -796,7 +796,9 @@ export default function ChatView({
   >({});
   const [compactCount, setCompactCount] = useState(() => {
     try {
-      const saved = Number(localStorage.getItem(`kern-compact-count:${chatId}`));
+      const saved = Number(
+        localStorage.getItem(`kern-compact-count:${chatId}`),
+      );
       return Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
     } catch {
       return 0;
