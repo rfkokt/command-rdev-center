@@ -75,12 +75,8 @@
           "THIRD_PARTY_NOTICES.md ada dan memuat teks lisensi lengkap.",
           "Rencana menyebut aturan komentar header."
         ],
-        "files": [
-          "THIRD_PARTY_NOTICES.md"
-        ],
-        "references": [
-          "LICENSE"
-        ],
+        "files": ["THIRD_PARTY_NOTICES.md"],
+        "references": ["LICENSE"],
         "notes": "THIRD_PARTY_NOTICES.md berisi lisensi MIT Orca; aturan komentar header ada di rencana."
       },
       {
@@ -118,9 +114,7 @@
         "name": "Attachment store per chat (Rust)",
         "status": "Review",
         "priority": "P0",
-        "depends_on": [
-          "O0-01"
-        ],
+        "depends_on": ["O0-01"],
         "scope": [
           "Command Tauri untuk menyimpan lampiran (bytes dari paste, atau path dari drop/picker) ke folder per upload di bawah data app, nama file asli dipertahankan.",
           "Batas ukuran per file (mis. 20 MB) dengan error yang jelas.",
@@ -150,9 +144,7 @@
         "name": "Intake lampiran: drag-drop, tombol attach, paste lewat satu jalur",
         "status": "Review",
         "priority": "P0",
-        "depends_on": [
-          "O1-01"
-        ],
+        "depends_on": ["O1-01"],
         "scope": [
           "Drag-drop file/gambar ke composer memakai getCurrentWindow().onDragDropEvent (pola sudah ada di RagKnowledge.tsx).",
           "Tombol attach (attachFiles di ChatView.tsx) menerima gambar dan PDF, bukan hanya path.",
@@ -182,11 +174,7 @@
         "name": "Pengiriman hybrid sesuai kemampuan model",
         "status": "Review",
         "priority": "P0",
-        "depends_on": [
-          "O0-02",
-          "O1-01",
-          "O1-02"
-        ],
+        "depends_on": ["O0-02", "O1-01", "O1-02"],
         "scope": [
           "Selalu sebut path lampiran di prompt.",
           "image=true: kirim gambar inline + path.",
@@ -220,9 +208,7 @@
         "name": "Perkecil gambar dan tampilkan perkiraan token",
         "status": "Review",
         "priority": "P1",
-        "depends_on": [
-          "O1-03"
-        ],
+        "depends_on": ["O1-03"],
         "scope": [
           "Sebelum dikirim inline, perkecil gambar sehingga sisi terpanjang maksimal 1568 px (canvas di frontend atau crate image di Rust).",
           "Chip menampilkan perkiraan token (Claude: lebar x tinggi / 750 setelah resize)."
@@ -232,10 +218,7 @@
           "Chip menampilkan perkiraan token yang masuk akal (mis. ~2.5k untuk 1568x1176).",
           "File asli di attachment store tidak diubah."
         ],
-        "files": [
-          "src/components/ChatComposer.tsx",
-          "src/lib/ (helper baru)"
-        ],
+        "files": ["src/components/ChatComposer.tsx", "src/lib/ (helper baru)"],
         "references": [],
         "notes": "Review 2026-10-26 (Claude): JPEG inputs stay JPEG (q0.9) when resized — a 1568px photo as PNG is often several MB and could exceed the ~5 MB inline limit; PNG over the cap falls back to JPEG on white; images under 1568px whose bytes exceed the cap are re-encoded too; still too large → error instead of a doomed send."
       },
@@ -284,9 +267,7 @@
           "src/lib/use-chat-draft.ts",
           "src/lib/use-chat-draft.test.tsx"
         ],
-        "references": [
-          "renderer/src/lib/native-chat-draft-owner.ts"
-        ],
+        "references": ["renderer/src/lib/native-chat-draft-owner.ts"],
         "notes": "Review 2026-10-26 (Claude): restoring a draft re-reads the stored file (new read_stored_attachment, refuses paths outside the store) instead of copying it again — every restart used to create a duplicate upload and move the draft to the copy."
       },
       {
@@ -312,9 +293,7 @@
           "src/components/CheckpointTimeline.tsx",
           "src-tauri/src/pi_rpc.rs"
         ],
-        "references": [
-          "main/claude/claude-rewind-transcript.ts"
-        ],
+        "references": ["main/claude/claude-rewind-transcript.ts"],
         "notes": "Review 2026-10-26 (Claude): EDIT button on each user message (pi only, agent idle). Kern finds the message's entry on the active session branch (get_entries, containment + position match, see pickEditTarget), calls pi fork, and puts the original text back in the composer to edit and send. Later replies leave model context but stay in the session tree; worktree files are not rewound (toast says so). No match → opens the session tree. ACP: still blocked with a notice (no fork in ACP). Native click-through unverified."
       },
       {
@@ -355,10 +334,7 @@
           "Kata yang ada di pesan lama ditemukan dan bisa dibuka.",
           "Pencarian tidak membekukan UI pada riwayat besar (jalan di luar main thread)."
         ],
-        "files": [
-          "src/App.tsx",
-          "src-tauri/src/ (indeks/pencarian sesi)"
-        ],
+        "files": ["src/App.tsx", "src-tauri/src/ (indeks/pencarian sesi)"],
         "references": [
           "renderer/src/app-shell/AppRootSurfaces.tsx",
           "renderer/src/lib/quick-open-file-history.ts"
@@ -381,10 +357,7 @@
           "Worktree baru berisi .env yang disalin dan dependency terpasang.",
           "Setup yang gagal menampilkan error tanpa mematikan chat."
         ],
-        "files": [
-          "src-tauri/src/worktree.rs",
-          "src/components/ChatView.tsx"
-        ],
+        "files": ["src-tauri/src/worktree.rs", "src/components/ChatView.tsx"],
         "references": [
           "main/runtime/runtime-local-worktree-setup.ts",
           "orca.yaml (root repo Orca)"
@@ -411,9 +384,7 @@
           "src/components/ApprovalDialog.tsx",
           "src/components/SettingsPanel.tsx"
         ],
-        "references": [
-          "shared/rpc-contract/notifications-params.ts"
-        ],
+        "references": ["shared/rpc-contract/notifications-params.ts"],
         "notes": "Approval OS notifications already existed at extension_ui_request. Added persistent notification sound toggle in Settings; notification builder omits sound when disabled (tested). OS-focus/native notification smoke pending."
       },
       {
@@ -474,9 +445,7 @@
         "name": "Command palette",
         "status": "Review",
         "priority": "P2",
-        "depends_on": [
-          "O2-02"
-        ],
+        "depends_on": ["O2-02"],
         "scope": [
           "Satu palet untuk aksi app (chat baru, buka panel, ganti model, settings) dan daftar shortcut.",
           "Bisa digabung dengan palet pencarian O2-02."
@@ -484,9 +453,7 @@
         "acceptance_criteria": [
           "Aksi utama bisa dijalankan dari palet dengan keyboard saja."
         ],
-        "files": [
-          "src/App.tsx"
-        ],
+        "files": ["src/App.tsx"],
         "references": [],
         "notes": "Review 2026-10-26 (Claude): depends on O2-02, now complete (message jump + coverage note). Palette search results stay stable while App re-renders."
       },
@@ -528,9 +495,7 @@
         "name": "Gambar Markdown di jawaban agent (path lokal)",
         "status": "To Do",
         "priority": "P0",
-        "depends_on": [
-          "O5-01"
-        ],
+        "depends_on": ["O5-01"],
         "scope": [
           "![alt](path) di pesan assistant di-render bila path relatif ke worktree chat, absolut di dalam worktree/project, attachment store, atau file gambar codemode di temp dir pi.",
           "Command Rust baru untuk membaca gambar lokal yang sudah divalidasi (ekstensi gambar, batas ukuran, canonicalize, di dalam root yang diizinkan); tidak mengaktifkan asset protocol global.",
@@ -559,9 +524,7 @@
         "name": "Aktifkan codemode pi (model bisa pakai model gambar kalau tersedia)",
         "status": "To Do",
         "priority": "P1",
-        "depends_on": [
-          "O5-01"
-        ],
+        "depends_on": ["O5-01"],
         "scope": [
           "Toggle di Settings > Harness/Agent: 'codemode (skrip + model gambar/klasifikasi)', default mati.",
           "Saat aktif, tambahkan codemode ke tool pi: lewat --tools bila Kern memakai allowlist (global chat, api-test, browser menambah allowlist di pi_rpc.rs), atau defaultTools +codemode bila tidak.",
@@ -634,9 +597,7 @@
           "src/components/ChatView.tsx",
           "src/components/SettingsPanel.tsx"
         ],
-        "references": [
-          "main/external-editor-launch.ts"
-        ]
+        "references": ["main/external-editor-launch.ts"]
       },
       {
         "id": "O5-06",
@@ -695,9 +656,7 @@
         "name": "Preview gambar sebelum/sesudah di FILES CHANGED",
         "status": "To Do",
         "priority": "P2",
-        "depends_on": [
-          "O5-02"
-        ],
+        "depends_on": ["O5-02"],
         "scope": [
           "File gambar yang berubah di diff (saat ini 'Binary or untracked — no textual diff') menampilkan before (git show merge_base:path) dan after (worktree) berdampingan, dengan ukuran dan dimensi.",
           "File baru: hanya after; dihapus: hanya before."
@@ -710,9 +669,7 @@
           "src/components/ExpandedDiffPanel.tsx",
           "src-tauri/src/diff.rs"
         ],
-        "references": [
-          "renderer/src/components/editor/ImageDiffViewer.tsx"
-        ]
+        "references": ["renderer/src/components/editor/ImageDiffViewer.tsx"]
       },
       {
         "id": "O5-09",
@@ -760,9 +717,7 @@
           "src/components/TerminalPanel.tsx",
           "src-tauri/src/terminal.rs"
         ],
-        "references": [
-          "renderer/src/components/TerminalSearch.tsx"
-        ]
+        "references": ["renderer/src/components/TerminalSearch.tsx"]
       },
       {
         "id": "O5-11",
@@ -789,9 +744,7 @@
           "src/components/ChatView.tsx",
           "src/components/SettingsPanel.tsx"
         ],
-        "references": [
-          "scripts/token-audit.mjs"
-        ],
+        "references": ["scripts/token-audit.mjs"],
         "notes": "Review 2026-10-26: ambang per harness (default 200k), ACP usage_update request terakhir (bukan PromptResponse kumulatif), pi idle preflight + compact, notice compact existing, meter konteks/ambang dengan warning 90%, saran chat baru setelah 3 compact. ACP menahan prompt sampai compact berhasil dan mempertahankan antrean saat gagal. Checks: tsc, Vitest (521 pass, 1 skipped), cargo check, cargo test --lib (219 pass, 1 ignored), cargo fmt lulus. Belum diverifikasi di app: sesi Claude/pi besar, UI native, retry/cancel, antrean pi yang dikirim saat turn berjalan (preflight hanya saat idle); token-audit setelah seminggu belum tersedia. usage_update Claude termasuk output sehingga ambang konservatif. Baseline 2026-10-26: ACP ~285k/request di sesi terberat, peak 528k/496k; pi peak 792k. Turn panjang masih boleh melewati ambang karena compact tidak menginterupsi turn. Review Claude 2026-10-26: diperbaiki (1) send_pi_command sync+block_on panic di runtime Tauri sehingga semua perintah chat gagal — sekarang async + test regresi di dalam runtime; (2) preflight pi best effort, error RPC tidak lagi menelan prompt; (3) ACP tanpa /compact atau compact gagal tidak lagi memblokir semua prompt berikutnya — satu notice, prompt tetap terkirim, auto-compact jeda sampai compact berhasil; (4) compaction ambang dilaporkan reason 'threshold'. Sisa: ambang pi hanya dicek antar prompt (turn panjang tetap bisa melewati ambang); setting compaction bawaan pi bisa dipakai untuk mid-turn."
       },
       {
@@ -817,9 +770,7 @@
           "src-tauri/src/pi_rpc.rs",
           "src/components/SettingsPanel.tsx"
         ],
-        "references": [
-          "scripts/token-audit.mjs"
-        ],
+        "references": ["scripts/token-audit.mjs"],
         "notes": "Review 2026-10-26: verifikasi default auto (permintaan eksplisit/Pipeline), toggle Settings untuk sesi pi baru dan /kern-verification on|off|auto per chat tersimpan; mode off tanpa snapshot/guidance/forced continuation. Guidance sekali per task, mode aktif mempertahankan evidence gate; status Jev hanya UI notify/trace, bukan pesan konteks. Metadata rusak tidak menggagalkan startup; tidak mengubah/menelan input. Checks lulus: tsc (PATH lokal; TypeScript global rusak), Vitest 526 pass/1 skip, cargo check, cargo test --lib 221 pass/1 ignored, format:check. Belum diverifikasi di app: toggle Settings/restart, slash command/resume, Pipeline native, notifikasi Jev dan pengiriman prompt saat error runtime; penurunan persentase token-audit perlu sesi baru setelah deploy (belum diukur). Baseline 2026-10-26 (pi, 7 hari): 1305 dari 3782 tool call adalah tool Kern (run_check 368, report_task 134, set_task_contract 99, format_changed_files 53, track_kanban_task 49; execute_terminal_command 498 termasuk kerja nyata global chat), 412 forced continuations, hidden messages: kern-jev-status 426, kern-task-guidance 214, kern-verification 125, kern-jev-routing 111. Review Claude 2026-10-26: ditambah — tool set_task_contract/run_check/report_task kini disembunyikan dari model (pi setActiveTools) selama verifikasi mati; sebelumnya tetap dideklarasikan sehingga model tetap memanggilnya. Loadout hanya berubah saat status berubah dan tidak melebihi allowlist --tools. Branch disinkronkan dengan main (PR #14)."
       },
       {
@@ -854,7 +805,7 @@
         "id": "O5-19",
         "phase": "O5",
         "name": "Review PR oleh model/agent lain langsung dari Kern (default Fix & push)",
-        "status": "To Do",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [],
         "scope": [
@@ -889,7 +840,8 @@
           "Alur review manual 2026-10-26 untuk PR #14 dan #15 (contoh temuan yang harus tertangkap)",
           "renderer/src/components/pull-request-page (Orca, tampilan PR)",
           "renderer/src/components/pr-comments-resolution-prompt.ts (Orca)"
-        ]
+        ],
+        "notes": "Implemented PR & CI Review with…, Cmd+K Review PR, reviewer agent/model remembered per project, editable Settings template, PR/task/Working rules handoff with bounded preview and full diff file, isolated detached PR-head worktree, pi/ACP completion tool, host checks + explicit-path fix commit and non-force push to original branch, task notes, optional PR comment and review badges. Fork, changed PR/origin, main/master, staged files and rejected push stop explicitly. Checks passed: tsc, vitest (529 passed, 1 skipped), cargo check, cargo test --lib (226 passed, 1 ignored), format:check. Not verified in native app: live reviewer startup/resume, actual per-account GitHub fetch/push/comment, rejected remote push and visual badge flow. No branch/commit/push executed for delivery per user override; proposed commit: feat(review): add isolated PR agent reviews with guarded fix and push."
       }
     ]
   }

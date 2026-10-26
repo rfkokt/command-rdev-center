@@ -165,6 +165,7 @@ pub const KERN_TOOLS: &[&str] = &[
     "report_recurring_error",
     "recommend_global_skills",
     "run_pipeline",
+    "complete_pr_review",
     "provide_pipeline_input",
     "control_pipeline",
 ];

@@ -81,6 +81,9 @@ import "./composer.css";
 import "./right-sidebar.css";
 import "./run-card.css";
 
+import PrReviewDialog from "./components/PrReviewDialog";
+import { type ReviewSession } from "./lib/pr-review";
+
 type Config = {
   pi_path: string;
   project_root: string;
@@ -104,6 +107,7 @@ type Tab = {
   unread?: number;
   initialPrompt?: string;
   initialDraft?: string;
+  prReview?: ReviewSession;
 };
 type KanbanTaskContext = {
   no?: string | number;
@@ -176,6 +180,17 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>(savedTabs);
   const [showArchivedGlobal, setShowArchivedGlobal] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [reviewRequest, setReviewRequest] = useState<{
+    path: string;
+    repositoryPath: string;
+    account: string;
+  } | null>(null);
+  useEffect(() => {
+    const open = (event: Event) =>
+      setReviewRequest((event as CustomEvent).detail);
+    window.addEventListener("kern:review-pr", open);
+    return () => window.removeEventListener("kern:review-pr", open);
+  }, []);
   useEffect(() => {
     const openPalette = (event: KeyboardEvent) => {
       if (
@@ -564,6 +579,40 @@ export default function App() {
       className={`app-shell ${sidebarOpen ? "" : "sidebar-hidden"}`}
       style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
     >
+      {reviewRequest && (
+        <PrReviewDialog
+          request={reviewRequest}
+          onClose={() => setReviewRequest(null)}
+          onToast={addToast}
+          onStart={(review, id, harness, model) => {
+            const repo = review.session.repositoryPath;
+            const project: ProjectInfo = {
+              name: repo.split("/").pop() || "PR review",
+              path: repo,
+              kinds: [],
+              mtime_ms: 0,
+              is_git: true,
+            };
+            setTabs((prev) => [
+              ...prev,
+              {
+                id,
+                project,
+                title: `Review PR #${review.session.number}`,
+                harness,
+                model,
+                prReview: review.session,
+                initialPrompt: review.prompt,
+              },
+            ]);
+            setMountedTabIds((ids) => new Set(ids).add(id));
+            setActiveTabId(id);
+            setSelectedProject(project);
+            setDashboard(null);
+            setReviewRequest(null);
+          }}
+        />
+      )}
       {paletteOpen && (
         <CommandPalette
           onClose={() => setPaletteOpen(false)}
@@ -617,6 +666,23 @@ export default function App() {
             ];
           }}
           actions={[
+            {
+              id: "review-pr",
+              label: "Review PR",
+              run: () => {
+                if (!activeTab || activeTab.global) {
+                  addToast(
+                    "Open a project chat and select its PR in Source Control first.",
+                  );
+                  return;
+                }
+                window.dispatchEvent(
+                  new CustomEvent("kern:review-active-pr", {
+                    detail: { chatId: activeTab.id },
+                  }),
+                );
+              },
+            },
             { id: "new", label: "New global chat", run: newGlobalChat },
             {
               id: "settings",
@@ -1182,6 +1248,7 @@ export default function App() {
                         initialThinking={tab.thinking}
                         initialInterrupted={tab.interrupted}
                         initialHarness={tab.harness}
+                        prReview={tab.prReview}
                         onHarnessChange={saveHarness}
                         resumableSessions={tabs
                           .filter(
