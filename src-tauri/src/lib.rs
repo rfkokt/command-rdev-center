@@ -221,6 +221,8 @@ pub fn run() {
             harness::list_harnesses,
             harness::install_harness,
             harness::set_default_harness,
+            harness::get_compact_thresholds,
+            harness::set_compact_threshold,
             harness::get_auto_approve,
             harness::set_auto_approve,
             harness::save_custom_harness,

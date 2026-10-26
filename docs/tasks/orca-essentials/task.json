@@ -767,7 +767,7 @@
         "id": "O5-11",
         "phase": "O5",
         "name": "Batasi ukuran konteks: auto-compact di ambang token (ACP + pi)",
-        "status": "To Do",
+        "status": "Review",
         "priority": "P0",
         "depends_on": [],
         "scope": [
@@ -791,7 +791,7 @@
         "references": [
           "scripts/token-audit.mjs"
         ],
-        "notes": "Baseline token-audit 2026-10-26 (7 hari): Claude Code/ACP 66 prompt, 676 request (10.2/prompt), 178.9M token terkirim, cache hit 99%; dua sesi worktree Kern 96.4M dan 81.8M dengan peak 528k dan 496k token per request. Overhead extension Kern = 0 di jalur ACP; penyebabnya ukuran konteks x jumlah request. pi (9router, bukan kuota Claude): 4153 request, 11.7/prompt, peak 792k."
+        "notes": "Review 2026-10-26: ambang per harness (default 200k), ACP usage_update request terakhir (bukan PromptResponse kumulatif), pi idle preflight + compact, notice compact existing, meter konteks/ambang dengan warning 90%, saran chat baru setelah 3 compact. ACP menahan prompt sampai compact berhasil dan mempertahankan antrean saat gagal. Checks: tsc, Vitest (521 pass, 1 skipped), cargo check, cargo test --lib (219 pass, 1 ignored), cargo fmt lulus. Belum diverifikasi di app: sesi Claude/pi besar, UI native, retry/cancel, antrean pi yang dikirim saat turn berjalan (preflight hanya saat idle); token-audit setelah seminggu belum tersedia. usage_update Claude termasuk output sehingga ambang konservatif. Baseline 2026-10-26: ACP ~285k/request di sesi terberat, peak 528k/496k; pi peak 792k. Turn panjang masih boleh melewati ambang karena compact tidak menginterupsi turn."
       },
       {
         "id": "O5-12",

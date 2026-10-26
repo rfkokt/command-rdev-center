@@ -108,6 +108,8 @@ pub struct AcpBridge {
     usage: Option<(u64, u64)>,
     /// Cumulative `PromptResponse.usage` (inputTokens, cachedReadTokens, …).
     tokens: Option<Value>,
+    /// Last request size, not cumulative turn/session usage.
+    request_tokens: Option<u64>,
     /// Session cost in USD when the adapter reports it (`usage_update.cost`).
     cost: Option<f64>,
     /// A `/compact` prompt is running; user prompts wait for it.
@@ -318,6 +320,7 @@ impl AcpBridge {
             commands: Vec::new(),
             usage: None,
             tokens: None,
+            request_tokens: None,
             cost: None,
             compacting: false,
             preamble: None,
@@ -728,6 +731,7 @@ impl AcpBridge {
                 self.history.clear();
                 self.usage = None;
                 self.tokens = None;
+                self.request_tokens = None;
                 self.cost = None;
                 self.ready = false;
                 vec![self.request(
@@ -769,7 +773,10 @@ impl AcpBridge {
                 "total": if total == 0 { self.usage.map_or(0, |(used, _)| used) } else { total }
             }
         });
-        if let Some((used, size)) = self.usage {
+        if let Some((used, size)) = self
+            .usage
+            .or_else(|| self.request_tokens.map(|used| (used, 0)))
+        {
             let percent = if size > 0 {
                 (used as f64 / size as f64) * 100.0
             } else {
@@ -820,6 +827,20 @@ impl AcpBridge {
     }
 
     fn start_prompt(&mut self, message: String, images: Vec<Value>) -> Vec<Out> {
+        let threshold = crate::harness::compact_threshold(&self.harness);
+        let used = self
+            .request_tokens
+            .or_else(|| self.usage.map(|(used, _)| used));
+        if self.turn.is_none() && !self.compacting && used.is_some_and(|used| used >= threshold) {
+            let out = self.compact(None);
+            if self.compacting {
+                self.queued_prompts.push_front((message, images));
+                return out;
+            }
+            // Do not silently send another oversized request if compaction is unavailable.
+            return out.into_iter().chain([Self::fail("prompt", None,
+                "Context threshold reached but this harness cannot compact. Start a new chat with a summary.")]).collect();
+        }
         let Some(session_id) = self.session_id.clone() else {
             return vec![Self::fail("prompt", None, "ACP session is not ready")];
         };
@@ -1152,6 +1173,8 @@ impl AcpBridge {
             Pending::Prompt => {
                 if let Some(usage) = result.get("usage").filter(|usage| usage.is_object()) {
                     self.tokens = Some(usage.clone());
+                    // PromptResponse usage is cumulative across the session; only
+                    // usage_update describes the adapter's latest request context.
                 }
                 let reason = result
                     .get("stopReason")
@@ -1168,14 +1191,24 @@ impl AcpBridge {
                     self.tokens = Some(usage.clone());
                 }
                 // The pre-compaction size is stale until the next usage_update.
-                self.usage = self.usage.map(|(_, size)| (0, size));
+                if error.is_none() {
+                    self.usage = None;
+                    self.request_tokens = None;
+                }
                 self.compacting = false;
+                let failed = error.is_some();
                 let ack = match error {
                     Some(error) => Self::fail("compact", pi_id.as_ref(), error),
                     None => Self::respond("compact", pi_id.as_ref(), None),
                 };
                 let mut out = vec![Self::ui(end), ack];
-                if let Some((message, images)) = self.queued_prompts.pop_front() {
+                if failed {
+                    out.push(Self::fail(
+                        "prompt",
+                        None,
+                        "Compaction failed; your prompt is still queued. Retry compaction first.",
+                    ));
+                } else if let Some((message, images)) = self.queued_prompts.pop_front() {
                     out.push(self.queue_update());
                     out.extend(self.start_prompt(message, images));
                 }
@@ -1481,6 +1514,7 @@ impl AcpBridge {
                     update.get("size").and_then(Value::as_u64),
                 ) {
                     self.usage = Some((used, size));
+                    self.request_tokens = Some(used);
                 }
                 if let Some(amount) = update.pointer("/cost/amount").and_then(Value::as_f64) {
                     self.cost = Some(amount);
@@ -1807,6 +1841,44 @@ mod tests {
         assert_eq!(events[1]["id"], "c1");
         let next = agent(&done);
         assert_eq!(next[0]["params"]["prompt"][0]["text"], "next");
+    }
+
+    #[test]
+    fn threshold_compacts_only_between_turns_and_drains_after_success() {
+        let mut bridge = ready_bridge(false);
+        bridge.commands = vec![json!({"name":"compact"})];
+        let first = agent(&bridge.on_ui(r#"{"type":"prompt","message":"first"}"#))[0]["id"]
+            .as_u64()
+            .unwrap();
+        bridge.on_agent(&update(
+            json!({"sessionUpdate":"usage_update", "used":250_000, "size":1_000_000}),
+        ));
+        let queued = bridge.on_ui(r#"{"type":"follow_up","message":"next"}"#);
+        assert!(agent(&queued).is_empty());
+        assert!(!bridge.compacting);
+        let out = bridge.on_agent(&reply(first, json!({"stopReason":"end_turn"})));
+        let compact = agent(&out);
+        assert_eq!(compact[0]["params"]["prompt"][0]["text"], "/compact");
+        assert!(bridge.turn.is_none());
+        let out = bridge.on_agent(&reply(compact[0]["id"].as_u64().unwrap(), json!({})));
+        assert_eq!(agent(&out)[0]["params"]["prompt"][0]["text"], "next");
+    }
+
+    #[test]
+    fn threshold_failure_does_not_send_oversized_prompt() {
+        let mut bridge = ready_bridge(false);
+        bridge.commands = vec![json!({"name":"compact"})];
+        bridge.request_tokens = Some(250_000);
+        let out = bridge.on_ui(r#"{"type":"prompt","message":"keep this"}"#);
+        let id = agent(&out)[0]["id"].as_u64().unwrap();
+        let failed = bridge.on_agent(
+            &json!({"jsonrpc":"2.0","id":id,"error":{"code":-1,"message":"failed"}}).to_string(),
+        );
+        assert!(agent(&failed).is_empty());
+        assert_eq!(bridge.request_tokens, Some(250_000));
+        assert!(ui(&failed)
+            .iter()
+            .any(|event| event["command"] == "prompt" && event["success"] == false));
     }
 
     #[test]

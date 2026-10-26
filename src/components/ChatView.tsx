@@ -791,6 +791,13 @@ export default function ChatView({
   const [devStarting, setDevStarting] = useState(false);
   const [pendingMessageCount, setPendingMessageCount] = useState(0);
   const [sessionStats, setSessionStats] = useState<SessionStats | null>(null);
+  const [compactThresholds, setCompactThresholds] = useState<
+    Record<string, number>
+  >({});
+  const [compactCount, setCompactCount] = useState(() => {
+    const saved = Number(localStorage.getItem(`kern-compact-count:${chatId}`));
+    return Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
+  });
   const [compaction, setCompaction] = useState<CompactionState | null>(null);
   const [autoCompactionEnabled, setAutoCompactionEnabled] = useState<
     boolean | null
@@ -1524,6 +1531,13 @@ export default function ChatView({
               }
             : stats,
         );
+        setCompactCount((count) => {
+          localStorage.setItem(
+            `kern-compact-count:${chatId}`,
+            String(count + 1),
+          );
+          return count + 1;
+        });
         onToast("Context compacted");
       }
       compactionProbeRef.current = null;
@@ -1996,6 +2010,8 @@ export default function ChatView({
               manualCompactionRef.current = null;
               compactionProbeRef.current = null;
               setSessionStats(null);
+              setCompactCount(0);
+              localStorage.removeItem(`kern-compact-count:${chatId}`);
               setMessages([]);
               setPendingMessageCount(0);
               trackedTaskRef.current = false;
@@ -3873,6 +3889,21 @@ export default function ChatView({
     agentStatus === "running" ||
     isRestarting ||
     compaction?.status === "running";
+  useEffect(() => {
+    const refresh = () => {
+      void invoke<Record<string, number>>("get_compact_thresholds")
+        .then((value) => setCompactThresholds(value ?? {}))
+        .catch((error) => onToast(`Context settings: ${String(error)}`));
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("kern-context-settings-changed", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("kern-context-settings-changed", refresh);
+    };
+  }, [harness, isActive, onToast]);
+
   const currentHarness =
     harness ?? harnessOptions.find((item) => item.is_default)?.id ?? "pi";
   // A different agent answers for itself once it is up.
@@ -5900,10 +5931,20 @@ export default function ChatView({
           className="usage-summary"
           onClick={() => setUsageOpen(true)}
           title="Show token usage"
+          style={{
+            color:
+              (sessionStats.contextUsage?.tokens ?? 0) >=
+              (compactThresholds[currentHarness] ?? 200000) * 0.9
+                ? "var(--warning, #b7791f)"
+                : undefined,
+          }}
         >
-          {sessionStats.contextUsage?.percent == null
-            ? "Context —"
-            : `${Math.round(sessionStats.contextUsage.percent)}% context`}
+          Context{" "}
+          {sessionStats.contextUsage?.tokens == null
+            ? "—"
+            : sessionStats.contextUsage.tokens.toLocaleString()}{" "}
+          / {(compactThresholds[currentHarness] ?? 200000).toLocaleString()}
+          {compactCount >= 3 && " · Consider a new chat with a summary"}
         </button>
       )}
     </>

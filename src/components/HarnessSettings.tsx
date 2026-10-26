@@ -34,6 +34,8 @@ export default function HarnessSettings({
   const [installing, setInstalling] = useState<string | null>(null);
   const [installLog, setInstallLog] = useState("");
   const [autoApprove, setAutoApprove] = useState(false);
+  const [thresholds, setThresholds] = useState<Record<string, number>>({});
+  const [threshold, setThreshold] = useState("200000");
   const [autoUpdate, setAutoUpdate] = useState(false);
   const [updates, setUpdates] = useState<AgentUpdate[] | null>(null);
   const [checking, setChecking] = useState(false);
@@ -74,8 +76,15 @@ export default function HarnessSettings({
 
   useEffect(() => {
     void load();
+    void invoke<Record<string, number>>("get_compact_thresholds")
+      .then((value) => setThresholds(value ?? {}))
+      .catch((e) => setError(String(e)));
     void checkUpdates(false);
   }, [load, checkUpdates]);
+
+  useEffect(() => {
+    setThreshold(String(thresholds[selected] ?? 200000));
+  }, [selected, thresholds]);
 
   const current = harnesses.find((item) => item.is_default)?.id ?? "pi";
   const chosen = harnesses.find((item) => item.id === selected);
@@ -268,6 +277,53 @@ export default function HarnessSettings({
         <span>Existing chats keep the agent they started with.</span>
       </div>
 
+      <Group label="Context">
+        <label htmlFor="compact-threshold">
+          Compact when context exceeds ({chosen?.label ?? selected})
+        </label>
+        <input
+          id="compact-threshold"
+          type="number"
+          min={10000}
+          max={10000000}
+          step={1000}
+          value={threshold}
+          onChange={(event) => setThreshold(event.target.value)}
+        />
+        <p>
+          Tokens, default 200,000. Checked between turns before the next prompt,
+          even for 1M models.
+        </p>
+        <button
+          type="button"
+          disabled={
+            !Number.isInteger(Number(threshold)) ||
+            Number(threshold) < 10000 ||
+            Number(threshold) > 10000000
+          }
+          onClick={async () => {
+            try {
+              const tokens = Number(threshold);
+              await invoke("set_compact_threshold", {
+                harness: selected,
+                tokens,
+              });
+              setThresholds((previous) => ({
+                ...previous,
+                [selected]: tokens,
+              }));
+              window.dispatchEvent(new Event("kern-context-settings-changed"));
+              onToast(
+                "Context threshold saved; applies to the next idle prompt.",
+              );
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+        >
+          Save threshold
+        </button>
+      </Group>
       <Group label="Approvals">
         <SwitchField
           label="Auto-approve tool calls"
