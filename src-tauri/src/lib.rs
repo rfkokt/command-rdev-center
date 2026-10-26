@@ -115,6 +115,7 @@ pub fn run() {
             kanban::get_project_task,
             kanban::get_project_task_source_state,
             kanban::preview_task_status,
+            pi_rpc::kern_doctor,
             kanban::write_task_status,
             kanban::update_kanban_task_status,
             kanban::sync_chat_task,

@@ -1259,6 +1259,27 @@ pub fn api_documentation_context_for_project(path: &Path) -> Result<Option<Strin
         .cloned())
 }
 
+/// The project's API List worksheet and the CSV saved with its API
+/// documentation when Project Settings were last saved.
+pub fn api_list_for_project(path: &Path) -> Result<Option<(ApiListSheet, Option<String>)>, String> {
+    let key = project_config_key(path)?;
+    let config = read_config()?;
+    Ok(config.api_list_sheets.get(&key).cloned().map(|sheet| {
+        let saved = config
+            .api_documentation_contexts
+            .get(&key)
+            .and_then(|context| saved_api_list_csv(context));
+        (sheet, saved)
+    }))
+}
+
+fn saved_api_list_csv(context: &str) -> Option<String> {
+    let (_, section) = context.split_once("## API list\n")?;
+    let (_, body) = section.split_once("```csv\n")?;
+    let (csv, _) = body.split_once("\n```\n")?;
+    Some(csv.to_owned())
+}
+
 pub(crate) fn compact_swagger_context(context: &str) -> String {
     let marker = "## Swagger/OpenAPI contract";
     let mut parts = context.split(marker);
@@ -2079,6 +2100,16 @@ pub(crate) fn graph_repositories(project: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_api_list_csv_is_read_from_the_documentation_context() {
+        let context = "## Swagger/OpenAPI contract\nSource: x\n```json\n{}\n```\n## API list\nSource: Google Sheet / API List\n```csv\n\"No\",\"Endpoint\"\n\"1\",\"/api/v1/a\"\n```\n## Postman collection\n";
+        assert_eq!(
+            saved_api_list_csv(context).as_deref(),
+            Some("\"No\",\"Endpoint\"\n\"1\",\"/api/v1/a\"")
+        );
+        assert_eq!(saved_api_list_csv("## Swagger/OpenAPI contract\n"), None);
+    }
 
     #[test]
     fn contract_status_summary_counts_operations_and_reports_failures() {

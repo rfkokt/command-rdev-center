@@ -655,11 +655,11 @@ fn approve_pi_install_blocking(app: tauri::AppHandle) -> Result<PiRuntimeStatus,
 }
 
 const MARKDOWN_RESPONSE_PROMPT: &str = "## Response formatting\nWrite every user-facing response, including progress updates and the final answer, in clean Markdown. Lead with the result or current finding. Keep progress updates to one or two concise sentences; do not narrate every investigation step. Keep paragraphs short (two to four sentences), separated by a blank line. Use `##` headings only for distinct sections of a longer answer, and `-` lists for grouped findings or next steps, with a blank line before each list. Summarize the evidence and relevant limitations in the final answer instead of repeating the running investigation. Mark filenames, commands, identifiers, and inline code with backticks. Put multi-line commands, logs, JSON, diffs, and source code in fenced blocks with a language when known; include only the relevant excerpt. Never expose scratchpad, internal planning, or raw provider errors.\n";
-const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. When the user asks to enter, replace, or remove an API token, call api_authenticate directly; it does not require a resolved operation or send an API request. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions.";
+const API_DOCUMENTATION_WORKFLOW_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly using `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory. If a selector returns operation_not_found, search for candidates instead of declaring the endpoint absent. Before concluding absence, refresh with api_find_operations(refresh=true) and search the complete inventory. A contract load failure, stale data, unresolved reference, missing parameter, or authentication requirement does not mean the endpoint is absent. Report the actual issue and search evidence. Do not use `web_search`. Do not open a Swagger URL in the browser merely to discover endpoints; use the saved contract tools. If a fresh, complete inventory genuinely lacks the endpoint, ask the user for the endpoint or an updated contract. Use browser tools only when the user explicitly asks for browser/UI verification, or after direct API testing when UI integration must be verified. Invoke the API test tool before claiming testing is unavailable. Credential dialogs are owned by the tools; never ask for tokens in chat. When the user asks to enter, replace, or remove an API token, call api_authenticate directly; it does not require a resolved operation or send an API request. A contract HTTP-status pass does not prove response-schema or business correctness; inspect the response and perform the task's relevant assertions. When a task cites API List numbers (\"sheet list api nomor 28-32\", \"endpoint nomor 66\") or /api paths, call `link_task_api` first: it resolves them to exact Swagger operations and flags API List ↔ Swagger mismatches. `api_list_check` compares the whole API List worksheet. Report mismatches to the user instead of choosing silently.";
 
 /// Harnesses other than pi get the read-only contract tools through the kern
 /// MCP server; request execution and the private credential dialog are pi's.
-const ACP_API_DOCUMENTATION_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly with the kern tools `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory, and do not open a Swagger UI page or guess raw spec URLs to discover endpoints. If a selector returns operation_not_found, search for candidates; before concluding absence, refresh with api_find_operations(refresh=true). A contract load failure, stale data, or unresolved reference does not mean the endpoint is absent; report the actual issue. Kern's request/test tools and private credential dialog are not available in this harness: run requests with your own shell tools, and never ask for tokens in chat; ask the user to export one in the terminal (for example `export API_TOKEN=...`) and reference the variable. A passing HTTP status does not prove response-schema or business correctness.";
+const ACP_API_DOCUMENTATION_PROMPT: &str = "The saved contracts are authoritative. Before implementing, changing, or testing an API integration, inspect its `paths` and `components` directly with the kern tools `api_find_operations` and `api_operation_detail`. Search all contracts by path, operationId, tags, and alternate requirement names; an empty query browses the complete paginated inventory. Follow hasMore/offset. Never infer the API inventory from a prompt outline, examples, or model memory, and do not open a Swagger UI page or guess raw spec URLs to discover endpoints. If a selector returns operation_not_found, search for candidates; before concluding absence, refresh with api_find_operations(refresh=true). A contract load failure, stale data, or unresolved reference does not mean the endpoint is absent; report the actual issue. Kern's request/test tools and private credential dialog are not available in this harness: run requests with your own shell tools, and never ask for tokens in chat; ask the user to export one in the terminal (for example `export API_TOKEN=...`) and reference the variable. A passing HTTP status does not prove response-schema or business correctness. When a task cites API List numbers (\"sheet list api nomor 28-32\", \"endpoint nomor 66\") or /api paths, call `link_task_api` first: it resolves them to exact Swagger operations and flags API List ↔ Swagger mismatches. `api_list_check` compares the whole API List worksheet. Report mismatches to the user instead of choosing silently.";
 
 /// `contract_status` lists the contracts loaded for this chat (or `None`
 /// when none could be loaded); `acp` selects the non-pi tool guidance.
@@ -913,6 +913,9 @@ pub fn spawn_pi_rpc(
         } else {
             write_api_contracts(&owning_project, &session_id)?
         };
+        let api_list_path = (!global_chat)
+            .then(|| write_api_list(&owning_project, &session_id))
+            .flatten();
         let api_prompt = (!global_chat).then(|| {
             api_documentation_system_prompt(
                 &owning_project,
@@ -933,22 +936,27 @@ pub fn spawn_pi_rpc(
         .flatten()
         .collect::<Vec<_>>()
         .join("\n\n");
-        let mcp_servers = if global_chat {
-            serde_json::json!([])
-        } else {
-            serde_json::json!(kern_mcp_server(
+        let kern = (!global_chat).then(|| {
+            kern_mcp_server(
                 &owning_project,
                 project_name.as_deref(),
                 &session_id,
                 pr_review,
                 api_contracts.as_ref().map(|(path, _)| path.as_path()),
+                api_list_path.as_deref(),
             )
-            .into_iter()
-            .collect::<Vec<_>>())
+            .and_then(|server| probe_kern_mcp(&server, false).map(|_| server))
+        });
+        let kern_error = kern.as_ref().and_then(|kern| kern.as_ref().err().cloned());
+        let mcp_servers =
+            serde_json::json!(kern.and_then(Result::ok).into_iter().collect::<Vec<_>>());
+        let preamble = match &kern_error {
+            Some(error) => format!("{preamble}\n\n## Kern tools unavailable\nKern's MCP server failed to start for this chat, so its task, API List and pipeline tools are missing: {error}\nTell the user once. Do not conclude that tasks or endpoints do not exist.").trim().to_string(),
+            None => preamble,
         };
-        return spawn_acp_session(
-            app,
-            session_id,
+        let started = spawn_acp_session(
+            app.clone(),
+            session_id.clone(),
             cwd,
             spec,
             resume,
@@ -956,6 +964,17 @@ pub fn spawn_pi_rpc(
             mcp_servers,
             preamble,
         );
+        if let (Ok(_), Some(error)) = (&started, kern_error) {
+            eprintln!("crc: Kern MCP tools unavailable for {session_id}: {error}");
+            let _ = app.emit(
+                "pi-rpc-stderr",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "line": format!("Kern tools unavailable in this chat: {error}. Check Project Settings → Tasks → Run Kern doctor."),
+                }),
+            );
+        }
+        return started;
     }
     let pi_path = ensure_pi_installed_with_repair(Some(&app), &configured_pi_path)
         .or_else(|_| ensure_pi_installed(&configured_pi_path))?;
@@ -991,6 +1010,9 @@ pub fn spawn_pi_rpc(
         write_api_contracts(&owning_project, &session_id)?
     }
     .unzip();
+    let api_list_path = (!global_chat)
+        .then(|| write_api_list(&owning_project, &session_id))
+        .flatten();
 
     // Research IDs are never replaceable: duplicate lifecycle claims must not kill live work.
     if session_id.starts_with("research-") && is_pi_session_running(session_id.clone())? {
@@ -1364,6 +1386,7 @@ pub fn spawn_pi_rpc(
             .env("CRC_TASK_DIR", task_dir.clone())
             .env("CRC_TASK_SOURCE_KIND", &task_source_kind)
             .env("CRC_TASK_WRITABLE", task_writable)
+            .envs(api_list_path.iter().map(|path| ("CRC_API_LIST_PATH", path)))
             .env("CRC_GRAPH_JSONS", &graph_json_paths);
     }
     let mut spawn_attempts = 0;
@@ -1425,6 +1448,7 @@ pub fn spawn_pi_rpc(
                                 .env("CRC_TASK_DIR", task_dir.clone())
                                 .env("CRC_TASK_SOURCE_KIND", &task_source_kind)
                                 .env("CRC_TASK_WRITABLE", task_writable)
+                                .envs(api_list_path.iter().map(|path| ("CRC_API_LIST_PATH", path)))
                                 .env("CRC_GRAPH_JSONS", &graph_json_paths);
                         }
                         spawn_attempts += 1;
@@ -1679,22 +1703,47 @@ fn write_api_contracts(
     }
 }
 
+/// Writes the project's API List worksheet (CSV) for this session's API List
+/// tools: first the copy saved with Project Settings, then a fresh export
+/// fetched in the background. `None` when no API List worksheet is set.
+fn write_api_list(owning_project: &Path, session_id: &str) -> Option<PathBuf> {
+    let (sheet, saved) = crate::projects::api_list_for_project(owning_project)
+        .ok()
+        .flatten()?;
+    let path = std::env::temp_dir().join(format!("crc-api-list-{session_id}.csv"));
+    if let Some(csv) = saved {
+        let _ = std::fs::write(&path, csv);
+    }
+    let target = path.clone();
+    std::thread::spawn(move || {
+        match crate::kanban::fetch_google_sheet_csv(&sheet.url, &sheet.sheet) {
+            Ok(csv) => {
+                let partial = target.with_extension("csv.partial");
+                if std::fs::write(&partial, csv).is_ok() {
+                    let _ = std::fs::rename(&partial, &target);
+                }
+            }
+            Err(error) => eprintln!("crc: API List refresh failed: {error}"),
+        }
+    });
+    Some(path)
+}
+
 /// ACP `McpServerStdio` entry for Kern's own tools (`extensions/kern-mcp.mjs`).
-/// `None` when node is unavailable: the chat still works, without Kern tools.
+/// Errs with a user-facing reason when it cannot be built; the chat still
+/// works, without Kern tools.
 fn kern_mcp_server(
     owning_project: &Path,
     project_name: Option<&str>,
     session_id: &str,
     pr_review: bool,
     api_contracts: Option<&Path>,
-) -> Option<serde_json::Value> {
-    let node = crate::harness::resolve_binary("node").or_else(|| {
-        eprintln!("crc: node not found; Kern MCP tools unavailable for {session_id}");
-        None
-    })?;
+    api_list: Option<&Path>,
+) -> Result<serde_json::Value, String> {
+    let node = crate::harness::resolve_binary("node")
+        .ok_or("Node.js was not found on PATH. Install Node.js 18 or newer and restart Kern.")?;
     let script = crate::projects::ensure_extensions()
-        .map_err(|error| eprintln!("crc: Kern MCP tools unavailable: {error}"))
-        .ok()?
+        .map_err(|error| format!("Kern could not install its tool scripts: {error}"))?
         .join("kern-mcp.mjs");
     let project_name = project_name
         .filter(|name| !name.trim().is_empty())
@@ -1706,7 +1755,8 @@ fn kern_mcp_server(
                 .to_string_lossy()
                 .into_owned()
         });
-    let task_dir = crate::kanban::task_dir().ok()?;
+    let task_dir = crate::kanban::task_dir()
+        .map_err(|error| format!("Kern's task folder is unavailable: {error}"))?;
     let (task_source, task_writable) =
         crate::projects::get_project_task_source(owning_project.to_string_lossy().into_owned())
             .map(|source| (source.kind, !source.writer_url.is_empty()))
@@ -1753,16 +1803,174 @@ fn kern_mcp_server(
             ),
         ]
     });
-    Some(serde_json::json!({
+    let api_list_env =
+        api_list.map(|path| ("CRC_API_LIST_PATH", path.to_string_lossy().into_owned()));
+    Ok(serde_json::json!({
         "name": "kern",
         "command": node.to_string_lossy(),
         "args": [script.to_string_lossy()],
         "env": env
             .iter()
             .chain(api_env.iter().flatten())
+            .chain(api_list_env.iter())
             .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
             .collect::<Vec<_>>(),
     }))
+}
+
+const KERN_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Starts the Kern MCP server as a harness would and completes the MCP
+/// handshake, so a server that cannot start is reported with its own error
+/// instead of the harness's bare "connection closed". With `doctor`, also
+/// returns the kern_doctor report. Returns the offered tool names.
+fn probe_kern_mcp(
+    server: &serde_json::Value,
+    doctor: bool,
+) -> Result<(Vec<String>, Option<String>), String> {
+    let command = server["command"].as_str().unwrap_or_default();
+    let mut child = Command::new(command)
+        .args(
+            server["args"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str),
+        )
+        .envs(
+            server["env"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| Some((entry["name"].as_str()?, entry["value"].as_str()?))),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Kern tools could not start `{command}`: {error}"))?;
+    let mut requests = vec![
+        serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": { "name": "kern-probe", "version": "1" } } }),
+        serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+    ];
+    if doctor {
+        requests.push(
+            serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "kern_doctor", "arguments": {} } }),
+        );
+    }
+    let mut stdin = child.stdin.take().ok_or("Kern tools stdin unavailable")?;
+    let written = requests
+        .iter()
+        .try_for_each(|request| writeln!(stdin, "{request}"));
+    drop(stdin);
+    let stdout = child.stdout.take().ok_or("Kern tools stdout unavailable")?;
+    let stderr = child.stderr.take().ok_or("Kern tools stderr unavailable")?;
+    let (lines, received) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if lines.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let errors = thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stderr).take(8192).read_to_string(&mut text);
+        text
+    });
+    let expected = if doctor { 3 } else { 2 };
+    let deadline = std::time::Instant::now() + KERN_PROBE_TIMEOUT;
+    let mut tools = None;
+    let mut report = None;
+    let mut failure = written.err().map(|error| error.to_string());
+    while failure.is_none() && (tools.is_none() || (doctor && report.is_none())) {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match received.recv_timeout(remaining) {
+            Ok(line) => {
+                let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    failure = Some(format!("Kern tools wrote non-MCP output: {line}"));
+                    break;
+                };
+                if let Some(error) = message.get("error") {
+                    failure = Some(format!("Kern tools answered with an error: {error}"));
+                    break;
+                }
+                match message["id"].as_u64() {
+                    Some(2) => {
+                        tools = Some(
+                            message["result"]["tools"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|tool| tool["name"].as_str().map(str::to_string))
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                    Some(id) if id == expected && doctor => {
+                        report = message["result"]["content"][0]["text"]
+                            .as_str()
+                            .map(str::to_string)
+                    }
+                    _ => {}
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                failure = Some(format!(
+                    "Kern tools did not answer the MCP handshake within {}s",
+                    KERN_PROBE_TIMEOUT.as_secs()
+                ));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                failure = Some("Kern tools exited during the MCP handshake".into());
+            }
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let stderr = errors.join().unwrap_or_default();
+    match (failure, tools) {
+        (None, Some(tools)) => Ok((tools, report)),
+        (failure, _) => {
+            let detail = stderr.trim();
+            Err(format!(
+                "{}{}",
+                failure.unwrap_or_else(|| "Kern tools did not list their tools".into()),
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(":\n{detail}")
+                }
+            ))
+        }
+    }
+}
+
+/// `kern doctor` for Project Settings: builds the same Kern MCP server a chat
+/// in this project gets, completes the handshake, and runs kern_doctor.
+#[tauri::command(async)]
+pub fn kern_doctor(project_path: String, project_name: Option<String>) -> Result<String, String> {
+    let project = crate::projects::ensure_path_allowed(Path::new(&project_path))?;
+    let session_id = "kern-doctor";
+    let contracts = write_api_contracts(&project, session_id)?;
+    let api_list = write_api_list(&project, session_id);
+    let server = kern_mcp_server(
+        &project,
+        project_name.as_deref(),
+        session_id,
+        false,
+        contracts.as_ref().map(|(path, _)| path.as_path()),
+        api_list.as_deref(),
+    )?;
+    let (tools, report) = probe_kern_mcp(&server, true)?;
+    Ok(format!(
+        "✓ MCP handshake: {} tools offered to Codex, Claude Code and other ACP agents\n{}",
+        tools.len(),
+        report.unwrap_or_else(|| "kern_doctor returned no report".into())
+    ))
 }
 
 /// Spawn an ACP harness (OpenCode, Claude Code, oh-my-pi, …) behind the pi
@@ -2244,6 +2452,65 @@ pub fn list_pi_sessions() -> Result<Vec<String>, String> {
 // This is the explicit PRD risk mitigation test hook: called via cargo test.
 #[cfg(test)]
 mod tests {
+    fn probe_server(script: &str, env: &[(&str, &str)]) -> serde_json::Value {
+        serde_json::json!({
+            "name": "kern",
+            "command": crate::harness::resolve_binary("node").expect("node is required for tests"),
+            "args": [script],
+            "env": env.iter().map(|(name, value)| serde_json::json!({ "name": name, "value": value })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn kern_probe_completes_the_handshake_and_runs_doctor() {
+        let dir = std::env::temp_dir().join(format!("crc-kern-probe-{}", std::process::id()));
+        // The installed path contains a space ("Application Support").
+        let installed = dir.join("Application Support");
+        std::fs::create_dir_all(installed.join("tasks")).unwrap();
+        let extensions = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("extensions");
+        for name in ["kern-mcp.mjs", "kern-openapi.mjs"] {
+            std::fs::copy(extensions.join(name), installed.join(name)).unwrap();
+        }
+        std::fs::write(
+            installed.join("tasks").join("demo.json"),
+            r#"[{"no":"1","deskripsi":"Task","status":"To Do"}]"#,
+        )
+        .unwrap();
+        let script = installed.join("kern-mcp.mjs");
+        let tasks = installed.join("tasks");
+        let server = probe_server(
+            script.to_str().unwrap(),
+            &[
+                ("CRC_PROJECT_NAME", "demo"),
+                ("CRC_TASK_DIR", tasks.to_str().unwrap()),
+            ],
+        );
+        let (tools, report) = super::probe_kern_mcp(&server, true).unwrap();
+        assert!(tools.contains(&"list_project_tasks".to_string()));
+        assert!(!tools.contains(&"api_list_check".to_string()));
+        let report = report.unwrap();
+        assert!(report.starts_with("Kern doctor: healthy"), "{report}");
+        assert!(report.contains("✓ tasks: 1 tasks"), "{report}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn kern_probe_reports_why_the_server_did_not_start() {
+        let dir = std::env::temp_dir().join(format!("crc-kern-broken-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("broken.mjs");
+        std::fs::write(
+            &script,
+            "console.error('boom: missing module'); process.exit(1);",
+        )
+        .unwrap();
+        let error =
+            super::probe_kern_mcp(&probe_server(script.to_str().unwrap(), &[]), false).unwrap_err();
+        assert!(error.contains("exited during the MCP handshake"), "{error}");
+        assert!(error.contains("boom: missing module"), "{error}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn send_pi_command_runs_inside_the_tauri_runtime_without_panicking() {
         // Tauri executes commands on runtime worker threads; a nested

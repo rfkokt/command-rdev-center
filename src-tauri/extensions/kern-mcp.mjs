@@ -6,7 +6,8 @@
 //
 // Zero dependencies on purpose: it runs with whatever `node` is on PATH.
 // Context comes from env set by Kern: CRC_PROJECT_NAME, CRC_TASK_DIR,
-// CRC_TASK_SOURCE_KIND.
+// CRC_TASK_SOURCE_KIND, CRC_TASK_WRITABLE, CRC_API_CONTRACTS_PATH,
+// CRC_API_LIST_PATH, CRC_PR_REVIEW. `--doctor` prints a health report.
 
 import { realpathSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -194,14 +195,13 @@ export async function taskStatusesText(env) {
   ].join("\n");
 }
 
-/** Mirrors update_task_status in pi's kanban-task extension: checks the
- * request against the synced tasks; Kern asks the user and does the write. */
-export async function requestStatusChange(input, env) {
-  const data = await tasks(env);
+const where = (task) => `${task._sheet || "sheet"} row ${task._row ?? "?"}`;
+
+/** The one task selected by number, optionally narrowed by sheet and row. */
+function oneTask(data, input, scope) {
   const taskNo = String(input.taskNo ?? "")
     .trim()
     .replace(/^#/, "");
-  const where = (task) => `${task._sheet || "sheet"} row ${task._row ?? "?"}`;
   const matching = data.items.filter(
     (task) =>
       String(task.no).trim() === taskNo &&
@@ -210,13 +210,24 @@ export async function requestStatusChange(input, env) {
   );
   if (!matching.length)
     throw new Error(
-      `Task ${taskNo} is not among this project's tasks for the selected PIC (${(data.metadata?.pics ?? []).join(", ") || "none"}). Only those tasks can be updated.`,
+      `Task ${taskNo} is not among this project's tasks for the selected PIC (${(data.metadata?.pics ?? []).join(", ") || "none"}). ${scope}`,
     );
   if (matching.length > 1)
     throw new Error(
       `Task ${taskNo} is ambiguous: ${matching.map(where).join(", ")}. Call again with sheet and row.`,
     );
-  const task = matching[0];
+  return { taskNo, task: matching[0] };
+}
+
+/** Mirrors update_task_status in pi's kanban-task extension: checks the
+ * request against the synced tasks; Kern asks the user and does the write. */
+export async function requestStatusChange(input, env) {
+  const data = await tasks(env);
+  const { taskNo, task } = oneTask(
+    data,
+    input,
+    "Only those tasks can be updated.",
+  );
   const known = data.metadata?.statuses ?? [];
   const status = String(input.status).trim();
   return [
@@ -305,6 +316,205 @@ async function operationDetailText(input, env) {
         "This exact selector was not resolved. Search api_find_operations across all contracts, inspect candidates with api_operation_detail, and refresh before claiming absence. An unavailable contract is not a missing endpoint.",
     }),
   );
+}
+
+// ---------------------------------------------------------------- api list
+
+// The project's API List worksheet, synced by Kern per session
+// (CRC_API_LIST_PATH, CSV). It is the plan; Swagger is what is deployed.
+async function apiList(env) {
+  if (!env.CRC_API_LIST_PATH)
+    throw new Error(
+      "No API List worksheet is configured for this project (Project Settings → API).",
+    );
+  const raw = await readFile(env.CRC_API_LIST_PATH, "utf8").catch((error) => {
+    if (error?.code !== "ENOENT") throw error;
+    throw new Error(
+      "The API List worksheet has not synced yet. Retry shortly; do not infer that it is empty.",
+    );
+  });
+  return (await catalog()).apiListRows(raw);
+}
+
+const optionalContracts = (env) =>
+  env.CRC_API_CONTRACTS_PATH ? contracts(env) : Promise.resolve([]);
+
+const API_LIST_GUIDANCE =
+  "The API List is the plan; Swagger is what the backend exposes. Implement and test against Swagger (api_operation_detail). Report ⚠/✗ rows to the user as API List ↔ Swagger mismatches instead of guessing which one is right.";
+
+/** Mirrors api_list_check in pi's kanban-task extension. */
+export async function apiListCheckText(input, env) {
+  const { checkApiList, checkCounts, checksMarkdown, selectRows } =
+    await catalog();
+  let rows = await apiList(env);
+  if (input.no) rows = selectRows(rows, String(input.no));
+  const query = input.query?.trim().toLowerCase();
+  if (query)
+    rows = rows.filter((row) =>
+      [row.endpoint, row.description, ...Object.values(row.fields)].some(
+        (value) => value.toLowerCase().includes(query),
+      ),
+    );
+  let checks = checkApiList(rows, await optionalContracts(env));
+  const counts = checkCounts(checks);
+  if (input.issuesOnly)
+    checks = checks.filter((check) => check.result !== "exact");
+  const limit = 100;
+  return [
+    `# API List ↔ Swagger · ${rows.length} rows`,
+    "",
+    Object.entries(counts)
+      .filter(([, count]) => count)
+      .map(([result, count]) => `${result}: ${count}`)
+      .join(" · ") || "No rows.",
+    "",
+    checksMarkdown(checks.slice(0, limit)),
+    checks.length > limit
+      ? `\n_${checks.length - limit} more rows; narrow with no or query._`
+      : "",
+    "",
+    API_LIST_GUIDANCE,
+  ].join("\n");
+}
+
+/** Mirrors link_task_api in pi's kanban-task extension. */
+export async function linkTaskApiText(input, env) {
+  const {
+    checkApiList,
+    checksMarkdown,
+    normalizePath,
+    selectRows,
+    taskApiReferences,
+  } = await catalog();
+  const data = await tasks(env);
+  const { taskNo, task } = oneTask(data, input, "");
+  const text = Object.entries(task)
+    .filter(
+      ([name, value]) => !name.startsWith("_") && typeof value === "string",
+    )
+    .map(([, value]) => value)
+    .join("\n");
+  const references = taskApiReferences(text);
+  const notes = [];
+  let rows = [];
+  if (env.CRC_API_LIST_PATH) {
+    try {
+      const listed = await apiList(env);
+      rows = selectRows(listed, references.numbers.join(","));
+      const missing = references.numbers.filter(
+        (no) => !rows.some((row) => row.no === no),
+      );
+      if (missing.length)
+        notes.push(`API List has no row numbered ${missing.join(", ")}.`);
+    } catch (error) {
+      notes.push(String(error?.message ?? error));
+    }
+  } else if (references.numbers.length)
+    notes.push(
+      `The task cites API List numbers ${references.numbers.join(", ")}, but no API List worksheet is configured (Project Settings → API).`,
+    );
+  const known = new Set(rows.map((row) => normalizePath(row.path)));
+  const inline = references.paths
+    .filter(
+      ({ path }) =>
+        !known.has(normalizePath(path)) && known.add(normalizePath(path)),
+    )
+    .map(({ method, path }) => ({
+      no: "task",
+      method,
+      path,
+      endpoint: path,
+      description: "cited in the task text",
+      status: "",
+      fields: {},
+    }));
+  const checks = checkApiList(
+    [...rows, ...inline],
+    await optionalContracts(env),
+  );
+  return [
+    `# Task #${taskNo} → API`,
+    "",
+    String(task.deskripsi || "Untitled task")
+      .split("\n")[0]
+      .slice(0, 200),
+    "",
+    checks.length
+      ? checksMarkdown(checks)
+      : "This task cites no API List numbers or /api paths. Search api_find_operations with the feature's terms instead.",
+    ...notes.map((note) => `\n${note}`),
+    "",
+    API_LIST_GUIDANCE,
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------- doctor
+
+/** Health of everything Kern's tools depend on in this chat. */
+export async function doctorReport(env = process.env) {
+  const checks = [];
+  const check = async (name, run) => {
+    try {
+      checks.push({ name, ok: true, detail: await run() });
+    } catch (error) {
+      checks.push({ name, ok: false, detail: String(error?.message ?? error) });
+    }
+  };
+  await check("node", () => {
+    const major = Number(process.versions.node.split(".")[0]);
+    if (major < 18) throw new Error(`node ${process.version}; Kern needs 18+`);
+    return `${process.version} (${process.execPath})`;
+  });
+  await check("project", () => {
+    if (!env.CRC_PROJECT_NAME || !env.CRC_TASK_DIR)
+      throw new Error(
+        "CRC_PROJECT_NAME/CRC_TASK_DIR are not set; start the chat from Kern",
+      );
+    return `${env.CRC_PROJECT_NAME} (${env.CRC_TASK_SOURCE_KIND || "local"} tasks)`;
+  });
+  await check("tasks", async () => {
+    const { items, metadata, updatedAt } = await tasks(env);
+    const source = metadata?.state
+      ? ` · ${metadata.state} · worksheets ${(metadata.sheets ?? []).join(", ") || "—"} · PIC ${(metadata.pics ?? []).join(", ") || "—"} · ${metadata.total ?? "?"} rows read`
+      : "";
+    return `${items.length} tasks${source} · updated ${updatedAt}`;
+  });
+  await check("status writes", () =>
+    env.CRC_TASK_WRITABLE === "1"
+      ? "enabled (Apps Script sheet writer)"
+      : "disabled; configure the sheet writer in Project Settings → Tasks",
+  );
+  if (env.CRC_API_CONTRACTS_PATH)
+    await check("swagger", async () => {
+      const { searchOperations } = await catalog();
+      const result = searchOperations(await contracts(env), { limit: 1 });
+      const failed = result.contracts.filter((item) => item.loadError);
+      if (failed.length && failed.length === result.contracts.length)
+        throw new Error(
+          failed.map((item) => `${item.id}: ${item.loadError}`).join("; "),
+        );
+      return `${result.totalOperations} operations in ${result.contracts.length} contracts${result.issues.length ? `; issues: ${result.issues.map((issue) => `${issue.contractId}: ${issue.code}`).join("; ")}` : ""}`;
+    });
+  else checks.push({ name: "swagger", ok: true, detail: "no saved contracts" });
+  if (env.CRC_API_LIST_PATH)
+    await check("api list", async () => `${(await apiList(env)).length} rows`);
+  checks.push({
+    name: "tools",
+    ok: true,
+    detail: toolsFor(env)
+      .map((tool) => tool.name)
+      .join(", "),
+  });
+  const ok = checks.every((item) => item.ok);
+  return {
+    ok,
+    text: [
+      `Kern doctor: ${ok ? "healthy" : "problems found"}`,
+      ...checks.map(
+        (item) => `${item.ok ? "✓" : "✗"} ${item.name}: ${item.detail}`,
+      ),
+    ].join("\n"),
+  };
 }
 
 // ---------------------------------------------------------------- tools
@@ -440,6 +650,42 @@ export const TOOLS = [
     run: operationDetailText,
   },
   {
+    name: "api_list_check",
+    description:
+      'Check the project\'s API List worksheet (the numbered, planned endpoints) against the saved Swagger contracts. Each row is reported as documented, path differs (with the nearest Swagger path), method differs, or not in Swagger. Select rows by number or range (e.g. "71", "68-70, 49"), filter by text, or show only mismatches.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        no: str("API List row numbers or ranges, e.g. 28-32"),
+        query: str("Text to find in endpoint, description, or other columns"),
+        issuesOnly: { type: "boolean" },
+      },
+    },
+    run: apiListCheckText,
+  },
+  {
+    name: "link_task_api",
+    description:
+      'Resolve the endpoints one project task needs: the API List rows it cites ("sheet list api nomor 28-32", "endpoint nomor 66") and /api paths in its text, each checked against Swagger with the exact documented method, path and contract. Use before implementing or testing a task\'s API integration. Pass sheet and row when a task number repeats.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskNo: str("Task number or ID"),
+        sheet: str("Worksheet name, when the task number repeats"),
+        row: { type: "integer", minimum: 2, description: "Sheet row" },
+      },
+      required: ["taskNo"],
+    },
+    run: linkTaskApiText,
+  },
+  {
+    name: "kern_doctor",
+    description:
+      "Diagnose Kern's tool context for this chat: node version, project and task source (sync state, selected worksheets and PIC), status writes, Swagger contracts, API List, and the tools offered. Use when a Kern tool fails or returns unexpectedly empty data, and report the findings to the user.",
+    inputSchema: { type: "object", properties: {} },
+    run: async (_input, env) => (await doctorReport(env)).text,
+  },
+  {
     name: "report_recurring_error",
     description:
       "After the user explicitly agrees, draft a backlog task for a verified application error so it can be prevented later. The host shows the draft for final approval before saving it.",
@@ -538,14 +784,18 @@ export const TOOLS = [
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
 /** complete_pr_review exists only in Kern PR review chats, update_task_status
- * only with a configured sheet writer, API tools only with saved contracts. */
+ * only with a configured sheet writer, Swagger tools only with saved
+ * contracts, API List tools only with a configured API List worksheet. */
 export function toolsFor(env = process.env) {
-  return TOOLS.filter(
-    (tool) =>
-      (tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1") &&
-      (tool.name !== "update_task_status" || env.CRC_TASK_WRITABLE === "1") &&
-      (!tool.name.startsWith("api_") || Boolean(env.CRC_API_CONTRACTS_PATH)),
-  );
+  const offered = {
+    complete_pr_review: env.CRC_PR_REVIEW === "1",
+    update_task_status: env.CRC_TASK_WRITABLE === "1",
+    api_find_operations: Boolean(env.CRC_API_CONTRACTS_PATH),
+    api_operation_detail: Boolean(env.CRC_API_CONTRACTS_PATH),
+    api_list_check: Boolean(env.CRC_API_LIST_PATH),
+    link_task_api: Boolean(env.CRC_API_LIST_PATH || env.CRC_API_CONTRACTS_PATH),
+  };
+  return TOOLS.filter((tool) => offered[tool.name] ?? true);
 }
 
 /** Validate the few constraints the host relies on; full JSON Schema is the client's job. */
@@ -584,7 +834,7 @@ export async function handle(message, env = process.env) {
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
         instructions:
-          "Kern Studio app tools: project tasks, Kanban tracking, and the app-owned delivery pipeline.",
+          "Kern Studio app tools: project tasks (details, statuses, approved status changes), Swagger contracts and the API List worksheet, Kanban tracking, and the app-owned delivery pipeline. When a Kern tool fails or returns unexpectedly empty data, call kern_doctor and report its findings.",
       });
     case "ping":
       return reply({});
@@ -653,4 +903,10 @@ function isMain() {
   }
 }
 
-if (isMain()) serve();
+// `node kern-mcp.mjs --doctor` prints the same report as the kern_doctor tool.
+if (isMain() && process.argv.includes("--doctor"))
+  doctorReport().then(({ ok, text }) => {
+    process.stdout.write(`${text}\n`);
+    process.exitCode = ok ? 0 : 1;
+  });
+else if (isMain()) serve();

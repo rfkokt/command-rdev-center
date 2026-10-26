@@ -56,7 +56,8 @@ describe("kern MCP server", () => {
         (name: string) =>
           name !== "complete_pr_review" &&
           name !== "update_task_status" &&
-          !name.startsWith("api_"),
+          !name.startsWith("api_") &&
+          name !== "link_task_api",
       ),
     );
     expect(names).toContain("track_kanban_task");
@@ -198,6 +199,100 @@ describe("kern MCP server", () => {
     );
     expect(missing.result.isError).toBe(true);
     expect(missing.result.content[0].text).toContain("api_find_operations");
+  });
+
+  test("API List rows and tasks are checked against Swagger", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kern-mcp-api-list-"));
+    const contracts = join(dir, "contracts.json");
+    const operation = (operationId: string) => ({ operationId });
+    writeFileSync(
+      contracts,
+      JSON.stringify([
+        {
+          id: "transaction-crew",
+          origin: "https://api.example.com",
+          base_url: "https://api.example.com/gateway/transaction-crew",
+          document: {
+            paths: {
+              "/api/v1/roster": { get: operation("getRosters") },
+              "/api/v1/roster/{id}": { put: operation("updateRoster") },
+              "/api/v1/presensi/roster": { post: operation("absenHadir") },
+              "/api/v1/presensi/roster/non-roster": {
+                post: operation("absenNonRoster"),
+              },
+              "/api/v1/sikeska/set-uuk": { post: operation("setUuk") },
+            },
+          },
+        },
+      ]),
+    );
+    const apiList = join(dir, "api-list.csv");
+    writeFileSync(
+      apiList,
+      [
+        '"API LIST CREW","",""',
+        '"No","Endpoint","Method","Deskripsi","Status","Repository"',
+        '"66","/api/v1/roster","GET","Ambil roster\n- pagination","Done","Roster"',
+        '"67","/api/v1/roster/:code","POST","Simpan roster","Done","Roster"',
+        '"71","/api/v1/presensi/non-roster","POST","Presensi non roster","Testing",""',
+        '"72","/api/v1/sikesa/set-uuk","POST","UUK","Testing",""',
+        '"73","/api/v1/files","GET","File","Cancel",""',
+      ].join("\n"),
+    );
+    const env = {
+      ...taskEnv([
+        {
+          no: 130,
+          deskripsi:
+            "Integrasikan endpoint dari sheet list api dengan nomor 66-67, revisi di poin nomor 3",
+          status: "To Do",
+        },
+        {
+          no: 158,
+          deskripsi:
+            "Error input:\ncurl -X 'POST' \\\n 'https://api.example.com/gateway/transaction-crew/api/v1/presensi/roster/non-roster'",
+          status: "To Do",
+        },
+        { no: 85, deskripsi: "Revisi ui/ux di poin nomor 3", status: "To Do" },
+      ]),
+      CRC_API_CONTRACTS_PATH: contracts,
+      CRC_API_LIST_PATH: apiList,
+    };
+    const text = async (name: string, args: unknown) =>
+      (await call(name, args, env)).result.content[0].text as string;
+    const check = await text("api_list_check", {});
+    expect(check).toContain(
+      "exact: 1 · path_differs: 2 · method_differs: 1 · missing: 1",
+    );
+    const row = (no: string) =>
+      check.split("\n").find((line) => line.startsWith(`| ${no} |`));
+    expect(row("66")).toContain("✓ documented");
+    expect(row("67")).toContain("⚠ method differs");
+    expect(row("67")).toContain("`PUT /api/v1/roster/{id}`");
+    // The path keeping every planned segment ranks before a respelling.
+    expect(row("71")).toMatch(
+      /`POST \/api\/v1\/presensi\/roster\/non-roster`.*`POST \/api\/v1\/presensi\/roster`.*⚠ path differs/,
+    );
+    expect(row("72")).toContain("`POST /api/v1/sikeska/set-uuk`");
+    expect(row("73")).toContain("✗ not in Swagger");
+    expect(
+      await text("api_list_check", { no: "71-72", issuesOnly: true }),
+    ).not.toContain("| 66 |");
+    const linked = await text("link_task_api", { taskNo: "130" });
+    expect(linked).toContain("| 66 |");
+    expect(linked).toContain("| 67 |");
+    expect(linked).not.toContain("| 3 |");
+    const cited = await text("link_task_api", { taskNo: "158" });
+    expect(cited).toContain("| task |");
+    expect(cited).toContain("absenNonRoster");
+    expect(cited).toContain("✓ documented");
+    expect(await text("link_task_api", { taskNo: "85" })).toContain(
+      "cites no API List numbers",
+    );
+    const doctor = await text("kern_doctor", {});
+    expect(doctor).toContain("Kern doctor: healthy");
+    expect(doctor).toContain("✓ api list: 5 rows");
+    expect(doctor).toContain("✓ swagger: 5 operations in 1 contracts");
   });
 
   test("kern-openapi.mjs matches its TypeScript sources", async () => {
@@ -345,7 +440,7 @@ describe("kern MCP server", () => {
     expect(parsed.find((m) => m.id === 1).result.serverInfo.name).toBe("kern");
     expect(parsed.some((m) => m.error?.code === -32700)).toBe(true);
     expect(parsed.find((m) => m.id === 2).result.tools.length).toBe(
-      TOOL_NAMES.length - 4,
+      TOOL_NAMES.length - 6,
     );
   });
 });

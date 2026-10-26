@@ -250,8 +250,8 @@ function expandReferences(value, document) {
     if (Array.isArray(node))
       return node.map((value2) => visit(value2, seen, depth + 1));
     return Object.fromEntries(
-      Object.entries(node).map(([key, value2]) => [
-        key,
+      Object.entries(node).map(([key2, value2]) => [
+        key2,
         visit(value2, seen, depth + 1),
       ]),
     );
@@ -368,9 +368,9 @@ async function download(target, signal) {
   }
   throw new Error("document_too_many_redirects");
 }
-function literals(source, key) {
+function literals(source, key2) {
   const expression = new RegExp(
-    `(?:^|[\\s{,])['"]?${key}['"]?\\s*:\\s*(['"])([^'"\\r\\n]+)\\1`,
+    `(?:^|[\\s{,])['"]?${key2}['"]?\\s*:\\s*(['"])([^'"\\r\\n]+)\\1`,
     "gm",
   );
   return [...source.replace(/^\s*\/\/.*$/gm, "").matchAll(expression)].map(
@@ -534,10 +534,285 @@ async function refreshContracts(previous, input, signal) {
   }
   return refreshed;
 }
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell2 = "";
+  let quoted = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"' && text[index + 1] === '"') {
+        cell2 += '"';
+        index++;
+      } else if (char === '"') quoted = false;
+      else cell2 += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ",") {
+      row.push(cell2);
+      cell2 = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[index + 1] === "\n") index++;
+      row.push(cell2);
+      rows.push(row);
+      row = [];
+      cell2 = "";
+    } else cell2 += char;
+  }
+  if (cell2 || row.length) rows.push([...row, cell2]);
+  return rows;
+}
+const HEADERS = {
+  no: ["no", "nomor", "id", "#", "noapi"],
+  endpoint: ["endpoint", "path", "url", "api", "route", "uri", "endpointapi"],
+  method: ["method", "httpmethod", "metode", "verb"],
+  description: ["deskripsi", "description", "keterangan", "summary", "nama"],
+  status: ["status"],
+};
+const METHOD = /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/i;
+const key = (value) => value.toLowerCase().replace(/[^\p{L}\p{N}#]/gu, "");
+function apiListRows(csv) {
+  const table = parseCsv(csv);
+  const headerIndex = table
+    .slice(0, 10)
+    .findIndex((row) =>
+      row.some((cell2) => HEADERS.endpoint.includes(key(cell2))),
+    );
+  if (headerIndex < 0)
+    throw new Error(
+      "The API List worksheet has no Endpoint/Path/URL column header in its first 10 rows.",
+    );
+  const headers = table[headerIndex].map(key);
+  const column = (names2) => headers.findIndex((name) => names2.includes(name));
+  const columns = {
+    no: column(HEADERS.no),
+    endpoint: column(HEADERS.endpoint),
+    method: column(HEADERS.method),
+    description: column(HEADERS.description),
+    status: column(HEADERS.status),
+  };
+  const names = table[headerIndex].map((name) => name.trim());
+  return table
+    .slice(headerIndex + 1)
+    .map((cells, index) => {
+      const cell2 = (at) => (at < 0 ? "" : String(cells[at] ?? "").trim());
+      const endpoint = cell2(columns.endpoint);
+      const inline = endpoint.match(METHOD)?.[1];
+      const fields = Object.fromEntries(
+        names
+          .map((name, at) => [name, cell2(at)])
+          .filter(
+            ([name, value], at) =>
+              name && value && !Object.values(columns).includes(at),
+          ),
+      );
+      return {
+        no: cell2(columns.no) || String(index + 1),
+        method: (cell2(columns.method) || inline || "").toUpperCase(),
+        path: pathOf(endpoint.replace(METHOD, "").trim()),
+        endpoint,
+        description: cell2(columns.description),
+        status: cell2(columns.status),
+        fields,
+      };
+    })
+    .filter((row) => row.endpoint || row.description);
+}
+function pathOf(endpoint) {
+  let path = endpoint.trim().split(/\s+/)[0] ?? "";
+  try {
+    if (/^https?:\/\//i.test(path)) path = new URL(path).pathname;
+  } catch {}
+  return path.replace(/[?#].*$/, "");
+}
+function normalizePath(path) {
+  return (
+    pathOf(path)
+      .toLowerCase()
+      .replace(/\/{2,}/g, "/")
+      .replace(/\{[^}]*\}|:[\w-]+|<[^>]*>|\[[^\]]*\]/g, "{}")
+      .replace(/\/+$/, "") || "/"
+  );
+}
+function pathKeys(item) {
+  let base = "";
+  try {
+    base = new URL(item.contract.base_url || "").pathname.replace(/\/+$/, "");
+  } catch {}
+  return [normalizePath(item.path), normalizePath(`${base}${item.path}`)];
+}
+function editDistance(a, b) {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++)
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    previous = current;
+  }
+  return previous[b.length];
+}
+function pathDistance(a, b) {
+  const left = a.split("/").filter(Boolean);
+  const right = b.split("/").filter(Boolean);
+  const cost = (x, y) => {
+    if (x === y) return 0;
+    if (x === "{}" || y === "{}") return 1;
+    const spelling = editDistance(x, y) / Math.max(x.length, y.length);
+    return spelling <= 0.5 ? spelling : 2;
+  };
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j++)
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + cost(left[i - 1], right[j - 1]),
+      );
+    previous = current;
+  }
+  return previous[right.length];
+}
+function checkApiList(rows, contracts) {
+  const items = operations(contracts).items.map((item) => ({
+    item,
+    keys: pathKeys(item),
+  }));
+  return rows.map((row) => {
+    const check = (result, found = []) => ({
+      ...row,
+      result,
+      operations: found.map(operationSummary),
+    });
+    if (!row.path.startsWith("/")) return check("no_endpoint");
+    if (!contracts.length) return check("unchecked");
+    const path = normalizePath(row.path);
+    const samePath = items.filter(({ keys }) => keys.includes(path));
+    const exact = samePath.filter(
+      ({ item }) => !row.method || item.method === row.method,
+    );
+    if (exact.length)
+      return check(
+        "exact",
+        exact.map(({ item }) => item),
+      );
+    if (samePath.length)
+      return check(
+        "method_differs",
+        samePath.map(({ item }) => item),
+      );
+    const segments = path.split("/").filter(Boolean);
+    const near = items
+      .filter(({ item }) => !row.method || item.method === row.method)
+      .map(({ item, keys }) => ({
+        item,
+        distance: Math.min(...keys.map((other) => pathDistance(path, other))),
+      }))
+      .filter(({ distance }) => distance <= 1)
+      .map((near2) => ({
+        ...near2,
+        keepsAll: segments.every((segment) =>
+          pathKeys(near2.item).some((other) =>
+            other.split("/").includes(segment),
+          ),
+        ),
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.keepsAll) - Number(a.keepsAll) || a.distance - b.distance,
+      );
+    return near.length
+      ? check(
+          "path_differs",
+          near.slice(0, 3).map(({ item }) => item),
+        )
+      : check("missing");
+  });
+}
+function selectRows(rows, selector) {
+  const wanted = /* @__PURE__ */ new Set();
+  for (const part of selector.split(/[,\s]+/).filter(Boolean)) {
+    const [from, to] = part.split(/[-–]/).map((value) => Number(value));
+    if (Number.isInteger(from) && Number.isInteger(to) && to >= from)
+      for (let no = from; no <= Math.min(to, from + 200); no++)
+        wanted.add(String(no));
+    else wanted.add(part.replace(/^#/, ""));
+  }
+  return rows.filter((row) => wanted.has(row.no));
+}
+function taskApiReferences(text) {
+  const numbers = /* @__PURE__ */ new Set();
+  const paths = [];
+  if (/\b(?:api|endpoint)\b/i.test(text))
+    for (const match of text.matchAll(
+      /(?<!\b(?:poin|point|task|tugas|backlog)\s+)\b(?:nomor|no\.?|nomer)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi,
+    )) {
+      const from = Number(match[1]);
+      const to = Number(match[2] ?? match[1]);
+      for (let no = from; no <= Math.min(to, from + 50); no++)
+        numbers.add(String(no));
+    }
+  for (const match of text.matchAll(
+    /(?:\b(GET|POST|PUT|PATCH|DELETE)\b['"]?\s+(?:\\\s*)?['"]?|-X\s*['"]?(GET|POST|PUT|PATCH|DELETE)['"]?[\s\\]+['"]?)?((?:https?:\/\/[^\s'"]+)?\/api\/[^\s'"),]+)/gi,
+  ))
+    paths.push({
+      method: (match[1] || match[2] || "").toUpperCase(),
+      path: pathOf(match[3]),
+    });
+  return { numbers: [...numbers], paths };
+}
+const cell = (value, max = 70) => {
+  const text = value.replace(/\s+/g, " ").trim().replace(/\|/g, "\\|");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+};
+const RESULT = {
+  exact: "✓ documented",
+  path_differs: "⚠ path differs",
+  method_differs: "⚠ method differs",
+  missing: "✗ not in Swagger",
+  no_endpoint: "— no endpoint",
+  unchecked: "? Swagger not loaded",
+};
+function checksMarkdown(checks) {
+  if (!checks.length) return "_No API List rows matched._";
+  return [
+    "| No | API List | Swagger | Result | Status |",
+    "|---:|---|---|---|---|",
+    ...checks.map((check) => {
+      const swagger =
+        check.operations
+          .map(
+            (operation) =>
+              `\`${operation.method} ${operation.path}\` (${operation.contractId}${operation.operationId ? ` · ${operation.operationId}` : ""})`,
+          )
+          .join("<br>") || "—";
+      return `| ${cell(check.no, 10)} | \`${check.method || "?"} ${cell(check.path || check.endpoint, 80)}\`<br>${cell(check.description)} | ${swagger} | ${RESULT[check.result]} | ${cell(check.status, 20) || "—"} |`;
+    }),
+  ].join("\n");
+}
+function checkCounts(checks) {
+  const counts = Object.fromEntries(
+    Object.keys(RESULT).map((result) => [result, 0]),
+  );
+  for (const check of checks) counts[check.result]++;
+  return counts;
+}
 export {
+  apiListRows,
+  checkApiList,
+  checkCounts,
+  checksMarkdown,
+  normalizePath,
   operationDetail,
+  pathOf,
   refreshContracts,
   saveContracts,
   searchOperations,
   selectOperation,
+  selectRows,
+  taskApiReferences,
 };

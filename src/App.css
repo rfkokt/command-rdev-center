@@ -612,6 +612,19 @@ select:focus-visible {
   background: transparent;
   color: var(--accent);
 }
+.project-kern-doctor {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--colors-hairline-strong);
+  color: var(--colors-on-dark);
+  font-size: var(--fs-small);
+  white-space: pre-wrap;
+}
+.project-kern-doctor.is-failed {
+  border-color: var(--colors-danger);
+}
 .project-pic-options {
   display: grid;
   gap: 1px;

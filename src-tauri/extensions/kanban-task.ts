@@ -5,9 +5,12 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 // @ts-expect-error plain ESM module without type declarations
 import {
+  apiListCheckText,
+  linkTaskApiText,
   requestStatusChange,
   taskSourceNote,
   taskStatusesText,
+  TOOLS as KERN_TOOLS,
 } from "./kern-mcp.mjs";
 
 type Task = {
@@ -293,6 +296,54 @@ export default function (pi: ExtensionAPI) {
       async execute(_id, input) {
         const text = await requestStatusChange(input, process.env);
         return { content: [{ type: "text", text }], details: input };
+      },
+    });
+  // Same behavior and descriptions as the kern MCP server's tools.
+  const kernDescription = (name: string): string =>
+    KERN_TOOLS.find((tool: { name: string }) => tool.name === name).description;
+  if (process.env.CRC_API_LIST_PATH)
+    pi.registerTool({
+      name: "api_list_check",
+      label: "Check API List against Swagger",
+      description: kernDescription("api_list_check"),
+      parameters: Type.Object({
+        no: Type.Optional(
+          Type.String({
+            description: "API List row numbers or ranges, e.g. 28-32",
+          }),
+        ),
+        query: Type.Optional(
+          Type.String({
+            description:
+              "Text to find in endpoint, description, or other columns",
+          }),
+        ),
+        issuesOnly: Type.Optional(Type.Boolean()),
+      }),
+      async execute(_id, input) {
+        const text = await apiListCheckText(input, process.env);
+        return { content: [{ type: "text", text }], details: {} };
+      },
+    });
+  if (process.env.CRC_API_LIST_PATH || process.env.CRC_API_CONTRACTS_PATH)
+    pi.registerTool({
+      name: "link_task_api",
+      label: "Link task to API endpoints",
+      description: kernDescription("link_task_api"),
+      parameters: Type.Object({
+        taskNo: Type.String({ description: "Task number or ID" }),
+        sheet: Type.Optional(
+          Type.String({
+            description: "Worksheet name, when the task number repeats",
+          }),
+        ),
+        row: Type.Optional(
+          Type.Integer({ minimum: 2, description: "Sheet row" }),
+        ),
+      }),
+      async execute(_id, input) {
+        const text = await linkTaskApiText(input, process.env);
+        return { content: [{ type: "text", text }], details: {} };
       },
     });
   pi.registerTool({

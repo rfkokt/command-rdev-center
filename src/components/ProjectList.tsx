@@ -135,6 +135,12 @@ export default function ProjectList({
   const [availablePics, setAvailablePics] = useState<string[]>([]);
   const [loadingSheets, setLoadingSheets] = useState(false);
   const [loadingPics, setLoadingPics] = useState(false);
+  /** Last `kern doctor` result for the project in settings. */
+  const [kernDoctor, setKernDoctor] = useState<{
+    running: boolean;
+    report?: string;
+    failed?: boolean;
+  }>({ running: false });
   const [fetchingBranches, setFetchingBranches] = useState(false);
   const [cleaningWorktrees, setCleaningWorktrees] = useState(false);
   const registerDialogRef = useModalFocus<HTMLDivElement>(
@@ -318,6 +324,7 @@ export default function ProjectList({
       setApiListSheets([]);
       setAvailableSheets(selectedSheets);
       setAvailablePics(source.pics);
+      setKernDoctor({ running: false });
       setSettingsTab("repositories");
       setProjectToEdit(project);
       setErr(null);
@@ -938,6 +945,42 @@ export default function ProjectList({
                   >
                     SAVE TASK SOURCE
                   </button>
+                  <button
+                    type="button"
+                    className="project-load-pics"
+                    disabled={kernDoctor.running}
+                    onClick={() => {
+                      setKernDoctor({ running: true });
+                      void invoke<string>("kern_doctor", {
+                        projectPath: projectToEdit.path,
+                        projectName: projectToEdit.name,
+                      })
+                        .then((report) =>
+                          setKernDoctor({ running: false, report }),
+                        )
+                        .catch((error) =>
+                          setKernDoctor({
+                            running: false,
+                            report: String(error),
+                            failed: true,
+                          }),
+                        );
+                    }}
+                  >
+                    {kernDoctor.running ? "CHECKING…" : "RUN KERN DOCTOR"}
+                  </button>
+                  <p>
+                    Checks the tools Codex, Claude Code and other agents get
+                    from Kern in this project: tasks, status writes, Swagger and
+                    the API List.
+                  </p>
+                  {kernDoctor.report && (
+                    <pre
+                      className={`project-kern-doctor${kernDoctor.failed ? " is-failed" : ""}`}
+                    >
+                      {kernDoctor.report}
+                    </pre>
+                  )}
                 </section>
               )}
               {settingsTab === "api" && (
