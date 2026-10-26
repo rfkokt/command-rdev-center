@@ -119,6 +119,11 @@ const THINKING_OPTIONS = [
 
 const TOGGLES: Array<[string, string, string]> = [
   [
+    "kernTaskVerification",
+    "Task verification",
+    "Require task contracts, recorded checks and reports in new pi sessions. Default: explicit verification requests or Pipeline only. Per chat: /kern-verification on|off|auto.",
+  ],
+  [
     "enableSkillCommands",
     "Skill commands",
     "Expose installed skills as slash commands in chat.",

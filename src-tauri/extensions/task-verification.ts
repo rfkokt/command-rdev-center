@@ -29,6 +29,7 @@ export type TaskLedger = {
   constraints: string[];
   checks: CheckEvidence[];
   required: boolean;
+  guided?: boolean;
   outcome:
     | "pending"
     | "checks_passed"
@@ -116,16 +117,63 @@ export function evidenceProblem(
     return "A check for the current source snapshot failed or was interrupted.";
 }
 
+// Deliberately narrow: ordinary coding requests must not opt into bookkeeping.
+export function requestsVerification(prompt: string): boolean {
+  return (
+    /\b(?:verif(?:y|ication|ikasi)|run (?:the )?(?:checks|tests|pipeline)|jalankan (?:tes|test|checks|pipeline))\b/i.test(
+      prompt,
+    ) &&
+    !/\b(?:no|without|skip|jangan|tanpa)\s+(?:\w+\s+)?(?:verif\w*|checks|tests|pipeline)\b/i.test(
+      prompt,
+    )
+  );
+}
+
 export default function (pi: ExtensionAPI) {
   const cwd = process.env.CRC_PROJECT_CWD;
   if (!cwd) return;
-  const repositories = (
-    JSON.parse(process.env.CRC_WORKSPACE_REPOSITORIES || "[]") as Array<{
-      name: string;
-    }>
-  )
-    .map((repo) => join(cwd, repo.name))
-    .filter((path) => existsSync(path));
+  let repositories: string[] = [];
+  try {
+    const configured: unknown = JSON.parse(
+      process.env.CRC_WORKSPACE_REPOSITORIES || "[]",
+    );
+    if (Array.isArray(configured))
+      repositories = configured.flatMap((repo) =>
+        typeof repo?.name === "string" && existsSync(join(cwd, repo.name))
+          ? [join(cwd, repo.name)]
+          : [],
+      );
+  } catch (error) {
+    console.error("Kern verification repository metadata unavailable:", error);
+  }
+  // Bookkeeping tools are only offered to the model while verification is on:
+  // a declared tool invites calls, and each call is one more full-context request.
+  const VERIFY_TOOLS = ["set_task_contract", "run_check", "report_task"];
+  let offered: string[] | null = null;
+  const applyTools = () => {
+    try {
+      const active = new Set(pi.getActiveTools());
+      // Respect an explicit --tools allowlist: only manage tools it allowed.
+      offered ??= VERIFY_TOOLS.filter((name) => active.has(name));
+      const before = active.size;
+      let changed = false;
+      for (const name of offered) {
+        if (enabled && !active.has(name)) {
+          active.add(name);
+          changed = true;
+        } else if (!enabled && active.has(name)) {
+          active.delete(name);
+          changed = true;
+        }
+      }
+      if (changed || active.size !== before) pi.setActiveTools([...active]);
+    } catch (error) {
+      console.error("Kern verification tool loadout unchanged:", error);
+    }
+  };
+  let mode: "on" | "off" | "auto" = "auto";
+  let enabled = process.env.CRC_TASK_VERIFICATION === "true";
+  let guidanceSent = false;
   let ledger: TaskLedger | undefined;
   let baseline: string | null = null;
   let recoveryRequested = false;
@@ -154,8 +202,23 @@ export default function (pi: ExtensionAPI) {
       entry?.type === "custom" && (entry.data as TaskLedger)?.version === 1
         ? structuredClone(entry.data as TaskLedger)
         : undefined;
+    const modeEntry = [...ctx.sessionManager.getBranch()]
+      .reverse()
+      .find(
+        (item) =>
+          item.type === "custom" &&
+          item.customType === "kern-verification-mode",
+      );
+    const saved = modeEntry?.type === "custom" ? modeEntry.data : undefined;
+    mode = saved === "on" || saved === "off" ? saved : "auto";
+    enabled =
+      mode === "on" ||
+      (mode === "auto" &&
+        (process.env.CRC_TASK_VERIFICATION === "true" || !!ledger?.required));
     baseline = null;
     recoveryRequested = false;
+    guidanceSent = ledger?.guided === true;
+    applyTools();
   };
   pi.on("session_start", restore);
   pi.on("session_tree", restore);
@@ -168,14 +231,51 @@ export default function (pi: ExtensionAPI) {
         "info",
       ),
   });
+  pi.registerCommand("kern-verification", {
+    description:
+      "Task verification for this chat: on, off, or auto (Settings / explicit requests / Pipeline)",
+    handler: async (args, ctx) => {
+      const next = args.trim();
+      if (!["on", "off", "auto"].includes(next)) {
+        ctx.ui.notify(
+          `Verification: ${mode}. Use /kern-verification on|off|auto`,
+          "info",
+        );
+        return;
+      }
+      mode = next as typeof mode;
+      enabled =
+        mode === "on" ||
+        (mode === "auto" && process.env.CRC_TASK_VERIFICATION === "true");
+      guidanceSent = false;
+      applyTools();
+      pi.appendEntry("kern-verification-mode", mode);
+      ctx.ui.notify(`Task verification: ${mode}`, "info");
+    },
+  });
   pi.on("before_agent_start", async (event, ctx) => {
+    // Never consume/transform input. Optional bookkeeping must fail open.
+    if (typeof event.prompt !== "string") return;
     recoveryRequested = false;
-    baseline = await snapshot(ctx.signal);
-    if (
+    const newTask =
       !ledger ||
-      ["checks_passed", "complete_with_limitations"].includes(ledger.outcome)
-    )
-      ledger = fresh(event.prompt);
+      ["checks_passed", "complete_with_limitations"].includes(ledger.outcome);
+    if (newTask) {
+      guidanceSent = false;
+      enabled =
+        mode === "on" ||
+        (mode === "auto" && process.env.CRC_TASK_VERIFICATION === "true");
+    }
+    if (mode === "auto" && requestsVerification(event.prompt)) enabled = true;
+    applyTools();
+    if (!enabled) return;
+    if (newTask) ledger = fresh(event.prompt);
+    if (!ledger) return;
+    baseline = await snapshot(ctx.signal);
+    if (guidanceSent) return;
+    guidanceSent = true;
+    ledger.guided = true;
+    persist();
     return {
       message: {
         customType: "kern-task-guidance",
@@ -185,7 +285,14 @@ export default function (pi: ExtensionAPI) {
     };
   });
   pi.on("tool_result", (event) => {
+    if (mode !== "off" && event.toolName === "run_pipeline" && !event.isError) {
+      enabled = true;
+      ledger ??= fresh("Verify the active Pipeline task");
+      guidanceSent = false;
+      applyTools();
+    }
     if (
+      enabled &&
       ledger &&
       !event.isError &&
       ["write", "edit"].includes(event.toolName)
@@ -227,6 +334,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, input) {
       ledger = {
         ...fresh(input.goal),
+        guided: guidanceSent,
         criteria: input.criteria,
         constraints: input.constraints,
         required: true,
@@ -361,7 +469,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (!ledger || event.continue || ctx.hasPendingMessages()) return;
+    if (!enabled || !ledger || event.continue || ctx.hasPendingMessages())
+      return;
     const current = await snapshot(ctx.signal);
     const changed = !!baseline && !!current && baseline !== current;
     if (!ledger.required && !changed) return;

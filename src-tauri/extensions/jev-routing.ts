@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const mode = await modeNow();
     if (mode !== "shadow" && mode !== "advisory") return;
-    if (!event.prompt.trim()) return;
+    if (typeof event.prompt !== "string" || !event.prompt.trim()) return;
     // "iya push aja" needs no new tool or skill: skip the request and its wait.
     if (isFollowUp(event.prompt.trim())) return;
     const config = jevConfig();
@@ -126,14 +126,12 @@ export default function (pi: ExtensionAPI) {
     // Persist only typed metadata. Prompts, descriptions, credentials, provider bodies never enter trace.
     if (result.status !== "ok") {
       recordTrace({ version: 1, mode, ...result });
-      pi.sendMessage({
-        customType: "kern-jev-status",
-        content:
-          result.reason === "input_limit"
-            ? "Jev tidak dijalankan: konteks kandidat terlalu besar; agent lanjut normal."
-            : `Jev selesai: ${result.reason}; agent lanjut normal.`,
-        display: true,
-      });
+      ctx.ui.notify(
+        result.reason === "input_limit"
+          ? "Jev tidak dijalankan: konteks kandidat terlalu besar; agent lanjut normal."
+          : `Jev selesai: ${result.reason}; agent lanjut normal.`,
+        "info",
+      );
       if (result.reason === "billing_exhausted") {
         billingDisabled = true;
         // App host handles the fixed marker and persists Off for this configuration generation.
@@ -177,11 +175,10 @@ export default function (pi: ExtensionAPI) {
     });
     // Only a pick is worth a line in the chat; "none" stays in the trace.
     if (!selected.length) return;
-    pi.sendMessage({
-      customType: "kern-jev-status",
-      content: `Jev: ${selected.map((item) => `${item.kind} ${item.name}`).join(", ")}.`,
-      display: true,
-    });
+    ctx.ui.notify(
+      `Jev: ${selected.map((item) => `${item.kind} ${item.name}`).join(", ")}.`,
+      "info",
+    );
     if (mode !== "advisory") return;
     // No confidence threshold is advertised as calibrated. These are suggestions, never enforcement.
     return {

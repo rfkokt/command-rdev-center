@@ -1265,6 +1265,24 @@ pub fn spawn_pi_rpc(
         };
         eprintln!("crc: spawn env {key}={status}");
     }
+    let task_verification = crate::settings::get_pi_settings("project".into(), Some(cwd.clone()))
+        .ok()
+        .and_then(|settings| {
+            settings
+                .get("kernTaskVerification")
+                .and_then(|v| v.as_bool())
+        })
+        .or_else(|| {
+            crate::settings::get_pi_settings("global".into(), None)
+                .ok()
+                .and_then(|settings| {
+                    settings
+                        .get("kernTaskVerification")
+                        .and_then(|v| v.as_bool())
+                })
+        })
+        .unwrap_or(false);
+    command.env("CRC_TASK_VERIFICATION", task_verification.to_string());
     command
         .args(&args)
         .current_dir(&cwd)
@@ -1344,6 +1362,7 @@ pub fn spawn_pi_rpc(
                 match ensure_pi_installed_with_repair(Some(&app), &configured_pi_path) {
                     Ok(new_pi) => {
                         command = Command::new(&new_pi);
+                        command.env("CRC_TASK_VERIFICATION", task_verification.to_string());
                         apply_user_token_env(&mut command);
                         crate::connections::apply_env(&mut command, crate::harness::PI);
                         if !global_chat {

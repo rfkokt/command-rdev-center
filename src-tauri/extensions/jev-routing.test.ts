@@ -114,14 +114,17 @@ describe("Jev project routing lifecycle", () => {
     ])
       expect(trace).not.toContain(secret);
     expect(h.pi.setActiveTools).not.toHaveBeenCalled();
-    expect(h.pi.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ customType: "kern-jev-status", display: true }),
+    expect(h.pi.sendMessage).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenCalledWith(
+      "Jev: tool read, skill auth.",
+      "info",
     );
   });
   it("advisory shares validated names, but never activates a tool or loads a skill", async () => {
     setup("advisory");
     const h = harness();
     const result = await h.run();
+    expect(h.pi.sendMessage).not.toHaveBeenCalled();
     expect(result.message.content).toContain('skill: "auth"');
     expect(result.message.content).toContain(
       "No permission or execution is implied",
@@ -198,7 +201,8 @@ describe("Jev project routing lifecycle", () => {
       expect(marker).toHaveBeenCalledExactlyOnceWith(
         "CRC_JEV_BILLING_EXHAUSTED",
       );
-      expect(h.notify).toHaveBeenCalledTimes(1);
+      expect(h.notify).toHaveBeenCalledTimes(2);
+      expect(h.pi.sendMessage).not.toHaveBeenCalled();
       expect(h.pi.appendEntry).toHaveBeenCalledWith(
         "kern-jev-routing",
         expect.objectContaining({ reason: "billing_exhausted" }),
@@ -220,6 +224,7 @@ describe("Jev project routing lifecycle", () => {
     await h.run();
     await h.run();
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(h.notify).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenCalledTimes(2);
+    expect(h.pi.sendMessage).not.toHaveBeenCalled();
   });
 });
