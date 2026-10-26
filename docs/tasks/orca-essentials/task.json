@@ -44,7 +44,8 @@
       "O5-07",
       "O5-08",
       "O5-09",
-      "O5-10"
+      "O5-10",
+      "O5-20"
     ],
     "principles": [
       "Port per fitur, bukan fork atau salin mentah: logika UI diadaptasi, logika backend ditulis ulang di Rust.",
@@ -891,6 +892,33 @@
           "renderer/src/components/pr-comments-resolution-prompt.ts (Orca)"
         ],
         "notes": "Implemented (Codex): pr_review.rs prepare_pr_review/complete_pr_review, PrReviewDialog (Review with…, agent/model, Fix & push default, PR comment toggle), reviewer chat in an isolated detached worktree at the PR head, complete_pr_review tool (pi + ACP) — host re-checks the PR head, commits explicit paths with fix(...), pushes HEAD to the original branch with the repo's gh account, writes notes, optional PR comment, badge. Review Claude 2026-10-26: fixed (1) dialog read list_harnesses as {name, installed} instead of {label, available}, so every agent option was blank and disabled and the Review button never enabled; (2) host checks were hard-coded to this repo (tsc/vitest/cargo/format) with no install step and no timeout, so a fresh review worktree could never pass and other projects always failed; now one command per line in the dialog, remembered per repository, defaults include pnpm install + prepare-browser-host, 20 min timeout per check with process-group kill; (3) base branch came from hard-coded main; now the PR's baseRefName; (4) task.json reformatting churn reverted. Not verified in the app: a real review run end to end (Claude via ACP), push with a second gh account, PR comment. complete_pr_review is offered only in review chats (CRC_PR_REVIEW for pi and Kern's MCP server)."
+      },
+      {
+        "id": "O5-20",
+        "phase": "O5",
+        "name": "Cookie authentication untuk API testing tools (AUTH_TOKEN)",
+        "status": "Review",
+        "priority": "P1",
+        "depends_on": [],
+        "scope": [
+          "api_authenticate mode cookie dengan cookieName (mis. AUTH_TOKEN); nilai lewat dialog privat, bukan chat/argumen.",
+          "Credential per origin dipakai otomatis oleh api_request dan api_contract_test; set/replace/clear seperti bearer.",
+          "Pilihan auth eksplisit bearer | cookie | none; tidak pernah mengirim bearer dan cookie bersamaan.",
+          "HTTP client internal mengirim header Cookie tanpa browser; redirect tidak diikuti sehingga credential tidak sampai ke origin lain.",
+          "Redaksi Cookie, Set-Cookie, Authorization dan nilai credential di hasil tool, update progres, dan error.",
+          "Baca security scheme OpenAPI type apiKey in cookie; konfigurasi manual tetap bisa."
+        ],
+        "acceptance_criteria": [
+          "Setelah AUTH_TOKEN diisi di dialog privat, request authenticated memakai cookie saja.",
+          "Replace dan clear bekerja.",
+          "Tidak ada nilai credential di output; redirect tidak membawa credential."
+        ],
+        "files": [
+          "src-tauri/extensions/api-test.ts",
+          "src-tauri/extensions/api-test-cookie.test.ts"
+        ],
+        "references": [],
+        "notes": "Implemented 2026-10-26 (Claude) atas permintaan agent. resolveScheme: auth eksplisit > scheme OpenAPI operasi (bearer/header/cookie) > credential terakhir yang di-set user untuk origin > bearer. Cookie: nama divalidasi (RFC token), nilai divalidasi (cookie-octet, menolak ; spasi kutip koma backslash), paste 'Cookie: AUTH_TOKEN=x' atau 'AUTH_TOKEN=x' dinormalisasi. Redirect: fetch redirect manual, hasil hanya menyebut origin+path target, redirectFollowed false. Redaksi di result() (konten + details): semua nilai credential yang diketahui (tersimpan atau baru diketik) dan pola header Authorization/Cookie/Set-Cookie/Bearer. Clear bisa semua mode atau satu mode. Belum diverifikasi terhadap backend asli."
       }
     ]
   }
