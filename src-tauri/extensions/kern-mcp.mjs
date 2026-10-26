@@ -322,6 +322,13 @@ export const TOOLS = [
 
 export const TOOL_NAMES = TOOLS.map((tool) => tool.name);
 
+/** complete_pr_review exists only in Kern PR review chats. */
+export function toolsFor(env = process.env) {
+  return TOOLS.filter(
+    (tool) => tool.name !== "complete_pr_review" || env.CRC_PR_REVIEW === "1",
+  );
+}
+
 /** Validate the few constraints the host relies on; full JSON Schema is the client's job. */
 function checkInput(tool, input) {
   for (const key of tool.inputSchema.required ?? []) {
@@ -364,14 +371,16 @@ export async function handle(message, env = process.env) {
       return reply({});
     case "tools/list":
       return reply({
-        tools: TOOLS.map(({ name, description, inputSchema }) => ({
+        tools: toolsFor(env).map(({ name, description, inputSchema }) => ({
           name,
           description,
           inputSchema,
         })),
       });
     case "tools/call": {
-      const tool = TOOLS.find((candidate) => candidate.name === params?.name);
+      const tool = toolsFor(env).find(
+        (candidate) => candidate.name === params?.name,
+      );
       if (!tool) return fail(-32602, `Unknown tool: ${params?.name}`);
       const input = params?.arguments ?? {};
       const invalid = checkInput(tool, input);

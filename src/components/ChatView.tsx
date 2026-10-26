@@ -2938,6 +2938,8 @@ export default function ChatView({
           setStartupStage("starting the agent", "STARTING AGENT");
           const [provider, ...modelParts] = modelRef.current.split("/");
           await invoke("spawn_pi_rpc", {
+            // Only review chats get the complete_pr_review tool.
+            prReview: Boolean(prReview),
             harness: harnessRef.current,
             sessionId,
             cwd: globalCwd,
@@ -2994,6 +2996,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: workspaceCwd,
@@ -3011,6 +3015,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: projectPath,
@@ -3059,6 +3065,8 @@ export default function ChatView({
             setStartupStage("starting the agent", "STARTING AGENT");
             const [provider, ...modelParts] = modelRef.current.split("/");
             await invoke("spawn_pi_rpc", {
+              // Only review chats get the complete_pr_review tool.
+              prReview: Boolean(prReview),
               harness: harnessRef.current,
               sessionId,
               cwd: wt.worktree_path,
@@ -3928,6 +3936,8 @@ export default function ChatView({
         }
         const [provider, ...modelParts] = modelRef.current.split("/");
         await invoke("spawn_pi_rpc", {
+          // Only review chats get the complete_pr_review tool.
+          prReview: Boolean(prReview),
           harness: harnessRef.current,
           sessionId,
           cwd,
