@@ -21,7 +21,8 @@ function repo() {
   execFileSync("git", ["commit", "-m", "initial"], { cwd });
   return cwd;
 }
-function harness(cwd: string, entries: any[] = []) {
+function harness(cwd: string, entries: any[] = [], enabled = true) {
+  vi.stubEnv("CRC_TASK_VERIFICATION", String(enabled));
   vi.stubEnv("CRC_PROJECT_CWD", cwd);
   vi.stubEnv("CRC_WORKSPACE_REPOSITORIES", "[]");
   const hooks = new Map<string, any>(),
@@ -66,6 +67,97 @@ afterEach(() => {
 });
 
 describe("task verification evidence", () => {
+  it("default-off coding prompts do not inject guidance or force continuation after edits", async () => {
+    const cwd = repo(),
+      h = harness(cwd, [], false);
+    expect(
+      await h.hooks.get("before_agent_start")({ prompt: "Fix version" }, h.ctx),
+    ).toBeUndefined();
+    writeFileSync(join(cwd, "source.ts"), "changed");
+    h.hooks.get("tool_result")({
+      toolName: "write",
+      input: { path: "source.ts" },
+      isError: false,
+    });
+    expect(await h.boundary()).toBeUndefined();
+    expect(h.pi.appendEntry).not.toHaveBeenCalled();
+  });
+  it("explicit verification and Pipeline opt in; follow-ups do not repeat guidance", async () => {
+    const h = harness(repo(), [], false);
+    expect(
+      (
+        await h.hooks.get("before_agent_start")(
+          { prompt: "Fix and verify" },
+          h.ctx,
+        )
+      ).message.customType,
+    ).toBe("kern-task-guidance");
+    expect(
+      await h.hooks.get("before_agent_start")({ prompt: "Continue" }, h.ctx),
+    ).toBeUndefined();
+    const pipeline = harness(repo(), [], false);
+    await pipeline.hooks.get("before_agent_start")(
+      { prompt: "Fix" },
+      pipeline.ctx,
+    );
+    pipeline.hooks.get("tool_result")({
+      toolName: "run_pipeline",
+      isError: false,
+    });
+    expect(
+      (
+        await pipeline.hooks.get("before_agent_start")(
+          { prompt: "Inspect pipeline failure" },
+          pipeline.ctx,
+        )
+      ).message.customType,
+    ).toBe("kern-task-guidance");
+  });
+  it("per-chat off survives restore and overrides Settings and explicit requests", async () => {
+    const h = harness(repo());
+    const command = h.pi.registerCommand.mock.calls.find(
+      ([name]) => name === "kern-verification",
+    )![1];
+    await command.handler("off", h.ctx);
+    const restored = harness(repo(), h.entries);
+    restored.hooks.get("session_start")({}, restored.ctx);
+    expect(
+      await restored.hooks.get("before_agent_start")(
+        { prompt: "verify changes" },
+        restored.ctx,
+      ),
+    ).toBeUndefined();
+    expect(await restored.boundary()).toBeUndefined();
+  });
+  it("malformed metadata does not prevent extension startup", () => {
+    vi.stubEnv("CRC_PROJECT_CWD", repo());
+    vi.stubEnv("CRC_WORKSPACE_REPOSITORIES", "invalid");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(() =>
+        verification({
+          on: vi.fn(),
+          registerTool: vi.fn(),
+          registerCommand: vi.fn(),
+        } as any),
+      ).not.toThrow();
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+  it("custom-message starts and negative requests never consume user input", async () => {
+    const h = harness(repo(), [], false);
+    expect(
+      await h.hooks.get("before_agent_start")({ messageType: "custom" }, h.ctx),
+    ).toBeUndefined();
+    expect(
+      await h.hooks.get("before_agent_start")(
+        { prompt: "Fix without verification" },
+        h.ctx,
+      ),
+    ).toBeUndefined();
+  });
   it("allows a user-waived failed Sonar check to settle with an honest limitation", async () => {
     const h = harness(repo());
     await h.hooks.get("before_agent_start")({ prompt: "Fix and push" }, h.ctx);
@@ -232,7 +324,8 @@ describe("task verification evidence", () => {
       { prompt: "Continue" },
       resumed.ctx,
     );
-    expect(result.message.content).toContain("Keep API");
+    expect(result).toBeUndefined();
+    expect(resumed.entries.at(-1).data.constraints).toContain("Keep API");
   });
   it("does not add a verification continuation to a read-only request or an abort", async () => {
     const h = harness(repo());

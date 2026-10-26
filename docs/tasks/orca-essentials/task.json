@@ -797,7 +797,7 @@
         "id": "O5-12",
         "phase": "O5",
         "name": "Kurangi request pembukuan Kern di pi (task-verification, Jev)",
-        "status": "To Do",
+        "status": "Review",
         "priority": "P1",
         "depends_on": [],
         "scope": [
@@ -819,7 +819,7 @@
         "references": [
           "scripts/token-audit.mjs"
         ],
-        "notes": "Baseline 2026-10-26 (pi, 7 hari): 1305 dari 3782 tool call adalah tool Kern (run_check 368, report_task 134, set_task_contract 99, format_changed_files 53, track_kanban_task 49; execute_terminal_command 498 termasuk kerja nyata global chat), 412 forced continuations, hidden messages: kern-jev-status 426, kern-task-guidance 214, kern-verification 125, kern-jev-routing 111."
+        "notes": "Review 2026-10-26: verifikasi default auto (permintaan eksplisit/Pipeline), toggle Settings untuk sesi pi baru dan /kern-verification on|off|auto per chat tersimpan; mode off tanpa snapshot/guidance/forced continuation. Guidance sekali per task, mode aktif mempertahankan evidence gate; status Jev hanya UI notify/trace, bukan pesan konteks. Metadata rusak tidak menggagalkan startup; tidak mengubah/menelan input. Checks lulus: tsc (PATH lokal; TypeScript global rusak), Vitest 526 pass/1 skip, cargo check, cargo test --lib 221 pass/1 ignored, format:check. Belum diverifikasi di app: toggle Settings/restart, slash command/resume, Pipeline native, notifikasi Jev dan pengiriman prompt saat error runtime; penurunan persentase token-audit perlu sesi baru setelah deploy (belum diukur). Baseline 2026-10-26 (pi, 7 hari): 1305 dari 3782 tool call adalah tool Kern (run_check 368, report_task 134, set_task_contract 99, format_changed_files 53, track_kanban_task 49; execute_terminal_command 498 termasuk kerja nyata global chat), 412 forced continuations, hidden messages: kern-jev-status 426, kern-task-guidance 214, kern-verification 125, kern-jev-routing 111."
       },
       {
         "id": "O5-18",
