@@ -1444,12 +1444,6 @@ body.is-resizing-panel * {
   > .chat-content:has(.office-roster.is-collapsed) {
   padding-left: 48px !important;
 }
-/* Hide the 3D left workbench dock while the floating chat overlay is open so it never peeks behind Crew */
-.app-shell .chat-view.is-office-full:not(.is-chat-hidden) .office-stage-dock {
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-14px);
-}
 /* Compact message spacing & smooth top scroll fade inside the floating chat window */
 .app-shell .chat-view.is-office-full > .chat-content [data-virtuoso-scroller] {
   -webkit-mask-image: linear-gradient(

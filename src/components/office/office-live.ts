@@ -184,7 +184,7 @@ export function createOfficeLive(
         ctx.font = "600 36px IBM Plex Sans, sans-serif";
         const lines: string[] = [];
         let line = "";
-        for (const word of (c.status === "idle" ? "Standing by at desk" : c.text).split(
+        for (const word of (c.status === "idle" ? "Standing by" : c.text).split(
           " ",
         )) {
           const next = line ? `${line} ${word}` : word;

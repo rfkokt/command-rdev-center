@@ -140,7 +140,6 @@ export default function BackgroundMotion({
           sceneRef.current = createOfficeScene(canvas, labels, {
             zoom: 0.56,
             focus: { x: 0, z: -1.0 },
-            liveStudio: true,
           });
           updateTheme();
           updateMotion();

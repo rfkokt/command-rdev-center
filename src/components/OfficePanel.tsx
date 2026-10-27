@@ -27,18 +27,17 @@ import "./office/office-scene.css";
 import "./office/office-panel.css";
 
 /*
- * Hallmark · genre: atmospheric · macrostructure: split-studio · theme: lumen · designed-as-app
- *
- * The office as a live spatial workbench of the agent crew: each member acts out
- * assigned tools, collaborates desk-to-desk with a brass floor tether, gathers in
- * the Lounge for team huddles, and reports telemetry in the 2x3 spatial pod matrix.
+ * The office as a live view of the agent run: each crew member acts out the
+ * tools assigned to it, sub-agents work in parallel at other desks, and the
+ * list below says who is doing what. Between turns the crew can be sent on
+ * small routines (huddle, pair sync, emotes). Rendering stops while hidden.
  */
 
 const STATUS_TEXT: Record<CrewStatus, string> = {
-  idle: "LIVE",
-  working: "ACTIVE",
-  done: "DONE",
-  error: "FAULT",
+  idle: "Idle",
+  working: "Working",
+  done: "Done",
+  error: "Error",
 };
 
 const AGENT_ROOM: Record<AgentId, string> = {
@@ -163,7 +162,7 @@ function CameraBar({
           aria-pressed={camera === mode}
           title={
             mode === "auto"
-              ? "Auto-run studio choreography (Huddle, Pair Sync, Espresso, Ops Audit) and direct the camera"
+              ? "Camera follows whoever is working; when idle the crew runs short studio routines"
               : "Show the whole floor"
           }
           onClick={() => onCamera(mode)}
@@ -194,27 +193,6 @@ function CameraBar({
         );
       })}
       <span className="office-camera-sep" aria-hidden="true" />
-      <button
-        type="button"
-        onClick={() => onGlide(-15, 11.6, 0.92)}
-        title="Focus camera on South-West Biophilic Amphitheater & Bonsai Garden"
-      >
-        Amphitheater
-      </button>
-      <button
-        type="button"
-        onClick={() => onGlide(0.6, 11.2, 0.95)}
-        title="Focus camera on Central Lounge & Espresso Bar"
-      >
-        Lounge
-      </button>
-      <button
-        type="button"
-        onClick={() => onGlide(15, 11.6, 0.92)}
-        title="Focus camera on South-East Koi Reflecting Pool & Innovation Pavilion"
-      >
-        Koi Pool
-      </button>
       <button
         type="button"
         onClick={() => onGlide(0, -1.2, 0.92)}
@@ -364,7 +342,6 @@ function StageHud({
 function OfficeStage({
   crew,
   selected,
-  inspectedMember,
   camera,
   visible,
   view,
@@ -374,12 +351,9 @@ function OfficeStage({
   onView,
   onHuddle,
   onPairSync,
-  onEmote,
-  onVisit,
 }: {
   crew: ReturnType<typeof buildCrew>;
   selected: AgentId | null;
-  inspectedMember: CrewMember;
   camera: CameraMode;
   visible: boolean;
   view: OfficeView;
@@ -389,14 +363,11 @@ function OfficeStage({
   onView: (view: OfficeView) => void;
   onHuddle: () => void;
   onPairSync: () => void;
-  onEmote: (id: AgentId, kind: "wave" | "cheer" | "coffee" | "server") => void;
-  onVisit: (from: AgentId, to: AgentId) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<OfficeLive | null>(null);
   const [lighting, setLighting] = useState<LightingMode>("auto");
-  const [dockOpen, setDockOpen] = useState(true);
   const lightingRef = useRef<LightingMode>(lighting);
   lightingRef.current = lighting;
   const latest = useRef({ crew, selected, camera, visible, onSelect });
@@ -680,16 +651,6 @@ function OfficeStage({
           >
             <button
               type="button"
-              className={`office-choreo-btn is-auto${camera === "auto" ? " is-on" : ""}`}
-              aria-pressed={camera === "auto"}
-              onClick={() => onCamera(camera === "auto" ? "overview" : "auto")}
-              title="Toggle Auto Director — automatically runs Huddle, Pair Sync, Espresso & Ops Audit and directs the camera"
-            >
-              <span className="office-auto-dot" aria-hidden="true" />
-              <span>{camera === "auto" ? "Auto: ON" : "Auto"}</span>
-            </button>
-            <button
-              type="button"
               className="office-choreo-btn is-primary"
               onClick={onHuddle}
               title="Gather crew in the Lounge for a live architecture huddle"
@@ -732,158 +693,10 @@ function OfficeStage({
               </svg>
               <span>Pair Sync</span>
             </button>
-            <button
-              type="button"
-              className="office-choreo-btn"
-              onClick={() => onEmote(inspectedMember.id, "coffee")}
-              title={`Send ${inspectedMember.name} to the Lounge espresso bar`}
-            >
-              <svg
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                aria-hidden="true"
-              >
-                <path d="M3 6h7.5v4.2a3.3 3.3 0 0 1-3.3 3.3H6.3A3.3 3.3 0 0 1 3 10.2V6Z" />
-                <path
-                  d="M10.5 7h1.2a1.8 1.8 0 0 1 0 3.6h-1.2"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <span>Espresso</span>
-            </button>
-            <button
-              type="button"
-              className="office-choreo-btn"
-              onClick={() => onEmote(inspectedMember.id, "server")}
-              title={`Send ${inspectedMember.name} to audit Ops server racks`}
-            >
-              <svg
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                aria-hidden="true"
-              >
-                <rect x="2.5" y="3" width="11" height="4" rx="1" />
-                <rect x="2.5" y="9" width="11" height="4" rx="1" />
-                <circle cx="5" cy="5" r="0.7" fill="currentColor" />
-                <circle cx="5" cy="11" r="0.7" fill="currentColor" />
-              </svg>
-              <span>Ops Audit</span>
-            </button>
           </div>
           {/* In the side panel the telemetry bar already carries the switch. */}
           {view !== "panel" && <ViewSwitch view={view} onView={onView} />}
         </div>
-      )}
-
-      {ready && view === "full" && (
-        <aside
-          className={`office-stage-dock${dockOpen ? "" : " is-collapsed"}`}
-          aria-label="Lumen Studio Workbench"
-        >
-          <div className="office-stage-dock-head">
-            <span className="office-telemetry-led" aria-hidden="true" />
-            <strong>KERN HQ // STUDIO</strong>
-            <span>06 AGENTS</span>
-            <button
-              type="button"
-              onClick={() => setDockOpen((v) => !v)}
-              title={dockOpen ? "Minimize studio dock" : "Expand studio dock"}
-              aria-expanded={dockOpen}
-            >
-              {dockOpen ? "−" : "+"}
-            </button>
-          </div>
-          {dockOpen && (
-            <>
-              <div className="office-stage-dock-grid">
-                {crew.members.map((member) => {
-                  const isActive = member.id === inspectedMember.id;
-                  return (
-                    <button
-                      key={member.id}
-                      type="button"
-                      className={`office-dock-pod is-${member.status}${isActive ? " is-selected" : ""}`}
-                      style={
-                        { "--member-color": member.color } as CSSProperties
-                      }
-                      onClick={() => onSelect(member.id)}
-                    >
-                      <span className="office-dock-pod-top">
-                        <i aria-hidden="true" />
-                        <b>{member.name}</b>
-                        <em>{AGENT_ROOM[member.id]}</em>
-                      </span>
-                      <small>{member.text || member.role}</small>
-                    </button>
-                  );
-                })}
-              </div>
-              <div
-                className="office-stage-dock-inspector"
-                style={
-                  { "--member-color": inspectedMember.color } as CSSProperties
-                }
-              >
-                <div className="office-dock-inspector-title">
-                  <i aria-hidden="true" />
-                  <strong>{inspectedMember.name}</strong>
-                  <span>{inspectedMember.role}</span>
-                  <em>{AGENT_ROOM[inspectedMember.id]}</em>
-                </div>
-                <div className="office-dock-inspector-actions">
-                  <button
-                    type="button"
-                    onClick={() => onEmote(inspectedMember.id, "wave")}
-                  >
-                    Wave
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEmote(inspectedMember.id, "cheer")}
-                  >
-                    Cheer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEmote(inspectedMember.id, "coffee")}
-                  >
-                    Coffee
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEmote(inspectedMember.id, "server")}
-                  >
-                    Racks
-                  </button>
-                </div>
-                <div className="office-dock-inspector-peers">
-                  <span>DISPATCH TO PEER //</span>
-                  <div>
-                    {crew.members
-                      .filter((p) => p.id !== inspectedMember.id)
-                      .map((peer) => (
-                        <button
-                          key={peer.id}
-                          type="button"
-                          style={
-                            { "--peer-color": peer.color } as CSSProperties
-                          }
-                          onClick={() => onVisit(inspectedMember.id, peer.id)}
-                        >
-                          <i aria-hidden="true" />
-                          {peer.name}
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
-        </aside>
       )}
 
       {ready && (
@@ -938,7 +751,7 @@ function MemberRow({
           <span className="office-member-room">{AGENT_ROOM[member.id]}</span>
         </span>
         <span className="office-member-text" title={member.text}>
-          {member.text || (totalCount ? "Standby at desk" : "Live in studio")}
+          {member.text || (totalCount ? "Waiting" : "No work yet")}
         </span>
         <span className="office-member-foot">
           <span className="office-member-status">
@@ -1092,10 +905,7 @@ function MemberDetail({
           ))}
       </div>
       {member.steps.length === 0 ? (
-        <p className="office-detail-empty">
-          STANDBY // Click any teammate above to dispatch {member.name} across
-          the floor.
-        </p>
+        <p className="office-detail-empty">Nothing assigned this turn.</p>
       ) : (
         <ol>
           {member.steps.map((step) => {
@@ -1291,42 +1101,14 @@ export default memo(function OfficePanel({
           <span className="office-telemetry-title">KERN HQ</span>
           <span className="office-telemetry-sub">// 06 AGENTS</span>
           <span className="office-telemetry-meta">
-            {running ? `${busy || 1} ACTIVE` : "STUDIO LIVE"}
+            {running ? `${busy || 1} WORKING` : "IDLE"}
           </span>
         </div>
         <div className="office-telemetry-controls">
-          <button
-            type="button"
-            className="office-huddle-btn office-telemetry-action"
-            onClick={handleHuddle}
-            title="Gather idle crew in the Lounge for a live architecture huddle"
-          >
-            <svg
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              aria-hidden="true"
-            >
-              <circle cx="8" cy="5" r="2" />
-              <circle cx="4" cy="10.5" r="1.8" />
-              <circle cx="12" cy="10.5" r="1.8" />
-              <path
-                d="M6.3 6.5 5 8.8M9.7 6.5 11 8.8M6 10.8h4"
-                strokeLinecap="round"
-              />
-            </svg>
-            Huddle
-          </button>
-          <button
-            type="button"
-            className="office-huddle-btn office-telemetry-action"
-            onClick={handlePairSync}
-            title="Dispatch two pairs of colleagues to collaborate desk-to-desk"
-          >
-            Pair Sync
-          </button>
-          <ViewSwitch view={view} onView={(next) => onViewChange?.(next)} />
+          {/* Away from the panel the away card below carries the switch. */}
+          {!outside && (
+            <ViewSwitch view={view} onView={(next) => onViewChange?.(next)} />
+          )}
         </div>
       </div>
 
@@ -1334,7 +1116,6 @@ export default memo(function OfficePanel({
         <OfficeStage
           crew={crew}
           selected={selected}
-          inspectedMember={activeMember}
           camera={camera}
           visible={visible}
           view={outside ? view : "panel"}
@@ -1344,8 +1125,6 @@ export default memo(function OfficePanel({
           onView={(next) => onViewChange?.(next)}
           onHuddle={handleHuddle}
           onPairSync={handlePairSync}
-          onEmote={handleEmote}
-          onVisit={handleVisit}
         />,
         stageHost,
       )}
@@ -1379,9 +1158,8 @@ export default memo(function OfficePanel({
                 : "Starting…"
             : tools.length
               ? "Turn finished"
-              : "Floor active · Peer sync online"}
+              : "Waiting for a prompt"}
         </span>
-        <span className="office-panel-summary-tag">2×3 POD MATRIX</span>
       </div>
       <ul className="office-members">
         {crew.members.map((member) => (

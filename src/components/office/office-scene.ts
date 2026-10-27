@@ -1124,9 +1124,6 @@ export function createOfficeScene(
       lead.home.z - Math.sin(f) * 1.06 + Math.cos(f) * -0.95,
     );
     scene.add(lamp);
-    const loungeLamp = new THREE.PointLight(C.amber, 14, 8, 2);
-    loungeLamp.position.set(tableX, 2.4, tableZ);
-    scene.add(loungeLamp);
     const wash = new THREE.PointLight(C.amber, 10, 7.5, 2);
     wash.position.set(wallCenter, 3.2, wallZ + 1.6);
     scene.add(wash);
@@ -1373,14 +1370,6 @@ export function createOfficeScene(
       reply: "Benchmarks look promising, Kern!",
     },
   ];
-  const DESK_THOUGHTS: Record<AgentId, readonly string[]> = {
-    kern: ["Coordinating sprint pipeline", "Reviewing task graph", "Routing studio telemetry"],
-    ada: ["Indexing architecture docs", "Cross-referencing specs", "Cataloguing API schemas"],
-    alan: ["Benchmarking model latency", "Prototyping heuristic search", "Validating tensor bounds"],
-    linus: ["Refactoring state reducer", "Polishing shader passes", "Wiring RPC handlers"],
-    bob: ["Running regression suite", "Fuzzing edge-case inputs", "Verifying snapshot diffs"],
-    grace: ["Auditing cluster metrics", "Balancing worker queues", "Checking p99 response time"],
-  };
   const isLiveStudio = Boolean(options.liveStudio);
   let peerChatIndex = 0;
   let nextPeerChatAt = isLiveStudio ? 0.4 : 11;
@@ -1967,31 +1956,6 @@ export function createOfficeScene(
         wave > 0.05
           ? GREETINGS[actor.member.id]
           : "";
-      // Rotating ambient studio micro-status for seated idle agents in liveStudio mode
-      // Only show on at most 1 seated agent at a time, and suppress if an active walker/visitor is nearby
-      const hasNearbyWalker = characters.some(
-        (other, j) =>
-          j !== index &&
-          routine.stages[j] !== "desk" &&
-          Math.hypot(
-            other.walker.position.x - walker.position.x,
-            other.walker.position.z - walker.position.z,
-          ) < 6.5,
-      );
-      const thoughtSlot = Math.floor(elapsed / 5.0);
-      const isThoughtActive =
-        isLiveStudio &&
-        !working &&
-        !reduced &&
-        atDesk &&
-        !hasNearbyWalker &&
-        thoughtSlot % TEAM.length === index;
-      const deskThought = isThoughtActive
-        ? DESK_THOUGHTS[actor.member.id][
-            Math.floor(thoughtSlot / TEAM.length) %
-              DESK_THOUGHTS[actor.member.id].length
-          ]
-        : "";
       const ambientText = errand
         ? stage === "returning"
           ? ""
@@ -2004,7 +1968,7 @@ export function createOfficeScene(
               : stage === "visiting"
                 ? visit.visiting
                 : "Back to my desk"
-            : selectGreetText || deskThought;
+            : selectGreetText;
       // What someone says on a visit wins over their status bubble.
       const isAmbientSpeech =
         Boolean(errand && stage !== "returning") ||
