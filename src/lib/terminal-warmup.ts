@@ -26,6 +26,22 @@ export const TERMINAL_FONT_FAMILY = [
 
 export const TERMINAL_FONT_SIZE = 13;
 
+/**
+ * Tauri event names allow only `[A-Za-z0-9-/:_]`, but chat ids may contain
+ * e.g. dots ("deployment-3.0"). Every other UTF-8 byte (and `:` itself)
+ * becomes `:HH`. Must match `event_id` in src-tauri/src/terminal.rs.
+ */
+export function terminalEventId(sessionKey: string): string {
+  let out = "";
+  for (const byte of new TextEncoder().encode(sessionKey)) {
+    const ch = String.fromCharCode(byte);
+    out += /[A-Za-z0-9\-/_]/.test(ch)
+      ? ch
+      : `:${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+  }
+  return out;
+}
+
 let warm: Promise<void> | null = null;
 
 async function loadFonts() {

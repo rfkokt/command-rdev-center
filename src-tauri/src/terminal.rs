@@ -34,6 +34,19 @@ fn incomplete_utf8_tail(bytes: &[u8]) -> usize {
     0
 }
 
+/// Tauri event names allow only `[A-Za-z0-9-/:_]`, but chat ids may contain
+/// e.g. dots ("deployment-3.0"). Every other byte (and `:` itself, so the
+/// encoding stays unambiguous) becomes `:HH`. Mirrored by `terminalEventId`.
+fn event_id(chat_id: &str) -> String {
+    chat_id
+        .bytes()
+        .map(|b| match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'/' | b'_' => (b as char).to_string(),
+            _ => format!(":{b:02X}"),
+        })
+        .collect()
+}
+
 /// macOS GUI apps start without a locale, so shells fall back to "C" and
 /// mangle non-ASCII output. Mirror Terminal.app's UTF-8 default.
 fn locale_fallback() -> Option<&'static str> {
@@ -71,7 +84,7 @@ fn snapshot_path(chat_id: &str) -> Result<PathBuf, String> {
     if chat_id.is_empty()
         || !chat_id
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
         return Err("invalid terminal session id".into());
     }
@@ -179,8 +192,8 @@ pub fn terminal_open(
         },
     );
 
-    let event = format!("terminal://data/{chat_id}");
-    let exit_event = format!("terminal://exit/{chat_id}");
+    let event = format!("terminal://data/{}", event_id(&chat_id));
+    let exit_event = format!("terminal://exit/{}", event_id(&chat_id));
     let dirty = Arc::new(AtomicBool::new(false));
     let finished = Arc::new(AtomicBool::new(false));
     {
@@ -321,7 +334,17 @@ pub fn terminal_close(chat_id: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{incomplete_utf8_tail, snapshot_path};
+    use super::{event_id, incomplete_utf8_tail, snapshot_path};
+
+    #[test]
+    fn event_ids_use_only_tauri_safe_characters() {
+        assert_eq!(event_id("chat-123__0"), "chat-123__0");
+        assert_eq!(
+            event_id("antifraud-deployment-3.0-1792655__0"),
+            "antifraud-deployment-3:2E0-1792655__0"
+        );
+        assert_eq!(event_id("a:b é"), "a:3Ab:20:C3:A9");
+    }
 
     #[test]
     fn holds_back_only_a_cut_off_utf8_sequence() {
@@ -339,6 +362,7 @@ mod tests {
     #[test]
     fn terminal_snapshot_ids_cannot_escape_the_snapshot_directory() {
         assert!(snapshot_path("chat-123__0").is_ok());
+        assert!(snapshot_path("deployment-3.0__0").is_ok());
         assert!(snapshot_path("../other").is_err());
         assert!(snapshot_path("chat/other").is_err());
     }

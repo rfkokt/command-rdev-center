@@ -6,6 +6,7 @@ import { Terminal, FitAddon, type ITheme } from "ghostty-web";
 import {
   TERMINAL_FONT_FAMILY,
   TERMINAL_FONT_SIZE,
+  terminalEventId,
   warmTerminal,
 } from "../lib/terminal-warmup";
 
@@ -77,12 +78,13 @@ function TerminalPane({
       if (host.clientWidth > 0 && host.clientHeight > 0) fit.fit();
 
       // register the output listener BEFORE spawning so the first shell prompt isn't lost
-      await listen<string>(`terminal://data/${sessionKey}`, (e) => {
+      const eventId = terminalEventId(sessionKey);
+      await listen<string>(`terminal://data/${eventId}`, (e) => {
         term.write(e.payload);
         for (const url of e.payload.match(/https?:\/\/[^\s<>"']+/g) || [])
           onUrl?.(url);
       }).then((u) => unlisten.push(u));
-      await listen(`terminal://exit/${sessionKey}`, () =>
+      await listen(`terminal://exit/${eventId}`, () =>
         term.write("\r\n[process exited]\r\n"),
       ).then((u) => unlisten.push(u));
       if (disposed) return;
