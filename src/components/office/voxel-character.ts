@@ -25,7 +25,10 @@ function getLoader() {
 function splitGeometryByPart(
   geo: THREE.BufferGeometry,
   matrix: THREE.Matrix4,
-): Record<"head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg", THREE.BufferGeometry> {
+): Record<
+  "head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg",
+  THREE.BufferGeometry
+> {
   const worldGeo = geo.clone().applyMatrix4(matrix);
   const nonIndexed = worldGeo.index ? worldGeo.toNonIndexed() : worldGeo;
   const pos = nonIndexed.getAttribute("position");
@@ -34,7 +37,12 @@ function splitGeometryByPart(
 
   const buckets: Record<
     "head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg",
-    { pos: number[]; norm: number[]; uv: number[]; pivot: [number, number, number] }
+    {
+      pos: number[];
+      norm: number[];
+      uv: number[];
+      pivot: [number, number, number];
+    }
   > = {
     head: { pos: [], norm: [], uv: [], pivot: [0, 0.74, 0] },
     torso: { pos: [], norm: [], uv: [], pivot: [0, 0, 0] },

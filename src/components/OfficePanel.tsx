@@ -9,6 +9,7 @@ import {
   type CSSProperties,
 } from "react";
 import { createPortal } from "react-dom";
+import { FOCUS_QUOTA_EVENT, takeQuotaFocus } from "../lib/quota";
 import type { ToolCall } from "../lib/rpc";
 import { STUDIO_COLORS } from "./office/office-layout";
 import type { AgentId, SceneCrew } from "./office/office-motion";
@@ -248,8 +249,18 @@ function StageHud({
         title="Orbit camera counter-clockwise (or Shift+drag)"
         aria-label="Rotate camera left"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-          <path d="M4.5 5.5H2v-2.5" strokeLinecap="round" strokeLinejoin="round" />
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden="true"
+        >
+          <path
+            d="M4.5 5.5H2v-2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
           <path d="M2.5 5.5a6 6 0 1 1 1.2 6.2" strokeLinecap="round" />
         </svg>
       </button>
@@ -259,8 +270,18 @@ function StageHud({
         title="Orbit camera clockwise (or Shift+drag)"
         aria-label="Rotate camera right"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
-          <path d="M11.5 5.5H14v-2.5" strokeLinecap="round" strokeLinejoin="round" />
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden="true"
+        >
+          <path
+            d="M11.5 5.5H14v-2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
           <path d="M13.5 5.5a6 6 0 1 0-1.2 6.2" strokeLinecap="round" />
         </svg>
       </button>
@@ -270,7 +291,13 @@ function StageHud({
         title="Zoom in"
         aria-label="Zoom in"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden="true"
+        >
           <path d="M8 3.5v9M3.5 8h9" strokeLinecap="round" />
         </svg>
       </button>
@@ -280,7 +307,13 @@ function StageHud({
         title="Zoom out"
         aria-label="Zoom out"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          aria-hidden="true"
+        >
           <path d="M3.5 8h9" strokeLinecap="round" />
         </svg>
       </button>
@@ -290,7 +323,13 @@ function StageHud({
         title="Reset camera angle & overview (or double-click canvas)"
         aria-label="Reset camera view"
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          aria-hidden="true"
+        >
           <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
           <circle cx="8" cy="8" r="1.8" fill="currentColor" />
         </svg>
@@ -303,9 +342,18 @@ function StageHud({
         title="Toggle studio lighting (Auto / Lumen Night / Warm Day)"
         aria-label={`Studio lighting: ${lightingLabel}`}
       >
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          aria-hidden="true"
+        >
           <circle cx="8" cy="8" r="4.2" />
-          <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8" strokeLinecap="round" />
+          <path
+            d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8"
+            strokeLinecap="round"
+          />
         </svg>
         <span>{lightingLabel}</span>
       </button>
@@ -479,14 +527,19 @@ function OfficeStage({
 
   const onCameraRef = useRef(onCamera);
   onCameraRef.current = onCamera;
+  // A focus request can arrive before the scene is ready (the HUD opens the
+  // panel and asks in the same tick), so it is kept pending until then.
   useEffect(() => {
+    if (!ready) return;
     const onFocusQuota = () => {
+      if (!takeQuotaFocus()) return;
       onCameraRef.current("free");
       sceneRef.current?.glideTo(0, -1.2, 0.92);
     };
-    window.addEventListener("crc:focus-3d-quota", onFocusQuota);
-    return () => window.removeEventListener("crc:focus-3d-quota", onFocusQuota);
-  }, []);
+    onFocusQuota();
+    window.addEventListener(FOCUS_QUOTA_EVENT, onFocusQuota);
+    return () => window.removeEventListener(FOCUS_QUOTA_EVENT, onFocusQuota);
+  }, [ready]);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !ready) return;
@@ -620,7 +673,11 @@ function OfficeStage({
             onZoom={(factor) => sceneRef.current?.zoomBy(factor)}
             onReset={handleResetView}
           />
-          <div className="office-stage-choreo" role="toolbar" aria-label="Studio choreography">
+          <div
+            className="office-stage-choreo"
+            role="toolbar"
+            aria-label="Studio choreography"
+          >
             <button
               type="button"
               className={`office-choreo-btn is-auto${camera === "auto" ? " is-on" : ""}`}
@@ -637,11 +694,20 @@ function OfficeStage({
               onClick={onHuddle}
               title="Gather crew in the Lounge for a live architecture huddle"
             >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
                 <circle cx="8" cy="4.5" r="2" />
                 <circle cx="4" cy="11" r="1.8" />
                 <circle cx="12" cy="11" r="1.8" />
-                <path d="M6.4 6 4.8 9M9.6 6 11.2 9M6 11h4" strokeLinecap="round" />
+                <path
+                  d="M6.4 6 4.8 9M9.6 6 11.2 9M6 11h4"
+                  strokeLinecap="round"
+                />
               </svg>
               <span>Huddle All</span>
             </button>
@@ -651,8 +717,18 @@ function OfficeStage({
               onClick={onPairSync}
               title="Dispatch two pairs of colleagues to collaborate desk-to-desk"
             >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                <path d="M3 5h10M10 2.5 13 5l-3 2.5M13 11H3M6 8.5 3 11l3 2.5" strokeLinecap="round" strokeLinejoin="round" />
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
+                <path
+                  d="M3 5h10M10 2.5 13 5l-3 2.5M13 11H3M6 8.5 3 11l3 2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
               <span>Pair Sync</span>
             </button>
@@ -662,9 +738,18 @@ function OfficeStage({
               onClick={() => onEmote(inspectedMember.id, "coffee")}
               title={`Send ${inspectedMember.name} to the Lounge espresso bar`}
             >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
                 <path d="M3 6h7.5v4.2a3.3 3.3 0 0 1-3.3 3.3H6.3A3.3 3.3 0 0 1 3 10.2V6Z" />
-                <path d="M10.5 7h1.2a1.8 1.8 0 0 1 0 3.6h-1.2" strokeLinecap="round" />
+                <path
+                  d="M10.5 7h1.2a1.8 1.8 0 0 1 0 3.6h-1.2"
+                  strokeLinecap="round"
+                />
               </svg>
               <span>Espresso</span>
             </button>
@@ -674,7 +759,13 @@ function OfficeStage({
               onClick={() => onEmote(inspectedMember.id, "server")}
               title={`Send ${inspectedMember.name} to audit Ops server racks`}
             >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
+              >
                 <rect x="2.5" y="3" width="11" height="4" rx="1" />
                 <rect x="2.5" y="9" width="11" height="4" rx="1" />
                 <circle cx="5" cy="5" r="0.7" fill="currentColor" />
@@ -683,7 +774,8 @@ function OfficeStage({
               <span>Ops Audit</span>
             </button>
           </div>
-          <ViewSwitch view={view} onView={onView} />
+          {/* In the side panel the telemetry bar already carries the switch. */}
+          {view !== "panel" && <ViewSwitch view={view} onView={onView} />}
         </div>
       )}
 
@@ -715,7 +807,9 @@ function OfficeStage({
                       key={member.id}
                       type="button"
                       className={`office-dock-pod is-${member.status}${isActive ? " is-selected" : ""}`}
-                      style={{ "--member-color": member.color } as CSSProperties}
+                      style={
+                        { "--member-color": member.color } as CSSProperties
+                      }
                       onClick={() => onSelect(member.id)}
                     >
                       <span className="office-dock-pod-top">
@@ -730,7 +824,9 @@ function OfficeStage({
               </div>
               <div
                 className="office-stage-dock-inspector"
-                style={{ "--member-color": inspectedMember.color } as CSSProperties}
+                style={
+                  { "--member-color": inspectedMember.color } as CSSProperties
+                }
               >
                 <div className="office-dock-inspector-title">
                   <i aria-hidden="true" />
@@ -739,16 +835,28 @@ function OfficeStage({
                   <em>{AGENT_ROOM[inspectedMember.id]}</em>
                 </div>
                 <div className="office-dock-inspector-actions">
-                  <button type="button" onClick={() => onEmote(inspectedMember.id, "wave")}>
+                  <button
+                    type="button"
+                    onClick={() => onEmote(inspectedMember.id, "wave")}
+                  >
                     Wave
                   </button>
-                  <button type="button" onClick={() => onEmote(inspectedMember.id, "cheer")}>
+                  <button
+                    type="button"
+                    onClick={() => onEmote(inspectedMember.id, "cheer")}
+                  >
                     Cheer
                   </button>
-                  <button type="button" onClick={() => onEmote(inspectedMember.id, "coffee")}>
+                  <button
+                    type="button"
+                    onClick={() => onEmote(inspectedMember.id, "coffee")}
+                  >
                     Coffee
                   </button>
-                  <button type="button" onClick={() => onEmote(inspectedMember.id, "server")}>
+                  <button
+                    type="button"
+                    onClick={() => onEmote(inspectedMember.id, "server")}
+                  >
                     Racks
                   </button>
                 </div>
@@ -761,7 +869,9 @@ function OfficeStage({
                         <button
                           key={peer.id}
                           type="button"
-                          style={{ "--peer-color": peer.color } as CSSProperties}
+                          style={
+                            { "--peer-color": peer.color } as CSSProperties
+                          }
                           onClick={() => onVisit(inspectedMember.id, peer.id)}
                         >
                           <i aria-hidden="true" />
@@ -876,16 +986,47 @@ function MemberDetail({
           </span>
         )}
       </header>
-      <div className="office-detail-actions" role="group" aria-label="Character actions">
-        <button type="button" onClick={() => onEmote("wave")} title="Wave hello">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <path d="M5.5 8.5V3.5a1 1 0 0 1 2 0v4M7.5 7.5V2.8a1 1 0 0 1 2 0v4.7M9.5 7.5V3.8a1 1 0 0 1 2 0v5.7a4 4 0 0 1-8 0V6.5a1 1 0 0 1 2 0v2" strokeLinecap="round" strokeLinejoin="round" />
+      <div
+        className="office-detail-actions"
+        role="group"
+        aria-label="Character actions"
+      >
+        <button
+          type="button"
+          onClick={() => onEmote("wave")}
+          title="Wave hello"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
+            <path
+              d="M5.5 8.5V3.5a1 1 0 0 1 2 0v4M7.5 7.5V2.8a1 1 0 0 1 2 0v4.7M9.5 7.5V3.8a1 1 0 0 1 2 0v5.7a4 4 0 0 1-8 0V6.5a1 1 0 0 1 2 0v2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
           Wave
         </button>
-        <button type="button" onClick={() => onEmote("cheer")} title="Celebrate milestone">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <path d="M8 2v3M8 11v3M2 8h3M11 8h3M4.2 4.2l2 2M9.8 9.8l2 2M11.8 4.2l-2 2M6.2 9.8l-2 2" strokeLinecap="round" />
+        <button
+          type="button"
+          onClick={() => onEmote("cheer")}
+          title="Celebrate milestone"
+        >
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
+            <path
+              d="M8 2v3M8 11v3M2 8h3M11 8h3M4.2 4.2l2 2M9.8 9.8l2 2M11.8 4.2l-2 2M6.2 9.8l-2 2"
+              strokeLinecap="round"
+            />
           </svg>
           Cheer
         </button>
@@ -894,9 +1035,18 @@ function MemberDetail({
           onClick={() => onEmote("coffee")}
           title="Walk to the Lounge for an espresso break"
         >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
             <path d="M3 6h7.5v4.2a3.3 3.3 0 0 1-3.3 3.3H6.3A3.3 3.3 0 0 1 3 10.2V6Z" />
-            <path d="M10.5 7h1.2a1.8 1.8 0 0 1 0 3.6h-1.2M5 2.5v1.8M8.5 2.5v1.8" strokeLinecap="round" />
+            <path
+              d="M10.5 7h1.2a1.8 1.8 0 0 1 0 3.6h-1.2M5 2.5v1.8M8.5 2.5v1.8"
+              strokeLinecap="round"
+            />
           </svg>
           Coffee
         </button>
@@ -905,7 +1055,13 @@ function MemberDetail({
           onClick={() => onEmote("server")}
           title="Walk to the Ops Room to audit server racks"
         >
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            aria-hidden="true"
+          >
             <rect x="2.5" y="2.8" width="11" height="4.2" rx="1" />
             <rect x="2.5" y="9" width="11" height="4.2" rx="1" />
             <circle cx="5" cy="4.9" r="0.7" fill="currentColor" />
@@ -914,7 +1070,11 @@ function MemberDetail({
           Racks
         </button>
       </div>
-      <div className="office-detail-peers" role="group" aria-label="Collaborate with teammate">
+      <div
+        className="office-detail-peers"
+        role="group"
+        aria-label="Collaborate with teammate"
+      >
         <span className="office-detail-peers-label">Sync //</span>
         {peers
           .filter((p) => p.id !== member.id)
@@ -933,7 +1093,8 @@ function MemberDetail({
       </div>
       {member.steps.length === 0 ? (
         <p className="office-detail-empty">
-          STANDBY // Click any teammate above to dispatch {member.name} across the floor.
+          STANDBY // Click any teammate above to dispatch {member.name} across
+          the floor.
         </p>
       ) : (
         <ol>
@@ -1049,7 +1210,7 @@ export default memo(function OfficePanel({
   roster?: HTMLElement | null;
   onViewChange?: (view: OfficeView) => void;
 }) {
-  const [camera, setCamera] = useState<CameraMode>("auto");
+  const [camera, setCamera] = useState<CameraMode>("overview");
   const [inspectedId, setInspectedId] = useState<AgentId>("kern");
   const sceneRef = useRef<OfficeScene | null>(null);
   // Following a member is the same as selecting them.
@@ -1140,11 +1301,20 @@ export default memo(function OfficePanel({
             onClick={handleHuddle}
             title="Gather idle crew in the Lounge for a live architecture huddle"
           >
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
               <circle cx="8" cy="5" r="2" />
               <circle cx="4" cy="10.5" r="1.8" />
               <circle cx="12" cy="10.5" r="1.8" />
-              <path d="M6.3 6.5 5 8.8M9.7 6.5 11 8.8M6 10.8h4" strokeLinecap="round" />
+              <path
+                d="M6.3 6.5 5 8.8M9.7 6.5 11 8.8M6 10.8h4"
+                strokeLinecap="round"
+              />
             </svg>
             Huddle
           </button>

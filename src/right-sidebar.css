@@ -1107,7 +1107,8 @@ body.is-resizing-panel * {
   flex-direction: column;
   width: 244px;
   max-height: min(320px, calc(100% - 110px));
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.14));
+  border: 1px solid
+    color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.14));
   border-radius: 10px;
   background: rgba(11, 16, 26, 0.82);
   backdrop-filter: blur(18px) saturate(145%);
@@ -1118,7 +1119,9 @@ body.is-resizing-panel * {
   color: var(--text-body);
   pointer-events: auto;
   overflow: hidden;
-  transition: width 140ms ease, border-radius 140ms ease;
+  transition:
+    width 140ms ease,
+    border-radius 140ms ease;
 }
 
 :root[data-theme="light"] .app-shell .kq-float {
@@ -1425,7 +1428,11 @@ body.is-resizing-panel * {
   padding: 0 0 0 196px !important;
   border: 1px solid var(--line-strong, var(--line));
   border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-solid, #0e131d) 95%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--surface-solid, #0e131d) 95%,
+    transparent
+  ) !important;
   backdrop-filter: blur(18px) saturate(1.15);
   box-shadow:
     0 22px 54px rgba(0, 0, 0, 0.5),

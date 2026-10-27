@@ -126,6 +126,7 @@ import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
 import { PinnedQuotaFloat } from "./QuotaPanel";
+import { requestQuotaFocus } from "../lib/quota";
 import type { OfficeView } from "./OfficePanel";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel, {
@@ -6247,7 +6248,7 @@ export default function ChatView({
             setRightSidebarOpen(true);
             setRightActivity("office");
           }
-          window.dispatchEvent(new CustomEvent("crc:focus-3d-quota"));
+          requestQuotaFocus();
         }}
       />
       {inAppHeader(

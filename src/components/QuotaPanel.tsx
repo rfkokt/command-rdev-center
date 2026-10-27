@@ -310,8 +310,8 @@ export default function QuotaPanel({
       </div>
       {pinnedAccounts.length === 0 && accounts.length > 0 && (
         <p className="kq-pin-hint">
-          <PinIcon size={12} /> Pin any account below to float it on screen &amp;
-          project onto the 3D Studio Quota Wall.
+          <PinIcon size={12} /> Pin any account below to float it on screen
+          &amp; show it on the 3D Studio Quota Wall.
         </p>
       )}
       {sections.map(({ key, title, accounts: groupAccounts }) => (
@@ -388,9 +388,7 @@ export function PinnedQuotaFloat({
 
   useEffect(() => {
     const unsubQuota = subscribeQuota(setSnapshot);
-    const unsubPins = subscribePinnedAccounts((ids) =>
-      setPinned(new Set(ids)),
-    );
+    const unsubPins = subscribePinnedAccounts((ids) => setPinned(new Set(ids)));
     const onFloatToggle = () => setEnabled(readFloatEnabled());
     window.addEventListener(FLOAT_ENABLED_EVENT, onFloatToggle);
     if (!quotaSnapshot()) {
@@ -410,12 +408,9 @@ export function PinnedQuotaFloat({
   if (!enabled || pinnedAccounts.length === 0) return null;
 
   function unpin(id: string) {
-    setPinned((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      writePinnedAccounts([...next]);
-      return next;
-    });
+    const next = [...pinned].filter((pinnedId) => pinnedId !== id);
+    setPinned(new Set(next));
+    writePinnedAccounts(next);
   }
 
   async function handleRefresh() {
@@ -631,4 +626,3 @@ export function PinnedQuotaFloat({
     </aside>
   );
 }
-

@@ -243,6 +243,22 @@ export function subscribePinnedAccounts(
   };
 }
 
+export const FOCUS_QUOTA_EVENT = "crc:focus-3d-quota";
+let quotaFocusPending = false;
+
+/** Ask the office camera to frame the 3D quota wall, now or once it loads. */
+export function requestQuotaFocus() {
+  quotaFocusPending = true;
+  window.dispatchEvent(new CustomEvent(FOCUS_QUOTA_EVENT));
+}
+
+/** True once per request; the office calls it when it can act on it. */
+export function takeQuotaFocus() {
+  const pending = quotaFocusPending;
+  quotaFocusPending = false;
+  return pending;
+}
+
 export function providerName(provider: string) {
   const names: Record<string, string> = {
     claude: "Claude",

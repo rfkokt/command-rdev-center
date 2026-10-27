@@ -417,7 +417,11 @@
 
 .office-dock-pod.is-selected {
   border-color: var(--member-color);
-  background: color-mix(in srgb, var(--member-color) 16%, oklch(19.5% 0.016 65));
+  background: color-mix(
+    in srgb,
+    var(--member-color) 16%,
+    oklch(19.5% 0.016 65)
+  );
 }
 
 .office-dock-pod-top {
@@ -530,7 +534,11 @@
 .office-dock-inspector-actions button:hover,
 .office-dock-inspector-peers button:hover {
   border-color: var(--member-color);
-  background: color-mix(in srgb, var(--member-color) 18%, oklch(15.5% 0.014 65));
+  background: color-mix(
+    in srgb,
+    var(--member-color) 18%,
+    oklch(15.5% 0.014 65)
+  );
 }
 
 .office-dock-inspector-peers {
@@ -864,7 +872,11 @@
 
 .office-member.is-selected {
   border-color: var(--member-color);
-  background: color-mix(in oklch, var(--member-color) 12%, var(--lumen-paper-2));
+  background: color-mix(
+    in oklch,
+    var(--member-color) 12%,
+    var(--lumen-paper-2)
+  );
 }
 
 .office-member:focus-visible {
@@ -1092,8 +1104,16 @@
 
 .office-detail-actions button:hover,
 .office-detail-peers button:hover {
-  border-color: color-mix(in oklch, var(--member-color, var(--lumen-brass)) 65%, var(--lumen-rule));
-  background: color-mix(in oklch, var(--member-color, var(--lumen-brass)) 14%, var(--lumen-paper));
+  border-color: color-mix(
+    in oklch,
+    var(--member-color, var(--lumen-brass)) 65%,
+    var(--lumen-rule)
+  );
+  background: color-mix(
+    in oklch,
+    var(--member-color, var(--lumen-brass)) 14%,
+    var(--lumen-paper)
+  );
 }
 
 .office-detail-actions button:focus-visible,

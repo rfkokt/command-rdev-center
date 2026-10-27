@@ -161,21 +161,31 @@ export default function BackgroundMotion({
           setReady(false);
         });
     }
+    // The backdrop sits under the whole app, so hover is sampled once a frame
+    // and clicks only count on empty space (not text, controls or a selection).
+    let hoverFrame = 0;
+    let hoverPoint: { x: number; y: number } | null = null;
     const onPointerMove = (event: MouseEvent) => {
-      if (!sceneRef.current?.hoverAt) return;
-      const rect = canvas.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-      sceneRef.current.hoverAt(
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-      );
+      hoverPoint = { x: event.clientX, y: event.clientY };
+      if (hoverFrame) return;
+      hoverFrame = requestAnimationFrame(() => {
+        hoverFrame = 0;
+        if (!hoverPoint || !sceneRef.current?.hoverAt) return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        sceneRef.current.hoverAt(
+          hoverPoint.x - rect.left,
+          hoverPoint.y - rect.top,
+        );
+      });
     };
     const onPointerClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null;
       if (
         !target ||
+        !window.getSelection()?.isCollapsed ||
         target.closest(
-          "button, a, input, textarea, select, [role='button'], .office-panel, .sidebar",
+          "button, a, input, textarea, select, label, [role='button'], [contenteditable], p, pre, code, li, td, h1, h2, h3, h4, h5, h6, .office-panel, .sidebar",
         )
       )
         return;
@@ -196,6 +206,7 @@ export default function BackgroundMotion({
     return () => {
       cancelled = true;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
+      if (hoverFrame) cancelAnimationFrame(hoverFrame);
       sceneRef.current?.dispose();
       sceneRef.current = null;
       observer.disconnect();
