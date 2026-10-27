@@ -22,27 +22,166 @@ function getLoader() {
   return gltfLoader;
 }
 
-function attachChibiModel(
-  parent: THREE.Group,
-  glbModel: THREE.Group,
-  voxelGroup?: THREE.Object3D,
-) {
-  if (voxelGroup) {
-    voxelGroup.visible = false;
-  }
-  const cloned = glbModel.clone(true);
-  cloned.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
-      obj.castShadow = true;
-      obj.receiveShadow = true;
-      if (Array.isArray(obj.material)) {
-        obj.material = obj.material.map((m) => m.clone());
-      } else if (obj.material) {
-        obj.material = obj.material.clone();
-      }
+function splitGeometryByPart(
+  geo: THREE.BufferGeometry,
+  matrix: THREE.Matrix4,
+): Record<
+  "head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg",
+  THREE.BufferGeometry
+> {
+  const worldGeo = geo.clone().applyMatrix4(matrix);
+  const nonIndexed = worldGeo.index ? worldGeo.toNonIndexed() : worldGeo;
+  const pos = nonIndexed.getAttribute("position");
+  const norm = nonIndexed.getAttribute("normal");
+  const uv = nonIndexed.getAttribute("uv");
+
+  const buckets: Record<
+    "head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg",
+    {
+      pos: number[];
+      norm: number[];
+      uv: number[];
+      pivot: [number, number, number];
     }
+  > = {
+    head: { pos: [], norm: [], uv: [], pivot: [0, 0.74, 0] },
+    torso: { pos: [], norm: [], uv: [], pivot: [0, 0, 0] },
+    lArm: { pos: [], norm: [], uv: [], pivot: [-0.26, 0.68, 0] },
+    rArm: { pos: [], norm: [], uv: [], pivot: [0.26, 0.68, 0] },
+    lLeg: { pos: [], norm: [], uv: [], pivot: [-0.12, 0.3, 0] },
+    rLeg: { pos: [], norm: [], uv: [], pivot: [0.12, 0.3, 0] },
+  };
+
+  for (let i = 0; i < pos.count; i += 3) {
+    const x0 = pos.getX(i),
+      y0 = pos.getY(i),
+      z0 = pos.getZ(i);
+    const x1 = pos.getX(i + 1),
+      y1 = pos.getY(i + 1),
+      z1 = pos.getZ(i + 1);
+    const x2 = pos.getX(i + 2),
+      y2 = pos.getY(i + 2),
+      z2 = pos.getZ(i + 2);
+    const cx = (x0 + x1 + x2) / 3;
+    const cy = (y0 + y1 + y2) / 3;
+    const key =
+      cy >= 0.74
+        ? "head"
+        : cy < 0.3
+          ? cx < 0
+            ? "lLeg"
+            : "rLeg"
+          : cx < -0.24
+            ? "lArm"
+            : cx > 0.24
+              ? "rArm"
+              : "torso";
+    const b = buckets[key];
+    const [px, py, pz] = b.pivot;
+    b.pos.push(
+      x0 - px,
+      y0 - py,
+      z0 - pz,
+      x1 - px,
+      y1 - py,
+      z1 - pz,
+      x2 - px,
+      y2 - py,
+      z2 - pz,
+    );
+    if (norm) {
+      b.norm.push(
+        norm.getX(i),
+        norm.getY(i),
+        norm.getZ(i),
+        norm.getX(i + 1),
+        norm.getY(i + 1),
+        norm.getZ(i + 1),
+        norm.getX(i + 2),
+        norm.getY(i + 2),
+        norm.getZ(i + 2),
+      );
+    }
+    if (uv) {
+      b.uv.push(
+        uv.getX(i),
+        uv.getY(i),
+        uv.getX(i + 1),
+        uv.getY(i + 1),
+        uv.getX(i + 2),
+        uv.getY(i + 2),
+      );
+    }
+  }
+
+  const out = {} as Record<
+    "head" | "torso" | "lArm" | "rArm" | "lLeg" | "rLeg",
+    THREE.BufferGeometry
+  >;
+  (Object.keys(buckets) as (keyof typeof buckets)[]).forEach((k) => {
+    const b = buckets[k];
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
+    if (b.norm.length)
+      g.setAttribute("normal", new THREE.Float32BufferAttribute(b.norm, 3));
+    if (b.uv.length)
+      g.setAttribute("uv", new THREE.Float32BufferAttribute(b.uv, 2));
+    out[k] = g;
   });
-  parent.add(cloned);
+  return out;
+}
+
+function attachChibiModel(
+  rig: {
+    body: THREE.Group;
+    voxelGroup: THREE.Object3D;
+    head: THREE.Group;
+    arms: THREE.Group[];
+    legs: THREE.Group[];
+  },
+  glbModel: THREE.Group,
+) {
+  rig.voxelGroup.visible = false;
+  // Hide fallback block meshes inside head/arms/legs so we can attach articulated GLB parts
+  rig.head.children.forEach((c) => (c.visible = false));
+  rig.arms.forEach((a) => a.children.forEach((c) => (c.visible = false)));
+  rig.legs.forEach((l) => l.children.forEach((c) => (c.visible = false)));
+
+  let sourceMesh: THREE.Mesh | null = null;
+  glbModel.updateMatrixWorld(true);
+  glbModel.traverse((obj) => {
+    if (obj instanceof THREE.Mesh && !sourceMesh) sourceMesh = obj;
+  });
+
+  if (!sourceMesh) return;
+  const mesh = sourceMesh as THREE.Mesh;
+  const mat = Array.isArray(mesh.material)
+    ? mesh.material.map((m) => m.clone())
+    : mesh.material.clone();
+  const matrix = new THREE.Matrix4().compose(
+    glbModel.position,
+    glbModel.quaternion,
+    glbModel.scale,
+  );
+  const parts = splitGeometryByPart(mesh.geometry, matrix);
+  const makePart = (geo: THREE.BufferGeometry) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    return m;
+  };
+
+  rig.body.add(makePart(parts.torso));
+  rig.head.position.set(0, 0.74, 0);
+  rig.head.add(makePart(parts.head));
+  rig.arms[0].position.set(-0.26, 0.68, 0);
+  rig.arms[0].add(makePart(parts.lArm));
+  rig.arms[1].position.set(0.26, 0.68, 0);
+  rig.arms[1].add(makePart(parts.rArm));
+  rig.legs[0].position.set(-0.12, 0.3, 0);
+  rig.legs[0].add(makePart(parts.lLeg));
+  rig.legs[1].position.set(0.12, 0.3, 0);
+  rig.legs[1].add(makePart(parts.rLeg));
 }
 
 /** GLTFLoader can resolve a model even when CSP blocked its embedded palette. */
@@ -235,11 +374,9 @@ export function createVoxelCharacter(id: AgentId, onLoaded?: () => void) {
   // Load chibi GLB model
   const chibiUrl = CHIBI_MODELS[id];
   const cached = glbCache.get(chibiUrl);
+  const rig = { body, voxelGroup, head, arms, legs };
   if (cached) {
-    attachChibiModel(body, cached, voxelGroup);
-    head.visible = false;
-    arms.forEach((a) => (a.visible = false));
-    legs.forEach((l) => (l.visible = false));
+    attachChibiModel(rig, cached);
     if (onLoaded) onLoaded();
   } else {
     const l = getLoader();
@@ -255,10 +392,7 @@ export function createVoxelCharacter(id: AgentId, onLoaded?: () => void) {
             return;
           }
           glbCache.set(chibiUrl, model);
-          attachChibiModel(body, model, voxelGroup);
-          head.visible = false;
-          arms.forEach((a) => (a.visible = false));
-          legs.forEach((l) => (l.visible = false));
+          attachChibiModel(rig, model);
           if (onLoaded) onLoaded();
         },
         undefined,

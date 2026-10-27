@@ -2,41 +2,56 @@ import type { Point } from "./office-motion";
 
 /** Palette and physical layout shared by the cutaway studio and its walkers. */
 export const STUDIO_COLORS = {
-  night: "#080e1d",
-  day: "#a5b2c1",
-  edge: "#24232d",
-  wall: "#38313b",
-  chair: "#303646",
-  trim: "#171b28",
-  metal: "#394654",
-  silver: "#a4b2ba",
-  wood: "#985b3d",
-  woodEdge: "#6f412f",
-  woodDark: "#3a2927",
-  woodFloor: ["#49332f", "#503832", "#583d34", "#47312e"],
-  tiles: ["#807570", "#91827a", "#776e6b"],
-  cyan: "#5bd9ef",
-  amber: "#ffae61",
-  lamp: "#ffd08a",
-  skyNight: "#12283e",
-  skyDay: "#759aaf",
-  city: ["#172d42", "#20384b", "#243d50"],
-  windowCool: "#6aa4b6",
-  windowWarm: "#cfb586",
-  glass: "#75b9d1",
-  glassEdge: "#7acee2",
-  serverBody: "#1d2b3c",
-  serverFloor: ["#4a6577", "#526e7f"],
-  serverGreen: "#7bbf9c",
-  books: ["#ba7257", "#759c9e", "#c6b18a", "#787592"],
-  art: "#283447",
-  screen: "#18363f",
-  code: "#9db7af",
-  key: "#5d6e80",
-  mousePad: "#29323e",
-  ambient: "#bac9e6",
-  moon: "#a5bedf",
-  daylight: "#ffe2bf",
+  night: "#0e1520",
+  day: "#cbd5dc",
+  edge: "#2d3540",
+  wall: "#525b66",
+  wallInner: "#66707c",
+  slat: "#b57c4e",
+  slatDark: "#8a5a36",
+  chair: "#2e3644",
+  chairCushion: "#49566b",
+  trim: "#232a34",
+  metal: "#4b5666",
+  brass: "#dfb060",
+  silver: "#c6c2ba",
+  wood: "#c68652",
+  woodLight: "#dfa06c",
+  woodEdge: "#945d34",
+  woodDark: "#5c3d28",
+  woodFloor: ["#8c6244", "#986c4c", "#a37554", "#7f583c"],
+  tiles: ["#b4aca2", "#c2bab0", "#a69e94"],
+  carpetBase: "#46435e",
+  carpetInner: "#565372",
+  rugWarm: "#664940",
+  rugBorder: "#e0a463",
+  foliage: "#4aa36c",
+  foliageLight: "#6dc48c",
+  terracotta: "#cb7654",
+  cyan: "#5ad8f0",
+  amber: "#ffbe64",
+  lamp: "#ffe8b3",
+  lampShade: "#f0c482",
+  skyNight: "#152840",
+  skyDay: "#8cb4cc",
+  city: ["#1d3248", "#263f58", "#304d68"],
+  windowCool: "#84c4da",
+  windowWarm: "#f8d494",
+  glass: "#94d4ea",
+  glassEdge: "#a8e4f8",
+  serverBody: "#202d3c",
+  serverFloor: ["#607282", "#6b7e8f"],
+  serverGreen: "#6ce09a",
+  books: ["#d47858", "#6fb0b2", "#e0c492", "#9286b0", "#6eb084"],
+  art: "#323e50",
+  artCanvas: "#e6d4b8",
+  screen: "#163440",
+  code: "#b0d8cc",
+  key: "#6d7c8e",
+  mousePad: "#2c3440",
+  ambient: "#e8dac8",
+  moon: "#c6daf4",
+  daylight: "#fff0d4",
 } as const;
 
 /*
@@ -106,7 +121,16 @@ export const WALLS: readonly Wall[] = ROOMS.filter((room) => room.walls).flatMap
  */
 export type Prop = {
   model?: string;
-  kind?: "shelf" | "rack" | "bench" | "counter" | "table" | "desk" | "rug";
+  kind?:
+    | "shelf"
+    | "rack"
+    | "bench"
+    | "counter"
+    | "table"
+    | "desk"
+    | "rug"
+    | "floorLamp"
+    | "planter";
   room: RoomId;
   at: [number, number];
   rot?: number;
@@ -115,16 +139,19 @@ export type Prop = {
   solid?: [number, number];
 };
 export const PROPS: readonly Prop[] = [
-  // Archive (Ada): shelves on the far walls, cabinets, a reading table
+  // Archive (Ada): warm bookshelves, reading nook, floor lamp, lush plants
   { kind: "shelf", room: "library", at: [-17.5, -14.5], size: [6, 2.4, 0.6], solid: [6, 0.6] },
   { kind: "shelf", room: "library", at: [-11.8, -14.5], size: [4.4, 2.4, 0.6], solid: [4.4, 0.6] },
   { model: "office_cabinet", room: "library", at: [-20.3, -11], rot: Math.PI / 2, solid: [0.8, 1.2] },
   { model: "office_cabinet", room: "library", at: [-20.3, -9.6], rot: Math.PI / 2, solid: [0.8, 1.2] },
   { model: "office_meeting_table", room: "library", at: [-12, -7], scale: 0.7, solid: [3.4, 0.9] },
   { model: "office_papers", room: "library", at: [-12.6, -7], scale: 0.9 },
+  { model: "office_plant", room: "library", at: [-11.2, -7], scale: 0.75 },
   { model: "office_plant_tall", room: "library", at: [-20.2, -14.2], solid: [0.8, 0.8] },
   { model: "office_couch", room: "library", at: [-18.6, -6.2], rot: 0, scale: 0.9, solid: [2.4, 1.3] },
-  // Research lab (Alan): whiteboards, corkboard, meeting table
+  { kind: "floorLamp", room: "library", at: [-20.2, -6.2] },
+  { kind: "planter", room: "library", at: [-9.8, -14.2], size: [1.4, 0.45, 0.45] },
+  // Research lab (Alan): whiteboards, corkboard, collaboration table, plants
   { model: "office_whiteboard", room: "lab", at: [-3.5, -14.3], scale: 1.3 },
   { model: "office_whiteboard", room: "lab", at: [3.5, -14.3], scale: 1.3 },
   { model: "office_corkboard", room: "lab", at: [-6.3, -10], rot: Math.PI / 2, scale: 1.4 },
@@ -132,17 +159,22 @@ export const PROPS: readonly Prop[] = [
   { model: "office_chair_white", room: "lab", at: [2.4, -6.3], rot: Math.PI, scale: 0.8 },
   { model: "office_chair_white", room: "lab", at: [4.8, -6.3], rot: Math.PI, scale: 0.8 },
   { model: "office_papers", room: "lab", at: [3.2, -7.2], scale: 0.9 },
+  { model: "office_plant", room: "lab", at: [4.3, -7.2], scale: 0.7 },
   { model: "office_plant_big", room: "lab", at: [-6.3, -14.3], solid: [0.8, 0.8] },
-  // Workshop (Linus): workbench desks, printer, corkboard
+  { model: "office_plant_tall", room: "lab", at: [6.2, -14.2] },
+  { kind: "floorLamp", room: "lab", at: [-6.2, -6.2] },
+  // Workshop (Linus): wooden workbench desks, printer, corkboard, greenery
   { kind: "desk", room: "workshop", at: [12, -13.6], solid: [2.7, 1.2] },
   { kind: "desk", room: "workshop", at: [18, -13.6], solid: [2.7, 1.2] },
   { model: "office_printer", room: "workshop", at: [20.3, -9.5], rot: -Math.PI / 2, solid: [1.2, 1.2] },
   { model: "office_trashcan", room: "workshop", at: [20.3, -8], scale: 0.9 },
   { model: "office_corkboard", room: "workshop", at: [15, -14.4], scale: 1.4 },
   { model: "office_plant_tall", room: "workshop", at: [9.8, -14.2], solid: [0.8, 0.8] },
+  { model: "office_plant_big", room: "workshop", at: [20.2, -14.2] },
   { model: "office_chair", room: "workshop", at: [12, -12.6], rot: Math.PI },
   { model: "office_chair", room: "workshop", at: [18, -12.6], rot: Math.PI },
-  // Ops room (Grace): server racks
+  { kind: "floorLamp", room: "workshop", at: [9.8, -6.2] },
+  // Ops room (Grace): warm-accented server racks + plants
   { kind: "rack", room: "ops", at: [-19.9, -2.4], rot: Math.PI / 2, solid: [0.9, 1.3] },
   { kind: "rack", room: "ops", at: [-19.9, -0.9], rot: Math.PI / 2, solid: [0.9, 1.3] },
   { kind: "rack", room: "ops", at: [-17.6, -2.4], solid: [1.3, 0.9] },
@@ -151,24 +183,31 @@ export const PROPS: readonly Prop[] = [
   { kind: "rack", room: "ops", at: [-11.4, -2.4], solid: [1.3, 0.9] },
   { model: "office_pc", room: "ops", at: [-11, 6.8], solid: [1.2, 1] },
   { model: "office_plant_big", room: "ops", at: [-20.3, 7.3] },
-  // Test lab (Bob): benches with devices, a rack, the test matrix
+  { kind: "planter", room: "ops", at: [-18.5, 7.3], size: [1.5, 0.45, 0.45] },
+  { kind: "floorLamp", room: "ops", at: [-9.8, -2.2] },
+  // Test lab (Bob): wooden device benches, rack, test matrix, plants
   { kind: "bench", room: "testlab", at: [12, -2.2], size: [3, 1, 0.9], solid: [3, 0.9] },
   { kind: "bench", room: "testlab", at: [18, -2.2], size: [3, 1, 0.9], solid: [3, 0.9] },
   { kind: "rack", room: "testlab", at: [20.2, 3.5], rot: -Math.PI / 2, solid: [0.9, 1.3] },
   { model: "office_whiteboard", room: "testlab", at: [15, -2.2], scale: 1.2 },
   { model: "office_printer", room: "testlab", at: [10, 7.2], solid: [1.2, 1.2] },
   { model: "office_plant_tall", room: "testlab", at: [20.3, 7.3], solid: [0.8, 0.8] },
-  // Command hub: rug and corner plants (desk + video wall are built with the posts)
-  { kind: "rug", room: "hub", at: [0, 3.2], size: [6, 0.02, 4.2] },
+  { kind: "floorLamp", room: "testlab", at: [9.8, -2.2] },
+  // Command hub: woven rug, corner planters, floor lamps (desk + video wall are built with the posts)
+  { kind: "rug", room: "hub", at: [0, 3.2], size: [6.4, 0.02, 4.4] },
   { model: "office_plant_tall", room: "hub", at: [-6.4, -2.4], solid: [0.8, 0.8] },
   { model: "office_plant_tall", room: "hub", at: [6.4, -2.4], solid: [0.8, 0.8] },
-  // Lounge: sofa corner, coffee bar, break table
+  { kind: "planter", room: "hub", at: [-6.2, 5.2], size: [1.2, 0.45, 0.45] },
+  { kind: "planter", room: "hub", at: [6.2, 5.2], size: [1.2, 0.45, 0.45] },
+  // Lounge: cozy sofa corner, espresso bar, break table, warm lamps & plants
+  { kind: "rug", room: "lounge", at: [-4.6, 12.2], size: [4.2, 0.02, 3.2] },
   { model: "office_couch", room: "lounge", at: [-4.6, 13.2], rot: Math.PI, solid: [2.7, 1.4] },
   { model: "office_coffee_table", room: "lounge", at: [-4.6, 11.6], scale: 0.8, solid: [2.1, 1] },
   { kind: "counter", room: "lounge", at: [4.8, 13.4], size: [4, 1, 0.9], solid: [4, 0.9] },
   { model: "office_coffee_machine", room: "lounge", at: [5.6, 13.4], rot: Math.PI, scale: 0.9 },
   { model: "office_plant_big", room: "lounge", at: [6.5, 9] },
   { model: "office_plant_big", room: "lounge", at: [-6.5, 9] },
+  { kind: "floorLamp", room: "lounge", at: [-6.4, 13.2] },
 ];
 
 /** Live video wall along the north edge of the command hub. */

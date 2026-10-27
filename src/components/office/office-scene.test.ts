@@ -95,9 +95,9 @@ function advance(seconds: number) {
   }
   vi.advanceTimersByTime(seconds * 1000);
 }
-// Only Kern sits (lead desk); helpers stand at their consoles.
-const restY = (i: number) => (TEAM[i].post === "lead" ? -0.24 : 0);
-const restArm = (i: number) => (TEAM[i].post === "lead" ? -0.8 : 0);
+// All crew members sit in ergonomic chairs at their wooden workstations.
+const restY = (_i: number) => -0.24;
+const restArm = (_i: number) => -0.8;
 function expectAtDesks() {
   roots.forEach((root, i) => {
     expect(root.position.toArray()).toEqual([
@@ -381,4 +381,37 @@ it("sends tasks down the tubes, walks Kern to a failure and lets the camera foll
   expect(back.right - back.left).toBeGreaterThan(followWidth * 3);
   live.dispose();
   expect(scene.getObjectByName("office-live")).toBeUndefined();
+});
+
+it("orbits the camera, resets the view, and picks/hovers characters in 3D", () => {
+  const camera0 = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  const startX = camera0.position.x;
+  const startZ = camera0.position.z;
+
+  office.rotateBy(Math.PI / 2);
+  advance(0.1);
+  const rotated = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  expect(rotated.position.x).not.toBeCloseTo(startX, 1);
+
+  office.resetView();
+  advance(4);
+  const reset = renderer.render.mock.lastCall![1] as THREE.OrthographicCamera;
+  expect(reset.position.x).toBeCloseTo(startX, 1);
+  expect(reset.position.z).toBeCloseTo(startZ, 1);
+
+  // Project Kern's world position to screen pixels and verify hoverAt / pickAt.
+  const kernIndex = TEAM.findIndex((m) => m.id === "kern");
+  const kernPos = new THREE.Vector3(
+    TEAM[kernIndex].home.x,
+    1.1,
+    TEAM[kernIndex].home.z,
+  ).project(reset);
+  const px = (kernPos.x * 0.5 + 0.5) * viewport.width;
+  const py = (-kernPos.y * 0.5 + 0.5) * viewport.height;
+  expect(office.hoverAt(px, py)).toBe("kern");
+  const kernLabel = labels.children[kernIndex] as HTMLElement;
+  expect(kernLabel.dataset.hovered).toBe("true");
+  expect(office.pickAt(px, py)).toBe("kern");
+  expect(office.hoverAt(-999, -999)).toBeNull();
+  expect(kernLabel.dataset.hovered).toBe("false");
 });

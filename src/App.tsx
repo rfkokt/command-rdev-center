@@ -742,7 +742,10 @@ export default function App() {
           aria-valuenow={sidebarWidth}
           tabIndex={0}
           onPointerDown={(e) => {
+            if (e.button !== 0) return;
             e.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            document.body.classList.add("is-resizing-panel");
             sidebarDragRef.current = {
               startX: e.clientX,
               startWidth: sidebarWidth,
@@ -751,6 +754,7 @@ export default function App() {
           }}
           onPointerMove={(e) => {
             if (!sidebarDragRef.current) return;
+            e.preventDefault();
             const { startX, startWidth } = sidebarDragRef.current;
             setSidebarWidth(
               Math.max(
@@ -761,11 +765,29 @@ export default function App() {
           }}
           onPointerUp={(e) => {
             sidebarDragRef.current = null;
-            e.currentTarget.releasePointerCapture(e.pointerId);
+            document.body.classList.remove("is-resizing-panel");
+            try {
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+            } catch {
+              /* ignore */
+            }
           }}
           onPointerCancel={(e) => {
             sidebarDragRef.current = null;
-            e.currentTarget.releasePointerCapture(e.pointerId);
+            document.body.classList.remove("is-resizing-panel");
+            try {
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+                e.currentTarget.releasePointerCapture(e.pointerId);
+              }
+            } catch {
+              /* ignore */
+            }
+          }}
+          onLostPointerCapture={() => {
+            sidebarDragRef.current = null;
+            document.body.classList.remove("is-resizing-panel");
           }}
           onKeyDown={(e) => {
             if (e.key === "ArrowLeft")
