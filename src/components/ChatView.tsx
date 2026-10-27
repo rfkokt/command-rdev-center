@@ -125,6 +125,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import ModelPickerDialog from "./ModelPickerDialog";
 import ChatComposer from "./ChatComposer";
 import ChatRightSidebar, { type RightActivity } from "./ChatRightSidebar";
+import { PinnedQuotaFloat } from "./QuotaPanel";
 import type { OfficeView } from "./OfficePanel";
 import ExpandedDiffPanel from "./ExpandedDiffPanel";
 import SessionTreePanel, {
@@ -6235,6 +6236,20 @@ export default function ChatView({
           />
         </div>
       )}
+      <PinnedQuotaFloat
+        rightOffset={rightSidebarOpen ? rightPanelWidth + 50 : 50}
+        onOpenUsage={() => {
+          setRightSidebarOpen(true);
+          setRightActivity("usage");
+        }}
+        onFocus3DQuota={() => {
+          if (officeView === "panel") {
+            setRightSidebarOpen(true);
+            setRightActivity("office");
+          }
+          window.dispatchEvent(new CustomEvent("crc:focus-3d-quota"));
+        }}
+      />
       {inAppHeader(
         <div
           className={`chat-header ${

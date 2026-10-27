@@ -108,6 +108,16 @@
   z-index: 2;
   width: 6px;
   cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+body.is-resizing-panel,
+body.is-resizing-panel * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: col-resize !important;
 }
 
 .app-shell .krs-resize:hover,
@@ -817,6 +827,32 @@
   font-size: var(--fs-caption);
 }
 
+.app-shell .kq-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.app-shell .kq-toolbar button.is-on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface-card));
+  color: var(--accent-ink, var(--text-strong));
+}
+
+.app-shell .kq-pin-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-card) 75%, transparent);
+  color: var(--text-quiet);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .app-shell .kq-toolbar button,
 .app-shell .kq-reset {
   padding: 3px 8px;
@@ -1061,6 +1097,280 @@
   cursor: wait;
 }
 
+/* Floating Pinned Usage HUD — non-intrusive top-right card/pill */
+.app-shell .kq-float {
+  position: absolute;
+  top: 46px;
+  right: calc(var(--office-rail, 38px) + 12px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: 244px;
+  max-height: min(320px, calc(100% - 110px));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, rgba(255, 255, 255, 0.14));
+  border-radius: 10px;
+  background: rgba(11, 16, 26, 0.82);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    0 12px 32px rgba(2, 6, 16, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--text-body);
+  pointer-events: auto;
+  overflow: hidden;
+  transition: width 140ms ease, border-radius 140ms ease;
+}
+
+:root[data-theme="light"] .app-shell .kq-float {
+  background: rgba(250, 251, 254, 0.88);
+  border-color: color-mix(in srgb, var(--accent) 34%, rgba(15, 23, 42, 0.14));
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.14);
+}
+
+.app-shell .kq-float.is-collapsed {
+  width: auto;
+  max-width: 340px;
+  border-radius: 999px;
+}
+
+.app-shell .kq-float-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 7px 4px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.app-shell .kq-float.is-collapsed .kq-float-head {
+  border-bottom: 0;
+  padding: 3px 6px 3px 8px;
+}
+
+.app-shell .kq-float-head:active {
+  cursor: grabbing;
+}
+
+.app-shell .kq-float-pin-badge {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-ink, #38bdf8);
+  flex: none;
+}
+
+.app-shell .kq-float-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text-strong);
+}
+
+.app-shell .kq-float.is-collapsed .kq-float-title {
+  flex: none;
+}
+
+.app-shell .kq-float-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.app-shell .kq-float-pill {
+  --kq-quota-color: var(--online-green);
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--kq-quota-color);
+  font: 600 10px/1.3 var(--font-mono);
+  white-space: nowrap;
+}
+
+.app-shell .kq-float-pill.is-high {
+  --kq-quota-color: var(--status-amber);
+}
+
+.app-shell .kq-float-pill.is-critical {
+  --kq-quota-color: var(--status-red);
+}
+
+.app-shell .kq-float-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.app-shell .kq-float-actions button {
+  height: 19px;
+  min-width: 19px;
+  padding: 0 5px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.08);
+  color: var(--text-quiet);
+  font: 600 10px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.app-shell .kq-float-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.app-shell .kq-float-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+  overflow-y: auto;
+}
+
+.app-shell .kq-float-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+:root[data-theme="light"] .app-shell .kq-float-item {
+  background: rgba(241, 245, 249, 0.72);
+}
+
+.app-shell .kq-float-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.app-shell .kq-float-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(56, 189, 248, 0.14);
+  border: 1px solid rgba(56, 189, 248, 0.32);
+  color: var(--text-strong);
+  font-size: 10px;
+  font-weight: 700;
+  flex: none;
+}
+
+.app-shell .kq-float-name {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.app-shell .kq-float-name strong {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.app-shell .kq-float-name small {
+  font-size: 10px;
+  color: var(--text-quiet);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .kq-float-unpin {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent-ink, #38bdf8);
+  cursor: pointer;
+  flex: none;
+}
+
+.app-shell .kq-float-unpin:hover {
+  background: rgba(248, 113, 113, 0.16);
+  color: var(--status-red);
+}
+
+.app-shell .kq-float-win {
+  --kq-quota-color: var(--online-green);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-shell .kq-float-win.is-high {
+  --kq-quota-color: var(--status-amber);
+}
+
+.app-shell .kq-float-win.is-critical {
+  --kq-quota-color: var(--status-red);
+}
+
+.app-shell .kq-float-win-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.app-shell .kq-float-win-label {
+  position: relative;
+  padding-left: 9px;
+  color: var(--text-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-shell .kq-float-win-label i {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--kq-quota-color);
+  transform: translateY(-50%);
+}
+
+.app-shell .kq-float-win-pct {
+  color: var(--kq-quota-color);
+  font: 600 10px/1.2 var(--font-mono);
+  white-space: nowrap;
+}
+
+.app-shell .kq-float-win-pct small {
+  color: var(--text-quiet);
+  font-weight: 400;
+}
+
 .app-shell .kq-group {
   display: flex;
   flex-direction: column;
@@ -1107,22 +1417,71 @@
 .app-shell .chat-view.is-office-full > .chat-content {
   position: absolute !important;
   right: calc(var(--office-rail, 38px) + 12px);
-  bottom: 50px;
+  bottom: 48px;
   z-index: 5;
   flex: none !important;
-  width: min(780px, calc(100% - var(--office-rail, 38px) - 24px)) !important;
-  height: min(580px, calc(100% - 110px)) !important;
-  padding: 0 0 0 208px !important;
+  width: min(760px, calc(100% - var(--office-rail, 38px) - 24px)) !important;
+  height: min(560px, calc(100% - 104px)) !important;
+  padding: 0 0 0 196px !important;
   border: 1px solid var(--line-strong, var(--line));
-  border-radius: 12px;
-  background: var(--surface-solid, #0e131d) !important;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-solid, #0e131d) 95%, transparent) !important;
+  backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow:
+    0 22px 54px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
 .app-shell
   .chat-view.is-office-full
   > .chat-content:has(.office-roster.is-collapsed) {
   padding-left: 48px !important;
+}
+/* Hide the 3D left workbench dock while the floating chat overlay is open so it never peeks behind Crew */
+.app-shell .chat-view.is-office-full:not(.is-chat-hidden) .office-stage-dock {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-14px);
+}
+/* Compact message spacing & smooth top scroll fade inside the floating chat window */
+.app-shell .chat-view.is-office-full > .chat-content [data-virtuoso-scroller] {
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 16px,
+    #000 calc(100% - 8px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    180deg,
+    transparent 0,
+    #000 16px,
+    #000 calc(100% - 8px),
+    transparent 100%
+  );
+}
+.app-shell
+  .chat-view.is-office-full
+  > .chat-content
+  [data-testid="virtuoso-item-list"]
+  > div
+  > div {
+  padding: 6px 14px 6px !important;
+}
+.app-shell .chat-view.is-office-full > .chat-content .chat-bubble-assistant,
+.app-shell .chat-view.is-office-full > .chat-content .chat-bubble-user {
+  margin-bottom: 6px !important;
+  padding: 14px 18px !important;
+}
+.app-shell .chat-view.is-office-full > .chat-content .chat-actions {
+  margin-top: 10px !important;
+  padding-top: 8px !important;
+}
+.app-shell .chat-view.is-office-full > .chat-content .chat-composer-dock {
+  padding: 8px 14px 12px !important;
+  border-top: 1px solid var(--line) !important;
+  background: var(--surface-solid, #0e131d) !important;
+  backdrop-filter: none !important;
 }
 .app-shell .chat-view.is-chat-hidden > .chat-content,
 .app-shell .chat-view.is-office-full > .chat-composer-help,
@@ -1134,8 +1493,9 @@
   top: 0;
   bottom: 0;
   left: 0;
-  width: 208px;
+  width: 196px;
   border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface, #111827) 65%, transparent);
 }
 .chat-content:has(.office-roster.is-collapsed) > .chat-office-roster {
   width: 48px;

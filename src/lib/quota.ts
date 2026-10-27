@@ -192,3 +192,64 @@ export function formatReset(resetsAt: number | null, now = Date.now()) {
     minute: "2-digit",
   })}`;
 }
+
+export const PINNED_ACCOUNTS_KEY = "crc:quota-pinned:v1";
+export const PINNED_ACCOUNTS_EVENT = "crc:quota-pinned-changed";
+
+export function readPinnedAccounts(): string[] {
+  try {
+    const saved: unknown = JSON.parse(
+      localStorage.getItem(PINNED_ACCOUNTS_KEY) ?? "[]",
+    );
+    return Array.isArray(saved)
+      ? saved.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writePinnedAccounts(ids: string[]): boolean {
+  let saved = true;
+  try {
+    localStorage.setItem(PINNED_ACCOUNTS_KEY, JSON.stringify(ids));
+  } catch {
+    saved = false;
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent(PINNED_ACCOUNTS_EVENT, { detail: ids }),
+    );
+  }
+  return saved;
+}
+
+export function subscribePinnedAccounts(
+  listener: (ids: string[]) => void,
+): () => void {
+  if (typeof window === "undefined") return () => {};
+  const syncPins = (event: Event) => {
+    if (event instanceof CustomEvent) listener(event.detail as string[]);
+  };
+  const syncStorage = (event: StorageEvent) => {
+    if (event.key === PINNED_ACCOUNTS_KEY || event.key === null)
+      listener(readPinnedAccounts());
+  };
+  window.addEventListener(PINNED_ACCOUNTS_EVENT, syncPins);
+  window.addEventListener("storage", syncStorage);
+  return () => {
+    window.removeEventListener(PINNED_ACCOUNTS_EVENT, syncPins);
+    window.removeEventListener("storage", syncStorage);
+  };
+}
+
+export function providerName(provider: string) {
+  const names: Record<string, string> = {
+    claude: "Claude",
+    codex: "OpenAI Codex",
+    antigravity: "Antigravity",
+    glm: "GLM",
+    jev: "Jev",
+  };
+  return names[provider] ?? provider;
+}

@@ -2,6 +2,15 @@ import * as THREE from "three";
 import { ROOMS, type RoomId } from "./office-layout";
 import { TEAM, type AgentId } from "./office-motion";
 import type { OfficeScene } from "./office-scene";
+import {
+  formatReset,
+  providerName,
+  quotaSnapshot,
+  readPinnedAccounts,
+  subscribePinnedAccounts,
+  subscribeQuota,
+  type QuotaSnapshot,
+} from "../../lib/quota";
 
 /*
  * The live layer of Kern HQ, on top of the office scene:
@@ -84,7 +93,8 @@ export function createOfficeLive(
   office: OfficeScene,
   options: { reducedMotion?: boolean } = {},
 ): OfficeLive {
-  const { scene, homeOf, positionOf, onFrame, wallScreens } = office.stage();
+  const { scene, homeOf, positionOf, onFrame, wallScreens, quotaScreens } =
+    office.stage();
   let reducedMotion = Boolean(options.reducedMotion);
   const reduced = () => reducedMotion;
   const layer = new THREE.Group();
@@ -133,19 +143,26 @@ export function createOfficeLive(
         const W = 512,
           H = c2d.height;
         ctx.clearRect(0, 0, W, H);
-        ctx.fillStyle = "#0a1219";
+        ctx.fillStyle = "#11161d";
         roundRect(ctx, 0, 0, W, H, 18);
         ctx.fill();
         ctx.fillStyle = col;
-        ctx.globalAlpha = c.status === "idle" ? 0.35 : 1;
-        roundRect(ctx, 0, 0, W, 84, 18);
+        ctx.globalAlpha = c.status === "idle" ? 0.35 : 0.94;
+        roundRect(ctx, 0, 0, W, 88, 18);
         ctx.fill();
-        ctx.fillRect(0, 60, W, 24);
+        ctx.fillRect(0, 64, W, 24);
         ctx.globalAlpha = 1;
         ctx.fillStyle = "#0b0e14";
-        ctx.font = "700 46px Instrument Sans, IBM Plex Sans, sans-serif";
-        ctx.fillText(m.name.toUpperCase(), 24, 60);
+        ctx.font = "700 44px Instrument Sans, IBM Plex Sans, sans-serif";
+        ctx.fillText(m.name.toUpperCase(), 24, 56);
+        ctx.font = "600 18px IBM Plex Sans, sans-serif";
+        ctx.fillText(
+          (ROOMS.find((r) => r.id === ROOM_OF[m.id])?.name ?? ROOM_OF[m.id]).toUpperCase(),
+          26,
+          78,
+        );
         ctx.textAlign = "right";
+        ctx.font = "700 42px Instrument Sans, IBM Plex Sans, sans-serif";
         ctx.fillText(
           c.status === "working"
             ? "▶"
@@ -155,19 +172,19 @@ export function createOfficeLive(
                 ? "✕"
                 : "·",
           W - 24,
-          60,
+          62,
         );
         ctx.textAlign = "left";
         ctx.fillStyle =
           c.status === "idle"
-            ? "#4f5768"
+            ? "#687082"
             : c.status === "error"
               ? "#ff9ea1"
-              : "#e8ecf3";
-        ctx.font = "600 38px IBM Plex Sans, sans-serif";
+              : "#f2ece1";
+        ctx.font = "600 36px IBM Plex Sans, sans-serif";
         const lines: string[] = [];
         let line = "";
-        for (const word of (c.status === "idle" ? "Standing by" : c.text).split(
+        for (const word of (c.status === "idle" ? "Standing by at desk" : c.text).split(
           " ",
         )) {
           const next = line ? `${line} ${word}` : word;
@@ -180,17 +197,17 @@ export function createOfficeLive(
         lines
           .slice(0, 3)
           .forEach((text, n) =>
-            ctx.fillText(clip(ctx, text, W - 48), 24, 146 + n * 48),
+            ctx.fillText(clip(ctx, text, W - 48), 24, 148 + n * 46),
           );
         if (c.detail && c.status !== "idle") {
-          ctx.fillStyle = "#121c26";
-          ctx.fillRect(0, H - 74, W, 74);
+          ctx.fillStyle = "#18212b";
+          ctx.fillRect(0, H - 76, W, 76);
           ctx.font = "26px JetBrains Mono, monospace";
           ctx.fillStyle = /✕|fail/i.test(c.detail)
             ? "#ff8a8d"
             : /✓|pass/i.test(c.detail)
               ? "#8fd9a6"
-              : "#9aa3b5";
+              : "#b9b1a3";
           ctx.fillText(clip(ctx, c.detail, W - 48), 24, H - 28);
         }
         texture.needsUpdate = true;
@@ -200,6 +217,186 @@ export function createOfficeLive(
     screen.draw();
   });
 
+  // ---------------------------------------------------------------- 3D quota wall
+  const quotaCleanups: Array<() => void> = [];
+  if (quotaScreens && quotaScreens.length > 0) {
+    const qCanvas = document.createElement("canvas");
+    qCanvas.width = 1280;
+    qCanvas.height = 240;
+    const qCtx = qCanvas.getContext("2d");
+    if (qCtx) {
+      const qTex = keep(new THREE.CanvasTexture(qCanvas));
+      qTex.colorSpace = THREE.SRGBColorSpace;
+      const qMat = keep(
+        new THREE.MeshBasicMaterial({ map: qTex, toneMapped: false }),
+      );
+      quotaScreens.forEach((mesh) => {
+        (mesh.material as THREE.Material).dispose();
+        mesh.material = qMat;
+      });
+      let currentSnap: QuotaSnapshot | null = quotaSnapshot();
+      let currentPins: string[] = readPinnedAccounts();
+      const drawQuotaWall = () => {
+        const W = qCanvas.width;
+        const H = qCanvas.height;
+        qCtx.clearRect(0, 0, W, H);
+        qCtx.fillStyle = "#0e141f";
+        roundRect(qCtx, 0, 0, W, H, 14);
+        qCtx.fill();
+
+        // Top header bar
+        qCtx.fillStyle = "#172234";
+        roundRect(qCtx, 0, 0, W, 44, 14);
+        qCtx.fill();
+        qCtx.fillRect(0, 24, W, 20);
+        qCtx.fillStyle = "#f0a843";
+        qCtx.fillRect(0, 42, W, 2);
+
+        const allAccounts = currentSnap?.accounts ?? [];
+        const pinSet = new Set(currentPins);
+        const pinnedList = allAccounts.filter((a) => pinSet.has(a.id));
+        const displayList = (
+          pinnedList.length > 0 ? pinnedList : allAccounts
+        ).slice(0, 4);
+
+        qCtx.textAlign = "left";
+        qCtx.fillStyle = "#f5efe4";
+        qCtx.font = "700 20px Instrument Sans, IBM Plex Sans, sans-serif";
+        qCtx.fillText(
+          pinnedList.length > 0
+            ? `PINNED SUBSCRIPTION QUOTA  ·  ${pinnedList.length} PINNED IN 3D STUDIO`
+            : "LIVE SUBSCRIPTION QUOTA  ·  PIN ACCOUNTS IN USAGE PANEL",
+          20,
+          29,
+        );
+
+        qCtx.textAlign = "right";
+        qCtx.fillStyle = "#64d2e8";
+        qCtx.font = "600 18px JetBrains Mono, monospace";
+        qCtx.fillText(
+          currentSnap
+            ? `SYNCED ${new Date(currentSnap.checked_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+            : "LIVE TELEMETRY",
+          W - 20,
+          29,
+        );
+        qCtx.textAlign = "left";
+
+        if (displayList.length === 0) {
+          qCtx.fillStyle = "#8a95a8";
+          qCtx.font = "600 24px IBM Plex Sans, sans-serif";
+          qCtx.fillText(
+            "Pin accounts in the Usage panel (📌) to project live quota bars onto this 3D studio wall.",
+            24,
+            142,
+          );
+          qTex.needsUpdate = true;
+          return;
+        }
+
+        const cols = Math.max(1, Math.min(4, displayList.length));
+        const gap = 14;
+        const padX = 16;
+        const cardW = (W - padX * 2 - gap * (cols - 1)) / cols;
+        const cardY = 54;
+        const cardH = H - cardY - 12;
+
+        displayList.forEach((acc, idx) => {
+          const cx = padX + idx * (cardW + gap);
+          const isPinned = pinSet.has(acc.id);
+          qCtx.fillStyle = "#151e2e";
+          roundRect(qCtx, cx, cardY, cardW, cardH, 10);
+          qCtx.fill();
+          qCtx.strokeStyle = isPinned ? "#f0a843" : "#27354d";
+          qCtx.lineWidth = 2;
+          roundRect(qCtx, cx, cardY, cardW, cardH, 10);
+          qCtx.stroke();
+
+          // Provider title + account subtitle
+          const pName = providerName(acc.provider);
+          qCtx.fillStyle = "#f5efe4";
+          qCtx.font = "700 22px Instrument Sans, IBM Plex Sans, sans-serif";
+          qCtx.fillText(clip(qCtx, pName, cardW - 76), cx + 14, cardY + 30);
+
+          if (isPinned) {
+            qCtx.textAlign = "right";
+            qCtx.fillStyle = "#f0a843";
+            qCtx.font = "700 15px JetBrains Mono, monospace";
+            qCtx.fillText("PINNED", cx + cardW - 12, cardY + 28);
+            qCtx.textAlign = "left";
+          }
+
+          qCtx.fillStyle = "#8e9bb0";
+          qCtx.font = "500 16px IBM Plex Sans, sans-serif";
+          qCtx.fillText(
+            clip(
+              qCtx,
+              [acc.name, acc.plan].filter(Boolean).join(" · "),
+              cardW - 28,
+            ),
+            cx + 14,
+            cardY + 52,
+          );
+
+          const wins = [...acc.windows]
+            .sort((a, b) => b.used_percent - a.used_percent)
+            .slice(0, 2);
+          wins.forEach((win, wIdx) => {
+            const wy = cardY + 78 + wIdx * 46;
+            const used = Math.max(0, Math.min(100, win.used_percent));
+            const rem = Math.round(100 - used);
+            const barColor =
+              used >= 90 ? "#e5564d" : used >= 70 ? "#f0a843" : "#5fbf7f";
+
+            qCtx.fillStyle = "#cfd6e3";
+            qCtx.font = "600 16px IBM Plex Sans, sans-serif";
+            qCtx.fillText(clip(qCtx, win.label, cardW * 0.52), cx + 14, wy);
+
+            const rst = formatReset(win.resets_at).replace(/^resets /, "");
+            qCtx.textAlign = "right";
+            qCtx.fillStyle = barColor;
+            qCtx.font = "700 16px JetBrains Mono, monospace";
+            qCtx.fillText(
+              `${rem}% left${rst ? ` · ${rst}` : ""}`,
+              cx + cardW - 14,
+              wy,
+            );
+            qCtx.textAlign = "left";
+
+            // Progress track & fill
+            qCtx.fillStyle = "#0b1019";
+            roundRect(qCtx, cx + 14, wy + 7, cardW - 28, 10, 5);
+            qCtx.fill();
+            if (rem > 0) {
+              qCtx.fillStyle = barColor;
+              roundRect(
+                qCtx,
+                cx + 14,
+                wy + 7,
+                Math.max(8, ((cardW - 28) * rem) / 100),
+                10,
+                5,
+              );
+              qCtx.fill();
+            }
+          });
+        });
+        qTex.needsUpdate = true;
+      };
+      drawQuotaWall();
+      quotaCleanups.push(
+        subscribeQuota((snap) => {
+          currentSnap = snap;
+          drawQuotaWall();
+        }),
+        subscribePinnedAccounts((pins) => {
+          currentPins = pins;
+          drawQuotaWall();
+        }),
+      );
+    }
+  }
+
   // ---------------------------------------------------------------- tubes
   const kernHome = homeOf("kern");
   const TUBE_Y = 3.6;
@@ -207,26 +404,27 @@ export function createOfficeLive(
   const INBOX = new THREE.Vector3(kernHome.x - 1.1, 1.08, kernHome.z - 1.25);
   const consoleTop = (id: AgentId) => {
     const h = homeOf(id);
-    return new THREE.Vector3(h.x, 0.8, h.z + 0.62);
+    return new THREE.Vector3(h.x, 0.88, h.z + 0.56);
   };
   const tubeMat = keep(
     new THREE.MeshStandardMaterial({
-      color: "#9fd7e6",
+      color: "#d8c7ab",
       transparent: true,
-      opacity: 0.22,
-      roughness: 0.15,
+      opacity: 0.24,
+      roughness: 0.14,
       depthWrite: false,
     }),
   );
   const ringMat = keep(
     new THREE.MeshStandardMaterial({
-      color: "#a4b2ba",
-      roughness: 0.5,
-      metalness: 0.4,
+      color: "#c89558",
+      roughness: 0.42,
+      metalness: 0.55,
     }),
   );
   const tubeGeo = keep(new THREE.CylinderGeometry(0.075, 0.075, 1, 10, 1, true));
   const ringGeo = keep(new THREE.CylinderGeometry(0.11, 0.11, 0.12, 10));
+  const strutGeo = keep(new THREE.CylinderGeometry(0.02, 0.02, 0.3, 6));
   const up = new THREE.Vector3(0, 1, 0);
   const drawn = new Set<string>();
   function pipe(a: THREE.Vector3, b: THREE.Vector3) {
@@ -244,11 +442,17 @@ export function createOfficeLive(
     mesh.renderOrder = 2;
     layer.add(mesh);
     const n = Math.max(1, Math.round(len / 3));
+    const isOverhead = Math.abs(a.y - TUBE_Y) < 0.05 && Math.abs(b.y - TUBE_Y) < 0.05;
     for (let i = 0; i <= n; i++) {
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.position.copy(a).lerp(b, i / n);
       ring.quaternion.copy(mesh.quaternion);
       layer.add(ring);
+      if (isOverhead && i > 0 && i < n) {
+        const strut = new THREE.Mesh(strutGeo, ringMat);
+        strut.position.set(ring.position.x, TUBE_Y + 0.16, ring.position.z);
+        layer.add(strut);
+      }
     }
   }
   const paths = {} as Record<AgentId, THREE.Vector3[]>;
@@ -527,6 +731,8 @@ export function createOfficeLive(
   let mode: CameraMode = "overview";
   let shot = "";
   let shotSince = -99;
+  let autoCycle = 0;
+  const AUTO_CHOREO_HOLD = 7.5;
   // Kern's walk-over: followed out and while he looks; the walk back is not.
   let errand: "off" | "set" | "out" | "there" | "back" = "off";
   let errandHost: AgentId = "bob";
@@ -565,6 +771,39 @@ export function createOfficeLive(
     shotSince = sceneTime;
     office.glideTo(OVERVIEW.x, OVERVIEW.z, OVERVIEW.zoom);
   }
+  function runAutoStudioChoreo() {
+    if (reduced()) {
+      overview();
+      return;
+    }
+    if (sceneTime - shotSince < AUTO_CHOREO_HOLD) return;
+    const beat = autoCycle % 5;
+    autoCycle += 1;
+    shotSince = sceneTime;
+    shot = `auto-choreo:${beat}:${autoCycle}`;
+    if (beat === 0) {
+      office.pairSync?.();
+      office.glideTo(-0.5, -1.2, 0.48);
+    } else if (beat === 1) {
+      const coffeeId = ORDER[(autoCycle + 1) % ORDER.length];
+      const waveId = ORDER[(autoCycle + 3) % ORDER.length];
+      office.emote?.(coffeeId, "coffee");
+      office.emote?.(waveId, "wave");
+      office.glideTo(0.5, 8.8, 0.66);
+    } else if (beat === 2) {
+      office.huddle?.();
+      office.glideTo(0.2, 9.4, 0.62);
+    } else if (beat === 3) {
+      const auditId = ORDER[(autoCycle + 2) % ORDER.length];
+      const cheerId = ORDER[(autoCycle + 4) % ORDER.length];
+      office.emote?.(auditId, "server");
+      office.emote?.(cheerId, "cheer");
+      office.glideTo(-6.2, 3.6, 0.62);
+    } else {
+      office.pairSync?.();
+      office.glideTo(OVERVIEW.x, OVERVIEW.z, OVERVIEW.zoom);
+    }
+  }
   function direct() {
     const kernPos = positionOf("kern");
     const away = Math.hypot(kernPos.x - kernHome.x, kernPos.z - kernHome.z) > 0.6;
@@ -581,14 +820,17 @@ export function createOfficeLive(
     if (mode !== "auto") return;
     if (errand === "set" || errand === "out" || errand === "there")
       return follow("kern", 1.15);
-    if (sceneTime - shotSince < SHOT_HOLD) return;
     const busy = ORDER.filter(
       (id) => id !== "kern" && crew.get(id)!.status === "working",
     );
-    if (busy.length > 1) frameRooms(busy);
-    else if (busy.length === 1) follow(busy[0]);
-    else if (working) follow("kern", 1);
-    else overview();
+    if (busy.length > 0 || working) {
+      if (sceneTime - shotSince < SHOT_HOLD) return;
+      if (busy.length > 1) frameRooms(busy);
+      else if (busy.length === 1) follow(busy[0]);
+      else follow("kern", 1);
+      return;
+    }
+    runAutoStudioChoreo();
   }
 
   // ---------------------------------------------------------------- frame
@@ -695,7 +937,8 @@ export function createOfficeLive(
       shot = "";
       shotSince = -99;
       if (next === "overview") overview();
-      else if (next !== "auto" && next !== "free") {
+      else if (next === "auto") direct();
+      else if (next !== "free") {
         shot = `follow:${next}`;
         office.focusOn(next, FOLLOW_ZOOM);
       }
@@ -705,6 +948,7 @@ export function createOfficeLive(
     },
     dispose() {
       onFrame(null);
+      quotaCleanups.forEach((fn) => fn());
       scene.remove(layer);
       disposables.forEach((item) => item.dispose());
     },

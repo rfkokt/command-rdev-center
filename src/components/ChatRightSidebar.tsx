@@ -126,22 +126,41 @@ export default function ChatRightSidebar({
               onPanelWidthChange(Math.max(240, panelWidth - 10));
           }}
           onPointerDown={(e) => {
-            e.currentTarget.setPointerCapture(e.pointerId);
+            if (e.button !== 0) return;
+            e.preventDefault();
+            window.getSelection()?.removeAllRanges();
+            document.body.classList.add("is-resizing-panel");
+            const pointerId = e.pointerId;
             const startX = e.clientX;
             const startWidth = panelWidth;
             const target = e.currentTarget;
-            target.onpointermove = (ev) =>
+            target.setPointerCapture(pointerId);
+            const stopResize = () => {
+              target.onpointermove = null;
+              target.onpointerup = null;
+              target.onpointercancel = null;
+              target.onlostpointercapture = null;
+              document.body.classList.remove("is-resizing-panel");
+              try {
+                if (target.hasPointerCapture(pointerId)) {
+                  target.releasePointerCapture(pointerId);
+                }
+              } catch {
+                /* ignore */
+              }
+            };
+            target.onpointermove = (ev) => {
+              ev.preventDefault();
               onPanelWidthChange(
                 Math.max(
                   240,
                   Math.min(maxWidth, startWidth + (startX - ev.clientX)),
                 ),
               );
-            target.onpointerup = () => {
-              target.onpointermove = null;
-              target.onpointerup = null;
-              target.releasePointerCapture(e.pointerId);
             };
+            target.onpointerup = stopResize;
+            target.onpointercancel = stopResize;
+            target.onlostpointercapture = stopResize;
           }}
         />
         <header className="krs-head">

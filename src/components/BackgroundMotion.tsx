@@ -137,7 +137,11 @@ export default function BackgroundMotion({
       void import("./office/office-scene")
         .then(({ createOfficeScene }) => {
           if (cancelled) return;
-          sceneRef.current = createOfficeScene(canvas, labels);
+          sceneRef.current = createOfficeScene(canvas, labels, {
+            zoom: 0.56,
+            focus: { x: 0, z: -1.0 },
+            liveStudio: true,
+          });
           updateTheme();
           updateMotion();
           updateVisibility();
@@ -157,6 +161,38 @@ export default function BackgroundMotion({
           setReady(false);
         });
     }
+    const onPointerMove = (event: MouseEvent) => {
+      if (!sceneRef.current?.hoverAt) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      sceneRef.current.hoverAt(
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      );
+    };
+    const onPointerClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        !target ||
+        target.closest(
+          "button, a, input, textarea, select, [role='button'], .office-panel, .sidebar",
+        )
+      )
+        return;
+      if (!sceneRef.current?.pickAt) return;
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const picked = sceneRef.current.pickAt(
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      );
+      if (picked) {
+        sceneRef.current.setSelected?.(picked);
+        sceneRef.current.emote?.(picked, "wave");
+      }
+    };
+    window.addEventListener("mousemove", onPointerMove, { passive: true });
+    window.addEventListener("click", onPointerClick);
     return () => {
       cancelled = true;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
@@ -167,6 +203,8 @@ export default function BackgroundMotion({
       motion?.removeEventListener("change", updateMotion);
       scheme?.removeEventListener("change", updateTheme);
       window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", onPointerMove);
+      window.removeEventListener("click", onPointerClick);
       document.removeEventListener("visibilitychange", updateVisibility);
       canvas.removeEventListener("webglcontextlost", contextLost);
       canvas.removeEventListener("webglcontextrestored", contextRestored);
