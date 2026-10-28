@@ -524,7 +524,7 @@ impl AcpBridge {
     fn state_data(&self) -> Value {
         let mut data = json!({
             "isStreaming": self.turn.is_some(),
-            "isCompacting": false,
+            "isCompacting": self.compacting,
             "harness": self.harness,
             "pendingMessageCount": self.queued_prompts.len(),
             // ACP: an agent that omits promptCapabilities.image cannot take images.
@@ -823,7 +823,14 @@ impl AcpBridge {
     }
 
     fn compact_as(&mut self, id: Option<&Value>, auto: bool) -> Vec<Out> {
-        if self.turn.is_some() || self.compacting {
+        if self.compacting {
+            return vec![Self::fail(
+                "compact",
+                id,
+                "Context compaction is already running",
+            )];
+        }
+        if self.turn.is_some() {
             return vec![Self::fail("compact", id, "Stop the running turn first")];
         }
         let Some(session_id) = self.session_id.clone() else {
@@ -1883,6 +1890,64 @@ mod tests {
         assert_eq!(events[1]["id"], "c1");
         let next = agent(&done);
         assert_eq!(next[0]["params"]["prompt"][0]["text"], "next");
+    }
+
+    #[test]
+    fn compaction_polling_stays_busy_until_the_adapter_finishes() {
+        // Both manual and threshold compaction must remain visible to the UI's
+        // get_state watchdog, including when the adapter eventually fails.
+        for auto in [false, true] {
+            for fails in [false, true] {
+                let mut bridge = ready_bridge(false);
+                bridge.commands = vec![json!({"name":"compact"})];
+                let out = bridge.compact_as(Some(&json!("c1")), auto);
+                let compact_id = agent(&out)[0]["id"].as_u64().unwrap();
+
+                for _ in 0..3 {
+                    let state = ui(&bridge.on_ui(r#"{"type":"get_state","id":"probe"}"#));
+                    assert_eq!(state[0]["id"], "probe");
+                    assert_eq!(state[0]["data"]["isStreaming"], false);
+                    assert_eq!(state[0]["data"]["isCompacting"], true);
+                }
+                let duplicate = bridge.on_ui(r#"{"type":"compact","id":"c2"}"#);
+                assert!(agent(&duplicate).is_empty());
+                assert_eq!(ui(&duplicate)[0]["id"], "c2");
+                assert_eq!(
+                    ui(&duplicate)[0]["error"],
+                    "Context compaction is already running"
+                );
+                let response = if fails {
+                    json!({"jsonrpc":"2.0", "id":compact_id, "error":{"code":-1,"message":"failed"}}).to_string()
+                } else {
+                    reply(compact_id, json!({"stopReason":"end_turn"}))
+                };
+                let done = ui(&bridge.on_agent(&response));
+                assert_eq!(done[0]["type"], "compaction_end");
+                assert_eq!(done[1]["success"], !fails);
+                let state = ui(&bridge.on_ui(r#"{"type":"get_state"}"#));
+                assert_eq!(state[0]["data"]["isCompacting"], false);
+                assert_eq!(state[0]["data"]["isStreaming"], false);
+                assert_eq!(
+                    agent(&bridge.on_ui(r#"{"type":"compact","id":"retry"}"#)).len(),
+                    1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compaction_after_a_finished_turn_does_not_require_stop() {
+        let mut bridge = ready_bridge(false);
+        bridge.commands = vec![json!({"name":"compact"})];
+        let prompt_id = agent(&bridge.on_ui(r#"{"type":"prompt","message":"hi"}"#))[0]["id"]
+            .as_u64()
+            .unwrap();
+        let busy = ui(&bridge.on_ui(r#"{"type":"compact","id":"busy"}"#));
+        assert_eq!(busy[0]["error"], "Stop the running turn first");
+        bridge.on_agent(&reply(prompt_id, json!({"stopReason":"end_turn"})));
+        let out = bridge.on_ui(r#"{"type":"compact","id":"idle"}"#);
+        assert_eq!(ui(&out)[0]["type"], "compaction_start");
+        assert_eq!(agent(&out)[0]["params"]["prompt"][0]["text"], "/compact");
     }
 
     #[test]
