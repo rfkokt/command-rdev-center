@@ -967,7 +967,43 @@ export default function ChatView({
       atBottomRef.current = true;
     }
   }, [isActive]);
+  // Rows below the fold are only estimated until Virtuoso measures them, so a
+  // single scrollToIndex("LAST") lands short (often near the top after the
+  // hidden tab's scroll box was reset). While pinned, every total-height change
+  // re-snaps to the end. Any manual scroll input releases the pin.
+  const pinUntilRef = useRef(0);
+  const scrollAnimRef = useRef<number | null>(null);
+  const scrollerElRef = useRef<HTMLElement | null>(null);
+  const cancelScrollAnim = useCallback(() => {
+    if (scrollAnimRef.current !== null)
+      cancelAnimationFrame(scrollAnimRef.current);
+    scrollAnimRef.current = null;
+  }, []);
+  const releaseBottomPin = useCallback(() => {
+    pinUntilRef.current = 0;
+    cancelScrollAnim();
+  }, [cancelScrollAnim]);
+  const handleScrollerRef = useCallback(
+    (ref: HTMLElement | Window | null) => {
+      const prev = scrollerElRef.current;
+      if (prev) {
+        for (const type of ["wheel", "touchmove", "keydown", "pointerdown"])
+          prev.removeEventListener(type, releaseBottomPin);
+      }
+      const el = ref instanceof HTMLElement ? ref : null;
+      scrollerElRef.current = el;
+      if (el) {
+        for (const type of ["wheel", "touchmove", "keydown", "pointerdown"])
+          el.addEventListener(type, releaseBottomPin, { passive: true });
+      }
+    },
+    [releaseBottomPin],
+  );
+  useEffect(() => cancelScrollAnim, [cancelScrollAnim]);
+
   const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    // Growing rows briefly push the end out of view while pinned; ignore that.
+    if (!atBottom && Date.now() < pinUntilRef.current) return;
     atBottomRef.current = atBottom;
     setIsAtBottom(atBottom);
   }, []);
@@ -982,14 +1018,70 @@ export default function ChatView({
     });
   }, []);
 
+  const pinToBottom = useCallback(
+    (ms: number) => {
+      pinUntilRef.current = Date.now() + ms;
+      scrollToBottom("auto");
+    },
+    [scrollToBottom],
+  );
+
+  const handleTotalListHeightChanged = useCallback(() => {
+    if (Date.now() >= pinUntilRef.current || scrollAnimRef.current !== null)
+      return;
+    virtuosoRef.current?.scrollToIndex({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
+    });
+  }, []);
+
+  // Jump-to-latest button: ease the scroller to the end, re-reading the target
+  // each frame so rows measured mid-flight don't leave it short.
+  const animateToBottom = useCallback(() => {
+    const el = scrollerElRef.current;
+    cancelScrollAnim();
+    const reduceMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    if (!el || reduceMotion) {
+      pinToBottom(600);
+      return;
+    }
+    atBottomRef.current = true;
+    setIsAtBottom(true);
+    pinUntilRef.current = Date.now() + 1000;
+    const maxTop = () => el.scrollHeight - el.clientHeight;
+    // Skip most of a long distance instantly so the virtual list doesn't have
+    // to mount every intermediate row during the animation.
+    const span = el.clientHeight * 1.5;
+    if (maxTop() - el.scrollTop > span) el.scrollTop = maxTop() - span;
+    const from = el.scrollTop;
+    const duration = 320;
+    let start: number | null = null;
+    const step = (now: number) => {
+      start ??= now;
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.scrollTop = from + (maxTop() - from) * eased;
+      if (t < 1) {
+        scrollAnimRef.current = requestAnimationFrame(step);
+        return;
+      }
+      scrollAnimRef.current = null;
+      pinToBottom(600);
+    };
+    scrollAnimRef.current = requestAnimationFrame(step);
+  }, [cancelScrollAnim, pinToBottom]);
+
   // Jump the virtualized list to the latest output when the chat tab becomes
   // active or its history finishes loading. followOutput takes over from there.
   useEffect(() => {
     if (!isActive || isHistoryLoading) return;
-    scrollToBottom("auto");
+    pinToBottom(1200);
     const timer = window.setTimeout(() => scrollToBottom("auto"), 80);
     return () => clearTimeout(timer);
-  }, [isActive, isHistoryLoading, scrollToBottom]);
+  }, [isActive, isHistoryLoading, pinToBottom, scrollToBottom]);
 
   // Keep list pinned to bottom whenever a new user message is appended or when at bottom
   useEffect(() => {
@@ -5099,6 +5191,7 @@ export default function ChatView({
         );
         return;
       }
+      releaseBottomPin();
       atBottomRef.current = false;
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -5123,7 +5216,7 @@ export default function ChatView({
       window.removeEventListener(REVEAL_EVENT, onReveal);
       timers.forEach((timer) => window.clearTimeout(timer));
     };
-  }, [isActive, isHistoryLoading, chatId, onToast]);
+  }, [isActive, isHistoryLoading, chatId, onToast, releaseBottomPin]);
 
   const renderFeedItemInner = (item: FeedItem): ReactNode => {
     if (item.kind === "session-loading") {
@@ -6644,17 +6737,20 @@ export default function ChatView({
             alignToBottom
             atBottomThreshold={80}
             atBottomStateChange={handleAtBottomStateChange}
+            totalListHeightChanged={handleTotalListHeightChanged}
+            scrollerRef={handleScrollerRef}
             itemContent={renderFeedItem}
             components={VIRTUOSO_COMPONENTS}
           />
           {isActive &&
             !isHistoryLoading &&
-            !isAtBottom &&
             feedItems.length > 0 && (
               <button
                 type="button"
-                className="chat-jump-to-latest"
-                onClick={() => scrollToBottom("auto")}
+                className={`chat-jump-to-latest${isAtBottom ? "" : " is-visible"}`}
+                onClick={animateToBottom}
+                aria-hidden={isAtBottom}
+                tabIndex={isAtBottom ? -1 : undefined}
                 aria-label="Latest messages"
                 title="Scroll to latest messages"
               >

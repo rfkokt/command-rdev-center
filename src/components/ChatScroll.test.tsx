@@ -118,18 +118,38 @@ test("opens at the latest message, preserves reading position, and offers a jump
     await new Promise((resolve) => setTimeout(resolve, 100));
   });
   scrollToIndex.mockClear();
+  // While pinned after opening, late row measurements keep re-snapping to
+  // the end instead of surfacing the jump button.
   act(() => feed.current.atBottomStateChange(false));
+  expect(
+    screen.queryByRole("button", { name: "Latest messages" }),
+  ).not.toBeInTheDocument();
+  act(() => feed.current.totalListHeightChanged(2000));
+  expect(scrollToIndex).toHaveBeenCalledWith({
+    index: "LAST",
+    align: "end",
+    behavior: "auto",
+  });
+  scrollToIndex.mockClear();
+  // A manual scroll releases the pin so the reader keeps their position.
+  const scroller = document.createElement("div");
+  act(() => feed.current.scrollerRef(scroller));
+  fireEvent.wheel(scroller, { deltaY: -120 });
+  act(() => feed.current.atBottomStateChange(false));
+  act(() => feed.current.totalListHeightChanged(2400));
   expect(
     screen.getByRole("button", { name: "Latest messages" }),
   ).toBeInTheDocument();
   expect(feed.current.followOutput(false)).toBe(false);
   expect(scrollToIndex).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Latest messages" }));
-  expect(scrollToIndex).toHaveBeenCalledWith({
-    index: "LAST",
-    align: "end",
-    behavior: "auto",
-  });
+  await waitFor(() =>
+    expect(scrollToIndex).toHaveBeenCalledWith({
+      index: "LAST",
+      align: "end",
+      behavior: "auto",
+    }),
+  );
   expect(
     screen.queryByRole("button", { name: "Latest messages" }),
   ).not.toBeInTheDocument();
