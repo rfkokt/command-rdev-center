@@ -10,6 +10,7 @@ import { confirm } from "./ConfirmDialog";
 import { PinIcon } from "./ui-icons";
 import {
   formatReset,
+  orderedQuotaWindows,
   providerName,
   quotaSnapshot,
   readPinnedAccounts,
@@ -74,9 +75,7 @@ function Account({
 }) {
   const [expanded, setExpanded] = useState(false);
   const windowsId = useId();
-  const windows = [...account.windows].sort(
-    (left, right) => right.used_percent - left.used_percent,
-  );
+  const windows = orderedQuotaWindows(account.windows);
   const visibleWindows = expanded ? windows : windows.slice(0, VISIBLE_QUOTAS);
   const pinLabel = `${pinned ? "Unpin" : "Pin"} ${account.name} (${account.group})`;
 
@@ -568,9 +567,7 @@ export function PinnedQuotaFloat({
       {!collapsed && (
         <div className="kq-float-list">
           {pinnedAccounts.map((account) => {
-            const windows = [...account.windows]
-              .sort((a, b) => b.used_percent - a.used_percent)
-              .slice(0, 2);
+            const windows = orderedQuotaWindows(account.windows).slice(0, 2);
             return (
               <div className="kq-float-item" key={account.id}>
                 <div className="kq-float-item-head">

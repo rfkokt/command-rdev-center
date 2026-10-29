@@ -19,6 +19,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
+mod claude_auth;
 /// One Keychain entry per router, keyed by `RouterConfig::id`.
 const ROUTER_KEYCHAIN_SERVICE: &str = "command-rdev-center.9router";
 
@@ -75,7 +76,14 @@ fn now_secs() -> i64 {
 
 /// Quote a value for a curl config file.
 fn quoted(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\r', "\\r")
+            .replace('\n', "\\n")
+    )
 }
 
 struct Reply {
@@ -169,16 +177,6 @@ fn chrono_like_parse(text: &str) -> Option<i64> {
 
 // ------------------------------------------------------------------ Claude
 
-fn claude_credentials() -> Result<Value, String> {
-    let user = std::env::var("USER").unwrap_or_default();
-    let bytes = security_framework::passwords::get_generic_password(CLAUDE_KEYCHAIN_SERVICE, &user)
-        .map_err(|_| "No Claude Code login in the Keychain".to_string())?;
-    serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|value| value.get("claudeAiOauth").cloned())
-        .ok_or_else(|| "Claude Code login is unreadable".to_string())
-}
-
 fn claude_window(usage: &Value, key: &str, label: &str) -> Option<QuotaWindow> {
     let window = usage.get(key)?;
     Some(QuotaWindow {
@@ -203,6 +201,7 @@ fn parse_claude_usage(usage: &Value) -> Vec<QuotaWindow> {
 /// Last good Claude usage reply, and when Anthropic lets Kern ask again.
 #[derive(Default)]
 struct ClaudeUsage {
+    credential_token: Option<String>,
     fetched: Option<(Instant, Vec<QuotaWindow>, Option<String>)>,
     last_try: Option<Instant>,
     blocked_until: Option<Instant>,
@@ -261,6 +260,9 @@ fn claude_from_cache(usage: &ClaudeUsage, account: &mut QuotaAccount, reason: Op
 }
 
 fn claude_account() -> QuotaAccount {
+    // Backend callers can overlap even though the frontend shares requests.
+    static LOOKUP: Mutex<()> = Mutex::new(());
+    let _lookup = LOOKUP.lock().unwrap_or_else(|error| error.into_inner());
     let mut account = QuotaAccount {
         id: "claude".into(),
         group: "Claude".into(),
@@ -273,7 +275,7 @@ fn claude_account() -> QuotaAccount {
         note: None,
         error: None,
     };
-    let creds = match claude_credentials() {
+    let mut creds = match claude_auth::credentials(None) {
         Ok(creds) => creds,
         Err(error) => {
             account.error = Some(error);
@@ -284,18 +286,19 @@ fn claude_account() -> QuotaAccount {
         .get("subscriptionType")
         .and_then(Value::as_str)
         .map(str::to_string);
-    // Kern never refreshes this token: rotating it would sign Claude Code out.
-    let expires = creds.get("expiresAt").and_then(Value::as_i64).unwrap_or(0) / 1000;
-    if expires > 0 && expires < now_secs() {
-        account.error = Some(CLAUDE_EXPIRED.into());
-        return account;
-    }
     let Some(token) = creds.get("accessToken").and_then(Value::as_str) else {
         account.error = Some("Claude Code login has no access token".into());
         return account;
     };
     {
         let mut usage = claude_usage();
+        if usage.credential_token.as_deref() != Some(token) {
+            // A different login must never inherit another account's quota.
+            *usage = ClaudeUsage {
+                credential_token: Some(token.to_string()),
+                ..ClaudeUsage::default()
+            };
+        }
         let now = Instant::now();
         if let Some(until) = usage.blocked_until.filter(|until| *until > now) {
             let reason = rate_limited((until - now).as_secs());
@@ -315,11 +318,32 @@ fn claude_account() -> QuotaAccount {
         }
         usage.last_try = Some(now);
     }
-    let config = format!(
-        "url = \"https://api.anthropic.com/api/oauth/usage?cedar_ember=1\"\nheader = {}\nheader = \"anthropic-beta: oauth-2025-04-20\"\n",
-        quoted(&format!("Authorization: Bearer {token}"))
+    let reply = claude_reply(
+        &mut creds,
+        |token| {
+            curl(&format!(
+            "url = \"https://api.anthropic.com/api/oauth/usage?cedar_ember=1\"\nheader = {}\nheader = \"anthropic-beta: oauth-2025-04-20\"\n",
+            quoted(&format!("Authorization: Bearer {token}"))
+        ))
+        },
+        |token| claude_auth::credentials(Some(token)),
     );
-    match curl(&config) {
+    account.plan = creds
+        .get("subscriptionType")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    {
+        let mut usage = claude_usage();
+        let token = creds.get("accessToken").and_then(Value::as_str);
+        if usage.credential_token.as_deref() != token {
+            *usage = ClaudeUsage {
+                credential_token: token.map(str::to_string),
+                last_try: Some(Instant::now()),
+                ..ClaudeUsage::default()
+            };
+        }
+    }
+    match reply {
         Ok(reply) if reply.status == 200 => {
             let usage: Value = serde_json::from_str(&reply.body).unwrap_or(Value::Null);
             account.windows = parse_claude_usage(&usage);
@@ -356,6 +380,30 @@ fn claude_account() -> QuotaAccount {
         Err(error) => account.error = Some(error),
     }
     account
+}
+
+/// A server can reject an access token before its recorded expiry. Recover
+/// once and retry the usage GET once; repeated 401s must not rotate in a loop.
+fn claude_reply(
+    creds: &mut Value,
+    request: impl Fn(&str) -> Result<Reply, String>,
+    recover: impl Fn(&str) -> Result<Value, String>,
+) -> Result<Reply, String> {
+    let token = creds
+        .get("accessToken")
+        .and_then(Value::as_str)
+        .ok_or("Claude Code login has no access token")?;
+    let reply = request(token)?;
+    if reply.status != 401 {
+        return Ok(reply);
+    }
+    *creds = recover(token)?;
+    request(
+        creds
+            .get("accessToken")
+            .and_then(Value::as_str)
+            .ok_or("Claude Code login has no access token")?,
+    )
 }
 
 // ----------------------------------------------------------------- 9router
@@ -641,16 +689,19 @@ fn jev_account() -> Option<QuotaAccount> {
 static CACHE: Mutex<Option<(Instant, QuotaSnapshot)>> = Mutex::new(None);
 /// Matches the frontend poll so several panels share one lookup.
 const CACHE_TTL: Duration = Duration::from_secs(4 * 60);
-/// Claude Code rotates its token on its next request, so an expired login
-/// usually heals within seconds; don't pin that error for a full poll.
+/// Retry a temporary auth failure or notice a new login promptly.
 const EXPIRED_CACHE_TTL: Duration = Duration::from_secs(20);
-const CLAUDE_EXPIRED: &str = "Claude login expired. Use Claude Code once to refresh it.";
+const CLAUDE_EXPIRED: &str =
+    "Claude login expired and couldn't be renewed. Sign in again with Claude Code (/login).";
 
 fn cache_ttl(snapshot: &QuotaSnapshot) -> Duration {
-    let expired = snapshot
-        .accounts
-        .iter()
-        .any(|account| account.error.as_deref() == Some(CLAUDE_EXPIRED));
+    let expired = snapshot.accounts.iter().any(|account| {
+        account.source == "claude"
+            && account
+                .error
+                .as_deref()
+                .is_some_and(|error| error.starts_with("Claude login"))
+    });
     if expired {
         EXPIRED_CACHE_TTL
     } else {
@@ -901,6 +952,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unauthorized_usage_recovers_and_retries_only_once() {
+        use std::cell::Cell;
+        for final_status in [200, 401] {
+            let mut creds = json!({"accessToken": "old"});
+            let requests = Cell::new(0);
+            let recoveries = Cell::new(0);
+            let reply = claude_reply(
+                &mut creds,
+                |token| {
+                    requests.set(requests.get() + 1);
+                    assert_eq!(token, if requests.get() == 1 { "old" } else { "new" });
+                    Ok(Reply {
+                        status: if requests.get() == 1 {
+                            401
+                        } else {
+                            final_status
+                        },
+                        headers: String::new(),
+                        body: "{}".into(),
+                    })
+                },
+                |rejected| {
+                    assert_eq!(rejected, "old");
+                    recoveries.set(recoveries.get() + 1);
+                    Ok(json!({"accessToken": "new", "subscriptionType": "max"}))
+                },
+            )
+            .unwrap();
+            assert_eq!(reply.status, final_status);
+            assert_eq!(requests.get(), 2);
+            assert_eq!(recoveries.get(), 1);
+            assert_eq!(creds["subscriptionType"], "max");
+        }
+    }
+
+    #[test]
+    fn other_usage_errors_do_not_refresh_login() {
+        for status in [200, 403, 429, 503] {
+            let reply = claude_reply(
+                &mut json!({"accessToken": "valid"}),
+                |_| {
+                    Ok(Reply {
+                        status,
+                        headers: String::new(),
+                        body: "{}".into(),
+                    })
+                },
+                |_| panic!("only 401 should refresh"),
+            )
+            .unwrap();
+            assert_eq!(reply.status, status);
+        }
+    }
+
+    #[test]
+    fn automatic_login_recovery_uses_short_snapshot_cache() {
+        let mut account = claude_account_shell();
+        account.error = Some(
+            "Claude login refresh couldn't reach Anthropic. Kern will retry automatically.".into(),
+        );
+        let mut snapshot = QuotaSnapshot {
+            accounts: vec![account],
+            routers: 0,
+            checked_at: 0,
+        };
+        assert_eq!(cache_ttl(&snapshot), EXPIRED_CACHE_TTL);
+        snapshot.accounts[0].error = Some(CLAUDE_EXPIRED.into());
+        assert_eq!(cache_ttl(&snapshot), EXPIRED_CACHE_TTL);
+        snapshot.accounts[0].error = None;
+        assert_eq!(cache_ttl(&snapshot), CACHE_TTL);
+    }
+
+    #[test]
     fn reads_retry_after() {
         let headers = "HTTP/2 429\r\ncontent-type: application/json\r\nRetry-After: 155";
         assert_eq!(retry_after(headers), Some(155));
@@ -1070,5 +1194,6 @@ mod tests {
     #[test]
     fn curl_config_values_are_escaped() {
         assert_eq!(quoted(r#"a"b\c"#), r#""a\"b\\c""#);
+        assert_eq!(quoted("a\r\nb"), r#""a\r\nb""#);
     }
 }

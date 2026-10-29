@@ -8,6 +8,17 @@ export type QuotaWindow = {
   resets_at: number | null;
 };
 
+/** Keep the main plan windows in a fixed order across quota displays. */
+export function orderedQuotaWindows(windows: readonly QuotaWindow[]) {
+  const priority = (label: string) =>
+    label === "5-hour" ? 0 : label === "Weekly" ? 1 : 2;
+  return [...windows].sort(
+    (left, right) =>
+      priority(left.label) - priority(right.label) ||
+      right.used_percent - left.used_percent,
+  );
+}
+
 /** Mirrors `quota::QuotaAccount`. */
 export type QuotaAccount = {
   id: string;
@@ -31,7 +42,7 @@ export type QuotaSnapshot = {
 };
 
 export const QUOTA_POLL_MS = 5 * 60 * 1000;
-/** Claude Code renews an expired login on its next request; re-check soon. */
+/** Re-check automatic login recovery or a new sign-in promptly. */
 export const QUOTA_EXPIRED_POLL_MS = 30_000;
 /** Providers book usage a moment after a reply ends. */
 export const REPLY_REFRESH_DELAY_MS = 3_000;
@@ -141,7 +152,8 @@ export function createReplyRefresher(
 export function claudeLoginExpired(snapshot: QuotaSnapshot | null) {
   return !!snapshot?.accounts?.some(
     (account) =>
-      account.source === "claude" && /login expired/i.test(account.error ?? ""),
+      account.source === "claude" &&
+      /Claude login (expired|refresh|changed)/i.test(account.error ?? ""),
   );
 }
 

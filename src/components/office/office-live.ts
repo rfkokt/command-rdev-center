@@ -4,6 +4,7 @@ import { TEAM, type AgentId } from "./office-motion";
 import type { OfficeScene } from "./office-scene";
 import {
   formatReset,
+  orderedQuotaWindows,
   providerName,
   quotaSnapshot,
   readPinnedAccounts,
@@ -338,9 +339,7 @@ export function createOfficeLive(
             cardY + 52,
           );
 
-          const wins = [...acc.windows]
-            .sort((a, b) => b.used_percent - a.used_percent)
-            .slice(0, 2);
+          const wins = orderedQuotaWindows(acc.windows).slice(0, 2);
           wins.forEach((win, wIdx) => {
             const wy = cardY + 78 + wIdx * 46;
             const used = Math.max(0, Math.min(100, win.used_percent));

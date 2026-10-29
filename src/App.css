@@ -196,6 +196,60 @@ select:focus-visible {
   height: 14px !important;
   flex: 0 0 14px;
 }
+/* Session menus escape the sidebar's clipping and stacking contexts. */
+.project-row-menu.session-actions-menu {
+  position: fixed !important;
+  top: var(--session-menu-top, 0px) !important;
+  left: var(--session-menu-left, 0px) !important;
+  right: auto !important;
+  z-index: 1200 !important;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  animation: none !important;
+}
+.session-actions-menu input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.chat-feed-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.chat-jump-to-latest {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--separator-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-soft);
+  font-size: var(--type-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-jump-to-latest:hover {
+  background: var(--surface-hover);
+}
+.chat-jump-to-latest:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .project-row {
   gap: 7px;
   padding: 0 8px;

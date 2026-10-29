@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 import {
+  claudeLoginExpired,
   createReplyRefresher,
   detectResets,
   formatReset,
@@ -24,6 +25,26 @@ const account = (overrides: Partial<QuotaAccount>): QuotaAccount => ({
   note: null,
   error: null,
   ...overrides,
+});
+
+test("login recovery retries promptly for Claude auth failures only", () => {
+  for (const error of [
+    "Claude login expired and couldn't be renewed. Sign in again with Claude Code (/login).",
+    "Claude login refresh couldn't reach Anthropic. Kern will retry automatically.",
+    "Claude login changed during refresh. Kern will retry automatically.",
+  ]) {
+    expect(claudeLoginExpired(snapshot([account({ error })]))).toBe(true);
+    expect(
+      claudeLoginExpired(snapshot([account({ source: "9router", error })])),
+    ).toBe(false);
+  }
+  expect(claudeLoginExpired(null)).toBe(false);
+  expect(claudeLoginExpired(snapshot([account({})]))).toBe(false);
+  expect(
+    claudeLoginExpired(
+      snapshot([account({ error: "Claude usage returned HTTP 429" })]),
+    ),
+  ).toBe(false);
 });
 
 const snapshot = (accounts: QuotaAccount[]): QuotaSnapshot => ({
