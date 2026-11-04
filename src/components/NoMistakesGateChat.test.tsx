@@ -194,10 +194,14 @@ it("clears the gate dialog when the user types a reply instead", async () => {
   const composer = screen
     .getAllByRole("textbox")
     .find((el) => !el.closest('[role="dialog"]'))!;
-  fireEvent.change(composer, { target: { value: "Approve it, it's intended" } });
+  fireEvent.change(composer, {
+    target: { value: "Approve it, it's intended" },
+  });
   fireEvent.keyDown(composer, { key: "Enter" });
   await waitFor(() =>
-    expect(sentPrompts().some((m) => m.includes("Approve it, it's intended"))).toBe(true),
+    expect(
+      sentPrompts().some((m) => m.includes("Approve it, it's intended")),
+    ).toBe(true),
   );
   expect(screen.queryByRole("dialog")).toBeNull();
 });
