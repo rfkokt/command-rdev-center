@@ -131,6 +131,9 @@ test("opens at the latest message, preserves reading position, and offers a jump
     behavior: "auto",
   });
   scrollToIndex.mockClear();
+  // Virtuoso re-arms a size-increase snap to the bottom whenever followOutput
+  // changes identity, so re-renders while scrolling up must keep it stable.
+  const followOutput = feed.current.followOutput;
   // A manual scroll releases the pin so the reader keeps their position.
   const scroller = document.createElement("div");
   act(() => feed.current.scrollerRef(scroller));
@@ -141,6 +144,7 @@ test("opens at the latest message, preserves reading position, and offers a jump
     screen.getByRole("button", { name: "Latest messages" }),
   ).toBeInTheDocument();
   expect(feed.current.followOutput(false)).toBe(false);
+  expect(feed.current.followOutput).toBe(followOutput);
   expect(scrollToIndex).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Latest messages" }));
   await waitFor(() =>

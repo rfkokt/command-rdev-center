@@ -1036,6 +1036,19 @@ export default function ChatView({
     setIsAtBottom(atBottom);
   }, []);
 
+  // Must keep one identity: Virtuoso treats every new followOutput value as a
+  // refresh and, for the next 100 ms, snaps to the bottom if the list grew.
+  // Scrolling up through unmeasured history grows the list while the
+  // at-bottom state change re-renders this view, so an inline callback
+  // yanked the reader back down.
+  const lastMessageIsUserRef = useRef(false);
+  lastMessageIsUserRef.current = messages[messages.length - 1]?.role === "user";
+  const followOutput = useCallback(
+    (atBottom: boolean) =>
+      lastMessageIsUserRef.current || atBottom ? ("auto" as const) : false,
+    [],
+  );
+
   const scrollToBottom = useCallback((behavior: "auto" | "smooth" = "auto") => {
     atBottomRef.current = true;
     setIsAtBottom(true);
@@ -6826,11 +6839,7 @@ export default function ChatView({
             }}
             data={feedItems}
             computeItemKey={feedItemKey}
-            followOutput={(isAtBottom) => {
-              const last = messages[messages.length - 1];
-              if (last?.role === "user") return "auto";
-              return isAtBottom ? "auto" : false;
-            }}
+            followOutput={followOutput}
             alignToBottom
             atBottomThreshold={80}
             atBottomStateChange={handleAtBottomStateChange}
