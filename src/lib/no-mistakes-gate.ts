@@ -157,8 +157,7 @@ function commandText(command: unknown) {
 export function isNoMistakesAxiCommand(command: unknown) {
   const text = commandText(command);
   return (
-    text !== null &&
-    /(^|[\s;&|(/"'`])no-mistakes\s+axi(\s|$|["'`])/.test(text)
+    text !== null && /(^|[\s;&|(/"'`])no-mistakes\s+axi(\s|$|["'`])/.test(text)
   );
 }
 
