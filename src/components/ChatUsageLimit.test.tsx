@@ -352,12 +352,13 @@ async function startGateChat(isActive = true) {
       });
     });
   let call = 0;
-  const toolResult = (text: string) => {
+  const toolResult = (text: string, command = "no-mistakes axi status") => {
     const toolCallId = `call-${++call}`;
     return emit({
       type: "tool_execution_end",
       toolCallId,
       toolName: "bash",
+      args: { command },
       result: { content: [{ type: "text", text }] },
     });
   };
@@ -388,7 +389,9 @@ const NESTED_ASK_USER_GATE = [
 it("keeps a pending gate across unrelated tool output but clears it once no-mistakes moves on", async () => {
   const { toolResult, settle } = await startGateChat();
   await toolResult(NESTED_ASK_USER_GATE);
-  await toolResult("total 0\nREADME.md");
+  await toolResult("total 0\nREADME.md", "ls");
+  await toolResult("outcome: passed", "cat notes.txt");
+  await toolResult("jobs:\n  build:\n    outcome: success", "cat ci.yml");
   await settle();
   expect(
     await screen.findByText("The Filter badge is now always visible"),
@@ -414,6 +417,16 @@ it("keeps a pending gate across unrelated tool output but clears it once no-mist
   expect(
     screen.queryByText("The Filter badge is now always visible"),
   ).toBeNull();
+});
+
+it("does not open a dialog for gate-like text from other commands", async () => {
+  const { toolResult, settle } = await startGateChat();
+  await toolResult(
+    NESTED_ASK_USER_GATE,
+    "cat src/lib/no-mistakes-gate.test.ts",
+  );
+  await settle();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("shows a background chat's gate only once its tab is active", async () => {

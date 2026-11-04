@@ -118,8 +118,7 @@ import {
   askUserFindings,
   noMistakesDecisionPrompt,
   noMistakesGateKey,
-  readNoMistakesOutput,
-  toolResultText,
+  readNoMistakesToolResult,
   type NoMistakesDecision,
   type NoMistakesGate,
 } from "../lib/no-mistakes-gate";
@@ -2762,7 +2761,7 @@ export default function ChatView({
           activeToolCallsRef.current.delete(callId);
           const noMistakes = ev.isError
             ? null
-            : readNoMistakesOutput(toolResultText(ev.result));
+            : readNoMistakesToolResult(args, ev.result);
           if (noMistakes) {
             const gate =
               noMistakes.gate && askUserFindings(noMistakes.gate).length

@@ -105,15 +105,19 @@ export function readNoMistakesOutput(
 ): { gate: NoMistakesGate | null } | null {
   const lines = output.replace(/\r\n?/g, "\n").split("\n");
   let gateIndex = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^\s*outcome:/.test(lines[i])) return { gate: null };
-    if (/^\s*gate:/.test(lines[i])) {
-      gateIndex = i;
-      break;
-    }
-  }
+  let outcomeIndex = -1;
+  let topLevelKey = "";
+  lines.forEach((line, i) => {
+    if (/^\S/.test(line)) topLevelKey = line.split(":")[0];
+    if (/^gate:/.test(line)) gateIndex = i;
+    if (
+      /^outcome:/.test(line) ||
+      (topLevelKey === "run" && /^\s{2}outcome:/.test(line))
+    )
+      outcomeIndex = i;
+  });
+  if (outcomeIndex > gateIndex) return { gate: null };
   if (gateIndex < 0) return null;
-  const gateIndent = indentOf(lines[gateIndex]);
   let step = unquote(lines[gateIndex].trim().replace(/^gate:/, ""));
   const nested = !step;
   let headerIndex = -1;
@@ -122,7 +126,7 @@ export function readNoMistakesOutput(
     const line = lines[i];
     if (!line.trim()) continue;
     const indent = indentOf(line);
-    if (indent < gateIndent || (nested && indent === gateIndent)) break;
+    if (nested && indent === 0) break;
     const key = line.trim();
     if (nested && !step && /^step:/.test(key))
       step = unquote(key.replace(/^step:/, ""));
@@ -136,6 +140,23 @@ export function readNoMistakesOutput(
   return {
     gate: { step, findings: parseFindings(lines, headerIndex, header) },
   };
+}
+
+export function isNoMistakesAxiCommand(command: unknown) {
+  return (
+    typeof command === "string" &&
+    /(^|[\s;&|(/])no-mistakes\s+axi(\s|$)/.test(command)
+  );
+}
+
+// Reads a tool call's result as no-mistakes output only when the call ran
+// `no-mistakes axi`, so file dumps and unrelated logs never touch the gate.
+export function readNoMistakesToolResult(
+  args: Record<string, unknown> | undefined,
+  result: unknown,
+) {
+  if (!isNoMistakesAxiCommand(args?.command ?? args?.cmd)) return null;
+  return readNoMistakesOutput(toolResultText(result));
 }
 
 export function parseNoMistakesGate(output: string): NoMistakesGate | null {

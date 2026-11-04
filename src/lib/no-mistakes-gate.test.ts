@@ -5,6 +5,7 @@ import {
   noMistakesGateKey,
   parseNoMistakesGate,
   readNoMistakesOutput,
+  readNoMistakesToolResult,
   toolResultText,
 } from "./no-mistakes-gate";
 
@@ -60,9 +61,7 @@ describe("parseNoMistakesGate", () => {
     const indented = NESTED_GATE.split("\n")
       .map((line) => `  ${line}`)
       .join("\n");
-    expect(noMistakesGateKey(parseNoMistakesGate(indented)!)).toBe(
-      noMistakesGateKey(gate!),
-    );
+    expect(readNoMistakesOutput(indented)).toBeNull();
   });
 
   it("parses gate findings from axi TOON output", () => {
@@ -106,6 +105,46 @@ describe("parseNoMistakesGate", () => {
     ).toEqual({ gate: null });
     expect(readNoMistakesOutput("echo gate: review")).toBeNull();
     expect(readNoMistakesOutput("total 0\nREADME.md")).toBeNull();
+  });
+
+  it("ignores indented outcome keys in unrelated output", () => {
+    expect(
+      readNoMistakesOutput("jobs:\n  build:\n    outcome: success"),
+    ).toBeNull();
+    expect(
+      readNoMistakesOutput("const x = {\n  outcome: passed,\n};"),
+    ).toBeNull();
+    expect(readNoMistakesOutput(`${GATE}\n  outcome: passed`)?.gate?.step).toBe(
+      "review",
+    );
+  });
+});
+
+describe("readNoMistakesToolResult", () => {
+  const result = { content: [{ type: "text", text: NESTED_GATE }] };
+
+  it("reads results of no-mistakes axi commands", () => {
+    for (const command of [
+      "no-mistakes axi run --intent 'x'",
+      "no-mistakes axi respond --action approve",
+      "cd repo && no-mistakes axi status",
+      "no-mistakes axi",
+    ])
+      expect(readNoMistakesToolResult({ command }, result)?.gate?.step).toBe(
+        "review",
+      );
+  });
+
+  it("leaves results of other commands untouched", () => {
+    for (const command of [
+      "cat src/lib/no-mistakes-gate.test.ts",
+      "rg outcome: src",
+      "no-mistakes status",
+      "echo no-mistakes-axi",
+    ])
+      expect(readNoMistakesToolResult({ command }, result)).toBeNull();
+    expect(readNoMistakesToolResult({}, result)).toBeNull();
+    expect(readNoMistakesToolResult(undefined, result)).toBeNull();
   });
 
   it("reads text from structured tool results", () => {
