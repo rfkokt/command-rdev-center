@@ -249,3 +249,82 @@ it("automatically signs an expired Claude session in and resumes the interrupted
     ).toBe(true),
   );
 });
+
+it("opens a decision dialog for no-mistakes ask-user findings and relays the choice", async () => {
+  invoke.mockImplementation((command: string) => {
+    if (command === "list_harnesses")
+      return Promise.resolve([
+        { id: "pi", label: "pi", available: true, is_default: true },
+      ]);
+    if (command === "list_projects") return Promise.resolve([]);
+    if (command === "get_deep_research_data")
+      return Promise.resolve({ runs: [], warnings: [] });
+    if (command === "get_dev_server") return Promise.resolve(null);
+    return Promise.resolve({});
+  });
+  render(<ChatView {...props} />);
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+  );
+  const emit = (event: unknown) =>
+    act(async () => {
+      listeners.get("pi-rpc-event")!({
+        payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+      });
+    });
+  await emit({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: { messages: [] },
+  });
+  await emit({ type: "agent_start" });
+  await emit({
+    type: "tool_execution_start",
+    toolCallId: "call-1",
+    toolName: "bash",
+    args: { command: "no-mistakes axi run --intent 'x'" },
+  });
+  await emit({
+    type: "tool_execution_end",
+    toolCallId: "call-1",
+    toolName: "bash",
+    result: {
+      content: [
+        {
+          type: "text",
+          text: [
+            "gate: review",
+            "findings[1]{id,severity,file,line,action,description}:",
+            "  badge-always-on,warning,src/page.tsx,219,ask-user,The Filter badge is now always visible",
+          ].join("\n"),
+        },
+      ],
+    },
+  });
+  // The dialog waits until the agent's turn has settled.
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const done = { role: "assistant", content: "Gate needs your decision." };
+  await emit({ type: "message_end", message: done });
+  await emit({ type: "agent_end", messages: [done] });
+  await emit({ type: "agent_settled" });
+
+  expect(
+    await screen.findByText("The Filter badge is now always visible"),
+  ).toBeVisible();
+  invoke.mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Approve as is" }));
+  await waitFor(() =>
+    expect(
+      invoke.mock.calls.some(
+        ([command, args]) =>
+          command === "send_pi_command" &&
+          JSON.parse(args.jsonLine).type === "prompt" &&
+          JSON.parse(args.jsonLine).message.includes("--action approve"),
+      ),
+    ).toBe(true),
+  );
+  expect(
+    screen.queryByText("The Filter badge is now always visible"),
+  ).toBeNull();
+});

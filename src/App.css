@@ -2333,6 +2333,56 @@ select:focus-visible {
   border-color: var(--accent);
   color: var(--accent);
 }
+.no-mistakes-findings {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--colors-hairline);
+}
+.no-mistakes-findings li {
+  display: grid;
+  gap: 6px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--colors-hairline);
+}
+.no-mistakes-findings li:last-child {
+  border-bottom: none;
+}
+.no-mistakes-findings label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.no-mistakes-finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--colors-muted);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+.no-mistakes-finding-meta code {
+  color: var(--colors-on-dark);
+}
+.no-mistakes-finding-meta em {
+  color: var(--accent);
+  font-style: normal;
+  text-transform: uppercase;
+}
+.no-mistakes-findings p {
+  margin: 0 0 0 26px;
+  color: var(--colors-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .chat-action {
   min-height: 40px;
   border: 1px solid var(--accent);

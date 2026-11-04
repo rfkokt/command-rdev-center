@@ -113,6 +113,16 @@ import ThinkingBlock from "./ThinkingBlock";
 import { warmTerminalWhenIdle } from "../lib/terminal-warmup";
 import AgentRunCard, { buildRunSteps, noteToolPhase } from "./AgentRunCard";
 import ApprovalDialog from "./ApprovalDialog";
+import NoMistakesGateDialog from "./NoMistakesGateDialog";
+import {
+  askUserFindings,
+  noMistakesDecisionPrompt,
+  noMistakesGateKey,
+  parseNoMistakesGate,
+  toolResultText,
+  type NoMistakesDecision,
+  type NoMistakesGate,
+} from "../lib/no-mistakes-gate";
 import { confirm } from "./ConfirmDialog";
 import { type FilePickerHandle } from "./FilePicker";
 // Split the xterm bundle out of the main chunk; it only loads when the
@@ -623,6 +633,10 @@ export default function ChatView({
     };
   }, [chatId, projectPath, repositories, isWorkspace]);
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  // An ask-user no-mistakes gate parsed from the agent's tool output.
+  const [noMistakesGate, setNoMistakesGate] = useState<NoMistakesGate | null>(
+    null,
+  );
   const [terminalApproval, setTerminalApproval] = useState<{
     pane?: string;
     data: string;
@@ -2746,6 +2760,15 @@ export default function ChatView({
               : (toolArgsRef.current.get(callId) ?? {});
           toolArgsRef.current.delete(callId);
           activeToolCallsRef.current.delete(callId);
+          const gate = ev.isError
+            ? null
+            : parseNoMistakesGate(toolResultText(ev.result));
+          if (gate && askUserFindings(gate).length)
+            setNoMistakesGate((current) =>
+              current && noMistakesGateKey(current) === noMistakesGateKey(gate)
+                ? current
+                : gate,
+            );
           upsertToolCall(callId, {
             name,
             args,
@@ -3577,6 +3600,16 @@ export default function ChatView({
     });
   };
 
+  const decideNoMistakesGate = async (decision: NoMistakesDecision) => {
+    const gate = noMistakesGate;
+    if (!gate) return;
+    setNoMistakesGate(null);
+    if (!(await sendPrompt(noMistakesDecisionPrompt(gate, decision)))) {
+      setNoMistakesGate(gate);
+      onToast("Could not send the no-mistakes decision to the agent.");
+    }
+  };
+
   // Plan-mode approval: the agent ended its plan with AWAITING PLAN APPROVAL.
   const approvePlan = async () => {
     setPlanMode(false);
@@ -3650,6 +3683,8 @@ export default function ChatView({
     setInput("");
     setImages([]);
     setFiles([]);
+    // A typed reply answers (or supersedes) any open no-mistakes gate dialog.
+    setNoMistakesGate(null);
     pendingTaskPromptRef.current = message;
     scrollToBottom("smooth");
     window.setTimeout(() => scrollToBottom("auto"), 60);
@@ -7316,6 +7351,14 @@ export default function ChatView({
         )}
       {approval && (
         <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />
+      )}
+      {noMistakesGate && !approval && !isStreaming && (
+        <NoMistakesGateDialog
+          key={noMistakesGateKey(noMistakesGate)}
+          gate={noMistakesGate}
+          onDecide={(decision) => void decideNoMistakesGate(decision)}
+          onDismiss={() => setNoMistakesGate(null)}
+        />
       )}
     </div>
   );
