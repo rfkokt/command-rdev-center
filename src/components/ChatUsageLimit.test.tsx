@@ -328,3 +328,101 @@ it("opens a decision dialog for no-mistakes ask-user findings and relays the cho
     screen.queryByText("The Filter badge is now always visible"),
   ).toBeNull();
 });
+
+async function startGateChat(isActive = true) {
+  invoke.mockImplementation((command: string) => {
+    if (command === "list_harnesses")
+      return Promise.resolve([
+        { id: "pi", label: "pi", available: true, is_default: true },
+      ]);
+    if (command === "list_projects") return Promise.resolve([]);
+    if (command === "get_deep_research_data")
+      return Promise.resolve({ runs: [], warnings: [] });
+    if (command === "get_dev_server") return Promise.resolve(null);
+    return Promise.resolve({});
+  });
+  const view = render(<ChatView {...props} isActive={isActive} />);
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+  );
+  const emit = (event: unknown) =>
+    act(async () => {
+      listeners.get("pi-rpc-event")!({
+        payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+      });
+    });
+  let call = 0;
+  const toolResult = (text: string) => {
+    const toolCallId = `call-${++call}`;
+    return emit({
+      type: "tool_execution_end",
+      toolCallId,
+      toolName: "bash",
+      result: { content: [{ type: "text", text }] },
+    });
+  };
+  const settle = async () => {
+    const done = { role: "assistant", content: "Done." };
+    await emit({ type: "message_end", message: done });
+    await emit({ type: "agent_end", messages: [done] });
+    await emit({ type: "agent_settled" });
+  };
+  await emit({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: { messages: [] },
+  });
+  await emit({ type: "agent_start" });
+  return { view, toolResult, settle };
+}
+
+const NESTED_ASK_USER_GATE = [
+  "gate:",
+  "  step: review",
+  "  status: awaiting_approval",
+  "  findings[1]{id,severity,file,action,description}:",
+  "    badge-always-on,warning,src/page.tsx,ask-user,The Filter badge is now always visible",
+].join("\n");
+
+it("keeps a pending gate across unrelated tool output but clears it once no-mistakes moves on", async () => {
+  const { toolResult, settle } = await startGateChat();
+  await toolResult(NESTED_ASK_USER_GATE);
+  await toolResult("total 0\nREADME.md");
+  await settle();
+  expect(
+    await screen.findByText("The Filter badge is now always visible"),
+  ).toBeVisible();
+
+  await toolResult(NESTED_ASK_USER_GATE);
+  await toolResult("run:\n  id: abc\n  outcome: passed");
+  await settle();
+  expect(
+    screen.queryByText("The Filter badge is now always visible"),
+  ).toBeNull();
+
+  await toolResult(NESTED_ASK_USER_GATE);
+  await toolResult(
+    [
+      "gate:",
+      "  step: test",
+      "  findings[1]{id,severity,file,action,description}:",
+      "    t1,error,src/a.ts,auto-fix,Failing test",
+    ].join("\n"),
+  );
+  await settle();
+  expect(
+    screen.queryByText("The Filter badge is now always visible"),
+  ).toBeNull();
+});
+
+it("shows a background chat's gate only once its tab is active", async () => {
+  const { view, toolResult, settle } = await startGateChat(false);
+  await toolResult(NESTED_ASK_USER_GATE);
+  await settle();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  view.rerender(<ChatView {...props} isActive />);
+  expect(
+    await screen.findByText("The Filter badge is now always visible"),
+  ).toBeVisible();
+});

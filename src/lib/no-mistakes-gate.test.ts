@@ -4,6 +4,7 @@ import {
   noMistakesDecisionPrompt,
   noMistakesGateKey,
   parseNoMistakesGate,
+  readNoMistakesOutput,
   toolResultText,
 } from "./no-mistakes-gate";
 
@@ -18,7 +19,52 @@ help[2]:
   Run \`no-mistakes axi respond --action approve\` to accept this step and continue
   Run \`no-mistakes axi respond --action skip\` to skip this step`;
 
+const NESTED_GATE = `run:
+  id: 01M6JF4T2HYJ6FNB00R6E33H5H
+  branch: crc/command-rdev-center-179326255173
+  status: running
+  steps[9]{step,status,findings}:
+    rebase,completed,0
+    review,awaiting_approval,3
+    test,pending,0
+gate:
+  step: review
+  status: awaiting_approval
+  risk: medium
+  note: "Review auto-fix is disabled, so findings park for your decision."
+  findings[3]{id,severity,file,action,description}:
+    stale-gate,warning,src/components/ChatView.tsx,auto-fix,The gate state only gets set
+    hidden-tab-modal,warning,src/components/ChatView.tsx,ask-user,"The dialog renders, even in hidden tabs"
+    failed-send-dup,info,src/components/ChatView.tsx,no-op,Duplicate user message on retry
+help[2]:
+  Run \`no-mistakes axi respond --action approve\` to accept this step and continue
+  Run \`no-mistakes axi respond --action skip\` to skip this step`;
+
 describe("parseNoMistakesGate", () => {
+  it("parses the nested gate layout from axi run/respond", () => {
+    const gate = parseNoMistakesGate(NESTED_GATE);
+    expect(gate?.step).toBe("review");
+    expect(gate?.findings.map((finding) => finding.id)).toEqual([
+      "stale-gate",
+      "hidden-tab-modal",
+      "failed-send-dup",
+    ]);
+    expect(gate?.findings[1]).toEqual({
+      id: "hidden-tab-modal",
+      severity: "warning",
+      file: "src/components/ChatView.tsx",
+      line: "",
+      action: "ask-user",
+      description: "The dialog renders, even in hidden tabs",
+    });
+    const indented = NESTED_GATE.split("\n")
+      .map((line) => `  ${line}`)
+      .join("\n");
+    expect(noMistakesGateKey(parseNoMistakesGate(indented)!)).toBe(
+      noMistakesGateKey(gate!),
+    );
+  });
+
   it("parses gate findings from axi TOON output", () => {
     const gate = parseNoMistakesGate(GATE);
     expect(gate?.step).toBe("review");
@@ -43,6 +89,23 @@ describe("parseNoMistakesGate", () => {
     expect(parseNoMistakesGate(`${GATE}\noutcome: passed`)).toBeNull();
     expect(parseNoMistakesGate("gate: test\nstatus: waiting")).toBeNull();
     expect(parseNoMistakesGate("echo gate: review")).toBeNull();
+  });
+
+  it("tells no-mistakes output without a pending gate from other output", () => {
+    expect(readNoMistakesOutput("outcome: passed\nrun: abc")).toEqual({
+      gate: null,
+    });
+    expect(readNoMistakesOutput("run:\n  id: abc\n  outcome: passed")).toEqual({
+      gate: null,
+    });
+    expect(readNoMistakesOutput("gate: test\nstatus: waiting")).toEqual({
+      gate: null,
+    });
+    expect(
+      readNoMistakesOutput("gate:\n  step: test\n  status: running"),
+    ).toEqual({ gate: null });
+    expect(readNoMistakesOutput("echo gate: review")).toBeNull();
+    expect(readNoMistakesOutput("total 0\nREADME.md")).toBeNull();
   });
 
   it("reads text from structured tool results", () => {

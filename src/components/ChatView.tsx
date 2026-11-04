@@ -118,7 +118,7 @@ import {
   askUserFindings,
   noMistakesDecisionPrompt,
   noMistakesGateKey,
-  parseNoMistakesGate,
+  readNoMistakesOutput,
   toolResultText,
   type NoMistakesDecision,
   type NoMistakesGate,
@@ -2760,15 +2760,22 @@ export default function ChatView({
               : (toolArgsRef.current.get(callId) ?? {});
           toolArgsRef.current.delete(callId);
           activeToolCallsRef.current.delete(callId);
-          const gate = ev.isError
+          const noMistakes = ev.isError
             ? null
-            : parseNoMistakesGate(toolResultText(ev.result));
-          if (gate && askUserFindings(gate).length)
+            : readNoMistakesOutput(toolResultText(ev.result));
+          if (noMistakes) {
+            const gate =
+              noMistakes.gate && askUserFindings(noMistakes.gate).length
+                ? noMistakes.gate
+                : null;
             setNoMistakesGate((current) =>
-              current && noMistakesGateKey(current) === noMistakesGateKey(gate)
+              gate &&
+              current &&
+              noMistakesGateKey(current) === noMistakesGateKey(gate)
                 ? current
                 : gate,
             );
+          }
           upsertToolCall(callId, {
             name,
             args,
@@ -7352,7 +7359,7 @@ export default function ChatView({
       {approval && (
         <ApprovalDialog req={approval} onRespond={handleApprovalResponse} />
       )}
-      {noMistakesGate && !approval && !isStreaming && (
+      {noMistakesGate && isActive && !approval && !isStreaming && (
         <NoMistakesGateDialog
           key={noMistakesGateKey(noMistakesGate)}
           gate={noMistakesGate}

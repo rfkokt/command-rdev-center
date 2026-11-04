@@ -56,52 +56,90 @@ function splitRow(row: string) {
   return cells;
 }
 
-export function parseNoMistakesGate(output: string): NoMistakesGate | null {
+function indentOf(line: string) {
+  return line.length - line.trimStart().length;
+}
+
+function parseFindings(
+  lines: string[],
+  headerIndex: number,
+  header: RegExpMatchArray,
+) {
+  const fields = header[2].split(",").map((field) => field.trim());
+  const count = Number(header[1]);
+  const headerIndent = indentOf(lines[headerIndex]);
+  const findings: NoMistakesFinding[] = [];
+  for (const row of lines.slice(headerIndex + 1, headerIndex + 1 + count)) {
+    if (!row.trim() || indentOf(row) <= headerIndent) break;
+    const cells = splitRow(row.trim());
+    // An unquoted trailing description may still contain commas.
+    if (cells.length > fields.length)
+      cells.splice(
+        fields.length - 1,
+        cells.length,
+        cells.slice(fields.length - 1).join(","),
+      );
+    const value = (name: string) => {
+      const index = fields.indexOf(name);
+      return index < 0 ? "" : unquote(cells[index] ?? "");
+    };
+    const id = value("id");
+    if (id)
+      findings.push({
+        id,
+        severity: value("severity"),
+        file: value("file"),
+        line: value("line"),
+        action: value("action"),
+        description: value("description"),
+      });
+  }
+  return findings;
+}
+
+// Returns null for output that is not from no-mistakes, and `{ gate: null }`
+// for no-mistakes output that shows no pending findings gate (an outcome, or a
+// gate without a findings table).
+export function readNoMistakesOutput(
+  output: string,
+): { gate: NoMistakesGate | null } | null {
   const lines = output.replace(/\r\n?/g, "\n").split("\n");
   let gateIndex = -1;
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (/^outcome:/.test(lines[i])) return null;
-    if (/^gate:\s*\S/.test(lines[i])) {
+    if (/^\s*outcome:/.test(lines[i])) return { gate: null };
+    if (/^\s*gate:/.test(lines[i])) {
       gateIndex = i;
       break;
     }
   }
   if (gateIndex < 0) return null;
-  const step = unquote(lines[gateIndex].replace(/^gate:/, ""));
+  const gateIndent = indentOf(lines[gateIndex]);
+  let step = unquote(lines[gateIndex].trim().replace(/^gate:/, ""));
+  const nested = !step;
+  let headerIndex = -1;
+  let header: RegExpMatchArray | null = null;
   for (let i = gateIndex + 1; i < lines.length; i++) {
-    const header = lines[i].match(/^findings\[(\d+)\]\{([^}]*)\}:\s*$/);
-    if (!header) continue;
-    const fields = header[2].split(",").map((field) => field.trim());
-    const count = Number(header[1]);
-    const findings: NoMistakesFinding[] = [];
-    for (const row of lines.slice(i + 1, i + 1 + count)) {
-      if (!/^\s+\S/.test(row)) break;
-      const cells = splitRow(row.trim());
-      // An unquoted trailing description may still contain commas.
-      if (cells.length > fields.length)
-        cells.splice(
-          fields.length - 1,
-          cells.length,
-          cells.slice(fields.length - 1).join(","),
-        );
-      const value = (name: string) => {
-        const index = fields.indexOf(name);
-        return index < 0 ? "" : unquote(cells[index] ?? "");
-      };
-      const id = value("id");
-      if (id)
-        findings.push({
-          id,
-          severity: value("severity"),
-          file: value("file"),
-          line: value("line"),
-          action: value("action"),
-          description: value("description"),
-        });
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const indent = indentOf(line);
+    if (indent < gateIndent || (nested && indent === gateIndent)) break;
+    const key = line.trim();
+    if (nested && !step && /^step:/.test(key))
+      step = unquote(key.replace(/^step:/, ""));
+    if (!header) {
+      header = key.match(/^findings\[(\d+)\]\{([^}]*)\}:\s*$/);
+      headerIndex = i;
     }
-    return { step, findings };
   }
-  return null;
+  if (!step) return null;
+  if (!header) return { gate: null };
+  return {
+    gate: { step, findings: parseFindings(lines, headerIndex, header) },
+  };
+}
+
+export function parseNoMistakesGate(output: string): NoMistakesGate | null {
+  return readNoMistakesOutput(output)?.gate ?? null;
 }
 
 // Tool results arrive as plain strings or `{ content: [{ text }] }` blocks.
