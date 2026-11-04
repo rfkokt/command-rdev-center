@@ -145,7 +145,7 @@ export function readNoMistakesOutput(
 export function isNoMistakesAxiCommand(command: unknown) {
   return (
     typeof command === "string" &&
-    /(^|[\s;&|(/])no-mistakes\s+axi(\s|$)/.test(command)
+    /(^|[\s;&|(/"'`])no-mistakes\s+axi(\s|$|["'`])/.test(command)
   );
 }
 

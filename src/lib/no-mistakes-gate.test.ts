@@ -128,6 +128,8 @@ describe("readNoMistakesToolResult", () => {
       "no-mistakes axi run --intent 'x'",
       "no-mistakes axi respond --action approve",
       "cd repo && no-mistakes axi status",
+      `/bin/zsh -lc "no-mistakes axi run --intent 'x'"`,
+      "/bin/zsh -lc 'no-mistakes axi'",
       "no-mistakes axi",
     ])
       expect(readNoMistakesToolResult({ command }, result)?.gate?.step).toBe(
