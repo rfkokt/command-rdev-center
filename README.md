@@ -32,6 +32,8 @@ Git-worktree chats await a best-effort checkpoint before dispatching an idle use
 
 Project coding sessions record task criteria, real validation exit codes, and source fingerprints. Completion evidence is checked after formatting and before final settlement. See [agent workflow](docs/agent-workflow.md) for the behavior and limits.
 
+When a live Claude Code session reports an expired login, Kern runs `claude auth login` in a separate terminal. Complete sign-in in the browser; after the command succeeds, Kern reconnects Claude Code and continues the interrupted request. Only one sign-in runs across chats, and failed or cancelled sign-ins never retry the task. Use **Try again** on the error, or **Sign in to Claude** on a startup error, to retry sign-in.
+
 ## Stack
 
 - Tauri 2

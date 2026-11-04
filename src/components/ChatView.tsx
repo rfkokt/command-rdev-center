@@ -50,6 +50,10 @@ import {
 } from "../lib/attachment-delivery";
 import { useChatDraft } from "../lib/use-chat-draft";
 import {
+  isClaudeLoginExpired,
+  useClaudeAuthRecovery,
+} from "../lib/use-claude-auth-recovery";
+import {
   buildChatHandoff,
   buildFullTranscript,
   isUsageLimitError,
@@ -948,6 +952,16 @@ export default function ChatView({
   // reopens with the agent it began with.
   const [harness, setHarness] = useState<string | undefined>(initialHarness);
   const harnessRef = useRef<string | undefined>(initialHarness);
+  const activeHarnessRef = useRef<string | undefined>(initialHarness);
+  const resumeAfterLoginRef = useRef<() => Promise<void>>(async () => {});
+  const claudeLogin = useClaudeAuthRecovery({
+    chatId,
+    cwd,
+    onToast,
+    onAuthenticated: () => resumeAfterLoginRef.current(),
+  });
+  const { recover: recoverClaudeLogin, markHealthy: markClaudeHealthy } =
+    claudeLogin;
   /** Conversation so far, handed to an agent that took over mid-chat. */
   const handoffRef = useRef<string | undefined>(undefined);
   const [harnessOptions, setHarnessOptions] = useState<HarnessOption[]>([]);
@@ -1817,6 +1831,7 @@ export default function ChatView({
       onAgentRunning(chatId, false);
       setMessages((prev) => settleWithError(prev, error));
       onToast(error);
+      recoverClaudeLogin(activeHarnessRef.current, error);
     };
     const startupTimer = window.setTimeout(() => {
       startupExpired = true;
@@ -1936,6 +1951,9 @@ export default function ChatView({
         typeof message.errorMessage === "string"
           ? message.errorMessage.trim()
           : "";
+      if (errMsg) recoverClaudeLogin(activeHarnessRef.current, errMsg);
+      else if (content.text || content.thinking || usedTool)
+        markClaudeHealthy();
       if (errMsg && surfacedErrorRef.current !== errMsg) {
         surfacedErrorRef.current = errMsg;
         setMessages((prev) => settleWithError(prev, errMsg));
@@ -2086,6 +2104,7 @@ export default function ChatView({
             setMessages((previous) => settleWithError(previous, error));
             onAgentRunning(chatId, false);
             onToast(error);
+            recoverClaudeLogin(activeHarnessRef.current, error);
             void sendRaw({ type: "get_state" });
             return;
           }
@@ -2538,6 +2557,7 @@ export default function ChatView({
           if (ev.success === false) {
             const finalError =
               typeof ev.finalError === "string" ? ev.finalError.trim() : "";
+            recoverClaudeLogin(activeHarnessRef.current, finalError);
             if (finalError && surfacedErrorRef.current !== finalError) {
               surfacedErrorRef.current = finalError;
               setMessages((prev) =>
@@ -3280,6 +3300,7 @@ export default function ChatView({
           setDriveDetached(true);
         setMessages((prev) => settleWithError(prev, msg));
         onToast(msg);
+        recoverClaudeLogin(activeHarnessRef.current, msg);
       }
     }
 
@@ -3320,6 +3341,8 @@ export default function ChatView({
     updateGraphIfCodeStale,
     syncKanbanTask,
     piInstallRetry,
+    recoverClaudeLogin,
+    markClaudeHealthy,
   ]);
 
   useEffect(() => {
@@ -4087,7 +4110,7 @@ export default function ChatView({
   }
 
   const handleRestart = useCallback(
-    async (retry = false) => {
+    async (retry = false, retryMessage?: string) => {
       if (isRestarting) return;
       setIsRestarting(true);
       setDriveDetached(false);
@@ -4145,6 +4168,7 @@ export default function ChatView({
             sendRaw({
               type: "prompt",
               message:
+                retryMessage ??
                 "Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.",
             });
         }, 300);
@@ -4208,6 +4232,20 @@ export default function ChatView({
 
   const currentHarness =
     harness ?? harnessOptions.find((item) => item.is_default)?.id ?? "pi";
+  activeHarnessRef.current = currentHarness;
+  resumeAfterLoginRef.current = async () => {
+    if (activeHarnessRef.current !== "claude-code" || agentStatus === "running")
+      return;
+    const lastUser = [...messages]
+      .reverse()
+      .find((message) => message.role === "user");
+    await handleRestart(
+      hasUserMessage,
+      lastUser?.text
+        ? `Claude login has been renewed. Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.\n\nLast user request:\n${lastUser.text}`
+        : undefined,
+    );
+  };
   // A different agent answers for itself once it is up.
   useEffect(() => setHarnessImage(null), [currentHarness]);
   const imageSupportOf = useCallback(
@@ -5602,6 +5640,11 @@ export default function ChatView({
               <button
                 className="chat-retry-inline"
                 onClick={() => {
+                  if (
+                    /(?:^|\n)Agent error:/.test(m.text) &&
+                    recoverClaudeLogin(currentHarness, m.text, true)
+                  )
+                    return;
                   const lastUser = [...messages]
                     .reverse()
                     .find((item) => item.role === "user");
@@ -5681,6 +5724,15 @@ export default function ChatView({
               {fixingPiIssueId === m.id ? "AI IS FIXING…" : "✦ FIX WITH AI"}
             </button>
           )}
+          {m.role === "system" &&
+            isClaudeLoginExpired(currentHarness, m.text) && (
+              <button
+                onClick={() => recoverClaudeLogin(currentHarness, m.text, true)}
+                className="chat-restart"
+              >
+                Sign in to Claude
+              </button>
+            )}
           {m.role === "user" &&
             currentHarness === "pi" &&
             agentStatus !== "running" &&
@@ -6549,6 +6601,17 @@ export default function ChatView({
             cwd={cwd}
             hidden={!showTerminal}
             onClose={() => setShowTerminal(false)}
+          />
+        </Suspense>
+      )}
+
+      {claudeLogin.terminal && (
+        <Suspense fallback={null}>
+          <TerminalPanel
+            chatId={claudeLogin.terminal.chatId}
+            cwd={claudeLogin.terminal.cwd}
+            hidden={!claudeLogin.visible}
+            onClose={claudeLogin.hide}
           />
         </Suspense>
       )}

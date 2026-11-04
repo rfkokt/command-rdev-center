@@ -28,6 +28,7 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./ProjectFilesSidebar", () => ({ default: () => null }));
 vi.mock("./FilePicker", () => ({ default: () => null }));
+vi.mock("./TerminalPanel", () => ({ default: () => null }));
 vi.mock("react-virtuoso", async () => {
   const React = await import("react");
   return {
@@ -46,6 +47,7 @@ vi.mock("react-virtuoso", async () => {
   };
 });
 import ChatView from "./ChatView";
+import { terminalEventId } from "../lib/terminal-warmup";
 
 Element.prototype.scrollIntoView = vi.fn();
 const props = {
@@ -152,4 +154,98 @@ it("offers to continue with another agent after a usage limit and hands over the
   )!;
   expect(spawn[1].handoff).toContain("/data/handoffs/chat-one.md");
   expect(localStorage.getItem("kern:fallback-agent")).toBe("pi");
+});
+
+it("automatically signs an expired Claude session in and resumes the interrupted request", async () => {
+  invoke.mockImplementation((command: string) => {
+    if (command === "list_harnesses")
+      return Promise.resolve([
+        {
+          id: "claude-code",
+          label: "Claude Code",
+          available: true,
+          is_default: true,
+        },
+      ]);
+    if (command === "list_projects") return Promise.resolve([]);
+    if (command === "get_deep_research_data")
+      return Promise.resolve({ runs: [], warnings: [] });
+    if (command === "get_dev_server") return Promise.resolve(null);
+    return Promise.resolve({});
+  });
+  render(<ChatView {...props} />); // Exercise the configured default harness.
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("spawn_pi_rpc", expect.anything()),
+  );
+  const emit = (event: unknown) =>
+    act(async () => {
+      listeners.get("pi-rpc-event")!({
+        payload: { session_id: "chat-chat-one", raw: JSON.stringify(event) },
+      });
+    });
+  const error =
+    "Failed to authenticate: OAuth session expired and could not be refreshed";
+  await emit({
+    type: "response",
+    command: "get_messages",
+    success: true,
+    data: {
+      messages: [
+        { role: "user", content: "Fix the settings page" },
+        {
+          role: "assistant",
+          content: error,
+          stopReason: "error",
+          errorMessage: error,
+        },
+      ],
+    },
+  });
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "terminal_write"),
+  ).toHaveLength(0);
+  await emit({ type: "agent_start" });
+  const failed = {
+    role: "assistant",
+    content: [],
+    stopReason: "error",
+    errorMessage: error,
+  };
+  await emit({ type: "message_end", message: failed });
+  await emit({ type: "agent_end", messages: [failed] });
+  await emit({ type: "agent_settled" });
+  await waitFor(() =>
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "terminal_write"),
+    ).toHaveLength(1),
+  );
+  const login = invoke.mock.calls.find(
+    ([command]) => command === "terminal_write",
+  )![1];
+  expect(login.data).toContain("claude auth login");
+  expect(login.chatId).not.toBe("chat-one__0");
+  expect(
+    invoke.mock.calls.filter(([command]) => command === "spawn_pi_rpc"),
+  ).toHaveLength(1);
+
+  await act(async () =>
+    listeners.get(`terminal://data/${terminalEventId(login.chatId)}`)!({
+      payload: "\r\n__KERN_CLAUDE_LOGIN_EXIT__:0\r\n",
+    }),
+  );
+  await waitFor(() =>
+    expect(
+      invoke.mock.calls.filter(([command]) => command === "spawn_pi_rpc"),
+    ).toHaveLength(2),
+  );
+  await waitFor(() =>
+    expect(
+      invoke.mock.calls.some(
+        ([command, args]) =>
+          command === "send_pi_command" &&
+          JSON.parse(args.jsonLine).type === "prompt" &&
+          JSON.parse(args.jsonLine).message.includes("Fix the settings page"),
+      ),
+    ).toBe(true),
+  );
 });
