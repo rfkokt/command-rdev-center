@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("./terminal-warmup", () => ({ terminalEventId: (key: string) => key }));
 
 import {
+  claudeLoginContinuation,
   isClaudeLoginExpired,
   useClaudeAuthRecovery,
 } from "./use-claude-auth-recovery";
@@ -106,17 +107,101 @@ it("keeps failures visible and permits an explicit retry without reconnecting", 
   expect(invoke).toHaveBeenCalledWith("terminal_close", { chatId });
 });
 
-it("deduplicates browser sign-in across chats", async () => {
+it("deduplicates browser sign-in across chats and reconnects waiting chats after success", async () => {
+  const secondAuthenticated = vi.fn();
   const first = renderHook(() => useClaudeAuthRecovery(options));
   const second = renderHook(() =>
-    useClaudeAuthRecovery({ ...options, chatId: "second" }),
+    useClaudeAuthRecovery({
+      ...options,
+      chatId: "second",
+      onAuthenticated: secondAuthenticated,
+    }),
+  );
+  act(() => {
+    first.result.current.recover("claude-code", expired);
+    second.result.current.recover("claude-code", expired);
+    second.result.current.recover("claude-code", expired);
+    second.result.current.markHealthy();
+    second.result.current.recover("claude-code", expired);
+  });
+  await waitFor(() => expect(commands()).toHaveLength(1));
+  expect(
+    onToast.mock.calls.filter(([text]) => text.includes("another chat")),
+  ).toHaveLength(1);
+  const { chatId } = commands()[0][1];
+  act(() =>
+    listeners.get(`terminal://data/${chatId}`)!({
+      payload: "\r\n__KERN_CLAUDE_LOGIN_EXIT__:0\r\n",
+    }),
+  );
+  expect(onAuthenticated).toHaveBeenCalledTimes(1);
+  expect(secondAuthenticated).toHaveBeenCalledTimes(1);
+  act(() => second.result.current.recover("claude-code", expired));
+  expect(commands()).toHaveLength(1);
+  expect(secondAuthenticated).toHaveBeenCalledTimes(1);
+});
+
+it("does not reconnect waiting chats after a failed login, and lets them retry explicitly", async () => {
+  const secondAuthenticated = vi.fn();
+  const first = renderHook(() => useClaudeAuthRecovery(options));
+  const second = renderHook(() =>
+    useClaudeAuthRecovery({
+      ...options,
+      chatId: "second",
+      onAuthenticated: secondAuthenticated,
+    }),
   );
   act(() => {
     first.result.current.recover("claude-code", expired);
     second.result.current.recover("claude-code", expired);
   });
   await waitFor(() => expect(commands()).toHaveLength(1));
-  expect(onToast).toHaveBeenCalledWith(expect.stringContaining("another chat"));
+  const { chatId } = commands()[0][1];
+  act(() => listeners.get(`terminal://exit/${chatId}`)!({ payload: "" }));
+  expect(onAuthenticated).not.toHaveBeenCalled();
+  expect(secondAuthenticated).not.toHaveBeenCalled();
+  act(() => second.result.current.recover("claude-code", expired));
+  expect(commands()).toHaveLength(1);
+  act(() => second.result.current.recover("claude-code", expired, true));
+  await waitFor(() => expect(commands()).toHaveLength(2));
+  expect(commands()[1][1].chatId).toMatch(/^second__claude_login_/);
+});
+
+it("does not reconnect a waiting chat that unmounted", async () => {
+  const secondAuthenticated = vi.fn();
+  const first = renderHook(() => useClaudeAuthRecovery(options));
+  const second = renderHook(() =>
+    useClaudeAuthRecovery({
+      ...options,
+      chatId: "second",
+      onAuthenticated: secondAuthenticated,
+    }),
+  );
+  act(() => {
+    first.result.current.recover("claude-code", expired);
+    second.result.current.recover("claude-code", expired);
+  });
+  await waitFor(() => expect(commands()).toHaveLength(1));
+  second.unmount();
+  const { chatId } = commands()[0][1];
+  act(() =>
+    listeners.get(`terminal://data/${chatId}`)!({
+      payload: "\r\n__KERN_CLAUDE_LOGIN_EXIT__:0\r\n",
+    }),
+  );
+  expect(onAuthenticated).toHaveBeenCalledTimes(1);
+  expect(secondAuthenticated).not.toHaveBeenCalled();
+});
+
+it("builds the continuation from the typed request without attachment envelopes", () => {
+  const text = `Fix the bug\n\n<authoritative_attachments>\nThe user explicitly attached the files below.\n--- a.ts (/a.ts) ---\nsecret\n--- end a.ts ---\n</authoritative_attachments>\n\nAttached image files (JSON records):\n{"path":"/tmp/x.png"}\n`;
+  const prompt = claudeLoginContinuation(text)!;
+  expect(prompt).toContain("Last user request:\nFix the bug");
+  expect(prompt).not.toContain("authoritative_attachments");
+  expect(prompt).not.toContain("Attached image files");
+  expect(prompt).not.toContain("secret");
+  expect(claudeLoginContinuation(undefined)).toBeUndefined();
+  expect(claudeLoginContinuation("   ")).toBeUndefined();
 });
 
 it("releases the login lock when opening fails", async () => {

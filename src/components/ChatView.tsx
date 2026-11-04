@@ -50,6 +50,7 @@ import {
 } from "../lib/attachment-delivery";
 import { useChatDraft } from "../lib/use-chat-draft";
 import {
+  claudeLoginContinuation,
   isClaudeLoginExpired,
   useClaudeAuthRecovery,
 } from "../lib/use-claude-auth-recovery";
@@ -4241,9 +4242,7 @@ export default function ChatView({
       .find((message) => message.role === "user");
     await handleRestart(
       hasUserMessage,
-      lastUser?.text
-        ? `Claude login has been renewed. Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.\n\nLast user request:\n${lastUser.text}`
-        : undefined,
+      claudeLoginContinuation(lastUser?.text),
     );
   };
   // A different agent answers for itself once it is up.

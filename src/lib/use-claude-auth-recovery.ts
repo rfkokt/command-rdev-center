@@ -2,11 +2,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { terminalEventId } from "./terminal-warmup";
+import { stripDeliveryEnvelope } from "./attachment-delivery";
 
 const LOGIN_COMMAND = `/bin/sh -c 'claude auth login; code=$?; printf "\\n__KERN_CLAUDE_LOGIN_EXIT__:%s\\n" "$code"'\r`;
 
-// Claude credentials are shared across chats. Only one browser login may run.
-let activeLogin: symbol | null = null;
+// Claude credentials are shared across chats. Only one browser login may run;
+// other expired chats wait on it and reconnect only when it succeeds.
+let activeLogin: { waiters: Set<(success: boolean) => void> } | null = null;
+
+export function claudeLoginContinuation(text: string | undefined) {
+  const request = stripDeliveryEnvelope(text ?? "")
+    .replace(
+      /\n*<authoritative_attachments>[\s\S]*?<\/authoritative_attachments>/g,
+      "",
+    )
+    .trim();
+  return request
+    ? `Claude login has been renewed. Continue the interrupted task from where you left off. Check the current state first and do not repeat completed work.\n\nLast user request:\n${request}`
+    : undefined;
+}
 
 export function isClaudeLoginExpired(
   harness: string | undefined,
@@ -30,6 +44,7 @@ export function useClaudeAuthRecovery(options: {
   latest.current = options;
   const attempted = useRef(false);
   const cancel = useRef<(() => void) | null>(null);
+  const waiting = useRef<(() => void) | null>(null);
   const terminalKey = useRef<string | null>(null);
   const [terminal, setTerminal] = useState<{
     chatId: string;
@@ -39,6 +54,8 @@ export function useClaudeAuthRecovery(options: {
 
   useEffect(
     () => () => {
+      waiting.current?.();
+      waiting.current = null;
       cancel.current?.();
       if (terminalKey.current)
         void invoke("terminal_close", { chatId: terminalKey.current }).catch(
@@ -51,19 +68,37 @@ export function useClaudeAuthRecovery(options: {
   const recover = useCallback(
     (harness: string | undefined, error: string, retry = false) => {
       if (!isClaudeLoginExpired(harness, error)) return false;
+      const reconnect = () =>
+        void Promise.resolve(latest.current.onAuthenticated()).catch((reason) =>
+          latest.current.onToast(`Claude reconnect failed: ${String(reason)}`),
+        );
+      if (waiting.current) {
+        if (retry)
+          latest.current.onToast(
+            "Claude sign-in is already open in another chat.",
+          );
+        return true;
+      }
       if (cancel.current || (!retry && attempted.current)) {
         if (retry) setVisible(true);
         return true;
       }
+      attempted.current = true;
       if (activeLogin) {
+        const { waiters } = activeLogin;
+        const waiter = (success: boolean) => {
+          waiting.current = null;
+          if (success) reconnect();
+        };
+        waiters.add(waiter);
+        waiting.current = () => waiters.delete(waiter);
         latest.current.onToast(
-          "Claude sign-in is already open in another chat.",
+          "Claude sign-in is already open in another chat. This chat reconnects when it completes.",
         );
         return true;
       }
-      attempted.current = true;
-      const owner = Symbol();
-      activeLogin = owner;
+      const login = { waiters: new Set<(success: boolean) => void>() };
+      activeLogin = login;
       // A fresh, separate PTY never writes into a user's busy project terminal.
       const chatId = `${latest.current.chatId}__claude_login_${crypto.randomUUID()}`;
       const key = `${chatId}__0`;
@@ -82,7 +117,7 @@ export function useClaudeAuthRecovery(options: {
         done = true;
         clearTimeout(timer);
         unlisteners.forEach((unlisten) => unlisten());
-        if (activeLogin === owner) activeLogin = null;
+        if (activeLogin === login) activeLogin = null;
         cancel.current = null;
         if (close || success) {
           terminalKey.current = null;
@@ -92,13 +127,11 @@ export function useClaudeAuthRecovery(options: {
           setVisible(false);
           setTerminal(null);
           latest.current.onToast("Claude signed in — reconnecting the agent.");
-          void Promise.resolve(latest.current.onAuthenticated()).catch(
-            (reason) =>
-              latest.current.onToast(
-                `Claude reconnect failed: ${String(reason)}`,
-              ),
-          );
+          reconnect();
         } else if (error) latest.current.onToast(error);
+        const waiters = [...login.waiters];
+        login.waiters.clear();
+        waiters.forEach((waiter) => waiter(success));
       };
       cancel.current = () => finish(false, undefined, true);
       timer = setTimeout(
@@ -165,7 +198,7 @@ export function useClaudeAuthRecovery(options: {
   // A successful model response starts a new expiry episode. Merely restarting
   // must not clear this guard, or rejected credentials cause a login loop.
   const markHealthy = useCallback(() => {
-    if (!cancel.current) attempted.current = false;
+    if (!cancel.current && !waiting.current) attempted.current = false;
   }, []);
 
   return {
