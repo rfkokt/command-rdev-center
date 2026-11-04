@@ -30,6 +30,7 @@ jobs:
           components: rustfmt
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
+      - run: python3 -m unittest discover -s scripts -p 'test_updater_vps.py'
       - run: pnpm test
       - run: pnpm build
   rust-test:

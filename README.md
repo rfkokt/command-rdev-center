@@ -84,6 +84,7 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --lib # macOS backend t
 - [Product requirements](docs/PRD.md)
 - [Project context and glossary](CONTEXT.md)
 - [Architecture decisions](docs/adr/)
+- [Updater deployment and retention](docs/updater-deployment.md)
 
 ## Status
 
