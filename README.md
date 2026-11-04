@@ -34,6 +34,8 @@ Project coding sessions record task criteria, real validation exit codes, and so
 
 When a live Claude Code session reports an expired login, Kern runs `claude auth login` in a separate terminal. Complete sign-in in the browser; after the command succeeds, Kern reconnects Claude Code and continues the interrupted request. Only one sign-in runs across chats, and failed or cancelled sign-ins never retry the task. Use **Try again** on the error, or **Sign in to Claude** on a startup error, to retry sign-in.
 
+When an agent drives the no-mistakes pipeline in a chat and a gate parks with `ask-user` findings, Kern shows a decision dialog after the agent turn settles. Choose **Fix selected** (with optional guidance), **Approve as is**, **Skip step**, or **Later**; Kern sends the decision to the agent as a normal prompt, and the agent runs `no-mistakes axi respond`. `auto-fix` and `no-op` findings are not shown. Typing a chat reply dismisses the dialog.
+
 ## Stack
 
 - Tauri 2
