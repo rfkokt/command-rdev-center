@@ -107,6 +107,16 @@ describe("parseNoMistakesGate", () => {
     expect(readNoMistakesOutput("total 0\nREADME.md")).toBeNull();
   });
 
+  it("stops the flat findings scan at the next top-level object", () => {
+    const output = `gate: review
+note: nothing to decide
+other:
+  findings[1]{id,severity,file,line,action,description}:
+    x1,info,a.ts,1,ask-user,Not from this gate
+`;
+    expect(readNoMistakesOutput(output)).toEqual({ gate: null });
+  });
+
   it("ignores indented outcome keys in unrelated output", () => {
     expect(
       readNoMistakesOutput("jobs:\n  build:\n    outcome: success"),
@@ -157,9 +167,43 @@ describe("readNoMistakesToolResult", () => {
     ).toBe("review");
   });
 
-  it("keys gates by step and finding ids", () => {
+  it("reads argv-array commands and falls back to the title", () => {
+    expect(
+      readNoMistakesToolResult(
+        { command: ["/bin/zsh", "-lc", "no-mistakes axi run --intent 'x'"] },
+        result,
+      )?.gate?.step,
+    ).toBe("review");
+    expect(
+      readNoMistakesToolResult({ title: "no-mistakes axi status" }, result)
+        ?.gate?.step,
+    ).toBe("review");
+    expect(
+      readNoMistakesToolResult({ command: ["cat", "notes.txt"] }, result),
+    ).toBeNull();
+  });
+
+  it("keys gates by step and finding contents", () => {
     const gate = parseNoMistakesGate(GATE)!;
-    expect(noMistakesGateKey(gate)).toBe("review:r1,r2,r3");
+    expect(noMistakesGateKey(gate)).toBe(
+      noMistakesGateKey({ ...gate, findings: [...gate.findings].reverse() }),
+    );
+    const nextRound = {
+      ...gate,
+      findings: gate.findings.map((finding) =>
+        finding.id === "r2"
+          ? { ...finding, description: "A different finding" }
+          : finding,
+      ),
+    };
+    expect(noMistakesGateKey(nextRound)).not.toBe(noMistakesGateKey(gate));
+    const actionChanged = {
+      ...gate,
+      findings: gate.findings.map((finding) =>
+        finding.id === "r1" ? { ...finding, action: "ask-user" } : finding,
+      ),
+    };
+    expect(noMistakesGateKey(actionChanged)).not.toBe(noMistakesGateKey(gate));
   });
 });
 

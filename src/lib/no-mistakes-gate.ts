@@ -127,6 +127,8 @@ export function readNoMistakesOutput(
     if (!line.trim()) continue;
     const indent = indentOf(line);
     if (nested && indent === 0) break;
+    if (!nested && indent > 0) continue;
+    if (!nested && /^[^\s:\[]+:\s*$/.test(line)) break;
     const key = line.trim();
     if (nested && !step && /^step:/.test(key))
       step = unquote(key.replace(/^step:/, ""));
@@ -142,10 +144,21 @@ export function readNoMistakesOutput(
   };
 }
 
+function commandText(command: unknown) {
+  if (typeof command === "string") return command;
+  if (
+    Array.isArray(command) &&
+    command.every((part) => typeof part === "string")
+  )
+    return command.join(" ");
+  return null;
+}
+
 export function isNoMistakesAxiCommand(command: unknown) {
+  const text = commandText(command);
   return (
-    typeof command === "string" &&
-    /(^|[\s;&|(/"'`])no-mistakes\s+axi(\s|$|["'`])/.test(command)
+    text !== null &&
+    /(^|[\s;&|(/"'`])no-mistakes\s+axi(\s|$|["'`])/.test(text)
   );
 }
 
@@ -155,7 +168,13 @@ export function readNoMistakesToolResult(
   args: Record<string, unknown> | undefined,
   result: unknown,
 ) {
-  if (!isNoMistakesAxiCommand(args?.command ?? args?.cmd)) return null;
+  const command = args?.command ?? args?.cmd;
+  if (
+    !isNoMistakesAxiCommand(
+      command === undefined || command === null ? args?.title : command,
+    )
+  )
+    return null;
   return readNoMistakesOutput(toolResultText(result));
 }
 
@@ -184,10 +203,12 @@ export function askUserFindings(gate: NoMistakesGate) {
 }
 
 export function noMistakesGateKey(gate: NoMistakesGate) {
-  return `${gate.step}:${gate.findings
-    .map((finding) => finding.id)
-    .sort()
-    .join(",")}`;
+  return JSON.stringify([
+    gate.step,
+    gate.findings
+      .map((finding) => [finding.id, finding.action, finding.description])
+      .sort((a, b) => a.join("\u0000").localeCompare(b.join("\u0000"))),
+  ]);
 }
 
 export function noMistakesDecisionPrompt(

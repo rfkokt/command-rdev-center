@@ -2767,13 +2767,7 @@ export default function ChatView({
               noMistakes.gate && askUserFindings(noMistakes.gate).length
                 ? noMistakes.gate
                 : null;
-            setNoMistakesGate((current) =>
-              gate &&
-              current &&
-              noMistakesGateKey(current) === noMistakesGateKey(gate)
-                ? current
-                : gate,
-            );
+            setNoMistakesGate(gate);
           }
           upsertToolCall(callId, {
             name,
