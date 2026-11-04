@@ -47,7 +47,6 @@ vi.mock("react-virtuoso", async () => {
   };
 });
 import ChatView from "./ChatView";
-import { terminalEventId } from "../lib/terminal-warmup";
 
 Element.prototype.scrollIntoView = vi.fn();
 const props = {
