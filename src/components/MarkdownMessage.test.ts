@@ -1,15 +1,78 @@
 // @vitest-environment jsdom
 
 import { createElement, StrictMode } from "react";
-import { fireEvent, render, waitFor } from "@testing-library/react";
-import { describe, expect, test, vi } from "vitest";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
 import MarkdownMessage, {
   areMarkdownMessagePropsEqual,
   formatChatCode,
   hasMath,
 } from "./MarkdownMessage";
 
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+afterEach(() => {
+  cleanup();
+  vi.resetAllMocks();
+});
+
 describe("MarkdownMessage", () => {
+  test.each([
+    "/workspace/My%20Project/worker.py:2",
+    "file:///workspace/My%20Project/worker.py#L2",
+    "./worker.py#L2",
+  ])(
+    "opens local file link %s in a preview at the cited line",
+    async (href) => {
+      vi.mocked(invoke).mockResolvedValue("first line\nPDF worker\nlast line");
+      const { getByRole, findByRole, queryByRole, getByText } = render(
+        createElement(MarkdownMessage, {
+          projectPath: "/workspace/My Project",
+          children: `[Kode prosesnya](${href})`,
+        }),
+      );
+      fireEvent.click(getByRole("link", { name: "Kode prosesnya" }));
+      await findByRole("dialog");
+      await waitFor(() => expect(getByText("PDF worker")).toBeTruthy());
+      expect(invoke).toHaveBeenCalledWith("get_project_file_content", {
+        projectPath: "/workspace/My Project",
+        fileName: "worker.py",
+      });
+      expect(
+        getByText("PDF worker").parentElement?.getAttribute("style"),
+      ).toContain("background");
+      fireEvent.keyDown(document, { key: "Escape" });
+      await waitFor(() => expect(queryByRole("dialog")).toBeNull());
+    },
+  );
+
+  test("shows a visible error when a linked file cannot be read", async () => {
+    vi.mocked(invoke).mockRejectedValue("File not found");
+    const { getByRole, findByRole } = render(
+      createElement(MarkdownMessage, null, "[Missing](/workspace/missing.py)"),
+    );
+    fireEvent.click(getByRole("link", { name: "Missing" }));
+    expect((await findByRole("alert")).textContent).toContain("File not found");
+  });
+
+  test("keeps web links and anchors while blocking unsafe protocols", () => {
+    const { getByRole, container } = render(
+      createElement(
+        MarkdownMessage,
+        null,
+        '[Web](https://example.com/code.py#L2) [Section](#section) [Unsafe](javascript:alert) <a href="file://remote/share/file.py">Remote file</a>',
+      ),
+    );
+    expect(getByRole("link", { name: "Web" }).getAttribute("target")).toBe(
+      "_blank",
+    );
+    expect(
+      getByRole("link", { name: "Section" }).getAttribute("target"),
+    ).toBeNull();
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull();
+    expect(container.querySelector('a[href^="file://remote"]')).toBeNull();
+    expect(invoke).not.toHaveBeenCalled();
+  });
   test("renders math after StrictMode replays effects", async () => {
     const { container } = render(
       createElement(
@@ -166,6 +229,12 @@ describe("memoization", () => {
     ).toBe(true);
     expect(
       areMarkdownMessagePropsEqual({ children: "a" }, { children: "b" }),
+    ).toBe(false);
+    expect(
+      areMarkdownMessagePropsEqual(
+        { children: "a", projectPath: "/old" },
+        { children: "a", projectPath: "/new" },
+      ),
     ).toBe(false);
     expect(
       areMarkdownMessagePropsEqual(

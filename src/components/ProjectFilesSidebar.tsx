@@ -453,7 +453,11 @@ export default function ProjectFilesSidebar({
                 ) : preview.name.endsWith(".md") ||
                   preview.name.endsWith(".mdx") ? (
                   <div className="file-preview-content markdown-preview">
-                    <MarkdownMessage>{preview.content}</MarkdownMessage>
+                    <MarkdownMessage
+                      projectPath={`${projectPath}/${preview.name.split("/").slice(0, -1).join("/")}`}
+                    >
+                      {preview.content}
+                    </MarkdownMessage>
                   </div>
                 ) : (
                   (() => {

@@ -8,12 +8,16 @@ import {
   useState,
 } from "react";
 import type { ComponentProps } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { slugifyHeading } from "../lib/deep-research";
+import { parseFileLink, type FileLink } from "../lib/markdown-links";
 
 // Plugin element type, derived from ReactMarkdown's own props so we don't
 // depend on unified's (transitive) type exports directly.
@@ -23,6 +27,11 @@ type RehypePlugin = Exclude<
 >[number];
 
 const SyntaxCodeBlock = lazy(() => import("./SyntaxCodeBlock"));
+const ChatFilePreview = lazy(() => import("./ChatFilePreview"));
+
+function markdownUrlTransform(url: string, key: string) {
+  return key === "href" && parseFileLink(url) ? url : defaultUrlTransform(url);
+}
 
 export function formatChatCode(text: string) {
   const lines = text.split("\n");
@@ -215,6 +224,10 @@ function MermaidBlock({
 const MAX_MARKDOWN_CHARS = 100_000;
 const sanitizeSchema = {
   ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href || []), "file"],
+  },
   attributes: {
     ...(defaultSchema.attributes ?? {}),
     code: [
@@ -245,13 +258,16 @@ export function hasMath(source: string): boolean {
 type MarkdownMessageProps = {
   children: string;
   isStreaming?: boolean;
+  projectPath?: string;
 };
 
 function MarkdownMessage({
   children,
   isStreaming = false,
+  projectPath,
 }: MarkdownMessageProps) {
   const [showLargeMessage, setShowLargeMessage] = useState(false);
+  const [fileLink, setFileLink] = useState<FileLink | null>(null);
   // ponytail: format is O(n^2)-ish scanning; skip it per-frame while streaming.
   const formatted = useMemo(
     () => (isStreaming ? children : formatChatCode(children)),
@@ -296,9 +312,25 @@ function MarkdownMessage({
   );
   const components = useMemo<Components>(
     () => ({
-      a: ({ node: _node, ...props }) => (
-        <a {...props} target="_blank" rel="noreferrer" />
-      ),
+      a: ({ node: _node, href, ...props }) => {
+        const localFile = href ? parseFileLink(href) : null;
+        return (
+          <a
+            {...props}
+            href={href}
+            target={localFile || href?.startsWith("#") ? undefined : "_blank"}
+            rel="noreferrer"
+            onClick={
+              localFile
+                ? (event) => {
+                    event.preventDefault();
+                    setFileLink(localFile);
+                  }
+                : undefined
+            }
+          />
+        );
+      },
       input: ({ node: _node, ...props }) => <input {...props} disabled />,
       h2: ({ children: headingChildren, ...props }) => (
         <h2 id={slugifyHeading(flattenText(headingChildren))} {...props}>
@@ -373,9 +405,19 @@ function MarkdownMessage({
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={rehypePlugins}
         components={components}
+        urlTransform={markdownUrlTransform}
       >
         {formatted}
       </ReactMarkdown>
+      {fileLink && (
+        <Suspense fallback={<p role="status">Loading file preview…</p>}>
+          <ChatFilePreview
+            link={fileLink}
+            projectPath={projectPath}
+            onClose={() => setFileLink(null)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -389,6 +431,7 @@ export function areMarkdownMessagePropsEqual(
 ): boolean {
   return (
     prev.children === next.children &&
+    prev.projectPath === next.projectPath &&
     (prev.isStreaming ?? false) === (next.isStreaming ?? false)
   );
 }

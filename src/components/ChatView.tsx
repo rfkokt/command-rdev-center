@@ -5434,7 +5434,7 @@ export default function ChatView({
             <p>{run.progress.activity || "Preparing research…"}</p>
           ) : report ? (
             <div className="research-inline-report">
-              <MarkdownMessage>{report}</MarkdownMessage>
+              <MarkdownMessage projectPath={cwd}>{report}</MarkdownMessage>
             </div>
           ) : null}
           {run.error && <p className="research-run-error">{run.error}</p>}
@@ -5658,7 +5658,7 @@ export default function ChatView({
             />
           )}
           {m.text && (
-            <MarkdownMessage isStreaming={m.isStreaming}>
+            <MarkdownMessage isStreaming={m.isStreaming} projectPath={cwd}>
               {m.text}
             </MarkdownMessage>
           )}
