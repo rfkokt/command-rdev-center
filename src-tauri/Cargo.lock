@@ -502,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "command-rdev-center"
-version = "0.2.89"
+version = "0.2.90"
 dependencies = [
  "fs2",
  "getrandom 0.3.4",
